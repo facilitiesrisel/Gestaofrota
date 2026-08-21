@@ -1,0 +1,8 @@
+{
+  "name": "Sistema Risel",
+  "description": "Sistema de Lançamento de Notas Fiscais e Controle de Frota para Risel Combustíveis LTDA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

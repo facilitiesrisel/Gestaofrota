@@ -1,0 +1,9 @@
+[
+  {
+    "timestamp": "2026-07-29T14:04:42.546Z",
+    "status": "erro",
+    "filename": "Nenhum arquivo CSV baixado",
+    "addedCount": 0,
+    "message": "Não foi possível baixar arquivos CSV diretamente. Verifique se há arquivos de abastecimento CSV salvos na pasta compartilhada."
+  }
+]
