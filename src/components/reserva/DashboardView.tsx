@@ -8,7 +8,8 @@ import CustomChartBuilderModal, { ChartConfig } from './CustomChartBuilderModal'
 import firebase from "firebase/compat/app";
 import { firebaseConfig } from '../../firebaseConfig';
 import { sendEmail } from '../../services/firebaseService';
-import { UserPlus } from 'lucide-react';
+import { UserPlus, RefreshCw, ArrowUp, ArrowDown, MapPin, Trophy, GripVertical } from 'lucide-react';
+import DestinationMap from './DestinationMap';
 
 type ChartType = ChartConfig['chartType'];
 
@@ -19,6 +20,9 @@ interface ChartWrapperProps {
   onConfigChange: (changes: Partial<ChartConfig>) => void;
   onRemove?: () => void;
   onEdit?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  isDraggable?: boolean;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -45,7 +49,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConfigChange, onRemove, onEdit }) => {
+const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConfigChange, onRemove, onEdit, onMoveUp, onMoveDown, isDraggable }) => {
   const COLORS = [
     '#00753f', // Verde Risel Institucional
     '#114D38', // Verde Floresta Profundo
@@ -138,46 +142,42 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
     switch(config.chartType) {
       case 'pie':
         return (
-          <div className="relative w-full h-full flex flex-col items-center justify-center">
-            <PieChart width={360} height={260}>
-              <Pie 
-                  data={chartData} 
-                  dataKey="value" 
-                  nameKey="name" 
-                  cx="50%" 
-                  cy="50%" 
-                  innerRadius="60%" 
-                  outerRadius="85%" 
-                  paddingAngle={4}
-                  cornerRadius={6}
-                  label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
-              >
-                  {chartData.map((entry, index) => (
-                    <Cell 
-                      key={`cell-${index}`} 
-                      fill={COLORS[index % COLORS.length]} 
-                      stroke="#ffffff" 
-                      strokeWidth={2} 
-                    />
-                  ))}
-              </Pie>
-              <Tooltip content={<CustomTooltip />} />
-              <Legend 
-                verticalAlign="bottom" 
-                height={38} 
-                iconType="circle" 
-                wrapperStyle={{fontSize: '11px', fontWeight: 600, color: '#475569'}} 
-              />
-            </PieChart>
-            
-            {/* Absolute Centered Ring Total for looker style BI */}
-            <div className="absolute top-[42%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none select-none">
-              <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Total</span>
-              <span className="block text-2xl font-black text-slate-800 tracking-tight">
-                {valStr.split(' ')[0]}
-              </span>
-            </div>
-          </div>
+          <PieChart>
+            <Pie 
+                data={chartData} 
+                dataKey="value" 
+                nameKey="name" 
+                cx="50%" 
+                cy="50%" 
+                innerRadius="48%" 
+                outerRadius="75%" 
+                paddingAngle={3}
+                cornerRadius={5}
+            >
+                {chartData.map((entry, index) => (
+                  <Cell 
+                    key={`cell-${index}`} 
+                    fill={config.dimension === 'status' 
+                      ? (entry.name === 'Concluída' ? '#10b981' 
+                        : entry.name === 'Em Uso' ? '#00753f' 
+                        : entry.name === 'Pendente' ? '#f59e0b' 
+                        : entry.name === 'Aprovada' ? '#2563eb' 
+                        : entry.name === 'Cancelada' ? '#ef4444' 
+                        : '#dc2626') 
+                      : COLORS[index % COLORS.length]} 
+                    stroke="#ffffff" 
+                    strokeWidth={2} 
+                  />
+                ))}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+            <Legend 
+              verticalAlign="bottom" 
+              height={36} 
+              iconType="circle" 
+              wrapperStyle={{fontSize: '11px', fontWeight: 600, color: '#475569'}} 
+            />
+          </PieChart>
         );
       case 'line':
           return (
@@ -205,8 +205,8 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
             <AreaChart {...commonProps}>
                 <defs>
                     <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#00753f" stopOpacity={0.4}/>
-                        <stop offset="70%" stopColor="#00753f" stopOpacity={0.08}/>
+                        <stop offset="0%" stopColor="#00753f" stopOpacity={0.45}/>
+                        <stop offset="70%" stopColor="#00753f" stopOpacity={0.1}/>
                         <stop offset="100%" stopColor="#00753f" stopOpacity={0.0}/>
                     </linearGradient>
                 </defs>
@@ -225,7 +225,7 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
                   dot={{ r: 3.5, strokeWidth: 2, fill: '#fff', stroke: '#00753f' }}
                   activeDot={{ r: 6, fill: '#ff9b00', strokeWidth: 2, stroke: '#fff' }}
                 >
-                    <LabelList dataList-key="value" dataKey="value" position="top" offset={10} style={{ fontSize: '11px', fontWeight: 800, fill: '#00753f' }} />
+                    <LabelList dataKey="value" position="top" offset={10} style={{ fontSize: '11px', fontWeight: 800, fill: '#00753f' }} />
                 </Area>
             </AreaChart>
           );
@@ -266,7 +266,7 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
                 <YAxis {...axisPropsY} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend verticalAlign="top" height={32} iconType="circle" wrapperStyle={{fontSize: '11px', fontWeight: 600}} />
-                <Bar dataKey="value" name="Volume Total" barSize={22} fill={`url(#${barGradientId})`} radius={[6, 6, 0, 0]}>
+                <Bar dataKey="value" name="Volume Total" barSize={24} fill={`url(#${barGradientId})`} radius={[6, 6, 0, 0]}>
                     <LabelList dataKey="value" position="top" style={{ fontSize: '11px', fontWeight: 800, fill: '#00753f' }} />
                 </Bar>
                 <Line type="monotone" dataKey="value" name="Tendência" stroke="#ff9b00" strokeWidth={3} dot={{ r: 4, fill: '#ff9b00', stroke: '#fff', strokeWidth: 2 }} />
@@ -297,30 +297,28 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
           );
       case 'treemap':
           return (
-             <ResponsiveContainer width="100%" height="100%">
-                <Treemap
-                    data={chartData}
-                    dataKey="value"
-                    aspectRatio={4 / 3}
-                    stroke="#fff"
-                    fill="#00753f"
-                    content={(props: any) => {
-                        const { root, depth, x, y, width, height, index, name, value } = props;
-                        return (
-                          <g>
-                            <rect x={x} y={y} width={width} height={height} rx={4} style={{ fill: COLORS[index % COLORS.length], stroke: '#fff', strokeWidth: 2 }} />
-                            {width > 50 && height > 28 && (
-                                <text x={x + width / 2} y={y + height / 2 + 4} textAnchor="middle" fill="#fff" fontSize={11} fontWeight="bold">
-                                    {name} ({value})
-                                </text>
-                            )}
-                          </g>
-                        );
-                    }}
-                >
-                    <Tooltip content={<CustomTooltip />} />
-                </Treemap>
-             </ResponsiveContainer>
+            <Treemap
+                data={chartData}
+                dataKey="value"
+                aspectRatio={4 / 3}
+                stroke="#fff"
+                fill="#00753f"
+                content={(props: any) => {
+                    const { root, depth, x, y, width, height, index, name, value } = props;
+                    return (
+                      <g>
+                        <rect x={x} y={y} width={width} height={height} rx={6} style={{ fill: COLORS[index % COLORS.length], stroke: '#fff', strokeWidth: 2 }} />
+                        {width > 50 && height > 28 && (
+                            <text x={x + width / 2} y={y + height / 2 + 4} textAnchor="middle" fill="#fff" fontSize={11} fontWeight="bold">
+                                {name} ({value})
+                            </text>
+                        )}
+                      </g>
+                    );
+                }}
+            >
+                <Tooltip content={<CustomTooltip />} />
+            </Treemap>
           );
       case 'bar':
       default:
@@ -340,7 +338,7 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
                 {chartData.map((entry, index) => (
                     <Cell 
                       key={`cell-${index}`} 
-                      fill={config.dimension === 'status' ? (entry.name === 'Concluída' ? '#10b981' : entry.name === 'Em Uso' ? '#00753f' : entry.name === 'Pendente' ? '#ff9b00' : '#ef4444') : COLORS[index % COLORS.length]} 
+                      fill={config.dimension === 'status' ? (entry.name === 'Concluída' ? '#10b981' : entry.name === 'Em Uso' ? '#00753f' : entry.name === 'Pendente' ? '#f59e0b' : '#ef4444') : COLORS[index % COLORS.length]} 
                     />
                 ))}
                 <LabelList dataKey="value" position="top" style={{ fontSize: '11px', fontWeight: 800, fill: '#334155' }} />
@@ -350,23 +348,42 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
     }
   };
 
+  const isDestinationCity = config.dimension === 'destinationCity';
+
   return (
-    <div className="bg-white rounded-[24px] border border-slate-200 flex flex-col h-full overflow-hidden relative group min-h-[420px] shadow-sm hover:shadow-md transition-all duration-300">
+    <div className="bg-white rounded-[24px] border border-slate-200/90 flex flex-col h-full overflow-hidden relative group shadow-sm hover:shadow-md transition-all duration-300">
       
       {/* Premium BI Card Header */}
       <div className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between">
-        <div className="flex flex-col gap-0.5 text-left">
-          <span className="text-[10px] font-extrabold text-emerald-600 uppercase tracking-widest flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-            {config.dataSource === 'reservations' ? 'Análise de Reservas' : config.dataSource === 'dailyUse' ? 'Uso Diário' : 'Estatísticas da Frota'}
-          </span>
-          <h3 className="text-base font-bold text-slate-800 tracking-tight leading-snug">
-            {title}
-          </h3>
+        <div className="flex items-center gap-2.5">
+          {isDraggable && (
+            <div className="text-slate-400 hover:text-slate-700 cursor-grab active:cursor-grabbing p-1 rounded-lg hover:bg-slate-100 transition-colors" title="Clique e arraste para trocar de lugar">
+              <GripVertical className="w-4 h-4" />
+            </div>
+          )}
+          <div className="flex flex-col gap-0.5 text-left">
+            <span className="text-[10px] font-extrabold text-emerald-600 uppercase tracking-widest flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              {config.dataSource === 'reservations' ? 'Análise de Reservas' : config.dataSource === 'dailyUse' ? 'Uso Diário' : 'Estatísticas da Frota'}
+            </span>
+            <h3 className="text-base font-bold text-slate-800 tracking-tight leading-snug">
+              {title}
+            </h3>
+          </div>
         </div>
         
         {/* Actions Menu */}
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity duration-200">
+             {onMoveUp && (
+                 <button onClick={onMoveUp} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" title="Mover para Cima">
+                     <ArrowUp className="w-4 h-4" />
+                 </button>
+             )}
+             {onMoveDown && (
+                 <button onClick={onMoveDown} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" title="Mover para Baixo">
+                     <ArrowDown className="w-4 h-4" />
+                 </button>
+             )}
              {onEdit && (
                  <button onClick={onEdit} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" title="Configurar Análise">
                      <CogIcon className="w-4.5 h-4.5" />
@@ -381,7 +398,7 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
       </div>
 
       {/* Executive Summary Banner */}
-      {config.chartType !== 'pie' && (
+      {config.chartType !== 'pie' && !isDestinationCity && (
         <div className="px-6 pt-4 pb-1 flex flex-col text-left">
           <span className="text-2xl font-black text-slate-800 tracking-tight font-sans">
             {valStr}
@@ -393,11 +410,15 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
         </div>
       )}
 
-      {/* Chart Canvas */}
-      <div className="flex-1 p-4 min-h-[280px] relative">
-        <ResponsiveContainer width="100%" height="100%">
+      {/* Chart or Map Canvas */}
+      <div className={`flex-1 p-4 ${isDestinationCity ? 'min-h-[360px]' : 'min-h-[280px]'} relative w-full h-full`}>
+        {isDestinationCity ? (
+          <DestinationMap data={chartData} />
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
             {renderChart()}
-        </ResponsiveContainer>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );
@@ -406,10 +427,11 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ title, data, config, onConf
 interface DashboardViewProps {
   customCharts: ChartConfig[];
   onChartsChange: (charts: ChartConfig[]) => void;
+  onResetToDefaults?: () => void;
   canEditDashboard: boolean;
 }
 
-const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsChange, canEditDashboard }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsChange, onResetToDefaults, canEditDashboard }) => {
   const { reservations, dailyTrips, vehicles, getVehicleById } = useReservations();
   const [isBuilderModalOpen, setIsBuilderModalOpen] = useState(false);
   const [editingChartIndex, setEditingChartIndex] = useState<number | null>(null);
@@ -417,6 +439,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
   
   const [globalFilters, setGlobalFilters] = useState({ year: '', month: ''});
   const [displayCharts, setDisplayCharts] = useState<ChartConfig[]>([]);
+  const [draggedChartId, setDraggedChartId] = useState<number | null>(null);
+  const [dragOverChartId, setDragOverChartId] = useState<number | null>(null);
 
   // Estados para a criação de acesso do usuário de forma discreta no Dashboard
   const [isCreateAccessModalOpen, setIsCreateAccessModalOpen] = useState(false);
@@ -584,9 +608,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
       return vehicles;
   }, [vehicles]);
 
-  // --- UPDATED KPI CARD WITH TOOLTIP & TREND COMPARISON ---
+  // --- LUXURY GRADIENT KPI CARD MATCHING RAC BI INDICATORS ---
   const KPICard = ({ title, value, icon: Icon, gradientFrom, gradientTo, trend, comparisonVal, inverseTrend, numericValue, tooltipContent }: any) => {
-    // Calculate percentage change if comparison data exists
     let changePercent = null;
     let isPositive = false;
     const currentVal = numericValue !== undefined ? numericValue : (typeof value === 'number' ? value : 0);
@@ -601,137 +624,149 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
         isPositive = changePercent >= 0;
     }
 
-    // Determine custom theme and color based on title or gradient parameters
+    // High-end sophisticated multi-stop gradient themes
     let themes = {
-      bg: 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-lg shadow-blue-500/15 border-white/5',
-      iconBg: 'bg-white/15 text-blue-100 border-white/10',
-      titleText: 'text-blue-100',
-      valueText: 'text-white',
-      stroke: '#93c5fd'
+      bg: 'bg-gradient-to-br from-blue-950 via-slate-900 to-indigo-950 text-white shadow-md border-white/10',
+      iconBg: 'bg-white/10 text-blue-300 border-white/15 shadow-inner',
+      titleText: 'text-blue-200/90 font-extrabold',
+      valueText: 'text-white font-black',
+      stroke: '#93c5fd',
+      glow: 'bg-blue-500/10'
     };
 
-    if (gradientFrom?.includes('emerald') || gradientFrom?.includes('teal') || title.toLowerCase().includes('conclu')) {
+    const lowerTitle = title.toLowerCase();
+
+    if (gradientFrom?.includes('emerald') || gradientFrom?.includes('teal') || lowerTitle.includes('conclu') || lowerTitle.includes('em uso') || lowerTitle.includes('ativas')) {
       themes = {
-        bg: 'bg-gradient-to-br from-emerald-400 via-emerald-600 to-teal-800 text-white shadow-lg shadow-emerald-500/20 border-white/5',
-        iconBg: 'bg-white/20 text-emerald-50 border-white/15',
-        titleText: 'text-emerald-100/90 font-medium',
-        valueText: 'text-white font-extrabold',
-        stroke: '#34d399'
+        bg: 'bg-gradient-to-br from-emerald-950 via-[#114D38] to-teal-950 text-white shadow-md border-white/10',
+        iconBg: 'bg-white/10 text-emerald-300 border-white/15 shadow-inner',
+        titleText: 'text-emerald-200/90 font-extrabold',
+        valueText: 'text-white font-black',
+        stroke: '#34d399',
+        glow: 'bg-emerald-500/10'
       };
-    } else if (gradientFrom?.includes('orange') || gradientFrom?.includes('amber') || title.includes('Próxima') || title.toLowerCase().includes('pend')) {
+    } else if (gradientFrom?.includes('orange') || gradientFrom?.includes('amber') || lowerTitle.includes('próxima') || lowerTitle.includes('pendente')) {
       themes = {
-        bg: 'bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg shadow-orange-500/15 border-white/5',
-        iconBg: 'bg-white/15 text-orange-100 border-white/10',
-        titleText: 'text-orange-50/90',
-        valueText: 'text-white',
-        stroke: '#fcd34d'
+        bg: 'bg-gradient-to-br from-amber-950 via-orange-950 to-stone-900 text-white shadow-md border-white/10',
+        iconBg: 'bg-white/10 text-amber-300 border-white/15 shadow-inner',
+        titleText: 'text-amber-200/90 font-extrabold',
+        valueText: 'text-white font-black',
+        stroke: '#fcd34d',
+        glow: 'bg-amber-500/10'
       };
-    } else if (gradientFrom?.includes('red') || gradientFrom?.includes('rose') || title.includes('Vencida') || title.toLowerCase().includes('recus') || title.toLowerCase().includes('cancel')) {
+    } else if (gradientFrom?.includes('red') || gradientFrom?.includes('rose') || lowerTitle.includes('vencida') || lowerTitle.includes('rejeit') || lowerTitle.includes('recus')) {
       themes = {
-        bg: 'bg-gradient-to-br from-rose-500 via-red-600 to-red-800 text-white shadow-lg shadow-rose-500/15 border-white/5',
-        iconBg: 'bg-white/15 text-rose-100 border-white/10',
-        titleText: 'text-rose-100/90',
-        valueText: 'text-white',
-        stroke: '#fda4af'
+        bg: 'bg-gradient-to-br from-rose-950 via-red-950 to-slate-900 text-white shadow-md border-white/10',
+        iconBg: 'bg-white/10 text-rose-300 border-white/15 shadow-inner',
+        titleText: 'text-rose-200/90 font-extrabold',
+        valueText: 'text-white font-black',
+        stroke: '#fda4af',
+        glow: 'bg-rose-500/10'
       };
-    } else if (gradientFrom?.includes('slate') || gradientFrom?.includes('gray')) {
+    } else if (gradientFrom?.includes('cyan') || lowerTitle.includes('total km') || lowerTitle.includes('quilometragem')) {
       themes = {
-        bg: 'bg-gradient-to-br from-slate-600 to-slate-800 text-white shadow-slate-500/10 border-white/5',
-        iconBg: 'bg-white/15 text-slate-100 border-white/10',
-        titleText: 'text-slate-200/90',
-        valueText: 'text-white',
-        stroke: '#cbd5e1'
+        bg: 'bg-gradient-to-br from-cyan-950 via-slate-900 to-blue-950 text-white shadow-md border-white/10',
+        iconBg: 'bg-white/10 text-cyan-300 border-white/15 shadow-inner',
+        titleText: 'text-cyan-200/90 font-extrabold',
+        valueText: 'text-white font-black',
+        stroke: '#67e8f9',
+        glow: 'bg-cyan-500/10'
+      };
+    } else if (gradientFrom?.includes('slate') || gradientFrom?.includes('gray') || lowerTitle.includes('cancelad') || lowerTitle.includes('média')) {
+      themes = {
+        bg: 'bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white shadow-md border-white/10',
+        iconBg: 'bg-white/10 text-slate-300 border-white/15 shadow-inner',
+        titleText: 'text-slate-300/90 font-extrabold',
+        valueText: 'text-white font-black',
+        stroke: '#cbd5e1',
+        glow: 'bg-slate-500/10'
       };
     }
 
     const isUpTrend = inverseTrend ? !isPositive : isPositive;
-    const trendBg = isUpTrend ? 'bg-emerald-500/20 text-emerald-100 border-emerald-500/15' : 'bg-rose-500/20 text-rose-100 border-rose-500/15';
+    const trendBg = isUpTrend ? 'bg-emerald-400/20 text-emerald-200 border-emerald-400/30' : 'bg-rose-400/20 text-rose-200 border-rose-400/30';
     const trendIcon = isUpTrend ? '▲' : '▼';
 
-    // Wavy sparkline generator for executive looking data flow
     const getSparklinePath = (cardTitle: string) => {
       const lower = cardTitle.toLowerCase();
       if (lower.includes('total') || lower.includes('quilometragem') || lower.includes('conclu')) {
-        return "M0,22 Q15,14 30,12 T60,5 T90,2"; // Rising wave
+        return "M0,22 Q15,14 30,12 T60,5 T90,2"; 
       }
       if (lower.includes('pendente') || lower.includes('atraso') || lower.includes('revis')) {
-        return "M0,15 Q25,25 50,8 T100,18"; // Erratic warning wave
+        return "M0,15 Q25,25 50,8 T100,18"; 
       }
       if (lower.includes('uso') || lower.includes('ativa')) {
-        return "M0,18 Q15,5 35,16 T70,8 T100,12"; // Vibrant activity wave
+        return "M0,18 Q15,5 35,16 T70,8 T100,12"; 
       }
-      return "M0,15 Q25,8 50,18 T100,6"; // Standard wave
+      return "M0,15 Q25,8 50,18 T100,6"; 
     };
 
     return (
         <div 
-            className={`relative overflow-visible rounded-[24px] shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col justify-between group h-full min-h-[142px] p-5 hover:-translate-y-1 cursor-default border border-white/5 ${themes.bg}`}
+            className={`relative overflow-hidden rounded-[18px] shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col justify-between group h-full min-h-[92px] p-3.5 hover:-translate-y-0.5 cursor-default border ${themes.bg}`}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
         >
-            {/* Círculo luminoso de background */}
-            <div className="absolute -right-8 -bottom-8 w-24 h-24 bg-white/5 rounded-full blur-xl group-hover:bg-white/10 transition-colors pointer-events-none" />
+            {/* Background ambient lighting */}
+            <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500 ${themes.glow}`} />
 
-            {/* Tooltip with Risel branding for active indicators */}
+            {/* Tooltip for active indicators */}
             {tooltipContent && isHovered && (
-                <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 w-72 max-w-[90vw] bg-white text-slate-700 rounded-xl shadow-2xl border border-slate-150 z-[60] text-xs animate-fadeIn pointer-events-none overflow-hidden">
-                    {/* Header */}
-                    <div className="bg-slate-900 text-white p-2.5 font-bold uppercase tracking-wider text-[10px] flex items-center justify-between border-b-2 border-indigo-500">
+                <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 w-72 max-w-[90vw] bg-slate-900/95 backdrop-blur-md text-white rounded-xl shadow-2xl border border-slate-700/60 z-[60] text-xs animate-fadeIn pointer-events-none overflow-hidden">
+                    <div className="bg-[#114D38] px-3 py-1.5 font-bold uppercase tracking-wider text-[10px] flex items-center justify-between border-b border-emerald-800">
                         <span>{title}</span>
                         <span className="bg-white/20 px-1.5 py-0.5 rounded text-white">{value} Ativos</span>
                     </div>
                     
-                    {/* Content */}
-                    <div className="p-3 max-h-[50vh] overflow-y-auto custom-scrollbar">
+                    <div className="p-2.5 max-h-[45vh] overflow-y-auto custom-scrollbar text-slate-200">
                         {tooltipContent}
                     </div>
 
-                    {/* Arrow Down */}
-                    <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-8 border-transparent border-t-white drop-shadow-sm"></div>
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-8 border-transparent border-t-slate-900 drop-shadow-sm"></div>
                 </div>
             )}
 
-            <div className="flex justify-between items-start w-full relative z-10">
-                <div className="flex flex-col text-left">
-                    <span className={`text-[10px] font-black uppercase tracking-widest leading-none mb-2 ${themes.titleText}`}>
+            <div className="flex justify-between items-center w-full relative z-10 gap-2">
+                <div className="flex flex-col text-left min-w-0">
+                    <span className={`text-[10px] font-black uppercase tracking-wider leading-none mb-1 truncate ${themes.titleText}`}>
                         {title}
                     </span>
-                    <h3 className={`text-3xl font-black tracking-tight ${themes.valueText}`}>
+                    <h3 className={`text-2xl font-black font-sans tracking-tight leading-tight ${themes.valueText}`}>
                         {value}
                     </h3>
                 </div>
                 
-                {/* Colored Icon Badge */}
-                <div className={`p-2.5 rounded-2xl transition-all duration-300 group-hover:scale-110 border backdrop-blur-sm shadow-inner shrink-0 ${themes.iconBg}`}>
-                    <Icon className="h-5 w-5" />
+                {/* Translucent Icon Badge */}
+                <div className={`p-2 rounded-xl transition-all duration-300 group-hover:scale-105 border backdrop-blur-md shrink-0 ${themes.iconBg}`}>
+                    <Icon className="h-4.5 w-4.5" />
                 </div>
             </div>
 
             {/* Bottom metadata and Mini Trend Sparkline */}
-            <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/10 w-full relative z-10">
+            <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-white/10 w-full relative z-10 text-[10px]">
                 {changePercent !== null && Math.abs(changePercent) > 0 ? (
-                    <div className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${trendBg}`}>
+                    <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${trendBg}`}>
                         <span>{trendIcon} {Math.abs(changePercent)}%</span>
-                        <span className="opacity-75 font-normal">vs anterior</span>
+                        <span className="opacity-75 font-normal">vs ant.</span>
                     </div>
                 ) : trend ? (
-                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-white bg-white/15 border border-white/10 px-2.5 py-0.5 rounded-full">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-450 animate-pulse"></span>
+                    <div className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-300 bg-emerald-400/20 border border-emerald-400/30 px-1.5 py-0.5 rounded">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
                         {trend}
                     </div>
                 ) : (
-                    <span className="text-[10px] text-white/60 font-medium">Atividade Estável</span>
+                    <span className="text-[9px] text-white/50 font-medium">Indicador Ativo</span>
                 )}
 
                 {/* Micro Sparkline Wave */}
-                <div className="w-16 h-6 opacity-60 group-hover:opacity-100 transition-opacity duration-300">
+                <div className="w-12 h-4 opacity-50 group-hover:opacity-100 transition-opacity duration-300">
                     <svg className="w-full h-full" viewBox="0 0 100 30" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path 
                             d={getSparklinePath(title)} 
                             stroke={themes.stroke} 
                             strokeWidth="2.5" 
                             strokeLinecap="round" 
-                            strokeLinejoin="round"
+                            strokeLinejoin="round" 
                         />
                     </svg>
                 </div>
@@ -741,7 +776,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
   };
 
   const reservationKpiCards = useMemo(() => {
-    // Current Stats
+    // Current Stats matching exact ReservationStatus enums
     const statusCounts = filteredReservations.reduce((acc, res) => {
         acc[res.status] = (acc[res.status] || 0) + 1;
         return acc;
@@ -754,10 +789,32 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
     }, {} as Record<ReservationStatus, number>);
 
     const activeReservations = filteredReservations.filter(r => r.status === ReservationStatus.InUse);
+    const completedReservations = filteredReservations.filter(r => r.status === ReservationStatus.Completed);
+    const rejectedReservations = filteredReservations.filter(r => r.status === ReservationStatus.Rejected);
+    const cancelledReservations = filteredReservations.filter(r => r.status === ReservationStatus.Cancelled);
+    const pendingReservations = filteredReservations.filter(r => r.status === ReservationStatus.Pending);
+
+    // Helpers to sort recent historical records
+    const getSortedRecent = (list: Reservation[]) => {
+      return [...list].sort((a, b) => {
+        const timeA = new Date(a.actualReturnDateTime || a.returnDate || a.departureDateTime).getTime();
+        const timeB = new Date(b.actualReturnDateTime || b.returnDate || b.departureDateTime).getTime();
+        return timeB - timeA;
+      });
+    };
+
+    const completedRecent = getSortedRecent(completedReservations).slice(0, 5);
+    const rejectedRecent = getSortedRecent(rejectedReservations).slice(0, 5);
+    const cancelledRecent = getSortedRecent(cancelledReservations).slice(0, 5);
+    const pendingRecent = getSortedRecent(pendingReservations).slice(0, 5);
     
-    // Generate Tooltip Content for Reservations
+    // Tooltip: Em Uso (Active)
     const activeResTooltip = activeReservations.length > 0 ? (
-        <div className="space-y-2.5">
+        <div className="space-y-2.5 max-w-[260px]">
+            <div className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider border-b border-slate-700/60 pb-1 flex items-center justify-between">
+                <span>Veículos em Deslocamento</span>
+                <span className="text-emerald-400 font-mono">({activeReservations.length})</span>
+            </div>
             {activeReservations.map(r => {
                 const vehicle = getVehicleById(r.vehicleId);
                 const dateStr = new Date(r.departureDateTime).toLocaleString('pt-BR', { 
@@ -765,22 +822,148 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
                 }).replace(',', ' às');
 
                 return (
-                    <div key={r.id} className="border-l-2 border-[#ff9b00] pl-2 py-0.5">
+                    <div key={r.id} className="border-l-2 border-emerald-400 pl-2 py-0.5 text-left">
                         <div className="flex justify-between items-center mb-0.5">
-                            <span className="font-bold text-primary text-xs truncate max-w-[50%]">{vehicle?.plate}</span>
-                            <span className="text-[10px] bg-gray-100 px-1.5 rounded text-gray-600 font-mono whitespace-nowrap">
+                            <span className="font-bold text-white text-xs truncate max-w-[55%]">{vehicle?.plate || 'Veículo'}</span>
+                            <span className="text-[10px] bg-slate-800/80 px-1.5 py-0.2 rounded text-slate-300 font-mono whitespace-nowrap">
                                 {dateStr}
                             </span>
                         </div>
-                        <span className="block text-gray-500 text-[10px] truncate" title={r.destinationCity}>
-                            📍 {r.destinationCity}
+                        <div className="text-slate-300 text-[10px] truncate">
+                            👤 {r.requesterName}
+                        </div>
+                        <span className="block text-slate-400 text-[10px] truncate" title={r.destinationCity}>
+                            📍 {r.destinationCity || r.destination}
                         </span>
                     </div>
                 );
             })}
         </div>
     ) : (
-        <div className="text-center text-gray-400 italic py-2">Nenhum veículo em uso.</div>
+        <div className="text-center text-slate-400 italic text-xs py-1">Nenhum veículo em uso no momento.</div>
+    );
+
+    // Tooltip: Concluídas (Completed History)
+    const completedResTooltip = completedRecent.length > 0 ? (
+        <div className="space-y-2.5 max-w-[270px]">
+            <div className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider border-b border-slate-700/60 pb-1 flex items-center justify-between">
+                <span>Últimas Concluídas</span>
+                <span className="text-teal-400 font-mono">Total: {completedReservations.length}</span>
+            </div>
+            {completedRecent.map(r => {
+                const vehicle = getVehicleById(r.vehicleId);
+                const returnDateStr = new Date(r.actualReturnDateTime || r.returnDate || r.departureDateTime).toLocaleDateString('pt-BR', { 
+                    day: '2-digit', month: '2-digit' 
+                });
+
+                return (
+                    <div key={r.id} className="border-l-2 border-teal-400 pl-2 py-0.5 text-left">
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="font-bold text-teal-300 truncate max-w-[60%]">{r.requesterName}</span>
+                            <span className="text-[10px] font-mono text-slate-300 bg-slate-800/80 px-1.5 rounded">{vehicle?.plate || 'Frota'}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-0.5">
+                            <span className="truncate max-w-[70%]" title={r.destinationCity || r.destination}>📍 {r.destinationCity || r.destination}</span>
+                            <span className="text-slate-300 font-mono">{returnDateStr}</span>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    ) : (
+        <div className="text-center text-slate-400 text-xs py-1">Nenhuma reserva concluída no período.</div>
+    );
+
+    // Tooltip: Rejeitadas (Rejected History)
+    const rejectedResTooltip = rejectedRecent.length > 0 ? (
+        <div className="space-y-2.5 max-w-[270px]">
+            <div className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider border-b border-slate-700/60 pb-1 flex items-center justify-between">
+                <span>Histórico de Rejeições</span>
+                <span className="text-rose-400 font-mono">Total: {rejectedReservations.length}</span>
+            </div>
+            {rejectedRecent.map(r => {
+                const dateStr = new Date(r.departureDateTime).toLocaleDateString('pt-BR', { 
+                    day: '2-digit', month: '2-digit' 
+                });
+
+                return (
+                    <div key={r.id} className="border-l-2 border-rose-400 pl-2 py-0.5 text-left">
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="font-bold text-rose-300 truncate max-w-[70%]">{r.requesterName}</span>
+                            <span className="text-[10px] text-slate-300 bg-slate-800/80 px-1.5 rounded">{dateStr}</span>
+                        </div>
+                        <span className="block text-slate-400 text-[10px] truncate" title={r.destinationCity || r.destination}>
+                            📍 {r.destinationCity || r.destination}
+                        </span>
+                        {r.rejectReason && (
+                            <span className="block text-rose-200/90 text-[10px] italic truncate mt-0.5 bg-rose-950/40 px-1 rounded" title={r.rejectReason}>
+                                Motivo: {r.rejectReason}
+                            </span>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    ) : (
+        <div className="text-center text-slate-400 text-xs py-1">Nenhuma reserva rejeitada no período.</div>
+    );
+
+    // Tooltip: Canceladas (Cancelled History)
+    const cancelledResTooltip = cancelledRecent.length > 0 ? (
+        <div className="space-y-2.5 max-w-[270px]">
+            <div className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider border-b border-slate-700/60 pb-1 flex items-center justify-between">
+                <span>Histórico de Cancelamentos</span>
+                <span className="text-slate-300 font-mono">Total: {cancelledReservations.length}</span>
+            </div>
+            {cancelledRecent.map(r => {
+                const dateStr = new Date(r.departureDateTime).toLocaleDateString('pt-BR', { 
+                    day: '2-digit', month: '2-digit' 
+                });
+
+                return (
+                    <div key={r.id} className="border-l-2 border-slate-400 pl-2 py-0.5 text-left">
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="font-bold text-slate-200 truncate max-w-[70%]">{r.requesterName}</span>
+                            <span className="text-[10px] text-slate-300 bg-slate-800/80 px-1.5 rounded">{dateStr}</span>
+                        </div>
+                        <span className="block text-slate-400 text-[10px] truncate" title={r.destinationCity || r.destination}>
+                            📍 {r.destinationCity || r.destination}
+                        </span>
+                    </div>
+                );
+            })}
+        </div>
+    ) : (
+        <div className="text-center text-slate-400 text-xs py-1">Nenhuma reserva cancelada no período.</div>
+    );
+
+    // Tooltip: Pendentes (Pending Requests)
+    const pendingResTooltip = pendingRecent.length > 0 ? (
+        <div className="space-y-2.5 max-w-[270px]">
+            <div className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider border-b border-slate-700/60 pb-1 flex items-center justify-between">
+                <span>Solicitações Pendentes</span>
+                <span className="text-amber-400 font-mono">Total: {pendingReservations.length}</span>
+            </div>
+            {pendingRecent.map(r => {
+                const dateStr = new Date(r.departureDateTime).toLocaleDateString('pt-BR', { 
+                    day: '2-digit', month: '2-digit' 
+                });
+
+                return (
+                    <div key={r.id} className="border-l-2 border-amber-400 pl-2 py-0.5 text-left">
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="font-bold text-amber-300 truncate max-w-[70%]">{r.requesterName}</span>
+                            <span className="text-[10px] text-slate-300 bg-slate-800/80 px-1.5 rounded">{dateStr}</span>
+                        </div>
+                        <span className="block text-slate-400 text-[10px] truncate" title={r.destinationCity || r.destination}>
+                            📍 {r.destinationCity || r.destination} ({r.department})
+                        </span>
+                    </div>
+                );
+            })}
+        </div>
+    ) : (
+        <div className="text-center text-slate-400 text-xs py-1">Nenhuma solicitação pendente no momento.</div>
     );
 
     return [
@@ -794,11 +977,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
         },
         { 
             title: 'Pendentes', 
-            value: statusCounts.Pendente || 0, 
-            comparisonVal: prevStatusCounts.Pendente || 0,
+            value: pendingReservations.length, 
+            comparisonVal: prevStatusCounts[ReservationStatus.Pending] || 0,
             icon: ClockIcon, 
             gradientFrom: 'from-orange-400', 
-            gradientTo: 'to-amber-600' 
+            gradientTo: 'to-amber-600',
+            tooltipContent: pendingResTooltip
         },
         { 
             title: 'Em Uso', 
@@ -811,29 +995,32 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
         },
         { 
             title: 'Concluídas', 
-            value: statusCounts.Concluida || 0, 
-            comparisonVal: prevStatusCounts.Concluida || 0,
+            value: completedReservations.length, 
+            comparisonVal: prevStatusCounts[ReservationStatus.Completed] || 0,
             icon: CheckCircleIcon, 
             gradientFrom: 'from-teal-500', 
-            gradientTo: 'to-teal-700' 
+            gradientTo: 'to-teal-700',
+            tooltipContent: completedResTooltip
         },
         { 
             title: 'Rejeitadas', 
-            value: statusCounts.Rejected || 0, 
-            comparisonVal: prevStatusCounts.Rejected || 0,
+            value: rejectedReservations.length, 
+            comparisonVal: prevStatusCounts[ReservationStatus.Rejected] || 0,
             icon: XIcon, 
             gradientFrom: 'from-red-500', 
             gradientTo: 'to-rose-700',
-            inverseTrend: true
+            inverseTrend: true,
+            tooltipContent: rejectedResTooltip
         },
         { 
             title: 'Canceladas', 
-            value: statusCounts.Cancelled || 0, 
-            comparisonVal: prevStatusCounts.Cancelled || 0,
+            value: cancelledReservations.length, 
+            comparisonVal: prevStatusCounts[ReservationStatus.Cancelled] || 0,
             icon: XCircleIcon, 
             gradientFrom: 'from-slate-500', 
             gradientTo: 'to-gray-600',
-            inverseTrend: true
+            inverseTrend: true,
+            tooltipContent: cancelledResTooltip
         },
     ];
   }, [filteredReservations, reservations, previousPeriodData, getVehicleById]);
@@ -951,6 +1138,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
   const processChartData = (config: ChartConfig): any[] => {
     const dataSource = config.dataSource || 'reservations';
     const getDurationDays = (start: Date, end: Date) => (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 60 * 60 * 24);
+    const normalizeVehicleModel = (modelName?: string) => {
+        if (!modelName) return 'MOBI';
+        const upper = modelName.toUpperCase();
+        if (upper.includes('MOBI')) return 'MOBI';
+        return modelName;
+    };
 
     if (dataSource === 'vehicles') {
         let chartSpecificVehicles = filteredVehicles;
@@ -1028,7 +1221,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
         const groupedData = chartSpecificTrips.reduce((acc, trip) => {
             let key: string | number = 'N/A';
             switch (config.dimension) {
-                case 'vehicle': key = getVehicleById(trip.vehicleId)?.model || 'Desconhecido'; break;
+                case 'vehicle': key = normalizeVehicleModel(getVehicleById(trip.vehicleId)?.model); break;
                 case 'department': key = trip.department; break;
                 case 'driverName': key = trip.driverName; break;
                 case 'destinationCity': key = trip.destinationCity; break;
@@ -1127,7 +1320,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
         const groupedData = chartSpecificReservations.reduce((acc, res) => {
         let key: string | number = 'N/A';
         switch (config.dimension) {
-            case 'vehicle': key = getVehicleById(res.vehicleId)?.model || 'Desconhecido'; break;
+            case 'vehicle': key = normalizeVehicleModel(getVehicleById(res.vehicleId)?.model); break;
             case 'department': key = res.department; break;
             case 'status': key = res.status; break;
             case 'role': key = res.role; break;
@@ -1146,8 +1339,35 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
                 break;
             case 'year': key = new Date(res.departureDateTime).getFullYear(); break;
             case 'destinationCity': key = res.destinationCity; break;
-            case 'purpose': key = res.purpose || 'Nao especificado'; break;
+            case 'purpose': key = res.purpose || 'Não Especificado'; break;
             case 'requesterName': key = res.requesterName; break;
+            case 'leadTime': {
+                const depTime = new Date(res.departureDateTime).getTime();
+                const creTime = res.createdAt ? new Date(res.createdAt).getTime() : (depTime - 86400000);
+                const diffDays = Math.max(0, Math.floor((depTime - creTime) / (1000 * 60 * 60 * 24)));
+                if (diffDays === 0) key = 'Mesmo Dia (0d)';
+                else if (diffDays <= 2) key = '1 a 2 Dias';
+                else if (diffDays <= 5) key = '3 a 5 Dias';
+                else if (diffDays <= 10) key = '6 a 10 Dias';
+                else key = '> 10 Dias';
+                break;
+            }
+            case 'durationRange': {
+                const days = getDurationDays(res.departureDateTime, res.returnDate);
+                if (days <= 1) key = '1 Dia (Bate-Volta)';
+                else if (days <= 3) key = '2 a 3 Dias';
+                else if (days <= 7) key = '4 a 7 Dias';
+                else key = '> 7 Dias';
+                break;
+            }
+            case 'timeRange': {
+                const deptHour = new Date(res.departureDateTime).getHours();
+                if (deptHour >= 0 && deptHour < 6) key = 'Madrugada (00h-06h)';
+                else if (deptHour >= 6 && deptHour < 12) key = 'Manhã (06h-12h)';
+                else if (deptHour >= 12 && deptHour < 18) key = 'Tarde (12h-18h)';
+                else key = 'Noite (18h-24h)';
+                break;
+            }
             default: key = 'N/A';
         }
         if (!acc[key]) acc[key] = [];
@@ -1193,6 +1413,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
             }
             if (config.dimension === 'weekday') return weekdays.indexOf(a.name) - weekdays.indexOf(b.name);
             if (config.dimension === 'year') return Number(a.name) - Number(b.name);
+            if (config.dimension === 'leadTime') {
+                const order = ['Mesmo Dia (0d)', '1 a 2 Dias', '3 a 5 Dias', '6 a 10 Dias', '> 10 Dias'];
+                return order.indexOf(a.name) - order.indexOf(b.name);
+            }
             
             return b.value - a.value;
         });
@@ -1216,6 +1440,44 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
   const handleRemoveChart = (indexToRemove: number) => {
     const newCharts = customCharts.filter((_, index) => index !== indexToRemove);
     onChartsChange(newCharts);
+  };
+
+  const handleMoveChart = (chartId: number, direction: 'up' | 'down') => {
+    const index = customCharts.findIndex(c => c.id === chartId);
+    if (index === -1) return;
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= customCharts.length) return;
+
+    const updated = [...customCharts];
+    const [moved] = updated.splice(index, 1);
+    updated.splice(newIndex, 0, moved);
+
+    setDisplayCharts(updated);
+    onChartsChange(updated);
+  };
+
+  const handleDropChart = (targetChartId: number) => {
+    if (!draggedChartId || draggedChartId === targetChartId) {
+      setDraggedChartId(null);
+      setDragOverChartId(null);
+      return;
+    }
+    const sourceIndex = customCharts.findIndex(c => c.id === draggedChartId);
+    const targetIndex = customCharts.findIndex(c => c.id === targetChartId);
+    if (sourceIndex === -1 || targetIndex === -1) {
+      setDraggedChartId(null);
+      setDragOverChartId(null);
+      return;
+    }
+
+    const updated = [...customCharts];
+    const [moved] = updated.splice(sourceIndex, 1);
+    updated.splice(targetIndex, 0, moved);
+
+    setDisplayCharts(updated);
+    onChartsChange(updated);
+    setDraggedChartId(null);
+    setDragOverChartId(null);
   };
 
   const handleOpenEditModal = (index: number) => {
@@ -1309,6 +1571,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
                     <option value="">Mês: Todos</option>
                     {months.map((month, index) => <option key={index} value={index}>{month}</option>)}
                 </select>
+                {canEditDashboard && onResetToDefaults && (
+                    <button 
+                        onClick={onResetToDefaults} 
+                        title="Restaurar layout de gráficos padrão recomendados pelo BI"
+                        className="inline-flex items-center justify-center px-3.5 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 transition-all duration-200 bg-white hover:bg-slate-100/80 active:scale-95 rounded-xl border border-slate-200 shadow-2xs cursor-pointer"
+                    >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1.5 text-slate-400" />
+                        Restaurar Padrão BI
+                    </button>
+                )}
                 {canEditDashboard && (
                     <button 
                         onClick={handleOpenAddModal} 
@@ -1335,10 +1607,40 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
       {/* Scrollable Charts Grid - 2 per row */}
       <div className="flex-1 min-h-0 overflow-y-auto pr-1 pb-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-         {chartsToDisplay.map((config) => {
+         {chartsToDisplay.map((config, index) => {
              const originalIndex = customCharts.findIndex(c => c.id === config.id);
+             const isFullWidth = config.dimension === 'status' || config.dimension === 'month' || (config.dimension === 'department' && config.metric === 'avg_duration_days');
+
              return (
-             <div key={config.id} className="h-auto">
+             <div 
+                key={config.id} 
+                className={`h-auto ${isFullWidth ? 'col-span-1 lg:col-span-2' : 'col-span-1'} transition-all duration-200 ${draggedChartId === config.id ? 'opacity-40 scale-[0.98]' : ''} ${dragOverChartId === config.id ? 'ring-2 ring-emerald-500 ring-offset-2 rounded-[24px]' : ''}`}
+                draggable={canEditDashboard}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/plain', String(config.id));
+                  setDraggedChartId(config.id);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverChartId !== config.id) {
+                    setDragOverChartId(config.id);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverChartId === config.id) {
+                    setDragOverChartId(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleDropChart(config.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedChartId(null);
+                  setDragOverChartId(null);
+                }}
+              >
                  <ChartWrapper 
                     title={config.title}
                     data={processChartData(config)}
@@ -1346,6 +1648,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
                     onConfigChange={(changes) => handleChartConfigChange(config.id, changes)}
                     onRemove={canEditDashboard ? () => handleRemoveChart(originalIndex) : undefined}
                     onEdit={canEditDashboard ? () => handleOpenEditModal(originalIndex) : undefined}
+                    onMoveUp={canEditDashboard && index > 0 ? () => handleMoveChart(config.id, 'up') : undefined}
+                    onMoveDown={canEditDashboard && index < chartsToDisplay.length - 1 ? () => handleMoveChart(config.id, 'down') : undefined}
+                    isDraggable={canEditDashboard}
                 />
             </div>
           )})}

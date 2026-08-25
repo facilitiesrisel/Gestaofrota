@@ -4,6 +4,7 @@ import { LayoutDashboard, FileText, Users, CalendarDays, Home, Bell, Search, Che
 import { cn } from "../lib/utils";
 import { useAuth, hasModuleAccess, hasSubmoduleAccess } from "../context/AuthContext";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
+import { UserProfileBadge } from "../components/UserProfileBadge";
 
 export function MainLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -337,191 +338,135 @@ export function MainLayout({ children }: { children: ReactNode }) {
       
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden w-full">
-        {/* Top Header - Estilo Minimalista CRM */}
-        <header className="h-16 px-6 flex items-center justify-between gap-5 flex-shrink-0 bg-slate-50/80 backdrop-blur-md z-40 border-b border-slate-200/40">
-          {/* Opção discreta no Header para transição direta para o Controle de Frota quando em Documentos */}
-          {!isFrota && hasModuleAccess(user?.permissions, "frota") ? (
-            <Link
-              to="/frota?tab=portal"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100/90 border border-orange-200/80 text-orange-700 font-bold text-xs transition-all cursor-pointer shadow-2xs hover:shadow-xs"
-              title="Ir para o Módulo de Controle de Frota Leve Direto"
-            >
-              <Truck className="w-3.5 h-3.5 text-orange-600" />
-              <span className="hidden sm:inline">Módulo de Frota Leve</span>
-            </Link>
-          ) : <div />}
-
-          <div className="flex items-center gap-3">
-            {/* Ícone de Notificações Funcional */}
-            {!isFrota && (
-              <>
-                <div className="relative" ref={notificationRef}>
-                  <button 
-                    onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-                    className="w-9 h-9 rounded-full bg-white shadow-sm border border-slate-150 flex items-center justify-center text-slate-500 hover:text-emerald-600 transition-colors relative cursor-pointer animate-in fade-in"
-                  >
-                    <Bell className="w-4 h-4" />
-                    {vencimentosAlerta.length > 0 && (
-                      <span className="absolute -top-1 -right-1 bg-orange-600 text-white font-extrabold text-[8px] px-1.5 py-0.5 rounded-full ring-2 ring-white min-w-[16px] h-[16px] flex items-center justify-center shadow-sm">
-                        {vencimentosAlerta.length}
-                      </span>
-                    )}
-                  </button>
-
-                  {isNotificationsOpen && (
-                    <div className="absolute right-0 mt-2.5 w-80 bg-white rounded-2xl shadow-xl border border-slate-150/80 p-2 z-50 animate-in fade-in slide-in-from-top-3 duration-250 text-left">
-                      <div className="px-3.5 py-2.5 border-b border-slate-100 flex justify-between items-center">
-                        <span className="text-[10px] font-extrabold text-[#114D38] uppercase tracking-wide">Alertas de Vencimento</span>
-                        <span className="text-[9px] bg-amber-50 text-amber-800 border border-amber-200 font-bold px-2 py-0.5 rounded-full">{vencimentosAlerta.length} pendentes</span>
-                      </div>
-
-                      <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 mt-1">
-                        {vencimentosAlerta.length === 0 ? (
-                          <p className="p-4 text-center text-xs text-slate-400 font-semibold">Sem novos alertas no momento.</p>
-                        ) : (
-                          vencimentosAlerta.map(v => {
-                            const isOverdue = v.dias < 0 || v.status === "Atrasado";
-                            return (
-                              <div 
-                                key={v.id} 
-                                onClick={() => handleMarkAsRead(v.id)}
-                                className="p-3 hover:bg-slate-50/80 transition-colors flex flex-col gap-1 text-xs relative group/item cursor-pointer"
-                                title="Clique em qualquer lugar para marcar como lida"
-                              >
-                                <div className="flex justify-between items-start pr-6">
-                                  <span className="font-extrabold text-slate-800 truncate max-w-[130px]">{v.fornecedor}</span>
-                                  <span className={cn(
-                                    "text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0",
-                                    isOverdue ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-800"
-                                  )}>
-                                    {isOverdue ? "Vencido" : `Vence em ${v.dias} dias`}
-                                  </span>
-                                </div>
-                                <p className="text-slate-400 font-semibold text-[10px]">Documento: <span className="font-bold text-slate-650">{v.doc}</span></p>
-                                <div className="flex justify-between items-center mt-1.5" onClick={(e) => e.stopPropagation()}>
-                                  <span className="font-black text-[#114D38] font-mono text-[11px]">{v.valor}</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <button 
-                                      onClick={() => {
-                                        setSelectedDocToView(v);
-                                        setIsNotificationsOpen(false);
-                                      }}
-                                      className="text-[9px] font-bold text-emerald-600 hover:text-[#114D38] flex items-center gap-0.5 cursor-pointer bg-slate-50 hover:bg-emerald-50 border border-slate-150 px-2 py-0.5 rounded"
-                                    >
-                                      <Eye className="w-2.5 h-2.5" /> Ver
-                                    </button>
-                                    <button 
-                                      onClick={() => {
-                                        setIsNotificationsOpen(false);
-                                        handleMarkAsRead(v.id);
-                                        navigate("/documentos/lancamento", { state: { editLancamentoId: v.id } });
-                                      }}
-                                      className="text-[9px] font-bold text-amber-600 hover:text-amber-800 flex items-center gap-0.5 cursor-pointer bg-slate-50 hover:bg-amber-50 border border-slate-150 px-2 py-0.5 rounded"
-                                    >
-                                      <Edit2 className="w-2.5 h-2.5" /> Editar
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Botão flutuante de Check discreto no canto superior */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleMarkAsRead(v.id);
-                                  }}
-                                  className="absolute right-2 top-2.5 w-4 h-4 bg-slate-100 hover:bg-emerald-600 hover:text-white rounded flex items-center justify-center opacity-0 group-hover/item:opacity-100 transition-opacity text-slate-400 cursor-pointer"
-                                  title="Marcar como lida e ocultar"
-                                >
-                                  <Check className="w-2.5 h-2.5" />
-                                </button>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                      <div className="p-2 border-t border-slate-100 bg-slate-50 rounded-b-xl text-center">
-                        <button 
-                          onClick={() => {
-                            setIsNotificationsOpen(false);
-                            navigate("/documentos/vencimentos");
-                          }}
-                          className="text-[10px] font-extrabold text-[#114D38] uppercase hover:underline"
-                        >
-                          Ver Painel de Alertas
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="w-px h-6 bg-slate-200 mx-0.5" />
-              </>
-            )}
-            
-            {/* Menu Dropdown de Perfil de Usuário */}
-            <div className="relative" ref={profileRef}>
-              <div 
-                onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="flex items-center gap-2.5 bg-white pl-1.5 pr-3 py-1 rounded-full shadow-sm border border-slate-150 cursor-pointer hover:shadow-md hover:border-slate-200 transition-all"
+        {/* Top Header - Apenas para o módulo de Documentos (No módulo de Frota, o cabeçalho integrado no topo da página une título, menu e perfil do usuário para ganho máximo de espaço) */}
+        {!isFrota && (
+          <header className="h-16 px-6 flex items-center justify-between gap-5 flex-shrink-0 bg-slate-50/80 backdrop-blur-md z-40 border-b border-slate-200/40">
+            {/* Opção discreta no Header para transição direta para o Controle de Frota quando em Documentos */}
+            {hasModuleAccess(user?.permissions, "frota") ? (
+              <Link
+                to="/frota?tab=portal"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100/90 border border-orange-200/80 text-orange-700 font-bold text-xs transition-all cursor-pointer shadow-2xs hover:shadow-xs"
+                title="Ir para o Módulo de Controle de Frota Leve Direto"
               >
-                <img 
-                  src={`https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || "Deny")}&background=114D38&color=fff&bold=true`} 
-                  alt="Profile" 
-                  className="w-7 h-7 rounded-full border border-slate-100"
-                />
-                <div className="flex flex-col text-left">
-                  <span className="text-[11px] font-bold text-slate-800 leading-tight">{user?.name || "Deny Gonçalves"}</span>
-                  <span className="text-[8px] font-semibold text-slate-400 tracking-wide">{user?.email || "deny.goncalves@risel.com.br"}</span>
-                </div>
+                <Truck className="w-3.5 h-3.5 text-orange-600" />
+                <span className="hidden sm:inline">Módulo de Frota Leve</span>
+              </Link>
+            ) : <div />}
+
+            <div className="flex items-center gap-3">
+              {/* Ícone de Notificações Funcional */}
+              <div className="relative" ref={notificationRef}>
+                <button 
+                  onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                  className="w-9 h-9 rounded-full bg-white shadow-sm border border-slate-150 flex items-center justify-center text-slate-500 hover:text-emerald-600 transition-colors relative cursor-pointer animate-in fade-in"
+                >
+                  <Bell className="w-4 h-4" />
+                  {vencimentosAlerta.length > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-orange-600 text-white font-extrabold text-[8px] px-1.5 py-0.5 rounded-full ring-2 ring-white min-w-[16px] h-[16px] flex items-center justify-center shadow-sm">
+                      {vencimentosAlerta.length}
+                    </span>
+                  )}
+                </button>
+
+                {isNotificationsOpen && (
+                  <div className="absolute right-0 mt-2.5 w-80 bg-white rounded-2xl shadow-xl border border-slate-150/80 p-2 z-50 animate-in fade-in slide-in-from-top-3 duration-250 text-left">
+                    <div className="px-3.5 py-2.5 border-b border-slate-100 flex justify-between items-center">
+                      <span className="text-[10px] font-extrabold text-[#114D38] uppercase tracking-wide">Alertas de Vencimento</span>
+                      <span className="text-[9px] bg-amber-50 text-amber-800 border border-amber-200 font-bold px-2 py-0.5 rounded-full">{vencimentosAlerta.length} pendentes</span>
+                    </div>
+
+                    <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 mt-1">
+                      {vencimentosAlerta.length === 0 ? (
+                        <p className="p-4 text-center text-xs text-slate-400 font-semibold">Sem novos alertas no momento.</p>
+                      ) : (
+                        vencimentosAlerta.map(v => {
+                          const isOverdue = v.dias < 0 || v.status === "Atrasado";
+                          return (
+                            <div 
+                              key={v.id} 
+                              onClick={() => handleMarkAsRead(v.id)}
+                              className="p-3 hover:bg-slate-50/80 transition-colors flex flex-col gap-1 text-xs relative group/item cursor-pointer"
+                              title="Clique em qualquer lugar para marcar como lida"
+                            >
+                              <div className="flex justify-between items-start pr-6">
+                                <span className="font-extrabold text-slate-800 truncate max-w-[130px]">{v.fornecedor}</span>
+                                <span className={cn(
+                                  "text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0",
+                                  isOverdue ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-800"
+                                )}>
+                                  {isOverdue ? "Vencido" : `Vence em ${v.dias} dias`}
+                                </span>
+                              </div>
+                              <p className="text-slate-400 font-semibold text-[10px]">Documento: <span className="font-bold text-slate-650">{v.doc}</span></p>
+                              <div className="flex justify-between items-center mt-1.5" onClick={(e) => e.stopPropagation()}>
+                                <span className="font-black text-[#114D38] font-mono text-[11px]">{v.valor}</span>
+                                <div className="flex items-center gap-1.5">
+                                  <button 
+                                    onClick={() => {
+                                      setSelectedDocToView(v);
+                                      setIsNotificationsOpen(false);
+                                    }}
+                                    className="text-[9px] font-bold text-emerald-600 hover:text-[#114D38] flex items-center gap-0.5 cursor-pointer bg-slate-50 hover:bg-emerald-50 border border-slate-150 px-2 py-0.5 rounded"
+                                  >
+                                    <Eye className="w-2.5 h-2.5" /> Ver
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      setIsNotificationsOpen(false);
+                                      handleMarkAsRead(v.id);
+                                      navigate("/documentos/lancamento", { state: { editLancamentoId: v.id } });
+                                    }}
+                                    className="text-[9px] font-bold text-amber-600 hover:text-amber-800 flex items-center gap-0.5 cursor-pointer bg-slate-50 hover:bg-amber-50 border border-slate-150 px-2 py-0.5 rounded"
+                                  >
+                                    <Edit2 className="w-2.5 h-2.5" /> Editar
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Botão flutuante de Check discreto no canto superior */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMarkAsRead(v.id);
+                                }}
+                                className="absolute right-2 top-2.5 w-4 h-4 bg-slate-100 hover:bg-emerald-600 hover:text-white rounded flex items-center justify-center opacity-0 group-hover/item:opacity-100 transition-opacity text-slate-400 cursor-pointer"
+                                title="Marcar como lida e ocultar"
+                              >
+                                <Check className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="p-2 border-t border-slate-100 bg-slate-50 rounded-b-xl text-center">
+                      <button 
+                        onClick={() => {
+                          setIsNotificationsOpen(false);
+                          navigate("/documentos/vencimentos");
+                        }}
+                        className="text-[10px] font-extrabold text-[#114D38] uppercase hover:underline"
+                      >
+                        Ver Painel de Alertas
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {isProfileOpen && (
-                <div className="absolute right-0 mt-2.5 w-56 bg-white rounded-2xl shadow-xl border border-slate-150/80 p-2 z-50 animate-in fade-in slide-in-from-top-3 duration-250 text-left">
-                  <div className="px-3.5 py-3 border-b border-slate-100 mb-1">
-                    <span className="text-[10px] font-extrabold text-[#114D38] uppercase tracking-wide block">Nível de Acesso</span>
-                    <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mt-0.5">
-                      <Shield className="w-3.5 h-3.5 text-emerald-600" />
-                      {user?.role === "admin" ? "Administrador Master" : "Acesso Customizado"}
-                    </span>
-                  </div>
+              <div className="w-px h-6 bg-slate-200 mx-0.5" />
 
-                  <button
-                    onClick={() => {
-                      setIsProfileOpen(false);
-                      navigate("/documentos/usuarios");
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors flex items-center gap-2"
-                  >
-                    <Settings className="w-4 h-4 text-slate-400" /> Configurar Acessos
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsProfileOpen(false);
-                      setIsChangePasswordOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-emerald-800 hover:bg-emerald-50 transition-colors flex items-center gap-2"
-                  >
-                    <KeyRound className="w-4 h-4 text-emerald-600" /> Alterar Minha Senha
-                  </button>
-
-                  <button
-                    onClick={handleLogout}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-extrabold text-rose-600 hover:bg-rose-50 transition-colors flex items-center gap-2 mt-1 border-t border-slate-50 pt-2"
-                  >
-                    <LogOut className="w-4 h-4 text-rose-500" /> Desconectar ERP
-                  </button>
-                </div>
-              )}
+              {/* Menu Dropdown de Perfil de Usuário */}
+              <UserProfileBadge />
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
-        {/* Content Area - Para rotas da Frota, utiliza container de altura fixa com flex-col para permitir congelamento verdadeiro de painéis */}
+        {/* Content Area - Para rotas da Frota, utiliza container de altura total sem perda vertical */}
         <div className={cn(
           "flex-1 w-full max-w-full mx-auto",
           isFrota 
-            ? "h-[calc(100vh-4.5rem)] overflow-hidden flex flex-col min-h-0 px-4 md:px-6 pt-2 pb-2" 
+            ? "h-screen overflow-hidden flex flex-col min-h-0 px-3 sm:px-4 md:px-5 pt-2 pb-2" 
             : "overflow-y-auto px-4 md:px-6 pb-20 pt-4"
         )}>
           <div className={cn("max-w-full w-full mx-auto", isFrota && "h-full flex flex-col min-h-0 overflow-hidden")}>

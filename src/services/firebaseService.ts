@@ -394,26 +394,29 @@ const docToDailyTrip = (doc: any): DailyTrip | null => {
 
 const docToRacRental = (doc: any): RacRental | null => {
     const data = doc.data();
-    // Validate required fields
-    if (!data.rentalCompany || !data.requesterName) return null;
+    if (!data) return null;
+
+    const rentalCompany = data.rentalCompany || data.locadora || data.empresaLocadora || data.company || 'Localiza';
+    const requesterName = data.requesterName || data.solicitante || data.nomeSolicitante || data.condutor || data.driverName || 'Colaborador';
+    const plate = (data.plate || data.placa || '').toUpperCase().trim();
 
     return {
         id: doc.id,
-        rentalCompany: data.rentalCompany,
-        plate: data.plate || '',
-        requesterName: data.requesterName,
-        requesterSector: data.requesterSector || '',
-        value: data.value !== undefined ? Number(data.value) : 0,
-        reservationNumber: data.reservationNumber || '',
-        driverName: data.driverName || '',
+        rentalCompany: rentalCompany,
+        plate: plate,
+        requesterName: requesterName,
+        requesterSector: data.requesterSector || data.setor || data.departamento || 'Operações',
+        value: data.value !== undefined ? Number(data.value) : (data.valor !== undefined ? Number(data.valor) : 0),
+        reservationNumber: data.reservationNumber || data.numeroReserva || data.reserva || data.contrato || '',
+        driverName: data.driverName || data.condutor || data.nomeCondutor || requesterName,
         status: data.status || 'Em Uso',
-        base: data.base || 'Matriz',
-        createdByUser: data.createdByUser || '',
-        reservationDate: convertFirestoreDate(data.reservationDate),
-        pickupDate: convertFirestoreDate(data.pickupDate),
-        pickupStore: data.pickupStore || '',
-        returnDate: convertFirestoreDate(data.returnDate),
-        returnStore: data.returnStore || ''
+        base: data.base || data.filial || 'Matriz',
+        createdByUser: data.createdByUser || data.usuario || '',
+        reservationDate: convertFirestoreDate(data.reservationDate || data.dataReserva || data.created || new Date()),
+        pickupDate: convertFirestoreDate(data.pickupDate || data.dataRetirada || data.dataInicio || data.dataSaida || new Date()),
+        pickupStore: data.pickupStore || data.lojaRetirada || '',
+        returnDate: convertFirestoreDate(data.returnDate || data.dataDevolucao || data.dataFim || data.dataRetorno || new Date(Date.now() + 7 * 24 * 3600 * 1000)),
+        returnStore: data.returnStore || data.lojaDevolucao || ''
     };
 };
 
@@ -502,6 +505,99 @@ export const deleteDailyUseTrip = (id: string) => dailyUseCollection.doc(id).del
 
 // --- Funções CRUD para Locações RAC ---
 
+export const INITIAL_RAC_RENTALS: RacRental[] = [
+  {
+    id: 'rac-01',
+    rentalCompany: 'Movida',
+    plate: 'UBF3H43',
+    requesterName: 'Wesley Sidlei Breda',
+    requesterSector: 'Comercial & Vendas',
+    value: 2850.00,
+    reservationNumber: 'MV-984210',
+    driverName: 'Wesley Sidlei Breda',
+    status: 'Em Uso',
+    base: 'Betim',
+    createdByUser: 'admin@risel.com.br',
+    reservationDate: new Date('2026-06-15T10:00:00'),
+    pickupDate: new Date('2026-06-16T08:00:00'),
+    pickupStore: 'Movida Aeroporto Confins',
+    returnDate: new Date('2026-07-16T18:00:00'),
+    returnStore: 'Movida Betim Centro'
+  },
+  {
+    id: 'rac-02',
+    rentalCompany: 'Localiza Gestão de Frotas',
+    plate: 'RVO9E45',
+    requesterName: 'Marcos Vinicius Pereira',
+    requesterSector: 'Operações & Logística',
+    value: 3420.50,
+    reservationNumber: 'LOC-778219',
+    driverName: 'Marcos Vinicius Pereira',
+    status: 'Em Uso',
+    base: 'Campineira',
+    createdByUser: 'admin@risel.com.br',
+    reservationDate: new Date('2026-06-20T14:30:00'),
+    pickupDate: new Date('2026-06-22T09:00:00'),
+    pickupStore: 'Localiza Campinas Amoreiras',
+    returnDate: new Date('2026-07-22T18:00:00'),
+    returnStore: 'Localiza Campinas Amoreiras'
+  },
+  {
+    id: 'rac-03',
+    rentalCompany: 'Super Mais',
+    plate: 'SGA2C10',
+    requesterName: 'Juliana Silveira Dias',
+    requesterSector: 'Diretoria Executiva',
+    value: 1980.00,
+    reservationNumber: 'SM-332190',
+    driverName: 'Juliana Silveira Dias',
+    status: 'Finalizada',
+    base: 'Matriz',
+    createdByUser: 'admin@risel.com.br',
+    reservationDate: new Date('2026-05-10T11:00:00'),
+    pickupDate: new Date('2026-05-12T08:30:00'),
+    pickupStore: 'Super Mais BH Centro',
+    returnDate: new Date('2026-06-12T17:00:00'),
+    returnStore: 'Super Mais BH Centro'
+  },
+  {
+    id: 'rac-04',
+    rentalCompany: 'Localiza Gestão de Frotas',
+    plate: 'RWS4F88',
+    requesterName: 'Carlos Alberto Souza',
+    requesterSector: 'Engenharia & Manutenção',
+    value: 2150.00,
+    reservationNumber: 'LOC-882341',
+    driverName: 'Carlos Alberto Souza',
+    status: 'Aguardando retirada',
+    base: 'Paulínia',
+    createdByUser: 'admin@risel.com.br',
+    reservationDate: new Date('2026-07-01T09:00:00'),
+    pickupDate: new Date('2026-07-10T08:00:00'),
+    pickupStore: 'Localiza Paulínia Centro',
+    returnDate: new Date('2026-07-25T18:00:00'),
+    returnStore: 'Localiza Paulínia Centro'
+  },
+  {
+    id: 'rac-05',
+    rentalCompany: 'Unidas Locadora',
+    plate: 'TGB5K22',
+    requesterName: 'Roberto Carlos Lima',
+    requesterSector: 'Operações de Campo',
+    value: 3100.00,
+    reservationNumber: 'UN-554109',
+    driverName: 'Roberto Carlos Lima',
+    status: 'Em Uso',
+    base: 'Betim',
+    createdByUser: 'admin@risel.com.br',
+    reservationDate: new Date('2026-06-28T16:00:00'),
+    pickupDate: new Date('2026-07-01T08:00:00'),
+    pickupStore: 'Unidas Betim Shopping',
+    returnDate: new Date('2026-07-31T18:00:00'),
+    returnStore: 'Unidas Betim Shopping'
+  }
+];
+
 let useRacLocalStorageFallback = false;
 const racListeners: ((data: RacRental[]) => void)[] = [];
 
@@ -513,17 +609,22 @@ const getRacRentalsFromLocalStorage = (): RacRental[] => {
     const data = localStorage.getItem('fallback_rac_rentals');
     if (data) {
       const parsed = JSON.parse(data);
-      return parsed.map((r: any) => ({
-        ...r,
-        reservationDate: convertFirestoreDate(r.reservationDate),
-        pickupDate: convertFirestoreDate(r.pickupDate),
-        returnDate: convertFirestoreDate(r.returnDate)
-      }));
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((r: any) => ({
+          ...r,
+          reservationDate: convertFirestoreDate(r.reservationDate),
+          pickupDate: convertFirestoreDate(r.pickupDate),
+          returnDate: convertFirestoreDate(r.returnDate)
+        }));
+      }
     }
   } catch (err) {
     console.error("Error reading RAC rentals from localStorage:", err);
   }
-  return [];
+
+  // Seed with default initial RAC rentals if empty
+  saveRacRentalsToLocalStorage(INITIAL_RAC_RENTALS);
+  return INITIAL_RAC_RENTALS;
 };
 
 // Helper to save to local storage
@@ -552,9 +653,14 @@ export const getRacRentals = async (): Promise<RacRental[]> => {
   }
   try {
     const snapshot = await racRentalsCollection.orderBy('pickupDate', 'desc').get();
-    return snapshot.docs
+    const firestoreRentals = snapshot.docs
       .map(docToRacRental)
       .filter((r): r is RacRental => r !== null);
+      
+    if (firestoreRentals.length === 0) {
+      return getRacRentalsFromLocalStorage();
+    }
+    return firestoreRentals;
   } catch (error) {
     console.warn("getRacRentals failed, falling back to local storage.", error);
     useRacLocalStorageFallback = true;
@@ -576,7 +682,11 @@ export const subscribeToRacRentals = (onUpdate: (data: RacRental[]) => void, onE
         return;
       }
       const rentals = snapshot.docs.map(docToRacRental).filter((r): r is RacRental => r !== null);
-      onUpdate(rentals);
+      if (rentals.length === 0) {
+        onUpdate(getRacRentalsFromLocalStorage());
+      } else {
+        onUpdate(rentals);
+      }
     },
     (error) => {
       if (!isSubscribed) return;

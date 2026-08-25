@@ -21,7 +21,8 @@ import {
   deleteRacRental,
   isRacRentalUsingFallback,
   getLocalRacRentalsCount,
-  syncLocalRacRentalsWithFirebase
+  syncLocalRacRentalsWithFirebase,
+  INITIAL_RAC_RENTALS
 } from '../../services/firebaseService';
 import { useAuth } from '../../context/ReservationAuthContext';
 import { 
@@ -137,8 +138,8 @@ interface RacRentalsViewProps {
 
 const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => {
     const { user } = useAuth();
-    const [rentals, setRentals] = useState<RacRental[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const [rentals, setRentals] = useState<RacRental[]>(INITIAL_RAC_RENTALS);
+    const [isLoading, setIsLoading] = useState(false);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [usingFallback, setUsingFallback] = useState(false);
     const [localRentalsCount, setLocalRentalsCount] = useState(0);
@@ -179,16 +180,20 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
     // Subscribe to Firebase real-time data
     useEffect(() => {
-        setIsLoading(true);
         const unsubscribe = subscribeToRacRentals(
             (data) => {
-                setRentals(data);
+                if (data && data.length > 0) {
+                    setRentals(data);
+                } else {
+                    setRentals(INITIAL_RAC_RENTALS);
+                }
                 setIsLoading(false);
                 setUsingFallback(isRacRentalUsingFallback());
                 setLocalRentalsCount(getLocalRacRentalsCount());
             },
             (error) => {
                 console.error("Error syncing RAC rentals:", error);
+                setRentals(INITIAL_RAC_RENTALS);
                 if (isRacRentalUsingFallback()) {
                     setUsingFallback(true);
                 } else {
@@ -252,7 +257,16 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             }
 
             // Rental Company Filter
-            if (filterCompany && rental.rentalCompany !== filterCompany) return false;
+            if (filterCompany) {
+                if (filterCompany === 'Outras') {
+                    const known = ['localiza', 'movida', 'unidas', 'super mais'];
+                    const comp = (rental.rentalCompany || '').toLowerCase();
+                    if (known.some(k => comp.includes(k))) return false;
+                } else {
+                    const comp = (rental.rentalCompany || '').toLowerCase();
+                    if (!comp.includes(filterCompany.toLowerCase())) return false;
+                }
+            }
 
             // Status Filter
             if (filterStatus !== 'all' && rental.status !== filterStatus) return false;
@@ -302,11 +316,44 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         const avgDays = rentals.length > 0 ? (totalDays / rentals.length) : 0;
         const activeCount = rentals.filter(r => r.status === 'Em Uso').length;
 
+        // Análise de comparação com mês anterior
+        const now = new Date();
+        const curMonth = now.getMonth();
+        const curYear = now.getFullYear();
+        const prevMonth = curMonth === 0 ? 11 : curMonth - 1;
+        const prevYear = curMonth === 0 ? curYear - 1 : curYear;
+
+        const curMonthRentals = rentals.filter(r => {
+            const d = new Date(r.pickupDate);
+            return d.getMonth() === curMonth && d.getFullYear() === curYear;
+        });
+        const prevMonthRentals = rentals.filter(r => {
+            const d = new Date(r.pickupDate);
+            return d.getMonth() === prevMonth && d.getFullYear() === prevYear;
+        });
+
+        const curMonthInvestment = curMonthRentals.reduce((sum, r) => sum + (r.value || 0), 0);
+        const prevMonthInvestment = prevMonthRentals.reduce((sum, r) => sum + (r.value || 0), 0);
+        
+        let investmentDiffPercent: number | null = null;
+        if (prevMonthInvestment > 0) {
+            investmentDiffPercent = Math.round(((curMonthInvestment - prevMonthInvestment) / prevMonthInvestment) * 100);
+        }
+
+        let rentalsDiffPercent: number | null = null;
+        if (prevMonthRentals.length > 0) {
+            rentalsDiffPercent = Math.round(((curMonthRentals.length - prevMonthRentals.length) / prevMonthRentals.length) * 100);
+        }
+
         return {
             totalInvestment: totalVal,
             averageInvestment: avgVal,
             averageDays: avgDays,
-            activeRentalsCount: activeCount
+            activeRentalsCount: activeCount,
+            curMonthInvestment,
+            prevMonthInvestment,
+            investmentDiffPercent,
+            rentalsDiffPercent
         };
     }, [rentals]);
 
@@ -523,7 +570,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     };
 
     return (
-        <div className="w-full h-full overflow-y-auto p-4 md:p-6 flex flex-col space-y-5 custom-scrollbar bg-slate-50/60">
+        <div className="w-full flex-1 flex flex-col p-4 md:p-6 space-y-4 bg-slate-50/60">
             {toast && (
                 <div className={`fixed top-24 right-6 text-white p-4 rounded-2xl shadow-xl z-50 flex items-center gap-2 transform transition-transform animate-fadeIn ${toast.type === 'success' ? 'bg-[#114D38] border border-emerald-500' : 'bg-rose-600 border border-rose-500'}`}>
                     {toast.type === 'success' ? <CheckCircleIcon className="h-5 w-5" /> : <XCircleIcon className="h-5 w-5" />}
@@ -552,235 +599,171 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 </div>
             )}
 
-            {/* 1. Header Principal com Design Sofisticado */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-                <div>
-                    <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-[#114D38] bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                            Frota Terceirizada & Aluguéis
-                        </span>
-                        <span className="text-[10px] font-bold text-slate-400">
-                            • Locações RAC (Fora da Frota)
-                        </span>
-                    </div>
-                    <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2.5">
-                        <span>Locações RAC</span>
-                        <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-emerald-100/80 text-emerald-800 border border-emerald-200/80">
-                            {rentals.length} {rentals.length === 1 ? 'contrato' : 'contratos'}
-                        </span>
-                    </h1>
-                    <p className="text-xs text-slate-500 font-medium mt-0.5">
-                        Gestão de veículos alugados externamente (Localiza, Movida e terceiros) para demandas fora da frota própria.
-                    </p>
-                </div>
-                
-                <div className="flex items-center gap-2.5 w-full lg:w-auto justify-start lg:justify-end flex-wrap">
-                    <button 
-                        onClick={() => setIsStatsDashboardOpen(!isStatsDashboardOpen)} 
-                        className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-black border rounded-2xl transition-all cursor-pointer ${
-                            isStatsDashboardOpen 
-                                ? 'bg-[#114D38] text-white border-[#114D38] shadow-xs' 
-                                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-xs'
-                        }`}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                           <path strokeLinecap="round" strokeLinejoin="round" d="M11 3.055A9.003 9.003 0 1020.945 13H11V3.055z" />
-                           <path strokeLinecap="round" strokeLinejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
-                        </svg>
-                        <span>{isStatsDashboardOpen ? 'Ocultar Indicadores' : 'Indicadores BI'}</span>
-                    </button>
-
-                    <button 
-                        onClick={() => setIsFiltersOpen(!isFiltersOpen)} 
-                        className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-black border rounded-2xl transition-all cursor-pointer ${
-                            isFiltersOpen 
-                                ? 'bg-slate-100 text-slate-800 border-slate-300 shadow-inner' 
-                                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-xs'
-                        }`}
-                    >
-                        <FunnelIcon className="h-3.5 w-3.5 text-slate-500" />
-                        <span>Filtros</span>
-                    </button>
-
-                    <button 
-                        onClick={handleOpenCreateModal} 
-                        className="bg-[#114D38] hover:bg-[#0d3b2c] text-white font-black py-2.5 px-5 rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-2 text-xs md:text-sm shrink-0 cursor-pointer group"
-                    >
-                        <div className="w-5 h-5 rounded-lg bg-emerald-600/60 flex items-center justify-center group-hover:scale-110 transition-transform">
-                            <PlusIcon className="h-3.5 w-3.5 text-white"/>
+            {/* 1. Header Fixo com Botões e Cards de Indicadores BI */}
+            <div className="sticky top-0 z-30 bg-slate-50/95 backdrop-blur-md -mx-4 md:-mx-6 px-4 md:px-6 py-2 space-y-2.5 border-b border-slate-200/80 shadow-2xs">
+                {/* Header Bar */}
+                <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-3 flex-wrap">
+                    {!isStatsDashboardOpen ? (
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-700">
+                                <span className="text-sm">🏢</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <h1 className="text-lg font-black text-slate-900 tracking-tight">Locações RAC</h1>
+                                <span className="text-xs font-black px-2 py-0.5 rounded-full bg-emerald-100/80 text-emerald-800 border border-emerald-200/80">
+                                    {rentals.length} {rentals.length === 1 ? 'contrato' : 'contratos'}
+                                </span>
+                            </div>
                         </div>
-                        <span>Nova Locação RAC</span>
-                    </button>
-                </div>
-            </div>
-
-            {/* 2. Cards Analíticos de Alto Padrão (Looker BI Style) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                
-                {/* Card 1: Total Cadastradas */}
-                <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Total de Contratos</span>
-                        <div className="w-8 h-8 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600">
-                            <CalendarIcon className="w-4 h-4" />
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200/80 flex items-center justify-center text-[#114D38]">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                   <path strokeLinecap="round" strokeLinejoin="round" d="M11 3.055A9.003 9.003 0 1020.945 13H11V3.055z" />
+                                   <path strokeLinecap="round" strokeLinejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                                </svg>
+                            </div>
+                            <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Painel Analítico RAC</span>
                         </div>
-                    </div>
-                    <div className="mt-2">
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-black text-slate-900 font-sans tracking-tight">{stats.total}</span>
-                            <span className="text-xs font-bold text-slate-400">registros totais</span>
-                        </div>
-                        <span className="text-[10px] font-semibold text-slate-400 block mt-1">
-                            Locações registradas no sistema
-                        </span>
-                    </div>
-                </div>
-
-                {/* Card 2: Aguardando Retirada */}
-                <div className={`p-4.5 rounded-2xl border shadow-xs flex flex-col justify-between transition-all ${
-                    stats.awaiting > 0 ? 'bg-amber-50/40 border-amber-200 hover:border-amber-400' : 'bg-white border-slate-200'
-                }`}>
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Aguardando Retirada</span>
-                        <div className={`w-8 h-8 rounded-xl border flex items-center justify-center ${
-                            stats.awaiting > 0 ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-slate-50 text-slate-400 border-slate-200'
-                        }`}>
-                            <ClockIcon className="w-4 h-4" />
-                        </div>
-                    </div>
-                    <div className="mt-2">
-                        <div className="flex items-baseline gap-2">
-                            <span className={`text-2xl font-black font-sans tracking-tight ${stats.awaiting > 0 ? 'text-amber-700' : 'text-slate-900'}`}>
-                                {stats.awaiting}
-                            </span>
-                            <span className="text-xs font-bold text-slate-500">
-                                {stats.awaiting === 1 ? 'locação agendada' : 'locações agendadas'}
-                            </span>
-                        </div>
-                        <span className="text-[10px] font-semibold text-slate-400 block mt-1">
-                            Aguardando retirada na locadora
-                        </span>
-                    </div>
-                </div>
-
-                {/* Card 3: Em Uso / Ativas */}
-                <div className={`p-4.5 rounded-2xl border shadow-xs flex flex-col justify-between transition-all ${
-                    stats.inUse > 0 ? 'bg-blue-50/40 border-blue-200 hover:border-blue-400' : 'bg-white border-slate-200'
-                }`}>
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Em Uso (Ativas)</span>
-                        <div className={`w-8 h-8 rounded-xl border flex items-center justify-center ${
-                            stats.inUse > 0 ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-slate-50 text-slate-400 border-slate-200'
-                        }`}>
-                            <CarIcon className="w-4 h-4" />
-                        </div>
-                    </div>
-                    <div className="mt-2">
-                        <div className="flex items-baseline gap-2">
-                            <span className={`text-2xl font-black font-sans tracking-tight ${stats.inUse > 0 ? 'text-blue-700' : 'text-slate-900'}`}>
-                                {stats.inUse}
-                            </span>
-                            <span className="text-xs font-bold text-slate-500">
-                                {stats.inUse === 1 ? 'veículo em circulação' : 'veículos em circulação'}
-                            </span>
-                        </div>
-                        <span className="text-[10px] font-semibold text-slate-400 block mt-1">
-                            Contratos ativos no momento
-                        </span>
-                    </div>
-                </div>
-
-                {/* Card 4: Finalizadas */}
-                <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition-all">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Finalizadas</span>
-                        <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-[#114D38]">
-                            <CheckCircleIcon className="w-4 h-4" />
-                        </div>
-                    </div>
-                    <div className="mt-2">
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-black text-slate-900 font-sans tracking-tight">{stats.completed}</span>
-                            <span className="text-xs font-bold text-slate-400">encerradas com sucesso</span>
-                        </div>
-                        <span className="text-[10px] font-semibold text-slate-400 block mt-1">
-                            Veículos devolvidos às locadoras
-                        </span>
-                    </div>
-                </div>
-
-            </div>
-
-            {/* 3. Painel de Indicadores BI & Gráficos (Expandível) */}
-            {isStatsDashboardOpen && (
-                <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-6 shadow-xs animate-fadeIn">
-                    <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-                        <div>
-                            <span className="text-[10px] font-black uppercase tracking-widest text-[#114D38] bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60">
-                                BI & Controladoria
-                            </span>
-                            <h3 className="text-base font-black text-slate-900 mt-1">Painel Analítico de Indicadores & Custos (RAC)</h3>
-                            <p className="text-xs text-slate-500 font-medium">Métricas calculadas em tempo real com base nos contratos registrados.</p>
-                        </div>
+                    )}
+                    
+                    <div className="flex items-center gap-2 flex-wrap ml-auto">
                         <button 
-                            onClick={() => setIsStatsDashboardOpen(false)}
-                            className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-2 rounded-xl transition-colors cursor-pointer"
-                            title="Fechar Painel"
+                            onClick={() => setIsStatsDashboardOpen(!isStatsDashboardOpen)} 
+                            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold border rounded-xl transition-all cursor-pointer ${
+                                isStatsDashboardOpen 
+                                    ? 'bg-[#114D38] text-white border-[#114D38] shadow-xs' 
+                                    : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-xs'
+                            }`}
                         >
-                            <XIcon className="h-4 w-4" />
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                               <path strokeLinecap="round" strokeLinejoin="round" d="M11 3.055A9.003 9.003 0 1020.945 13H11V3.055z" />
+                               <path strokeLinecap="round" strokeLinejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                            </svg>
+                            <span>{isStatsDashboardOpen ? 'Ocultar BI' : 'Indicadores BI'}</span>
+                        </button>
+
+                        <button 
+                            onClick={() => setIsFiltersOpen(!isFiltersOpen)} 
+                            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold border rounded-xl transition-all cursor-pointer ${
+                                isFiltersOpen 
+                                    ? 'bg-slate-100 text-slate-800 border-slate-300 shadow-inner' 
+                                    : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-xs'
+                            }`}
+                        >
+                            <FunnelIcon className="h-3.5 w-3.5 text-slate-500" />
+                            <span>Filtros</span>
+                        </button>
+
+                        <button 
+                            onClick={handleOpenCreateModal} 
+                            className="bg-slate-900 hover:bg-[#114D38] text-white font-bold py-1.5 px-3.5 rounded-xl shadow-xs hover:shadow-sm transition-all duration-200 flex items-center gap-1.5 text-xs shrink-0 cursor-pointer"
+                        >
+                            <PlusIcon className="h-3.5 w-3.5 text-white"/>
+                            <span>Nova Locação</span>
                         </button>
                     </div>
+                </div>
 
-                    {/* 4 Cards Financeiros / Operacionais */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {/* Card 1: Total Investido */}
-                        <div className="bg-slate-50/80 border border-slate-200/80 p-4 rounded-2xl flex flex-col justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Investido (RAC)</span>
-                            <h4 className="text-xl font-black text-slate-900 font-sans mt-1">
-                                {formatCurrencyBRL(indicators.totalInvestment)}
-                            </h4>
-                            <span className="text-[10px] text-slate-400 font-semibold mt-2">
-                                Gasto total acumulado em locações
-                            </span>
+                {/* 4 Cards Financeiros / Operacionais Fixo no Topo */}
+                {isStatsDashboardOpen && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 animate-fadeIn">
+                        {/* Card 1: Total Investido (RAC) */}
+                        <div className="bg-gradient-to-br from-emerald-900 via-[#114D38] to-teal-950 text-white p-4 rounded-2xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
+                            <div className="flex items-center justify-between relative z-10">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-200/90">Total Investido (RAC)</span>
+                                <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-emerald-200">
+                                    <span className="text-xs">💰</span>
+                                </div>
+                            </div>
+                            <div className="mt-1.5 relative z-10">
+                                <h4 className="text-xl font-black text-white font-sans tracking-tight">
+                                    {formatCurrencyBRL(indicators.totalInvestment)}
+                                </h4>
+                                <div className="mt-1 flex items-center justify-between text-[10px] text-emerald-200/80 font-medium">
+                                    <span>Gasto total acumulado</span>
+                                    {indicators.investmentDiffPercent !== null && (
+                                        <span className={`font-bold px-1.5 py-0.2 rounded-md ${indicators.investmentDiffPercent <= 0 ? 'bg-emerald-400/20 text-emerald-200' : 'bg-rose-400/20 text-rose-200'}`}>
+                                            {indicators.investmentDiffPercent > 0 ? `+${indicators.investmentDiffPercent}% vs mês ant.` : `${indicators.investmentDiffPercent}% vs mês ant.`}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-white/5 rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                         </div>
 
                         {/* Card 2: Custo Médio por Contrato */}
-                        <div className="bg-slate-50/80 border border-slate-200/80 p-4 rounded-2xl flex flex-col justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Custo Médio / Contrato</span>
-                            <h4 className="text-xl font-black text-slate-900 font-sans mt-1">
-                                {formatCurrencyBRL(indicators.averageInvestment)}
-                            </h4>
-                            <span className="text-[10px] text-slate-400 font-semibold mt-2">
-                                Média de valor por locação
-                            </span>
+                        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white p-4 rounded-2xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
+                            <div className="flex items-center justify-between relative z-10">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">Custo Médio / Contrato</span>
+                                <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-slate-300">
+                                    <span className="text-xs">📊</span>
+                                </div>
+                            </div>
+                            <div className="mt-1.5 relative z-10">
+                                <h4 className="text-xl font-black text-white font-sans tracking-tight">
+                                    {formatCurrencyBRL(indicators.averageInvestment)}
+                                </h4>
+                                <div className="mt-1 flex items-center justify-between text-[10px] text-slate-300/80 font-medium">
+                                    <span>Média por locação</span>
+                                    <span className="font-bold text-slate-300">{rentals.length} contratos</span>
+                                </div>
+                            </div>
+                            <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-blue-500/10 rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                         </div>
 
-                        {/* Card 3: Tempo Médio de Uso */}
-                        <div className="bg-slate-50/80 border border-slate-200/80 p-4 rounded-2xl flex flex-col justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Média de Utilização</span>
-                            <h4 className="text-xl font-black text-slate-900 font-sans mt-1">
-                                {indicators.averageDays.toFixed(1)} dias
-                            </h4>
-                            <span className="text-[10px] text-slate-400 font-semibold mt-2">
-                                Duração média dos aluguéis
-                            </span>
+                        {/* Card 3: Média de Utilização */}
+                        <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-blue-950 text-white p-4 rounded-2xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
+                            <div className="flex items-center justify-between relative z-10">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200">Média de Utilização</span>
+                                <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-indigo-200">
+                                    <ClockIcon className="w-3 h-3" />
+                                </div>
+                            </div>
+                            <div className="mt-1.5 relative z-10">
+                                <h4 className="text-xl font-black text-white font-sans tracking-tight">
+                                    {indicators.averageDays.toFixed(1)} <span className="text-xs font-semibold text-indigo-200">dias</span>
+                                </h4>
+                                <div className="mt-1 flex items-center justify-between text-[10px] text-indigo-200/80 font-medium">
+                                    <span>Duração média</span>
+                                    <span className="font-bold text-indigo-300">Tempo de uso</span>
+                                </div>
+                            </div>
+                            <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                         </div>
 
                         {/* Card 4: Locações Ativas */}
-                        <div className="bg-slate-50/80 border border-slate-200/80 p-4 rounded-2xl flex flex-col justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Locações Ativas</span>
-                            <h4 className="text-xl font-black text-[#114D38] font-sans mt-1">
-                                {indicators.activeRentalsCount} contratos
-                            </h4>
-                            <span className="text-[10px] text-slate-400 font-semibold mt-2">
-                                Veículos em circulação externa
-                            </span>
+                        <div className="bg-gradient-to-br from-blue-950 via-sky-950 to-slate-900 text-white p-4 rounded-2xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
+                            <div className="flex items-center justify-between relative z-10">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-sky-200">Locações Ativas</span>
+                                <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-sky-200">
+                                    <CarIcon className="w-3 h-3" />
+                                </div>
+                            </div>
+                            <div className="mt-1.5 relative z-10">
+                                <h4 className="text-xl font-black text-sky-300 font-sans tracking-tight">
+                                    {indicators.activeRentalsCount} <span className="text-xs font-semibold text-sky-200">em uso</span>
+                                </h4>
+                                <div className="mt-1 flex items-center justify-between text-[10px] text-sky-200/80 font-medium">
+                                    <span>Em circulação externa</span>
+                                    {indicators.rentalsDiffPercent !== null && (
+                                        <span className={`font-bold px-1.5 py-0.2 rounded-md ${indicators.rentalsDiffPercent >= 0 ? 'bg-sky-400/20 text-sky-200' : 'bg-slate-400/20 text-slate-200'}`}>
+                                            {indicators.rentalsDiffPercent > 0 ? `+${indicators.rentalsDiffPercent}% vs mês ant.` : `${indicators.rentalsDiffPercent}% vs mês ant.`}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-sky-500/10 rounded-full blur-xl pointer-events-none group-hover:scale-125 transition-transform duration-500"></div>
                         </div>
                     </div>
+                )}
+            </div>
 
+            {/* 2. Painel de Gráficos Analíticos (Expandível) */}
+            {isStatsDashboardOpen && (
+                <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-4 shadow-xs animate-fadeIn">
                     {/* Gráficos Recharts em Pares (2 por Linha) */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         {/* Gráfico 1: Quantidade de Locações por Mês */}
                         <div className="bg-slate-50/60 p-4.5 rounded-2xl border border-slate-200 flex flex-col">
                             <div className="mb-3">

@@ -58,9 +58,48 @@ import {
   saveAppsScriptUrl
 } from "../services/googleSheetsService";
 import { useAuth, hasSubmoduleAccess } from "../context/AuthContext";
+import { UserProfileBadge } from "../components/UserProfileBadge";
 
 // BENCHMARK DATE FOR CONTRACT EXPIRY COMPARISONS
 const HOJE_REF = "2026-07-03";
+
+// Componente de Placa Padrão Mercosul (igual a Gestão de Reservas)
+export const MercosulPlateBadge: React.FC<{ plate: string; isInactive?: boolean }> = ({ plate, isInactive }) => {
+    const formattedPlate = (plate || 'ABC1D23').toUpperCase().trim();
+    
+    return (
+        <div className={`inline-flex flex-col items-center justify-center border rounded-lg overflow-hidden shadow-2xs select-none transition-all duration-200 ${
+            isInactive 
+                ? 'border-slate-300 bg-slate-100 opacity-60' 
+                : 'border-slate-300 bg-white hover:border-slate-400 hover:shadow-xs'
+        }`} style={{ width: '92px', minWidth: '92px' }}>
+            {/* Faixa Azul Mercosul */}
+            <div className={`w-full py-0.5 px-1.5 flex items-center justify-between ${isInactive ? 'bg-slate-500' : 'bg-[#003399]'}`}>
+                {/* Estrelas / Logo Mercosul */}
+                <div className="flex items-center gap-0.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-300 opacity-90"></div>
+                    <div className="w-1 h-1 rounded-full bg-yellow-200 opacity-70"></div>
+                </div>
+                {/* Texto BRASIL */}
+                <span className="text-[7.5px] font-black text-white tracking-widest leading-none font-sans uppercase">
+                    BRASIL
+                </span>
+                {/* Mini Bandeira do Brasil */}
+                <div className="w-2.5 h-1.5 bg-emerald-500 rounded-[1px] relative flex items-center justify-center overflow-hidden">
+                    <div className="w-1.5 h-1 bg-yellow-400 rotate-45 transform"></div>
+                    <div className="w-0.5 h-0.5 rounded-full bg-blue-700 absolute"></div>
+                </div>
+            </div>
+
+            {/* Corpo da Placa com Código e Fonte Monospace */}
+            <div className="w-full bg-white py-0.5 px-1 text-center flex items-center justify-center">
+                <span className={`text-[12px] font-mono font-black tracking-wider leading-tight ${isInactive ? 'text-slate-500' : 'text-slate-900'}`}>
+                    {formattedPlate}
+                </span>
+            </div>
+        </div>
+    );
+};
 
 // HELPER FOR SHORTENING LONG CORPORATE NAMES (inspired by user request)
 const formatarTextoLongo = (texto: string, maxLength: number = 18): string => {
@@ -1904,37 +1943,49 @@ export default function Frota() {
   };
 
   const diasParaVencimento = (dataVenc?: string | null, dataInativacao?: string | null, status?: string) => {
-    if (!dataVenc) return 999;
+    if (!dataVenc) return 9999;
     try {
       const cleanStr = String(dataVenc).trim();
-      if (!cleanStr) return 999;
-      const refDateStr = (status === "Inativo" && dataInativacao) ? String(dataInativacao).trim() : HOJE_REF;
-      let refDateISO = refDateStr;
-      if (refDateStr.includes("/")) {
-        const p = refDateStr.split("/");
-        if (p.length === 3) refDateISO = `${p[2]}-${p[1].padStart(2, "0")}-${p[0].padStart(2, "0")}`;
+      if (!cleanStr) return 9999;
+
+      // Data de referência: data de inativação para veículos inativos, ou data atual do sistema para os demais
+      const now = new Date();
+      let ref = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+
+      if (status === "Inativo" && dataInativacao && String(dataInativacao).trim()) {
+        const inatStr = String(dataInativacao).trim();
+        if (inatStr.includes("/")) {
+          const p = inatStr.split("/");
+          if (p.length === 3) ref = new Date(parseInt(p[2], 10), parseInt(p[1], 10) - 1, parseInt(p[0], 10), 12, 0, 0);
+        } else if (inatStr.includes("-")) {
+          const p = inatStr.split("T")[0].split("-");
+          if (p.length === 3) ref = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10), 12, 0, 0);
+        }
       }
-      const ref = new Date((refDateISO.includes("-") ? refDateISO : HOJE_REF) + "T12:00:00");
-      let venc: Date;
+
+      let venc: Date | null = null;
       if (cleanStr.includes("/")) {
         const parts = cleanStr.split("/");
         if (parts.length === 3) {
-          venc = new Date(`${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}T12:00:00`);
-        } else {
-          venc = new Date(cleanStr);
+          venc = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10), 12, 0, 0);
         }
-      } else if (cleanStr.includes("T")) {
-        venc = new Date(cleanStr);
       } else if (cleanStr.includes("-")) {
-        venc = new Date(cleanStr + "T12:00:00");
-      } else {
-        venc = new Date(cleanStr);
+        const parts = cleanStr.split("T")[0].split("-");
+        if (parts.length === 3) {
+          venc = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0);
+        }
       }
-      if (isNaN(venc.getTime())) return 999;
+
+      if (!venc || isNaN(venc.getTime())) {
+        const fallback = new Date(cleanStr);
+        if (isNaN(fallback.getTime())) return 9999;
+        venc = new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate(), 12, 0, 0);
+      }
+
       const diffTime = venc.getTime() - ref.getTime();
-      return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return Math.round(diffTime / (1000 * 60 * 60 * 24));
     } catch (e) {
-      return 999;
+      return 9999;
     }
   };
 
@@ -1942,6 +1993,7 @@ export default function Frota() {
     const dias = diasParaVencimento(dataVenc);
     if (dias < 0) return { label: "Vencido", color: "text-rose-700 bg-rose-50 border-rose-200" };
     if (dias <= 30) return { label: "Vence em breve", color: "text-orange-700 bg-orange-50 border-orange-200" };
+    if (dias <= 90) return { label: "Próximo (≤90d)", color: "text-amber-700 bg-amber-50 border-amber-200" };
     return { label: "Ativo", color: "text-emerald-700 bg-emerald-50 border-emerald-200" };
   };
 
@@ -1965,16 +2017,14 @@ export default function Frota() {
 
     // Sort list
     list.sort((a, b) => {
-      let valA: any = "";
-      let valB: any = "";
-
       if (sortField === "diasRestantes") {
-        valA = diasParaVencimento(a.vencContrato);
-        valB = diasParaVencimento(b.vencContrato);
-      } else {
-        valA = a[sortField] !== undefined ? a[sortField] : "";
-        valB = b[sortField] !== undefined ? b[sortField] : "";
+        const diasA = diasParaVencimento(a.vencContrato, a.dataInativacao, a.status);
+        const diasB = diasParaVencimento(b.vencContrato, b.dataInativacao, b.status);
+        return sortDirection === "asc" ? diasA - diasB : diasB - diasA;
       }
+
+      let valA: any = a[sortField] !== undefined ? a[sortField] : "";
+      let valB: any = b[sortField] !== undefined ? b[sortField] : "";
 
       if (typeof valA === "string") {
         valA = valA.toLowerCase();
@@ -1989,42 +2039,47 @@ export default function Frota() {
     return list;
   }, [veiculos, searchQuery, filterFilial, filterStatus, sortField, sortDirection]);
 
-  // Statistics summaries - 5 main metrics of Controle de Frota itself (Dinamizados de acordo com filtros ativos)
+  // Statistics summaries - 4 main metrics of Controle de Frota (Dinamizados de acordo com filtros ativos)
   const stats = useMemo(() => {
     const targetVehicles = filteredVeiculos;
     const total = targetVehicles.length;
-    const ativos = targetVehicles.filter(v => v.status === "Ativo" || v.status === "Disponível" || v.status === "Em Viagem").length;
+    const ativos = targetVehicles.filter(v => v.status !== "Inativo").length;
+    const inativos = targetVehicles.filter(v => v.status === "Inativo").length;
     const manutencao = targetVehicles.filter(v => v.status === "Em Manutenção").length;
     
-    // Classificação de Frota Locada vs Própria
-    const isLocado = (locadora?: string) => {
-      if (!locadora) return false;
-      const clean = locadora.toUpperCase().trim();
-      return clean !== "" && 
-             clean !== "FROTA PRÓPRIA" && 
-             clean !== "FROTA PROPRIA" && 
-             clean !== "PRÓPRIO" && 
-             clean !== "PROPRIO" && 
-             clean !== "PRÓPRIA" && 
-             clean !== "PROPRIA" && 
-             clean !== "RISEL" && 
-             clean !== "REPELUB" && 
-             clean !== "ASSTAM";
-    };
+    // Contratos vencidos ou vencendo em 90 dias ou menos
+    const contratosProximos90 = targetVehicles.filter(v => {
+      if (v.status === "Inativo") return false;
+      if (!v.vencContrato || !v.vencContrato.trim()) return false;
+      const d = diasParaVencimento(v.vencContrato, v.dataInativacao, v.status);
+      return d <= 90;
+    }).length;
 
-    const totalLocada = targetVehicles.filter(v => isLocado(v.locadora)).length;
-    const totalPropria = targetVehicles.filter(v => !isLocado(v.locadora)).length;
-
-    // Contratos vencidos ou em alerta nos próximos 30 dias
-    const alertaVenc = targetVehicles.filter(v => {
-      const d = diasParaVencimento(v.vencContrato);
+    const alertaVenc30 = targetVehicles.filter(v => {
+      if (v.status === "Inativo") return false;
+      if (!v.vencContrato || !v.vencContrato.trim()) return false;
+      const d = diasParaVencimento(v.vencContrato, v.dataInativacao, v.status);
       return d <= 30;
     }).length;
 
     const odometroTotal = targetVehicles.reduce((acc, curr) => acc + (curr.odometro || 0), 0);
 
-    return { total, ativos, manutencao, totalLocada, totalPropria, alertaVenc, odometroTotal };
+    return { total, ativos, inativos, manutencao, contratosProximos90, alertaVenc30, odometroTotal };
   }, [filteredVeiculos]);
+
+  // Lista dinamizada para exibição na tabela (filtro de 90 dias ou vencidos com ordenação por proximidade de vencimento)
+  const displayedFrotaVeiculos = useMemo(() => {
+    if (subSectionFrota === "vencidos") {
+      return filteredVeiculos
+        .filter(v => v.status !== "Inativo" && Boolean(v.vencContrato && v.vencContrato.trim()) && diasParaVencimento(v.vencContrato, v.dataInativacao, v.status) <= 90)
+        .sort((a, b) => {
+          const diasA = diasParaVencimento(a.vencContrato, a.dataInativacao, a.status);
+          const diasB = diasParaVencimento(b.vencContrato, b.dataInativacao, b.status);
+          return diasA - diasB;
+        });
+    }
+    return filteredVeiculos;
+  }, [filteredVeiculos, subSectionFrota]);
 
   // Handle forms
   const handleAddEditVeiculo = (e: any) => {
@@ -2287,15 +2342,18 @@ export default function Frota() {
     return (
       <div className="space-y-6 w-full text-slate-800">
         <div className="h-full flex flex-col justify-center max-w-6xl mx-auto py-8">
-          {/* Botão Discreto de Retorno para o Início */}
+          {/* Barra Superior do Portal com Retorno e Perfil */}
           <div className="flex justify-between items-center mb-6 px-4">
             <Link 
               to="/" 
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold text-slate-400 hover:text-slate-700 hover:bg-white border border-transparent hover:border-slate-150 transition-all duration-300 shadow-sm hover:shadow"
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200/80 transition-all duration-300 shadow-2xs hover:shadow-xs"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> Voltar ao Início
             </Link>
-            <span className="text-[10px] font-black tracking-widest text-slate-350 uppercase">Risel ERP · Gestão de Frota</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black tracking-widest text-slate-400 uppercase hidden sm:inline">Risel ERP · Gestão de Frota</span>
+              <UserProfileBadge />
+            </div>
           </div>
 
           <div className="text-center mb-12">
@@ -2325,16 +2383,6 @@ export default function Frota() {
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {hasSubmoduleAccess(user?.permissions, "frota") && (
-              <SubModuleCard
-                title="Controle de Frota"
-                description="Gestão completa de veículos leves, quilometragem, condutores cadastrados e vencimentos de contratos."
-                icon={Truck}
-                onClick={() => setActiveTab("frota")}
-                theme="orange"
-                delay={0.15}
-              />
-            )}
             {hasSubmoduleAccess(user?.permissions, "checklist") && (
               <SubModuleCard
                 title="Checklist Digital"
@@ -2342,17 +2390,17 @@ export default function Frota() {
                 icon={CheckSquare}
                 onClick={() => setActiveTab("checklist")}
                 theme="emerald"
-                delay={0.2}
+                delay={0.15}
               />
             )}
-            {hasSubmoduleAccess(user?.permissions, "reservas") && (
+            {hasSubmoduleAccess(user?.permissions, "frota") && (
               <SubModuleCard
-                title="Gestão de Reservas"
-                description="Agendamento e controle de uso de veículos compartilhados para evitar conflitos de rotas de campo."
-                icon={Calendar}
-                onClick={() => setActiveTab("reservas")}
-                theme="blue"
-                delay={0.25}
+                title="Controle de Frota"
+                description="Gestão completa de veículos leves, quilometragem, condutores cadastrados e vencimentos de contratos."
+                icon={Truck}
+                onClick={() => setActiveTab("frota")}
+                theme="orange"
+                delay={0.2}
               />
             )}
             {hasSubmoduleAccess(user?.permissions, "multas") && (
@@ -2362,6 +2410,16 @@ export default function Frota() {
                 icon={ShieldAlert}
                 onClick={() => setActiveTab("multas")}
                 theme="rose"
+                delay={0.25}
+              />
+            )}
+            {hasSubmoduleAccess(user?.permissions, "reservas") && (
+              <SubModuleCard
+                title="Gestão de Reservas"
+                description="Agendamento e controle de uso de veículos compartilhados para evitar conflitos de rotas de campo."
+                icon={Calendar}
+                onClick={() => setActiveTab("reservas")}
+                theme="blue"
                 delay={0.3}
               />
             )}
@@ -2411,119 +2469,118 @@ export default function Frota() {
     <div className="h-full flex flex-col overflow-hidden space-y-3 w-full text-slate-800 relative">
       {/* Excel-like Static Top Section (Header, Navigation Tabs, 5 Indicators) */}
       <div 
-        className="shrink-0 bg-slate-50 -mx-4 px-4 pt-1 pb-2 border-b border-slate-200 shadow-sm space-y-3"
+        className="shrink-0 bg-slate-50 -mx-2 px-2 pt-0.5 pb-2 border-b border-slate-200/80 shadow-2xs space-y-2.5"
         onWheel={(e) => {
           if (mainFrotaTableScrollRef.current) {
             mainFrotaTableScrollRef.current.scrollTop += e.deltaY;
           }
         }}
       >
-        {/* Header com Identidade Visual Premium Risel */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-white p-5 rounded-[24px] border border-slate-150/80 shadow-sm relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-orange-500/5 rounded-full blur-3xl" />
-          <div className="flex items-center gap-4 relative z-10">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-lg shadow-orange-500/20">
-              <Truck className="w-7 h-7" />
+        {/* Top Header Card: Identidade à Esquerda e Usuário Logado no Topo Superior Direito */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-2xs relative">
+          {/* Lado Esquerdo: Identidade Visual e Breadcrumbs */}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-sm shadow-orange-500/20 shrink-0">
+              <Truck className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <Link to="/" className="text-xs font-bold text-slate-400 hover:text-orange-600 transition-colors flex items-center gap-1">
-                  <ArrowLeft className="w-3 h-3" /> Início
+              <div className="flex items-center gap-1.5 leading-none">
+                <Link to="/" className="text-[10px] font-bold text-slate-400 hover:text-orange-600 transition-colors flex items-center gap-1">
+                  <ArrowLeft className="w-2.5 h-2.5" /> Início
                 </Link>
-                <span className="text-xs text-slate-300">/</span>
-                <button onClick={() => setActiveTab("portal")} className="text-xs font-bold text-slate-400 hover:text-orange-600 transition-colors cursor-pointer bg-transparent border-none p-0 outline-none">
+                <span className="text-[10px] text-slate-300">/</span>
+                <button onClick={() => setActiveTab("portal")} className="text-[10px] font-bold text-slate-400 hover:text-orange-600 transition-colors cursor-pointer bg-transparent border-none p-0 outline-none">
                   Portal de Frota Leve
                 </button>
-                <span className="text-xs text-slate-300">/</span>
-                <span className="text-xs font-semibold text-slate-500 uppercase">{activeTab}</span>
+                <span className="text-[10px] text-slate-300">/</span>
+                <span className="text-[10px] font-semibold text-slate-500 uppercase">{activeTab}</span>
               </div>
-              <h1 className="text-2xl font-display font-black text-slate-800 mt-1">Controle de Frota Leve</h1>
+              <h1 className="text-lg font-display font-black text-slate-800 tracking-tight leading-tight mt-0.5">
+                {activeTab === "frota" && "Controle de Frota Leve"}
+                {activeTab === "checklist" && "Checklist Digital"}
+                {activeTab === "reservas" && "Gestão de Reservas"}
+                {activeTab === "multas" && "Controle de Multas"}
+                {activeTab === "rastreamento" && "Rastreamento & Telemetria"}
+              </h1>
             </div>
           </div>
 
-          {/* Tab Switcher Navigation */}
-          <div className="flex flex-wrap gap-1 bg-slate-100 p-1.5 rounded-xl border border-slate-200 shrink-0 relative z-10">
-            {[
-              { id: "portal", label: "Menu da Frota", icon: LayoutGrid },
-              { id: "frota", label: "Controle de Frota Leve", icon: Truck },
-              { id: "checklist", label: "Checklist", icon: CheckSquare },
-              { id: "reservas", label: "Gestão de Reservas", icon: Calendar },
-              { id: "multas", label: "Multas", icon: ShieldAlert },
-              { id: "rastreamento", label: "Rastreamento", icon: Navigation }
-            ].map(tab => {
-              const IsActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => {
-                    setActiveTab(tab.id as any);
-                    setSearchQuery("");
-                  }}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-extrabold transition-all duration-250 cursor-pointer ${
-                    IsActive 
-                      ? "bg-white text-orange-600 shadow-sm border border-orange-200/40" 
-                      : "text-slate-500 hover:text-slate-800 hover:bg-white/50"
-                  }`}
-                >
-                  <tab.icon className={`w-3.5 h-3.5 ${IsActive ? "text-orange-600" : "text-slate-400"}`} />
-                  {tab.label}
-                </button>
-              );
-            })}
+          {/* Canto Superior Direito: Dados do Usuário Logado */}
+          <div className="flex items-center justify-end shrink-0">
+            <UserProfileBadge />
           </div>
         </div>
 
-        {/* Top Counters Summary Row - 5 Principal Indicators with Unique Colors & Spring Transitions */}
+        {/* Barra de Menus / Abas da Frota Logo Embaixo */}
+        <div className="flex items-center overflow-x-auto gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/80 shrink-0">
+          {[
+            { id: "portal", label: "Menu da Frota", icon: LayoutGrid },
+            { id: "frota", label: "Controle de Frota Leve", icon: Truck },
+            { id: "checklist", label: "Checklist", icon: CheckSquare },
+            { id: "reservas", label: "Gestão de Reservas", icon: Calendar },
+            { id: "multas", label: "Multas", icon: ShieldAlert },
+            { id: "rastreamento", label: "Rastreamento", icon: Navigation }
+          ].map(tab => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id as any);
+                  setSearchQuery("");
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 cursor-pointer ${
+                  isActive 
+                    ? "bg-white text-orange-600 shadow-2xs border border-orange-200/60 font-black" 
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/60"
+                }`}
+              >
+                <tab.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-orange-600" : "text-slate-400"}`} />
+                <span className="whitespace-nowrap">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Top Counters Summary Row - 4 Principal Indicators with Rectangular Style & Spring Transitions */}
         {activeTab !== "reservas" && activeTab !== "rastreamento" && activeTab !== "checklist" && activeTab !== "multas" && subSectionFrota !== "custos" && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {[
               { 
                 label: "Total Frota", 
                 value: stats.total, 
-                sub: "Veículos leves", 
+                sub: "Veículos cadastrados", 
                 gradient: "from-orange-500 to-amber-500", 
                 icon: Truck, 
                 textColor: "text-orange-600",
-                bgLight: "bg-orange-50/50",
+                bgLight: "bg-orange-50/70",
                 gradientBg: "from-white via-orange-50/15 to-orange-500/[0.04]",
-                borderColor: "border-orange-100/70 hover:border-orange-300/80",
-                glowColor: "hover:shadow-orange-200/45"
+                borderColor: "border-orange-200/80 hover:border-orange-300",
+                glowColor: "hover:shadow-orange-200/40"
               },
               { 
-                label: "Total Frota Locada", 
-                value: stats.totalLocada, 
-                sub: "Contratos de locação", 
-                gradient: "from-emerald-500 to-teal-500", 
-                icon: Check, 
-                textColor: "text-emerald-600",
-                bgLight: "bg-emerald-50/50",
-                gradientBg: "from-white via-emerald-50/15 to-emerald-500/[0.04]",
-                borderColor: "border-emerald-100/70 hover:border-emerald-300/80",
-                glowColor: "hover:shadow-emerald-200/45"
-              },
-              { 
-                label: "Total Frota Própria", 
-                value: stats.totalPropria, 
-                sub: "Ativos da empresa", 
+                label: "Total Frota Ativa", 
+                value: stats.ativos, 
+                sub: "Veículos operacionais", 
                 gradient: "from-blue-500 to-indigo-500", 
-                icon: Wrench, 
+                icon: CheckCircle, 
                 textColor: "text-blue-600",
-                bgLight: "bg-blue-50/50",
+                bgLight: "bg-blue-50/70",
                 gradientBg: "from-white via-blue-50/15 to-blue-500/[0.04]",
-                borderColor: "border-blue-100/70 hover:border-blue-300/80",
-                glowColor: "hover:shadow-blue-200/45"
+                borderColor: "border-blue-200/80 hover:border-blue-300",
+                glowColor: "hover:shadow-blue-200/40"
               },
               { 
-                label: "Contratos < 30 dias", 
-                value: stats.alertaVenc, 
-                sub: "Vencimentos de contratos", 
+                label: "Total Frota Inativa", 
+                value: stats.inativos, 
+                sub: "Veículos desativados", 
                 gradient: "from-rose-500 to-red-500", 
                 icon: AlertTriangle, 
                 textColor: "text-rose-600",
-                bgLight: "bg-rose-50/50",
+                bgLight: "bg-rose-50/70",
                 gradientBg: "from-white via-rose-50/15 to-rose-500/[0.04]",
-                borderColor: "border-rose-100/70 hover:border-rose-300/80",
-                glowColor: "hover:shadow-rose-200/45"
+                borderColor: "border-rose-200/80 hover:border-rose-300",
+                glowColor: "hover:shadow-rose-200/40"
               },
               { 
                 label: "Odômetro Total", 
@@ -2532,37 +2589,37 @@ export default function Frota() {
                 gradient: "from-violet-500 to-purple-500", 
                 icon: Gauge, 
                 textColor: "text-violet-600",
-                bgLight: "bg-violet-50/50",
+                bgLight: "bg-violet-50/70",
                 gradientBg: "from-white via-violet-50/15 to-violet-500/[0.04]",
-                borderColor: "border-violet-100/70 hover:border-violet-300/80",
-                glowColor: "hover:shadow-violet-200/45"
+                borderColor: "border-violet-200/80 hover:border-violet-300",
+                glowColor: "hover:shadow-violet-200/40"
               },
             ].map((item, idx) => (
               <motion.div 
                 key={idx} 
-                initial={{ opacity: 0, y: 15 }}
+                initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                whileHover={{ scale: 1.04, y: -4 }}
+                whileHover={{ scale: 1.02, y: -2 }}
                 transition={{ 
                   type: "spring", 
-                  stiffness: 260, 
-                  damping: 20, 
-                  delay: idx * 0.05 
+                  stiffness: 280, 
+                  damping: 22, 
+                  delay: idx * 0.04 
                 }}
-                className={`p-5 rounded-[24px] border ${item.borderColor} shadow-sm flex flex-col justify-between relative overflow-hidden bg-gradient-to-br ${item.gradientBg} ${item.glowColor} transition-all duration-300`}
+                className={`p-4 rounded-2xl border ${item.borderColor} shadow-2xs flex flex-col justify-between relative overflow-hidden bg-gradient-to-br ${item.gradientBg} ${item.glowColor} transition-all duration-300 min-h-[96px]`}
               >
                 {/* Decorative background glow */}
-                <div className={`absolute -right-10 -bottom-10 w-24 h-24 rounded-full bg-gradient-to-br ${item.gradient} opacity-[0.08] blur-xl transition-transform duration-500 group-hover:scale-125`} />
+                <div className={`absolute -right-8 -bottom-8 w-20 h-20 rounded-full bg-gradient-to-br ${item.gradient} opacity-[0.07] blur-lg pointer-events-none`} />
                 
-                <div className="flex justify-between items-start gap-1 relative z-10">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block leading-tight">{item.label}</span>
-                  <div className={`w-7 h-7 rounded-lg ${item.bgLight} flex items-center justify-center shrink-0 border border-slate-100/10`}>
-                    <item.icon className={`w-4 h-4 ${item.textColor}`} />
+                <div className="flex justify-between items-start gap-2 relative z-10">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block leading-tight">{item.label}</span>
+                  <div className={`w-7 h-7 rounded-lg ${item.bgLight} flex items-center justify-center shrink-0 border border-slate-200/40`}>
+                    <item.icon className={`w-3.5 h-3.5 ${item.textColor}`} />
                   </div>
                 </div>
-                <div className="mt-4 relative z-10 text-left">
-                  <span className={`text-2xl font-display font-black bg-gradient-to-r ${item.gradient} bg-clip-text text-transparent block tracking-tight`}>{item.value}</span>
-                  <span className="text-[10px] font-bold text-slate-400 block mt-0.5">{item.sub}</span>
+                <div className="mt-2 relative z-10 text-left">
+                  <span className={`text-xl sm:text-2xl font-display font-black bg-gradient-to-r ${item.gradient} bg-clip-text text-transparent block tracking-tight leading-none`}>{item.value}</span>
+                  <span className="text-[10px] font-bold text-slate-400 block mt-1">{item.sub}</span>
                 </div>
               </motion.div>
             ))}
@@ -2793,16 +2850,71 @@ export default function Frota() {
               </div>
             ) : (
               <div className="flex-1 min-h-0 flex flex-col space-y-3 overflow-hidden">
-                {/* Filter and Actions Bar */}
+                {/* Sub-section Switcher & Filter Bar */}
                 <div 
-                  className="shrink-0 pt-1 pb-2"
+                  className="shrink-0 pt-1 pb-1 space-y-2.5"
                   onWheel={(e) => {
                     if (mainFrotaTableScrollRef.current) {
                       mainFrotaTableScrollRef.current.scrollTop += e.deltaY;
                     }
                   }}
                 >
-                  <div className="bg-white p-3.5 rounded-2xl border border-slate-150 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm">
+                  {/* Sub-menu Tabs for Frota Leve */}
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-xl border border-slate-200/80">
+                      <button
+                        onClick={() => setSubSectionFrota("veiculos")}
+                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          subSectionFrota === "veiculos"
+                            ? "bg-white text-orange-600 shadow-2xs font-black border border-orange-200/60"
+                            : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                        }`}
+                      >
+                        <Truck className={`w-3.5 h-3.5 ${subSectionFrota === "veiculos" ? "text-orange-600" : "text-slate-400"}`} />
+                        <span>Todos os Veículos</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-black ml-0.5 ${
+                          subSectionFrota === "veiculos" ? "bg-orange-100 text-orange-700" : "bg-slate-200 text-slate-600"
+                        }`}>
+                          {stats.total}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => setSubSectionFrota("vencidos")}
+                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          subSectionFrota === "vencidos"
+                            ? "bg-white text-rose-600 shadow-2xs font-black border border-rose-200/60"
+                            : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                        }`}
+                      >
+                        <Clock className={`w-3.5 h-3.5 ${subSectionFrota === "vencidos" ? "text-rose-600" : "text-slate-400"}`} />
+                        <span>Contratos Próximos</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-black ml-0.5 ${
+                          subSectionFrota === "vencidos" ? "bg-rose-100 text-rose-700" : "bg-rose-50 text-rose-600 border border-rose-200"
+                        }`}>
+                          {stats.contratosProximos90}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => setSubSectionFrota("custos")}
+                        className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                      >
+                        <DollarSign className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Abastecimento</span>
+                      </button>
+                    </div>
+
+                    {subSectionFrota === "vencidos" && (
+                      <div className="flex items-center gap-2 px-3 py-1 bg-rose-50 border border-rose-200/80 rounded-xl text-[11px] font-bold text-rose-700 shadow-2xs">
+                        <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 animate-pulse" />
+                        <span>Contratos vencendo em ≤ 90 dias ou vencidos ({displayedFrotaVeiculos.length} veículos)</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Filter and Actions Bar */}
+                  <div className="bg-white p-3 rounded-2xl border border-slate-150 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2 flex-1">
                       <div className="relative flex-1 min-w-[200px] max-w-sm text-left">
                         <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
@@ -2911,25 +3023,33 @@ export default function Frota() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
-                        {((subSectionFrota === "vencidos") ? filteredVeiculos.filter(v => v.status !== "Inativo" && Boolean(v.vencContrato && v.vencContrato.trim()) && diasParaVencimento(v.vencContrato, v.dataInativacao, v.status) <= 90) : filteredVeiculos).length === 0 ? (
+                        {displayedFrotaVeiculos.length === 0 ? (
                           <tr>
                             <td colSpan={9} className="py-12 text-center text-slate-400 font-bold">
                               Nenhum veículo encontrado com os filtros selecionados.
                             </td>
                           </tr>
                         ) : (
-                          ((subSectionFrota === "vencidos") ? filteredVeiculos.filter(v => v.status !== "Inativo" && Boolean(v.vencContrato && v.vencContrato.trim()) && diasParaVencimento(v.vencContrato, v.dataInativacao, v.status) <= 90) : filteredVeiculos).map(v => {
+                          displayedFrotaVeiculos.map(v => {
                             const dias = diasParaVencimento(v.vencContrato, v.dataInativacao, v.status);
-                            const contSt = getStatusContrato(v.vencContrato);
+                            const isVencido = dias <= 0 && v.status !== "Inativo";
+                            const isAlerta30 = dias > 0 && dias <= 30 && v.status !== "Inativo";
+                            const isAlerta90 = dias > 30 && dias <= 90 && v.status !== "Inativo";
+                            const rowBgClass = isVencido 
+                              ? "bg-rose-50/75 hover:bg-rose-100/90 border-l-4 border-rose-500 transition-colors" 
+                              : isAlerta30 
+                                ? "bg-amber-50/45 hover:bg-amber-100/60 border-l-4 border-amber-400 transition-colors" 
+                                : isAlerta90 && subSectionFrota === "vencidos"
+                                  ? "bg-orange-50/30 hover:bg-orange-100/50 border-l-4 border-orange-300 transition-colors"
+                                  : "hover:bg-slate-50/60 transition-colors";
+
                             return (
-                              <tr key={v.id} className="hover:bg-slate-50/60 transition-colors">
-                                <td className="py-4 px-5">
-                                  <span className="font-mono bg-slate-100 border border-slate-200 px-2 py-1 rounded text-xs font-black tracking-wider text-slate-800 shadow-inner block w-20 text-center">
-                                    {v.placa}
-                                  </span>
+                              <tr key={v.id} className={rowBgClass}>
+                                <td className="py-3 px-5">
+                                  <MercosulPlateBadge plate={v.placa} isInactive={v.status === "Inativo"} />
                                 </td>
                                 <td className="py-4 px-4 text-left">
-                                  <div className="font-bold text-slate-800">{formatarTextoLongo(v.modelo, 20)}</div>
+                                  <div className={`font-bold ${isVencido ? "text-rose-950" : "text-slate-800"}`}>{formatarTextoLongo(v.modelo, 20)}</div>
                                   <div className="text-[10px] font-semibold text-slate-400 mt-0.5">{toTitleCase(v.combustivel)} · {v.odometro.toLocaleString("pt-BR")} km</div>
                                 </td>
                                 <td className="py-4 px-4 text-left">
@@ -2948,14 +3068,17 @@ export default function Frota() {
                                 <td className="py-4 px-4 font-bold text-slate-500 uppercase text-[11px] text-left" title={v.locadora}>
                                   {formatarTextoLongo(v.locadora, 16)}
                                 </td>
-                                <td className="py-4 px-4 font-mono font-bold text-slate-650 text-left">
-                                  {formatDateSafe(v.vencContrato)}
+                                <td className="py-4 px-4 font-mono font-bold text-left">
+                                  <div className={`flex items-center gap-1.5 ${isVencido ? "text-rose-700 font-extrabold" : isAlerta30 ? "text-amber-700 font-bold" : "text-slate-650"}`}>
+                                    {isVencido && <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 animate-pulse" />}
+                                    <span>{formatDateSafe(v.vencContrato)}</span>
+                                  </div>
                                 </td>
                                 <td className="py-4 px-4 text-center">
                                   {v.status === "Inativo" ? (
                                     <div className="flex flex-col items-center gap-0.5">
                                       <span 
-                                        className="font-extrabold px-2.5 py-1 rounded-full text-[10px] bg-slate-200 text-slate-800 border border-slate-300 shadow-sm max-w-[170px] truncate block"
+                                        className="font-extrabold px-2.5 py-1 rounded-md text-[10px] bg-slate-100 text-slate-750 border border-slate-200 shadow-2xs max-w-[170px] truncate block"
                                         title={`Inativado em ${formatDateSafe(v.dataInativacao || "")}${v.motivoInativacao ? ` | Motivo: ${v.motivoInativacao}` : ""}`}
                                       >
                                         {v.motivoInativacao || "Inativo"}
@@ -2967,14 +3090,20 @@ export default function Frota() {
                                       </span>
                                     </div>
                                   ) : (
-                                    <span className={`font-extrabold px-2 py-0.5 rounded-full text-[10px] ${
-                                      dias < 0 
-                                        ? "bg-rose-100 text-rose-800" 
-                                        : dias <= 30 
-                                          ? "bg-amber-100 text-amber-800 animate-pulse" 
-                                          : "bg-slate-100 text-slate-700"
+                                    <span className={`inline-flex items-center justify-center font-black px-2.5 py-1 rounded-md text-[10px] shadow-2xs border ${
+                                      isVencido
+                                        ? "bg-rose-600 text-white border-rose-700 shadow-rose-200 animate-pulse" 
+                                        : isAlerta30 
+                                          ? "bg-amber-100 text-amber-900 border-amber-300 font-extrabold" 
+                                          : isAlerta90
+                                            ? "bg-amber-50 text-amber-800 border-amber-200 font-extrabold"
+                                            : "bg-slate-100 text-slate-700 border-slate-200"
                                     }`}>
-                                      {dias < 0 ? `Vencido há ${Math.abs(dias)} dias` : `${dias} dias`}
+                                      {isVencido 
+                                        ? (dias < 0 ? `Vencido há ${Math.abs(dias)} dias` : `Vence Hoje!`)
+                                        : isAlerta30 
+                                          ? `${dias} dias (Atenção)` 
+                                          : `${dias} dias`}
                                     </span>
                                   )}
                                 </td>
@@ -2983,10 +3112,10 @@ export default function Frota() {
                                     const displayStatus = (v.status === "Inativo" || v.status === "Em Manutenção") ? "Inativo" : "Ativo";
                                     const isAtivo = displayStatus === "Ativo";
                                     return (
-                                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black border ${
+                                      <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-black border ${
                                         isAtivo 
-                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200/60" 
-                                          : "bg-rose-50 text-rose-700 border-rose-200/60"
+                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200/80" 
+                                          : "bg-rose-50 text-rose-700 border-rose-200/80"
                                       }`}>
                                         <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
                                           isAtivo ? "bg-emerald-500" : "bg-rose-500"
@@ -3015,16 +3144,16 @@ export default function Frota() {
                                           setModalLocadora(locUpper);
                                           setCustomLocadora("");
                                         } else {
-                                          setModalLocadora(locUpper ? "OUTRA" : "");
+                                          setModalLocadora("Outra");
                                           setCustomLocadora(loc);
                                         }
                                         setModalVencContrato(v.vencContrato || "");
-                                        setModalStatus(v.status || "Ativo");
-                                        setModalDataInativacao(v.dataInativacao || (v.status === "Inativo" ? HOJE_REF : ""));
+                                        setModalStatus(v.status);
+                                        setModalDataInativacao(v.dataInativacao || "");
                                         setModalMotivoInativacao(v.motivoInativacao || "");
                                         setIsVehModalOpen(true);
                                       }}
-                                      className="p-1.5 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-all cursor-pointer"
+                                      className="p-1.5 text-slate-400 hover:text-orange-600 hover:bg-slate-100 rounded-lg transition-all cursor-pointer"
                                       title="Editar Veículo"
                                     >
                                       <Edit2 className="w-4 h-4" />
@@ -3252,9 +3381,7 @@ export default function Frota() {
               <div>
                 <div className="flex justify-between items-start border-b border-slate-100 pb-4 mb-6">
                   <div>
-                    <span className="font-mono bg-slate-100 border border-slate-200 px-3 py-1 rounded text-sm font-black tracking-wider text-slate-800">
-                      {selectedVeiculo.placa}
-                    </span>
+                    <MercosulPlateBadge plate={selectedVeiculo.placa} isInactive={selectedVeiculo.status === "Inativo"} />
                     <h2 className="text-lg font-display font-black text-slate-800 mt-3">{selectedVeiculo.modelo}</h2>
                     <p className="text-xs font-semibold text-slate-400">Cadastro Detalhado Risel ERP</p>
                   </div>

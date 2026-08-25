@@ -1,8 +1,10 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useReservations } from '../../context/ReservationContext';
 import { ReservationStatus, Vehicle, FuelLevel, GeoFrotasPosition } from '../../types_reserva';
 import { CarIcon, MapPinIcon, ClockIcon, SteeringWheelIcon, CalendarIcon, ExclamationTriangleIcon, RouteIcon } from './icons';
+import { Navigation } from 'lucide-react';
 import Modal from './Modal';
 import { fetchFleetPositions } from '../../services/geoFrotasService';
 import { useAuth } from '../../context/ReservationAuthContext';
@@ -16,30 +18,116 @@ const OFFICE_RADIUS_KM = 0.14; // 140 meters
 // Atualiza a cada 1 minuto para menor delay
 const UPDATE_INTERVAL_MS = 60000;
 
-const MiniFuelLevelDisplay: React.FC<{ level: FuelLevel | undefined }> = ({ level }) => {
-    if (!level) return <span className="text-xs text-gray-400 font-medium" title="Nível do tanque desconhecido">Tanque: N/A</span>;
+// Componente de Placa Mercosul Realista
+const MercosulPlateBadge: React.FC<{ plate: string; isInactive?: boolean }> = ({ plate, isInactive }) => {
+    const formattedPlate = (plate || 'ABC1D23').toUpperCase().trim();
     
-    const widths: Record<FuelLevel, string> = {
-        [FuelLevel.Empty]: '10%',
-        [FuelLevel.Quarter]: '25%',
-        [FuelLevel.Half]: '50%',
-        [FuelLevel.ThreeQuarters]: '75%',
-        [FuelLevel.Full]: '100%',
+    return (
+        <div className={`inline-flex flex-col items-center justify-center border rounded-lg overflow-hidden shadow-2xs select-none transition-all duration-200 ${
+            isInactive 
+                ? 'border-slate-300 bg-slate-100 opacity-60' 
+                : 'border-slate-300 bg-white hover:border-slate-400 hover:shadow-xs'
+        }`} style={{ width: '92px', minWidth: '92px' }}>
+            {/* Faixa Azul Mercosul */}
+            <div className={`w-full py-0.5 px-1.5 flex items-center justify-between ${isInactive ? 'bg-slate-500' : 'bg-[#003399]'}`}>
+                {/* Estrelas / Logo Mercosul */}
+                <div className="flex items-center gap-0.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-300 opacity-90"></div>
+                    <div className="w-1 h-1 rounded-full bg-yellow-200 opacity-70"></div>
+                </div>
+                {/* Texto BRASIL */}
+                <span className="text-[7.5px] font-black text-white tracking-widest leading-none font-sans uppercase">
+                    BRASIL
+                </span>
+                {/* Mini Bandeira do Brasil */}
+                <div className="w-2.5 h-1.5 bg-emerald-500 rounded-[1px] relative flex items-center justify-center overflow-hidden">
+                    <div className="w-1.5 h-1 bg-yellow-400 rotate-45 transform"></div>
+                    <div className="w-0.5 h-0.5 rounded-full bg-blue-700 absolute"></div>
+                </div>
+            </div>
+
+            {/* Corpo da Placa com Código e Fonte Monospace */}
+            <div className="w-full bg-white py-0.5 px-1 text-center flex items-center justify-center">
+                <span className={`text-[12px] font-mono font-black tracking-wider leading-tight ${isInactive ? 'text-slate-500' : 'text-slate-900'}`}>
+                    {formattedPlate}
+                </span>
+            </div>
+        </div>
+    );
+};
+
+const MiniFuelLevelDisplay: React.FC<{ level: FuelLevel | undefined }> = ({ level }) => {
+    if (!level) {
+        return (
+            <div className="flex items-center gap-2 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200/80 text-slate-400" title="Nível de combustível não registrado">
+                <div className="w-5 h-5 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-xs shrink-0">
+                    ⛽
+                </div>
+                <div className="w-12 h-2 bg-slate-200 rounded-full overflow-hidden shrink-0">
+                    <div className="h-full bg-slate-300 w-0"></div>
+                </div>
+                <span className="text-[11px] font-semibold text-slate-400 truncate">Não informado</span>
+            </div>
+        );
+    }
+    
+    const config: Record<FuelLevel, { width: string; barColor: string; iconBg: string; textColor: string; label: string }> = {
+        [FuelLevel.Full]: {
+            width: '100%',
+            barColor: 'bg-emerald-500',
+            iconBg: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+            textColor: 'text-emerald-700',
+            label: 'Cheio'
+        },
+        [FuelLevel.ThreeQuarters]: {
+            width: '75%',
+            barColor: 'bg-emerald-400',
+            iconBg: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+            textColor: 'text-emerald-700',
+            label: '3/4'
+        },
+        [FuelLevel.Half]: {
+            width: '50%',
+            barColor: 'bg-amber-400',
+            iconBg: 'bg-amber-50 text-amber-700 border-amber-200',
+            textColor: 'text-amber-800',
+            label: '1/2'
+        },
+        [FuelLevel.Quarter]: {
+            width: '25%',
+            barColor: 'bg-orange-500',
+            iconBg: 'bg-orange-50 text-orange-700 border-orange-200',
+            textColor: 'text-orange-800',
+            label: '1/4'
+        },
+        [FuelLevel.Empty]: {
+            width: '12%',
+            barColor: 'bg-rose-500 animate-pulse',
+            iconBg: 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse',
+            textColor: 'text-rose-700',
+            label: 'Reserva / Vazio'
+        },
     };
-    const colors: Record<FuelLevel, string> = {
-        [FuelLevel.Empty]: 'bg-red-500',
-        [FuelLevel.Quarter]: 'bg-yellow-400',
-        [FuelLevel.Half]: 'bg-yellow-400',
-        [FuelLevel.ThreeQuarters]: 'bg-green-500',
-        [FuelLevel.Full]: 'bg-green-500',
+
+    const current = config[level] || {
+        width: '50%',
+        barColor: 'bg-slate-400',
+        iconBg: 'bg-slate-100 text-slate-600 border-slate-200',
+        textColor: 'text-slate-700',
+        label: level
     };
 
     return (
-        <div className="flex items-center gap-2" title={`Nível do tanque: ${level}`}>
-            <div className="w-10 h-2 bg-gray-200 rounded-full border border-gray-300 overflow-hidden">
-                <div className={`h-full ${colors[level]}`} style={{ width: widths[level] }}></div>
+        <div className="flex items-center gap-2 bg-slate-50/90 px-2.5 py-1 rounded-xl border border-slate-200/90 shadow-2xs hover:bg-slate-100/90 transition-colors" title={`Nível de Combustível: ${current.label}`}>
+            <div className={`w-6 h-6 rounded-lg border flex items-center justify-center text-xs shadow-2xs shrink-0 ${current.iconBg}`}>
+                ⛽
             </div>
-            <span className="text-xs font-bold text-gray-600">{level}</span>
+            <div className="w-14 h-2.5 bg-slate-200/90 rounded-full border border-slate-300/80 overflow-hidden shrink-0 shadow-inner p-[1px]">
+                <div className={`h-full rounded-full transition-all duration-500 ${current.barColor}`} style={{ width: current.width }}></div>
+            </div>
+            <span className={`text-[11px] font-extrabold tracking-tight truncate ${current.textColor}`}>
+                {current.label}
+            </span>
         </div>
     );
 };
@@ -52,6 +140,11 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
     const { vehicles, reservations, dailyTrips, isLoading } = useReservations();
     const { user } = useAuth();
     const isAdmin = user && !user.isAnonymous;
+    const [, setSearchParams] = useSearchParams();
+
+    const handleOpenInTracking = (plate: string) => {
+        setSearchParams({ tab: 'reservas', sub: 'monitoring', plate: plate.trim() });
+    };
 
     const [isHb20ModalOpen, setIsHb20ModalOpen] = useState(false);
     const [trackerPositions, setTrackerPositions] = useState<GeoFrotasPosition[]>([]);
@@ -220,21 +313,21 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
     }, [isAdmin, vehicles, dailyTrips, reservations]);
     
     const getLastFuelLevel = (vehicleId: string): FuelLevel | undefined => {
-        const completedTrips = dailyTrips.filter(t => 
+        const tripsWithFuel = dailyTrips.filter(t => 
             t.vehicleId === vehicleId && 
-            t.status === ReservationStatus.Completed && 
-            t.finalFuelLevel
+            (t.finalFuelLevel || t.initialFuelLevel)
         );
         
-        if (completedTrips.length === 0) return undefined;
+        if (tripsWithFuel.length === 0) return undefined;
 
-        completedTrips.sort((a, b) => {
-            const dateA = a.actualReturnDateTime ? new Date(a.actualReturnDateTime).getTime() : 0;
-            const dateB = b.actualReturnDateTime ? new Date(b.actualReturnDateTime).getTime() : 0;
+        tripsWithFuel.sort((a, b) => {
+            const dateA = a.actualReturnDateTime ? new Date(a.actualReturnDateTime).getTime() : new Date(a.departureDateTime).getTime();
+            const dateB = b.actualReturnDateTime ? new Date(b.actualReturnDateTime).getTime() : new Date(b.departureDateTime).getTime();
             return dateB - dateA;
         });
 
-        return completedTrips[0].finalFuelLevel;
+        const latest = tripsWithFuel[0];
+        return latest.finalFuelLevel || latest.initialFuelLevel;
     };
 
     const getTrackerInfo = (plate: string) => {
@@ -456,79 +549,94 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                     }
 
                     return (
-                        <div key={vehicle.id} className="bg-white rounded-lg shadow-sm border border-gray-300 flex flex-col overflow-hidden hover:shadow-md transition-all duration-200">
+                        <div key={vehicle.id} className="bg-white rounded-2xl shadow-xs border border-slate-200/90 flex flex-col overflow-hidden hover:shadow-md hover:border-slate-300 transition-all duration-200">
                             
-                            <div className="flex flex-row min-h-[110px]">
-                                <div className="w-20 bg-gray-50 flex flex-col items-center justify-center p-2 shrink-0 border-r border-gray-200 relative gap-1">
-                                    <CarIcon className={`h-9 w-9 ${statusData.iconColor} opacity-90 z-10`} />
+                            <div className="flex flex-row min-h-[115px]">
+                                <div className="w-20 bg-slate-50/80 flex flex-col items-center justify-center p-2.5 shrink-0 border-r border-slate-200/80 relative gap-1.5">
+                                    <div className="w-10 h-10 rounded-xl bg-white border border-slate-200/70 shadow-2xs flex items-center justify-center">
+                                        <CarIcon className={`h-6 w-6 ${statusData.iconColor}`} />
+                                    </div>
                                     
-                                    <div className="text-center z-10 mt-1">
-                                        <span className="block text-[10px] text-gray-400 font-bold uppercase leading-none mb-1">KM</span>
-                                        <span className="block text-xs font-bold text-gray-700 leading-none tracking-tight">
+                                    <div className="text-center z-10">
+                                        <span className="block text-[9px] text-slate-400 font-extrabold uppercase leading-none mb-0.5 tracking-wider">ODÔMETRO</span>
+                                        <span className="block text-xs font-black text-slate-800 font-sans leading-none tracking-tight">
                                             {vehicle.lastKm ? vehicle.lastKm.toLocaleString('pt-BR') : '0'}
                                         </span>
                                     </div>
 
-                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${statusData.type === 'available' ? 'bg-green-500' : statusData.type === 'in-use' ? 'bg-blue-500' : 'bg-accent'}`}></div>
+                                    <div className={`absolute left-0 top-0 bottom-0 w-1 ${statusData.type === 'available' ? 'bg-emerald-500' : statusData.type === 'in-use' ? 'bg-blue-500' : 'bg-amber-500'}`}></div>
                                 </div>
 
-                                <div className="p-3 flex-1 flex flex-col justify-center min-w-0 gap-1 relative">
+                                <div className="p-3.5 flex-1 flex flex-col justify-between min-w-0 gap-1.5 relative">
                                     {trackerInfo && (
-                                        <div className="absolute top-2 right-2">
-                                            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border shadow-sm ${isOffline ? 'bg-gray-100 border-gray-300' : 'bg-green-50 border-green-200'}`} title={`Status GPS: ${displayStatusText}`}>
-                                                <div className={`h-2 w-2 rounded-full ${!isOffline ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
-                                                <span className="text-[9px] text-gray-500 font-bold">GPS</span>
-                                            </div>
+                                        <div className="absolute top-2.5 right-2.5">
+                                            {isAdmin ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleOpenInTracking(vehicle.plate);
+                                                    }}
+                                                    className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border shadow-2xs cursor-pointer hover:shadow-xs active:scale-95 transition-all ${isOffline ? 'bg-slate-100/90 border-slate-300 text-slate-600 hover:bg-slate-200' : 'bg-emerald-50/90 border-emerald-200/80 text-emerald-800 hover:bg-emerald-100'}`}
+                                                    title={`Clique para abrir a posição de ${vehicle.plate} no Rastreamento`}
+                                                >
+                                                    <div className={`h-2 w-2 rounded-full ${!isOffline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
+                                                    <span className="text-[9px] font-black uppercase tracking-wider flex items-center gap-1">
+                                                        GPS <Navigation className="w-2.5 h-2.5 inline" />
+                                                    </span>
+                                                </button>
+                                            ) : (
+                                                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border shadow-2xs ${isOffline ? 'bg-slate-100/90 border-slate-200 text-slate-500' : 'bg-emerald-50/90 border-emerald-200/80 text-emerald-800'}`} title={`Status GPS: ${displayStatusText}`}>
+                                                    <div className={`h-2 w-2 rounded-full ${!isOffline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
+                                                    <span className="text-[9px] font-black uppercase tracking-wider">GPS</span>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 
-                                    <div className="flex flex-col items-start gap-1.5 mb-2 pr-8"> 
-                                        <h3 className="text-lg font-bold text-gray-900 uppercase tracking-tight leading-none truncate w-full">
+                                    <div className="flex flex-col items-start gap-1.5 pr-14"> 
+                                        <h3 className="text-base font-black text-slate-900 tracking-tight leading-snug truncate w-full">
                                             {vehicle.model}
                                         </h3>
-                                        <div className="bg-white border border-gray-300 rounded shadow-sm px-2 py-0.5 w-fit">
-                                            <span className="text-sm font-bold text-gray-800 font-mono leading-none block">
-                                                {vehicle.plate}
-                                            </span>
-                                        </div>
+                                        <MercosulPlateBadge plate={vehicle.plate} isInactive={vehicle.isActive === false} />
                                     </div>
                                     
-                                    <div className="mb-1 flex items-center justify-between gap-2">
+                                    <div className="flex items-center justify-between gap-2">
                                         <MiniFuelLevelDisplay level={fuelLevel} />
                                     </div>
 
                                     {statusData.details ? (
-                                        <div className="text-sm bg-gray-50 rounded p-2 border border-gray-200">
+                                        <div className="text-xs bg-slate-50/90 rounded-xl p-2.5 border border-slate-200/80">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="font-bold text-gray-900 truncate text-base" title={statusData.details.fullName}>
+                                                <span className="font-black text-slate-900 truncate text-sm" title={statusData.details.fullName}>
                                                     {statusData.details.fullName.split(' ')[0]}
                                                 </span>
-                                                <span className="text-gray-500 shrink-0 text-xs">({statusData.details.roleLabel})</span>
+                                                <span className="text-slate-500 shrink-0 text-[10px] font-bold">({statusData.details.roleLabel})</span>
                                             </div>
-                                            <div className="space-y-0.5 text-gray-700 text-xs">
-                                                <div className="flex items-start gap-1">
-                                                    <MapPinIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-gray-500" />
-                                                    <span className="leading-tight truncate block w-full font-medium" title={statusData.details.location}>{statusData.details.location}</span>
+                                            <div className="space-y-1 text-slate-600 text-xs">
+                                                <div className="flex items-start gap-1.5">
+                                                    <MapPinIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-slate-400" />
+                                                    <span className="leading-tight truncate block w-full font-semibold" title={statusData.details.location}>{statusData.details.location}</span>
                                                 </div>
-                                                <div className="flex items-start gap-1">
-                                                    <ClockIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-gray-500" />
+                                                <div className="flex items-start gap-1.5">
+                                                    <ClockIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-slate-400" />
                                                     <span className="leading-tight truncate block w-full font-medium">
                                                         {statusData.type === 'reserved' ? 'Saída às ' : 'Desde: '}
-                                                        {statusData.details.departureTime}
+                                                        <span className="font-bold text-slate-800">{statusData.details.departureTime}</span>
                                                     </span>
                                                 </div>
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="flex items-center justify-between gap-2 py-1">
-                                            <div className="flex items-center gap-1 text-gray-500 text-sm">
-                                                <SteeringWheelIcon className="h-5 w-5 text-green-600" />
-                                                <span className="font-bold text-green-700 text-xs md:text-sm">Disponível</span>
+                                        <div className="flex items-center justify-between gap-2 pt-0.5">
+                                            <div className="flex items-center gap-1.5 text-emerald-700 text-xs">
+                                                <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                                <span className="font-black">Disponível no Pátio</span>
                                             </div>
                                             {onRequestReservation && (
                                                 <button 
                                                     onClick={() => handleReserveClick(vehicle)}
-                                                    className="bg-white text-green-700 border border-green-600 hover:bg-green-50 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors"
+                                                    className="bg-[#114D38] text-white hover:bg-[#0e3d2c] px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
                                                 >
                                                     <CalendarIcon className="h-3 w-3" />
                                                     Reservar
@@ -538,46 +646,62 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                     )}
                                 </div>
 
-                                <div className={`w-24 flex flex-col items-center justify-center border-l border-gray-200 shrink-0 ${statusData.badgeColor}`}>
-                                    <span className="block text-sm font-extrabold uppercase tracking-wide text-center w-full drop-shadow-sm px-1">
+                                <div className={`w-24 flex flex-col items-center justify-center border-l border-slate-200/80 shrink-0 ${statusData.badgeColor}`}>
+                                    <span className="block text-xs font-black uppercase tracking-wider text-center w-full px-1">
                                         {statusData.statusLabel}
                                     </span>
                                     {statusData.subLabel && (
-                                        <span className="text-[10px] font-medium opacity-90 mt-1">{statusData.subLabel}</span>
+                                        <span className="text-[10px] font-bold opacity-90 mt-1">{statusData.subLabel}</span>
                                     )}
                                 </div>
                             </div>
 
                             {trackerInfo && (
-                                <div className={`border-t border-gray-200 p-2 text-xs text-gray-700 flex flex-col gap-1 ${isRecentSignal ? 'bg-green-50' : 'bg-gray-50'}`}>
+                                <div className={`border-t border-slate-200/80 p-3 text-xs text-slate-700 flex flex-col gap-1.5 ${isRecentSignal ? 'bg-emerald-50/40' : 'bg-slate-50/70'}`}>
                                     <div className="flex items-center justify-between">
-                                         <div className="flex items-center gap-1 text-green-700 font-bold uppercase tracking-wide text-[10px]">
-                                            <MapPinIcon className="h-3 w-3" />
-                                            Rastreador (GPS)
+                                         <div className="flex items-center gap-1.5 text-[#114D38] font-black uppercase tracking-wider text-[10px]">
+                                            <MapPinIcon className="h-3.5 w-3.5" />
+                                            <span>Rastreador (GPS)</span>
                                         </div>
-                                        {distanceInfo && (
-                                            <span className={`font-bold ${distanceInfo.color}`}>
-                                                {distanceInfo.text}
-                                            </span>
-                                        )}
+                                        <div className="flex items-center gap-2">
+                                            {distanceInfo && (
+                                                <span className={`font-black text-xs ${distanceInfo.color}`}>
+                                                    {distanceInfo.text}
+                                                </span>
+                                            )}
+                                            {isAdmin && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleOpenInTracking(vehicle.plate);
+                                                    }}
+                                                    title={`Abrir localização de ${vehicle.plate} direto no Menu Rastreamento`}
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#114D38] hover:bg-[#0e3d2c] text-white font-bold text-[10px] shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer ml-1"
+                                                >
+                                                    <Navigation className="h-2.5 w-2.5" />
+                                                    <span>Ver no Mapa</span>
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                    
                                     <div className="flex justify-between items-start gap-2">
-                                        <div className="line-clamp-1 font-medium" title={trackerInfo.address}>
+                                        <div className="line-clamp-1 font-semibold text-slate-800 text-xs" title={trackerInfo.address}>
                                             {trackerInfo.address || "Endereço não disponível"}
                                         </div>
                                         {Number(trackerInfo.speed) > 0 && (
-                                            <span className="bg-green-100 text-green-800 px-1.5 rounded font-bold shrink-0">
+                                            <span className="bg-emerald-100/80 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-black text-xs shrink-0">
                                                 {Math.round(Number(trackerInfo.speed))} km/h
                                             </span>
                                         )}
                                     </div>
-                                    <div className="text-gray-500 text-[10px] flex items-center gap-1 justify-between w-full">
-                                        <div className="flex items-center gap-1">
-                                            <ClockIcon className="h-3 w-3" />
+                                    <div className="text-slate-500 text-[10px] flex items-center gap-1 justify-between w-full pt-0.5">
+                                        <div className="flex items-center gap-1 font-medium">
+                                            <ClockIcon className="h-3 w-3 text-slate-400" />
                                             {trackerInfo.gpsTime ? new Date(trackerInfo.gpsTime).toLocaleString('pt-BR') : 'Sem sinal'}
                                         </div>
-                                        <span className={`font-bold ${isOffline ? 'text-gray-400' : 'text-green-600'}`}>
+                                        <span className={`font-black ${isOffline ? 'text-slate-400' : 'text-emerald-700'}`}>
                                             {displayStatusText}
                                         </span>
                                     </div>

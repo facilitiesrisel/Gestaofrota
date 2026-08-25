@@ -22,7 +22,7 @@ interface AdminDashboardProps {
 
 // Default gallery updated with modern BI visualizations (Treemaps, Composed, Areas, Radars and Donuts)
 const DEFAULT_GALLERY: ChartConfig[] = [
-    // --- Reservations Charts (6 charts = 3 rows of 2) ---
+    // --- Reservations Charts (9 charts = 4+ rows of 2) ---
     {
         id: 100,
         title: 'Total de Reservas por Status',
@@ -48,6 +48,33 @@ const DEFAULT_GALLERY: ChartConfig[] = [
         dimension: 'department',
         metric: 'count',
         chartType: 'pie',
+        filters: {}
+    },
+    {
+        id: 108,
+        title: 'Antecedência de Agendamento (Lead Time)',
+        dataSource: 'reservations',
+        dimension: 'leadTime',
+        metric: 'count',
+        chartType: 'bar',
+        filters: {}
+    },
+    {
+        id: 109,
+        title: 'Distribuição por Finalidade da Viagem',
+        dataSource: 'reservations',
+        dimension: 'purpose',
+        metric: 'count',
+        chartType: 'composed',
+        filters: {}
+    },
+    {
+        id: 110,
+        title: 'Duração Média das Viagens por Setor (Dias)',
+        dataSource: 'reservations',
+        dimension: 'department',
+        metric: 'avg_duration_days',
+        chartType: 'bar',
         filters: {}
     },
     {
@@ -158,12 +185,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   }, [currentView, onLogout, setSearchParams]);
 
+  // Merge loaded charts with default gallery to ensure all strategic BI charts are available
+  const mergeWithDefaultGallery = (loadedCharts: ChartConfig[]): ChartConfig[] => {
+    if (!loadedCharts || loadedCharts.length === 0) return DEFAULT_GALLERY;
+    const loadedIds = new Set(loadedCharts.map(c => c.id));
+    const missing = DEFAULT_GALLERY.filter(dc => !loadedIds.has(dc.id));
+    if (missing.length > 0) {
+      return [...loadedCharts, ...missing];
+    }
+    return loadedCharts;
+  };
+
   // Load dashboard settings
   useEffect(() => {
     const unsubscribe = onDashboardSettingsChange(
       (settings) => {
         if (settings && settings.dashboardCharts && settings.dashboardCharts.length > 0) {
-          setCustomCharts(settings.dashboardCharts);
+          const merged = mergeWithDefaultGallery(settings.dashboardCharts);
+          setCustomCharts(merged);
         } else {
           // Initialize with default gallery if no settings found
           setCustomCharts(DEFAULT_GALLERY);
@@ -185,7 +224,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     setCustomCharts(newCharts);
     updateDashboardSettings({ dashboardCharts: newCharts }).catch(err => {
         console.error("Failed to save dashboard charts:", err);
-        // Optionally show a toast error here
+    });
+  };
+
+  const handleResetToDefaults = () => {
+    setCustomCharts(DEFAULT_GALLERY);
+    updateDashboardSettings({ dashboardCharts: DEFAULT_GALLERY }).catch(err => {
+        console.error("Failed to reset dashboard charts:", err);
     });
   };
 
@@ -209,7 +254,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const renderView = () => {
     switch (currentView) {
       case 'dashboard':
-        return <DashboardView customCharts={customCharts} onChartsChange={handleChartsChange} canEditDashboard={true} />;
+        return (
+          <DashboardView 
+            customCharts={customCharts} 
+            onChartsChange={handleChartsChange} 
+            onResetToDefaults={handleResetToDefaults}
+            canEditDashboard={true} 
+          />
+        );
       case 'monitoring':
         return <MapView />;
       case 'reservations':
@@ -225,21 +277,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       case 'settings':
         return <SettingsView />;
       default:
-        return <DashboardView customCharts={customCharts} onChartsChange={handleChartsChange} canEditDashboard={true} />;
+        return (
+          <DashboardView 
+            customCharts={customCharts} 
+            onChartsChange={handleChartsChange} 
+            onResetToDefaults={handleResetToDefaults}
+            canEditDashboard={true} 
+          />
+        );
     }
   };
 
   return (
-    <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-50">
+    <div className="w-full flex-1 min-h-0 flex flex-col overflow-y-auto custom-scrollbar bg-slate-50">
       <HelpGuideModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} type="admin" />
       
-      <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden transition-all duration-300">
-        <main className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
-          <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
-            {renderView()}
-          </div>
-        </main>
-      </div>
+      <main className="w-full min-h-full flex flex-col">
+        {renderView()}
+      </main>
     </div>
   );
 };

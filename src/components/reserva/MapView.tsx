@@ -1,5 +1,6 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap, LayersControl } from 'react-leaflet';
 import L from 'leaflet';
 import { useReservations } from '../../context/ReservationContext';
@@ -119,6 +120,8 @@ const MetricBox: React.FC<{ label: string; value: string; color?: string }> = ({
 
 const MapView: React.FC = () => {
     const { vehicles, reservations, dailyTrips, getVehicleById, syncVehiclesFromGeoFrotas } = useReservations();
+    const [searchParams] = useSearchParams();
+    const plateQueryParam = searchParams.get('plate') || '';
     
     // Todos os veículos ativos cadastrados na Frota de Veículos
     const vehiclesWithHistory = useMemo(() => {
@@ -129,8 +132,16 @@ const MapView: React.FC = () => {
     const [displayMode, setDisplayMode] = useState<'map' | 'grid'>('map');
     const [positions, setPositions] = useState<GeoFrotasPosition[]>([]);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-    const [plateFilter, setPlateFilter] = useState('');
+    const [plateFilter, setPlateFilter] = useState(plateQueryParam);
     const [apiError, setApiError] = useState<string | null>(null);
+
+    // Efeito para sincronizar quando a URL mudar para uma placa específica
+    useEffect(() => {
+        if (plateQueryParam) {
+            setPlateFilter(plateQueryParam);
+            setViewMode('tracking');
+        }
+    }, [plateQueryParam]);
     const [mapCenter, setMapCenter] = useState<[number, number] | null>(OFFICE_COORDS);
     const [mapZoom, setMapZoom] = useState(15);
     const [isRefreshing, setIsRefreshing] = useState(false);

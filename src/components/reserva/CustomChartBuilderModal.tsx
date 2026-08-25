@@ -8,7 +8,7 @@ export interface ChartConfig {
     id: number;
     title: string;
     dataSource: 'reservations' | 'dailyUse' | 'vehicles';
-    dimension: 'vehicle' | 'department' | 'status' | 'month' | 'year' | 'day' | 'weekday' | 'destinationCity' | 'driverName' | 'requesterName' | 'purpose' | 'role' | 'serviceStatus' | 'washStatus' | 'model' | 'base' | 'timeRange';
+    dimension: 'vehicle' | 'department' | 'status' | 'month' | 'year' | 'day' | 'weekday' | 'destinationCity' | 'driverName' | 'requesterName' | 'purpose' | 'role' | 'serviceStatus' | 'washStatus' | 'model' | 'base' | 'timeRange' | 'leadTime' | 'durationRange';
     metric: 'count' | 'sum_km' | 'avg_km' | 'sum_duration_days' | 'avg_duration_days' | 'avg_km_per_trip';
     chartType: 'bar' | 'pie' | 'line' | 'area' | 'radar' | 'scatter' | 'funnel' | 'radialBar' | 'treemap' | 'composed';
     filters: {
@@ -103,7 +103,10 @@ const CustomChartBuilderModal: React.FC<CustomChartBuilderModalProps> = ({ isOpe
       { value: 'month', label: 'Mês (Evolução Mensal)' },
       { value: 'year', label: 'Ano' },
       { value: 'destinationCity', label: 'Cidade de Destino' },
-      { value: 'purpose', label: 'Finalidade' },
+      { value: 'purpose', label: 'Finalidade / Motivo' },
+      { value: 'leadTime', label: 'Antecedência (Lead Time)' },
+      { value: 'durationRange', label: 'Faixa de Duração (Dias)' },
+      { value: 'timeRange', label: 'Faixa de Horário de Saída' },
     ],
     dailyUse: [
       { value: 'vehicle', label: 'Veículo (Placa)' },

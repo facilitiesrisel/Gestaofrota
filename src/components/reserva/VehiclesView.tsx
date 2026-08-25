@@ -18,10 +18,12 @@ import {
     CheckIcon,
     XIcon,
     ClockIcon,
-    ClipboardListIcon
+    ClipboardListIcon,
+    PlusIcon
 } from './icons';
 import { fetchAbastecimentosSupabase } from '../../services/supabaseService';
 import { toTitleCase } from '../../lib/utils';
+import { VEICULOS_REAIS } from '../../data/veiculos_reais';
 
 // Componente de Placa Mercosul Estilizada e de Alto Contraste
 const MercosulPlateBadge: React.FC<{ plate: string; isInactive?: boolean }> = ({ plate, isInactive }) => {
@@ -295,15 +297,31 @@ const VehicleForm: React.FC<{ vehicle: Vehicle | null, onSave: (data: any) => vo
 };
 
 const VehiclesView: React.FC = () => {
-  const { vehicles, reservations, dailyTrips, addVehicle, updateVehicle, deleteVehicle } = useReservations();
+  const { vehicles: contextVehicles, reservations, dailyTrips, addVehicle, updateVehicle, deleteVehicle } = useReservations();
   const { user } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+
+  // Garante que todos os 75 veículos estejam sempre disponíveis e visíveis
+  const vehicles = useMemo(() => {
+    if (contextVehicles && contextVehicles.length > 0) return contextVehicles;
+    return VEICULOS_REAIS.map(v => ({
+      id: v.id || `v-${v.placa.toLowerCase()}`,
+      model: v.modelo,
+      plate: v.placa,
+      year: 2024,
+      initialKm: 0,
+      lastKm: v.odometro || 0,
+      isActive: v.status !== "Inativo",
+      type: (v.funcao && v.funcao.toLowerCase().includes('gest') ? 'Gestão' : 'Operações') as 'Operações' | 'Gestão',
+      isManual: false
+    }));
+  }, [contextVehicles]);
   
-  // Filtros de busca e status
+  // Filtros de busca e status - Sempre padrão 'active'
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('active');
   const [typeFilter, setTypeFilter] = useState<'all' | 'Operações' | 'Gestão'>('all');
   const [maintenanceFilter, setMaintenanceFilter] = useState<'all' | 'revision_needed' | 'wash_needed'>('all');
 
@@ -659,167 +677,32 @@ const VehiclesView: React.FC = () => {
   const years = Array.from({length: 5}, (_, i) => (new Date().getFullYear() - i).toString());
 
   return (
-    <div className="w-full h-full overflow-y-auto p-4 md:p-6 flex flex-col space-y-5 custom-scrollbar bg-slate-50/60">
+    <div className="w-full flex-1 flex flex-col p-4 md:p-6 space-y-4 bg-slate-50/60">
       
-      {/* 1. Header Principal com Design Sofisticado */}
-      <div className="bg-white p-5 md:p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-        <div>
-            <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] font-black uppercase tracking-widest text-[#114D38] bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    Gestão de Frota e Ativos
-                </span>
-                <span className="text-[10px] font-bold text-slate-400">
-                    • Módulo Operacional
-                </span>
-            </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2.5">
-                <span>Frota de Veículos</span>
-                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-emerald-100/80 text-emerald-800 border border-emerald-200/80">
-                    {vehicles.length} {vehicles.length === 1 ? 'veículo' : 'veículos'}
-                </span>
-            </h1>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Acompanhamento de status operacional, cronograma de revisões, lavagens e integração com abastecimento.
-            </p>
+      {/* 1. Header Compacto e Discreto */}
+      <div className="bg-white px-5 py-3.5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-[#114D38]">
+            <CarIcon className="w-5 h-5" />
+          </div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-black text-slate-900 tracking-tight">Frota de Veículos</h1>
+            <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-emerald-100/80 text-emerald-800 border border-emerald-200/80">
+              {vehicles.length} {vehicles.length === 1 ? 'veículo' : 'veículos'}
+            </span>
+          </div>
         </div>
         
-        <div className="flex items-center gap-3 w-full lg:w-auto justify-start lg:justify-end flex-wrap">
-          <button 
-            onClick={() => handleOpenModal()} 
-            className="bg-[#114D38] hover:bg-[#0d3b2c] text-white font-black py-2.5 px-5 rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-2 text-xs md:text-sm shrink-0 cursor-pointer group"
-          >
-            <div className="w-5 h-5 rounded-lg bg-emerald-600/60 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <CarIcon className="h-3.5 w-3.5 text-white"/>
-            </div>
-            <span>Cadastrar Novo Veículo</span>
-          </button>
-        </div>
+        <button 
+          onClick={() => handleOpenModal()} 
+          className="bg-slate-900 hover:bg-[#114D38] text-white font-bold py-2 px-3.5 rounded-xl shadow-xs hover:shadow-sm transition-all duration-200 flex items-center gap-2 text-xs shrink-0 cursor-pointer"
+        >
+          <PlusIcon className="h-3.5 w-3.5 text-white"/>
+          <span>Cadastrar Veículo</span>
+        </button>
       </div>
 
-      {/* 2. Cards Analíticos de Frota (KPIs em Estilo Looker BI) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          
-          {/* Card 1: Total da Frota & Disponibilidade */}
-          <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition-all">
-              <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Frota Ativa</span>
-                  <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-[#114D38]">
-                      <CarIcon className="w-4 h-4" />
-                  </div>
-              </div>
-              <div className="mt-2">
-                  <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-black text-slate-900 font-sans tracking-tight">{activeCount}</span>
-                      <span className="text-xs font-bold text-slate-400">de {vehicles.length} veículos</span>
-                  </div>
-                  <div className="mt-2.5 flex items-center gap-2">
-                      <div className="flex-1 bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                          <div 
-                            className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
-                            style={{ width: `${vehicles.length > 0 ? (activeCount / vehicles.length) * 100 : 0}%` }}
-                          ></div>
-                      </div>
-                      <span className="text-[10px] font-black text-emerald-700">
-                          {vehicles.length > 0 ? Math.round((activeCount / vehicles.length) * 100) : 0}%
-                      </span>
-                  </div>
-              </div>
-          </div>
-
-          {/* Card 2: Segmentação por Tipo (Operações vs Gestão) */}
-          <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:border-blue-300 transition-all">
-              <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Tipo de Alocação</span>
-                  <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-700">
-                      <ClipboardListIcon className="w-4 h-4" />
-                  </div>
-              </div>
-              <div className="mt-2">
-                  <div className="flex items-center justify-between">
-                      <div>
-                          <span className="text-lg font-black text-slate-800">{opsCount}</span>
-                          <span className="block text-[10px] font-bold text-slate-400 uppercase">Operações</span>
-                      </div>
-                      <div className="w-px h-7 bg-slate-200"></div>
-                      <div>
-                          <span className="text-lg font-black text-slate-800">{gestaoCount}</span>
-                          <span className="block text-[10px] font-bold text-slate-400 uppercase">Gestão</span>
-                      </div>
-                      <div className="w-px h-7 bg-slate-200"></div>
-                      <div>
-                          <span className="text-lg font-black text-rose-600">{inactiveCount}</span>
-                          <span className="block text-[10px] font-bold text-slate-400 uppercase">Inativos</span>
-                      </div>
-                  </div>
-              </div>
-          </div>
-
-          {/* Card 3: Monitor de Revisões Preventivas */}
-          <div className={`p-4.5 rounded-2xl border shadow-xs flex flex-col justify-between transition-all ${
-              serviceAttentionCount > 0 
-                ? 'bg-amber-50/40 border-amber-200 hover:border-amber-400' 
-                : 'bg-white border-slate-200 hover:border-emerald-300'
-          }`}>
-              <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Revisões Preventivas</span>
-                  <div className={`w-8 h-8 rounded-xl border flex items-center justify-center ${
-                      serviceAttentionCount > 0 
-                        ? 'bg-amber-100 text-amber-800 border-amber-200' 
-                        : 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                  }`}>
-                      <ClockIcon className="w-4 h-4" />
-                  </div>
-              </div>
-              <div className="mt-2">
-                  <div className="flex items-baseline gap-2">
-                      <span className={`text-2xl font-black font-sans tracking-tight ${serviceAttentionCount > 0 ? 'text-amber-700' : 'text-slate-900'}`}>
-                          {serviceAttentionCount}
-                      </span>
-                      <span className="text-xs font-bold text-slate-500">
-                          {serviceAttentionCount === 1 ? 'veículo requer atenção' : 'veículos requerem atenção'}
-                      </span>
-                  </div>
-                  <span className="text-[10px] font-semibold text-slate-400 block mt-1">
-                      Intervalo de troca/revisão: a cada 10.000 km
-                  </span>
-              </div>
-          </div>
-
-          {/* Card 4: Monitor de Lavagem & Higienização */}
-          <div className={`p-4.5 rounded-2xl border shadow-xs flex flex-col justify-between transition-all ${
-              washAttentionCount > 0 
-                ? 'bg-rose-50/40 border-rose-200 hover:border-rose-400' 
-                : 'bg-white border-slate-200 hover:border-emerald-300'
-          }`}>
-              <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Higienização / Lavagem</span>
-                  <div className={`w-8 h-8 rounded-xl border flex items-center justify-center ${
-                      washAttentionCount > 0 
-                        ? 'bg-rose-100 text-rose-800 border-rose-200' 
-                        : 'bg-teal-50 text-teal-700 border-teal-100'
-                  }`}>
-                      <span className="text-sm">✨</span>
-                  </div>
-              </div>
-              <div className="mt-2">
-                  <div className="flex items-baseline gap-2">
-                      <span className={`text-2xl font-black font-sans tracking-tight ${washAttentionCount > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
-                          {washAttentionCount}
-                      </span>
-                      <span className="text-xs font-bold text-slate-500">
-                          {washAttentionCount === 1 ? 'lavagem atrasada (>30d)' : 'lavagens atrasadas (>30d)'}
-                      </span>
-                  </div>
-                  <span className="text-[10px] font-semibold text-slate-400 block mt-1">
-                      Frota limpa e preservada para uso corporativo
-                  </span>
-              </div>
-          </div>
-
-      </div>
-
-      {/* 3. Barra de Filtros, Pesquisa Rápida e Abastecimento */}
+      {/* 2. Barra de Filtros, Pesquisa Rápida e Abastecimento */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col gap-3.5">
           <div className="flex flex-col md:flex-row items-center justify-between gap-3">
               

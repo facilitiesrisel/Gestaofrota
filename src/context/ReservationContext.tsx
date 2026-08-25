@@ -5,6 +5,44 @@ import { useReservationAuth } from './ReservationAuthContext';
 import { ADMIN_EMAIL_RECIPIENTS } from '../constants_reserva';
 import { sendEmail, generateEmailHtml } from '../services/firebaseService';
 import { fetchFleetPositions } from '../services/geoFrotasService';
+import { VEICULOS_REAIS } from '../data/veiculos_reais';
+
+// Converte os 75 veículos reais cadastrados no sistema para o formato do módulo de reservas
+const getInitialFleetVehicles = (): Vehicle[] => {
+  try {
+    const stored = localStorage.getItem('risel_frota_veiculos_v2');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((v: any) => ({
+          id: v.id || `v-${(v.placa || v.plate || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+          model: v.modelo || v.model || 'Veículo',
+          plate: (v.placa || v.plate || '').toUpperCase().trim(),
+          year: Number(v.ano || v.year) || 2024,
+          initialKm: Number(v.odometro || v.initialKm) || 0,
+          lastKm: Number(v.odometro || v.lastKm) || 0,
+          isActive: v.status !== "Inativo" && v.isActive !== false,
+          type: (v.funcao && v.funcao.toLowerCase().includes('gest')) || v.type === 'Gestão' ? 'Gestão' : 'Operações',
+          isManual: Boolean(v.isManual)
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn("Erro ao carregar veículos de localStorage no ReservationContext:", e);
+  }
+
+  return VEICULOS_REAIS.map(v => ({
+    id: v.id || `v-${v.placa.toLowerCase()}`,
+    model: v.modelo,
+    plate: v.placa,
+    year: 2024,
+    initialKm: 0,
+    lastKm: v.odometro || 0,
+    isActive: v.status !== "Inativo",
+    type: (v.funcao && v.funcao.toLowerCase().includes('gest') ? 'Gestão' : 'Operações') as 'Operações' | 'Gestão',
+    isManual: false
+  }));
+};
 
 interface ReservationContextType {
   vehicles: Vehicle[];
@@ -31,7 +69,7 @@ interface ReservationContextType {
 const ReservationContext = createContext<ReservationContextType | undefined>(undefined);
 
 export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>(getInitialFleetVehicles);
   const [reservations, setReservas] = useState<Reservation[]>([]);
   const [dailyTrips, setDailyTrips] = useState<DailyTrip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,12 +96,17 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
     // Subscribe to real-time updates
     const unsubVehicles = firebaseApi.subscribeToVehicles(
         (data) => {
-            setVehicles(data);
+            if (data && data.length > 0) {
+              setVehicles(data);
+            } else {
+              setVehicles(getInitialFleetVehicles());
+            }
             vehiclesLoaded = true;
             checkLoadingComplete();
         },
         (error) => {
             console.error("Vehicles sync error:", error);
+            setVehicles(getInitialFleetVehicles());
             vehiclesLoaded = true;
             checkLoadingComplete();
         }
