@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: risel-erp
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: SMTP_EMAIL
+        value: deny.goncalves@risel.com.br
+      - key: SMTP_HOST
+        value: smtp.office365.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: VITE_SUPABASE_URL
+        value: https://ihowbxlqfcjzzzleasqq.supabase.co
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
