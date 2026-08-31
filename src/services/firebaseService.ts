@@ -229,7 +229,16 @@ export const generateEmailHtml = (
     `;
 };
 
-export const sendEmail = async (to: string | string[], subject: string, html: string): Promise<void> => {
+export const sendEmail = async (
+  to: string | string[], 
+  subject: string, 
+  html: string,
+  options?: {
+    fromName?: string;
+    cc?: string | string[];
+    attachments?: Array<{ filename: string; content?: string; path?: string; contentType?: string }>;
+  }
+): Promise<void> => {
   try {
     if (!to || (Array.isArray(to) && to.length === 0)) {
         console.warn("Tentativa de enviar e-mail sem destinatário válido.");
@@ -245,6 +254,9 @@ export const sendEmail = async (to: string | string[], subject: string, html: st
         to,
         subject,
         html,
+        fromName: options?.fromName || "Gestão de Reservas Risel",
+        cc: options?.cc,
+        attachments: options?.attachments
       }),
     });
 
@@ -257,6 +269,256 @@ export const sendEmail = async (to: string | string[], subject: string, html: st
   } catch (error: any) {
     console.error("Erro ao enviar e-mail via API backend:", error);
   }
+};
+
+export interface RacEmailOptions {
+  actionType?: 'created' | 'approved' | 'rejected' | 'updated';
+  cnhAttachedNow?: boolean;
+  cnhAlreadyOnRecord?: boolean;
+  adminNotes?: string;
+  rejectReason?: string;
+}
+
+/**
+ * Gera HTML formatado para notificação de Solicitação de Locação RAC
+ */
+export const generateRacEmailHtml = (
+  rental: RacRental, 
+  cnhAttachedOrOptions?: boolean | RacEmailOptions, 
+  cnhAlreadyOnRecordParam?: boolean
+): string => {
+  let cnhAttachedNow = false;
+  let cnhAlreadyOnRecord = false;
+  let actionType: 'created' | 'approved' | 'rejected' | 'updated' = 'created';
+  let adminNotes = rental.adminNotes || '';
+  let rejectReason = rental.rejectReason || '';
+
+  if (typeof cnhAttachedOrOptions === 'boolean') {
+    cnhAttachedNow = cnhAttachedOrOptions;
+    cnhAlreadyOnRecord = !!cnhAlreadyOnRecordParam;
+    if (rental.status === 'Rejeitada' || rental.status === 'Recusada') {
+      actionType = 'rejected';
+    } else if (rental.status === 'Aguardando retirada' || rental.status === 'Aprovada' || rental.status === 'Em Uso') {
+      actionType = 'approved';
+    } else {
+      actionType = 'created';
+    }
+  } else if (cnhAttachedOrOptions && typeof cnhAttachedOrOptions === 'object') {
+    cnhAttachedNow = !!cnhAttachedOrOptions.cnhAttachedNow;
+    cnhAlreadyOnRecord = !!cnhAlreadyOnRecordParam || !!cnhAttachedOrOptions.cnhAlreadyOnRecord;
+    actionType = cnhAttachedOrOptions.actionType || 'created';
+    if (cnhAttachedOrOptions.adminNotes) adminNotes = cnhAttachedOrOptions.adminNotes;
+    if (cnhAttachedOrOptions.rejectReason) rejectReason = cnhAttachedOrOptions.rejectReason;
+  }
+
+  const formatDateTime = (d?: Date | string) => {
+    if (!d) return 'Não informado';
+    const dateObj = new Date(d);
+    return dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' às ' +
+           dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const statusCnhHtml = cnhAttachedNow
+    ? `<span style="display:inline-block; padding:4px 8px; border-radius:6px; background-color:#ecfdf5; color:#065f46; font-weight:bold; font-size:12px; border:1px solid #a7f3d0;">📎 CNH ANEXADA NESTE E-MAIL</span>`
+    : cnhAlreadyOnRecord
+    ? `<span style="display:inline-block; padding:4px 8px; border-radius:6px; background-color:#eff6ff; color:#1e40af; font-weight:bold; font-size:12px; border:1px solid #bfdbfe;">✅ CNH JÁ CADASTRADA NO SISTEMA</span>`
+    : `<span style="display:inline-block; padding:4px 8px; border-radius:6px; background-color:#fffbeb; color:#92400e; font-weight:bold; font-size:12px; border:1px solid #fde68a;">⚠️ PENDENTE DE CNH</span>`;
+
+  // Configurações visuais de acordo com o tipo de ação
+  let headerTitle = "Nova Solicitação de Locação RAC";
+  let headerSubtitle = "Solicitação de veículo terceirizado cadastrada no sistema";
+  let headerBg = "linear-gradient(135deg, #114D38 0%, #0c3829 100%)";
+  let tagColor = "#F47920";
+  let tagText = `Protocolo: ${rental.protocolNumber || rental.reservationNumber || 'RAC-PENDENTE'}`;
+  let statusBadgeHtml = `<span style="display:inline-block; padding:5px 12px; border-radius:20px; background-color:#fef3c7; color:#92400e; font-weight:800; font-size:13px; border:1px solid #fde68a;">⏳ SOLICITADA (EM ANÁLISE)</span>`;
+
+  if (actionType === 'approved') {
+    headerTitle = "Solicitação de Locação RAC APROVADA";
+    headerSubtitle = "Sua solicitação de veículo terceirizado foi aprovada pela Gestão de Frota";
+    headerBg = "linear-gradient(135deg, #00753f 0%, #0c3829 100%)";
+    tagColor = "#10b981";
+    tagText = `Aprovada • ${rental.protocolNumber || rental.reservationNumber || 'RAC-OK'}`;
+    statusBadgeHtml = `<span style="display:inline-block; padding:5px 14px; border-radius:20px; background-color:#ecfdf5; color:#065f46; font-weight:800; font-size:13px; border:1px solid #a7f3d0;">✅ APROVADA / AGUARDANDO RETIRADA</span>`;
+  } else if (actionType === 'rejected') {
+    headerTitle = "Solicitação de Locação RAC RECUSADA";
+    headerSubtitle = "Informamos que sua solicitação de locação de veículo terceirizado não foi autorizada";
+    headerBg = "linear-gradient(135deg, #991b1b 0%, #7f1d1d 100%)";
+    tagColor = "#ef4444";
+    tagText = `Recusada • ${rental.protocolNumber || rental.reservationNumber || 'RAC-RECUSADA'}`;
+    statusBadgeHtml = `<span style="display:inline-block; padding:5px 14px; border-radius:20px; background-color:#fef2f2; color:#991b1b; font-weight:800; font-size:13px; border:1px solid #fecaca;">❌ SOLICITAÇÃO RECUSADA</span>`;
+  } else if (actionType === 'updated') {
+    headerTitle = "Atualização na Solicitação de Locação RAC";
+    headerSubtitle = "Os dados da sua solicitação de locação RAC foram atualizados pela Gestão de Frota";
+    headerBg = "linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)";
+    tagColor = "#3b82f6";
+    tagText = `Atualizada • ${rental.protocolNumber || rental.reservationNumber || 'RAC-INFO'}`;
+    statusBadgeHtml = `<span style="display:inline-block; padding:5px 14px; border-radius:20px; background-color:#eff6ff; color:#1e40af; font-weight:800; font-size:13px; border:1px solid #bfdbfe;">ℹ️ STATUS: ${(rental.status || 'Atualizada').toUpperCase()}</span>`;
+  }
+
+  // Bloco de Observações da Administração (se houver)
+  const notesToDisplay = adminNotes || (actionType === 'rejected' ? rejectReason : '');
+  const adminNotesHtml = notesToDisplay ? `
+    <div style="background-color: ${actionType === 'rejected' ? '#fef2f2' : '#f0fdf4'}; border-left: 5px solid ${actionType === 'rejected' ? '#dc2626' : '#16a34a'}; padding: 16px; border-radius: 8px; margin: 18px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+      <div style="font-size: 13px; font-weight: 800; text-transform: uppercase; color: ${actionType === 'rejected' ? '#991b1b' : '#166534'}; margin-bottom: 6px; letter-spacing: 0.5px;">
+        ${actionType === 'rejected' ? '❌ Motivo da Recusa / Parecer da Administração:' : '📝 Observações & Instruções da Gestão de Frota:'}
+      </div>
+      <div style="font-size: 14px; color: ${actionType === 'rejected' ? '#7f1d1d' : '#14532d'}; line-height: 1.6; font-weight: 600; white-space: pre-wrap;">
+        ${notesToDisplay}
+      </div>
+    </div>
+  ` : '';
+
+  return `
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
+        .card { max-width: 650px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+        .header { background: ${headerBg}; color: #ffffff; padding: 26px 24px; text-align: center; }
+        .header h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.5px; text-transform: uppercase; }
+        .header p { margin: 6px 0 0; font-size: 13px; opacity: 0.92; }
+        .tag-proto { display: inline-block; background: ${tagColor}; color: #ffffff; font-size: 11px; font-weight: 800; padding: 4px 12px; border-radius: 20px; text-transform: uppercase; margin-top: 12px; letter-spacing: 0.5px; }
+        .body { padding: 24px; }
+        .status-container { text-align: center; margin-bottom: 18px; }
+        .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #114D38; letter-spacing: 0.5px; margin: 18px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
+        .grid { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+        .grid td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+        .grid td.label { font-weight: 700; color: #64748b; width: 38%; }
+        .grid td.value { font-weight: 600; color: #0f172a; }
+        .route-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin: 16px 0; text-align: center; }
+        .route-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 6px; }
+        .route-flow { font-size: 15px; font-weight: 800; color: #0f172a; }
+        .footer { background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px; text-align: center; font-size: 11px; color: #94a3b8; }
+        .btn { display: inline-block; background: #00753f; color: #ffffff !important; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 13px; text-decoration: none; margin-top: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="header">
+          <h1>${headerTitle}</h1>
+          <p>${headerSubtitle}</p>
+          <div class="tag-proto">${tagText}</div>
+        </div>
+        <div class="body">
+          <div class="status-container">
+            ${statusBadgeHtml}
+          </div>
+
+          ${adminNotesHtml}
+
+          <div class="route-box">
+            <div class="route-title">Itinerário de Retirada e Devolução</div>
+            <div class="route-flow">
+              📍 <strong>${rental.pickupCity || rental.pickupStore || 'A definir'}</strong> 
+              &nbsp; ➔ &nbsp; 
+              🏁 <strong>${rental.returnCity || rental.returnStore || 'A definir'}</strong>
+            </div>
+          </div>
+
+          <div class="section-title">Dados do Solicitante & Condutor</div>
+          <table class="grid">
+            <tr>
+              <td class="label">Solicitante:</td>
+              <td class="value">${rental.requesterName}</td>
+            </tr>
+            <tr>
+              <td class="label">Setor / Departamento:</td>
+              <td class="value">${rental.requesterSector || 'Não informado'}</td>
+            </tr>
+            <tr>
+              <td class="label">Cargo / Função:</td>
+              <td class="value">${rental.requesterRole || 'Não informado'}</td>
+            </tr>
+            <tr>
+              <td class="label">E-mail:</td>
+              <td class="value">${rental.requesterEmail || 'Não informado'}</td>
+            </tr>
+            <tr>
+              <td class="label">Telefone / Contato:</td>
+              <td class="value">${rental.requesterPhone || 'Não informado'}</td>
+            </tr>
+            <tr>
+              <td class="label">Condutor Designado:</td>
+              <td class="value"><strong>${rental.driverName}</strong></td>
+            </tr>
+            <tr>
+              <td class="label">Status CNH:</td>
+              <td class="value">${statusCnhHtml}</td>
+            </tr>
+          </table>
+
+          <div class="section-title">Datas e Detalhes da Locação</div>
+          <table class="grid">
+            ${rental.rentalCompany ? `
+            <tr>
+              <td class="label">Locadora / Prestador:</td>
+              <td class="value"><strong>${rental.rentalCompany}</strong></td>
+            </tr>` : ''}
+            ${rental.reservationNumber ? `
+            <tr>
+              <td class="label">Nº Reserva Locadora / Voucher:</td>
+              <td class="value"><strong style="color: #00753f;">${rental.reservationNumber}</strong></td>
+            </tr>` : ''}
+            ${rental.plate ? `
+            <tr>
+              <td class="label">Placa do Veículo:</td>
+              <td class="value"><strong style="font-family:monospace; font-size:14px;">${rental.plate}</strong></td>
+            </tr>` : ''}
+            <tr>
+              <td class="label">Data/Hora de Retirada:</td>
+              <td class="value"><strong>${formatDateTime(rental.pickupDate)}</strong></td>
+            </tr>
+            <tr>
+              <td class="label">Cidade de Retirada:</td>
+              <td class="value"><strong>${rental.pickupCity || rental.pickupStore || 'Não informada'}</strong></td>
+            </tr>
+            ${rental.pickupStore ? `
+            <tr>
+              <td class="label">Loja de Retirada:</td>
+              <td class="value">${rental.pickupStore}</td>
+            </tr>` : ''}
+            <tr>
+              <td class="label">Data/Hora de Devolução:</td>
+              <td class="value"><strong>${formatDateTime(rental.returnDate)}</strong></td>
+            </tr>
+            <tr>
+              <td class="label">Cidade de Devolução:</td>
+              <td class="value"><strong>${rental.returnCity || rental.returnStore || 'Não informada'}</strong></td>
+            </tr>
+            ${rental.returnStore ? `
+            <tr>
+              <td class="label">Loja de Devolução:</td>
+              <td class="value">${rental.returnStore}</td>
+            </tr>` : ''}
+            <tr>
+              <td class="label">Categoria Pretendida:</td>
+              <td class="value">${rental.category || 'Hatch / Compacto'}</td>
+            </tr>
+            <tr>
+              <td class="label">Finalidade / Justificativa:</td>
+              <td class="value">${rental.purpose || 'Uso Operacional Corporativo'}</td>
+            </tr>
+            ${rental.observations ? `
+            <tr>
+              <td class="label">Observações do Solicitante:</td>
+              <td class="value">${rental.observations}</td>
+            </tr>` : ''}
+          </table>
+
+          <div style="text-align: center; margin-top: 22px;">
+            <a href="https://ais-dev-snhwxerluvpzdf2xpbaalx-171172692145.us-east1.run.app/frota?tab=reservas&sub=racRentals" class="btn" style="color:#ffffff;">Acessar Módulo RAC no Sistema</a>
+          </div>
+        </div>
+        <div class="footer">
+          <p style="margin: 0 0 4px;">Risel Combustíveis &bull; Gestão de Frota &bull; Locações RAC</p>
+          <p style="margin: 0;">E-mail automático gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
 };
 
 
@@ -406,9 +668,13 @@ const docToRacRental = (doc: any): RacRental | null => {
         plate: plate,
         requesterName: requesterName,
         requesterSector: data.requesterSector || data.setor || data.departamento || 'Operações',
+        requesterRole: data.requesterRole || data.cargo || '',
+        requesterEmail: data.requesterEmail || data.email || '',
+        requesterPhone: data.requesterPhone || data.telefone || data.phone || '',
         value: data.value !== undefined ? Number(data.value) : (data.valor !== undefined ? Number(data.valor) : 0),
         reservationNumber: data.reservationNumber || data.numeroReserva || data.reserva || data.contrato || '',
         driverName: data.driverName || data.condutor || data.nomeCondutor || requesterName,
+        driverRole: data.driverRole || data.cargoCondutor || '',
         status: data.status || 'Em Uso',
         base: data.base || data.filial || 'Matriz',
         createdByUser: data.createdByUser || data.usuario || '',
@@ -416,7 +682,17 @@ const docToRacRental = (doc: any): RacRental | null => {
         pickupDate: convertFirestoreDate(data.pickupDate || data.dataRetirada || data.dataInicio || data.dataSaida || new Date()),
         pickupStore: data.pickupStore || data.lojaRetirada || '',
         returnDate: convertFirestoreDate(data.returnDate || data.dataDevolucao || data.dataFim || data.dataRetorno || new Date(Date.now() + 7 * 24 * 3600 * 1000)),
-        returnStore: data.returnStore || data.lojaDevolucao || ''
+        returnStore: data.returnStore || data.lojaDevolucao || '',
+        pickupCity: data.pickupCity || data.cidadeRetirada || '',
+        returnCity: data.returnCity || data.cidadeDevolucao || '',
+        category: data.category || data.categoria || '',
+        purpose: data.purpose || data.motivo || data.finalidade || '',
+        observations: data.observations || data.observacoes || '',
+        hasCnhCopy: !!(data.hasCnhCopy || data.cnhFileName || data.cnhBase64),
+        cnhFileName: data.cnhFileName || '',
+        cnhBase64: data.cnhBase64 || '',
+        cnhUploadDate: data.cnhUploadDate ? convertFirestoreDate(data.cnhUploadDate) : undefined,
+        protocolNumber: data.protocolNumber || data.protocolo || ''
     };
 };
 

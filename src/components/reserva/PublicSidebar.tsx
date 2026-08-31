@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DocumentTextIcon, ClipboardListIcon, LogoutIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, MapPinIcon, BookOpenIcon } from './icons';
+import { DocumentTextIcon, ClipboardListIcon, LogoutIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, MapPinIcon, BookOpenIcon, CarIcon } from './icons';
 import { RiselLogo } from './RiselLogo';
 
 interface PublicSidebarProps {
@@ -13,7 +13,8 @@ interface PublicSidebarProps {
 
 const PublicSidebar: React.FC<PublicSidebarProps> = ({ currentView, onNavigate, isSidebarOpen, setIsSidebarOpen, onOpenHelp }) => {
   const navItems = [
-    { id: 'request', label: 'Solicitar Reserva', icon: DocumentTextIcon, desc: 'Agende um veículo' },
+    { id: 'request', label: 'Solicitar Reserva', icon: DocumentTextIcon, desc: 'Veículo próprio da frota' },
+    { id: 'racRequest', label: 'Solicitar Locação RAC', icon: CarIcon, desc: 'Veículo terceirizado/locadora' },
     { id: 'dailyUse', label: 'Uso Diário', icon: ClipboardListIcon, desc: 'Registre saída/retorno' },
     { id: 'fleetStatus', label: 'Status da Frota', icon: MapPinIcon, desc: 'Consulte disponibilidade' },
   ];
@@ -84,9 +85,9 @@ const PublicSidebar: React.FC<PublicSidebarProps> = ({ currentView, onNavigate, 
           ))}
         </ul>
 
-        {/* Manual Link Public */}
-        {onOpenHelp && (
-            <ul className="space-y-2 mt-4 pt-4 border-t border-emerald-100/50">
+        {/* Manual Link Public & Voltar ao Início */}
+        <ul className="space-y-2 mt-4 pt-4 border-t border-emerald-100/50">
+            {onOpenHelp && (
                 <li onClick={onOpenHelp} title={!isSidebarOpen ? "Manual do Sistema" : ''}>
                     <a className={`${baseItemClass} ${inactiveItemClass}`}>
                         <div className={`p-2 rounded-md text-emerald-400 group-hover:text-primary transition-all`}>
@@ -98,8 +99,19 @@ const PublicSidebar: React.FC<PublicSidebarProps> = ({ currentView, onNavigate, 
                         </div>
                     </a>
                 </li>
-            </ul>
-        )}
+            )}
+            <li>
+                <a href="/" className={`${baseItemClass} ${inactiveItemClass}`} title={!isSidebarOpen ? "Voltar ao Início" : ''}>
+                    <div className="p-2 rounded-md text-emerald-400 group-hover:text-primary transition-all">
+                        <ChevronDoubleLeftIcon className="h-6 w-6" />
+                    </div>
+                    <div className={`ml-3 transition-all duration-300 ${isSidebarOpen ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 absolute'}`}>
+                        <span className="block font-bold text-sm text-emerald-900">Página Inicial</span>
+                        <span className="block text-[10px] text-emerald-600 font-medium">Voltar aos Módulos</span>
+                    </div>
+                </a>
+            </li>
+        </ul>
       </nav>
 
       <div className="p-4 border-t border-emerald-100 bg-emerald-100/30">

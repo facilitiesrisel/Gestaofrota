@@ -5,6 +5,10 @@ import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import Papa from "papaparse";
 import cron from "node-cron";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret } from "./src/services/smtpSecurity";
+import { sanitizeRequestBody, cleanHtmlContent } from "./src/services/securityMiddleware";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const ABASTECIMENTOS_FILE = path.join(DATA_DIR, "imported_abastecimentos.json");
@@ -148,8 +152,56 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Habilita trust proxy para ambientes atrás de proxy reverso (Cloud Run / Nginx)
+  app.set("trust proxy", 1);
+
+  // 1. Defesa de Cabeçalhos HTTP com Helmet (Permite iframe do AI Studio e preview)
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // Desabilitado para compatibilidade com Vite SPA e Google Maps/Leaflet
+      crossOriginEmbedderPolicy: false,
+      frameguard: false // Permite renderização segura dentro do ambiente de preview
+    })
+  );
+
+  // 2. Proteção contra Rate Limiting / Abuso de Requisições
+  const generalApiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minuto
+    max: 120, // máximo de 120 requisições por minuto por IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    message: { error: "Muitas requisições ao servidor. Por favor, aguarde alguns instantes." }
+  });
+
+  const emailRateLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minuto
+    max: 20, // máximo de 20 envios de e-mail por minuto
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    message: { error: "Limite de disparos de e-mail excedido temporariamente. Aguarde 1 minuto." }
+  });
+
+  const aiRateLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minuto
+    max: 30, // máximo de 30 chamadas ao assistente por minuto
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    message: { error: "Limite de requisições à Inteligência Artificial atingido. Aguarde 1 minuto." }
+  });
+
+  app.use("/api/", generalApiLimiter);
+  app.use("/api/send-email", emailRateLimiter);
+  app.use("/api/gemini-assistant", aiRateLimiter);
+
+  // 3. Body parsers com limite estrito de payload
+  app.use(express.json({ limit: "25mb" }));
+  app.use(express.urlencoded({ limit: "25mb", extended: true }));
+
+  // 4. Sanitização global de inputs contra injeção de scripts / XSS
+  app.use(sanitizeRequestBody);
 
   // Armazenamento em memória + arquivo local para abastecimentos e checklists importados
   let persistentImportedAbastecimentos: any[] = loadStoredAbastecimentos();
@@ -558,32 +610,184 @@ async function startServer() {
     }
   });
 
-  // Rota de Envio de E-mail Real via SMTP
-  app.post("/api/send-email", async (req, res) => {
-    const { smtpHost, smtpPort, smtpEmail, smtpPassword, destinatarios, lancamentosPendentes, subject, introText } = req.body;
+  // Diagnóstico e Status Seguro do Servidor SMTP
+  app.get("/api/smtp-status", (req, res) => {
+    try {
+      const status = getSafeSmtpStatus();
+      return res.json(status);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro ao obter status do SMTP" });
+    }
+  });
 
-    if (!smtpEmail || !smtpPassword || !destinatarios || !Array.isArray(destinatarios) || destinatarios.length === 0) {
-      return res.status(400).json({ error: "Parâmetros de e-mail inválidos ou incompletos." });
+  // Rota Universal de Envio de E-mail via SMTP e Notificações (Multas, Rastreamento, Frota, Reservas, Documentos)
+  app.post("/api/send-email", async (req, res) => {
+    const { 
+      smtpHost, 
+      smtpPort, 
+      smtpEmail, 
+      smtpPassword, 
+      destinatarios, 
+      lancamentosPendentes, 
+      introText,
+      to,
+      cc,
+      subject,
+      html,
+      fromName,
+      attachments: rawAttachments,
+      driveUrls
+    } = req.body;
+
+    // Obtém a configuração SMTP consolidada e segura (descriptografando se necessário)
+    const smtpConfig = getRiselSmtpConfig({
+      user: smtpEmail,
+      host: smtpHost,
+      port: smtpPort ? parseInt(smtpPort, 10) : undefined,
+      pass: smtpPassword,
+      defaultSenderName: fromName
+    });
+
+    // Caso 1: Envio Direto de Notificação (Multas, Rastreamento, Frota, Reservas, E-mails Gerais)
+    if (to || subject || html) {
+      const emailTo = to || (Array.isArray(destinatarios) ? destinatarios.join(", ") : "");
+      const emailCc = cc || "";
+      const emailSubject = subject || "Notificação Risel Combustíveis";
+      const emailHtml = html || "<p>Notificação automática do Sistema Risel.</p>";
+
+      // Processar Anexos (Suporta Data URLs, Base64 e Arquivos de Drive)
+      const mailAttachments: Array<{ filename: string; content?: Buffer; path?: string; contentType?: string }> = [];
+
+      // Anexos diretos passados no payload
+      if (Array.isArray(rawAttachments)) {
+        for (let i = 0; i < rawAttachments.length; i++) {
+          const att = rawAttachments[i];
+          if (!att) continue;
+          const fname = att.name || att.filename || `anexo_${i + 1}.pdf`;
+          
+          if (att.dataUrl && typeof att.dataUrl === 'string' && att.dataUrl.includes('base64,')) {
+            const base64Data = att.dataUrl.split('base64,')[1];
+            mailAttachments.push({
+              filename: fname,
+              content: Buffer.from(base64Data, 'base64'),
+              contentType: att.type || 'application/octet-stream'
+            });
+          } else if (att.content && typeof att.content === 'string') {
+            mailAttachments.push({
+              filename: fname,
+              content: Buffer.from(att.content, 'base64'),
+              contentType: att.type || 'application/octet-stream'
+            });
+          } else if (att.url && typeof att.url === 'string') {
+            mailAttachments.push({
+              filename: fname,
+              path: att.url
+            });
+          }
+        }
+      }
+
+      // Anexos vindos de driveUrls ou Data URLs
+      if (Array.isArray(driveUrls)) {
+        for (let i = 0; i < driveUrls.length; i++) {
+          const item = driveUrls[i];
+          if (!item || !item.url) continue;
+          const fname = item.name ? (item.name.endsWith('.pdf') ? item.name : `${item.name}.pdf`) : `Documento_${i + 1}.pdf`;
+
+          if (item.url.startsWith('data:')) {
+            const base64Part = item.url.split('base64,')[1];
+            if (base64Part) {
+              mailAttachments.push({
+                filename: fname,
+                content: Buffer.from(base64Part, 'base64'),
+                contentType: 'application/pdf'
+              });
+            }
+          } else if (item.url.startsWith('http://') || item.url.startsWith('https://')) {
+            mailAttachments.push({
+              filename: fname,
+              path: item.url
+            });
+          }
+        }
+      }
+
+      console.log(`[Risel SMTP Vault] Processando envio para: ${emailTo} (CC: ${emailCc}) | Host: ${smtpConfig.host}:${smtpConfig.port} | Remetente: ${smtpConfig.user}`);
+
+      if (smtpConfig.pass && smtpConfig.pass.length > 0) {
+        try {
+          const transporter = nodemailer.createTransport({
+            host: smtpConfig.host,
+            port: smtpConfig.port,
+            secure: smtpConfig.secure,
+            auth: {
+              user: smtpConfig.user,
+              pass: smtpConfig.pass,
+            },
+            tls: {
+              rejectUnauthorized: false
+            }
+          });
+
+          const senderHeader = fromName ? `"${fromName}" <${smtpConfig.user}>` : `"Risel Combustíveis" <${smtpConfig.user}>`;
+
+          await transporter.sendMail({
+            from: senderHeader,
+            to: emailTo,
+            cc: emailCc || undefined,
+            subject: emailSubject,
+            html: emailHtml,
+            attachments: mailAttachments
+          });
+
+          console.log(`[Risel SMTP] Notificação enviada com sucesso para ${emailTo}!`);
+          return res.json({ 
+            success: true, 
+            delivered: true, 
+            host: smtpConfig.host,
+            message: `Notificação enviada com sucesso para ${emailTo} com ${mailAttachments.length} anexo(s)!`,
+            attachmentsCount: mailAttachments.length 
+          });
+        } catch (err: any) {
+          console.warn("[Risel SMTP] Aviso no envio direto:", err.message);
+          return res.json({ 
+            success: true, 
+            delivered: false, 
+            fallbackLogged: true,
+            smtpError: err.message,
+            host: smtpConfig.host,
+            message: `Notificação registrada e preparada no sistema! (Nota SMTP: ${err.message}). Utilize o botão "Abrir no Outlook / Webmail" caso deseje disparar diretamente da sua caixa postal agora.`,
+            attachmentsCount: mailAttachments.length
+          });
+        }
+      } else {
+        console.log(`[Risel SMTP] Notificação preparada no fluxo corporativo. Destinatários: ${emailTo}`);
+        return res.json({ 
+          success: true, 
+          delivered: false, 
+          requiresLocalClient: true,
+          host: smtpConfig.host,
+          message: `Notificação preparada para ${emailTo} com ${mailAttachments.length} anexo(s)! Para envio imediato pela sua conta, clique em "Abrir no Outlook / Webmail" ou configure o App Password SMTP.`,
+          attachmentsCount: mailAttachments.length
+        });
+      }
     }
 
-    // Detecção Inteligente do Host SMTP:
-    // Se for e-mail corporativo da Risel (@risel.com.br / Microsoft 365), o servidor padrão é smtp.office365.com
-    // Se for e-mail @gmail.com, o servidor é smtp.gmail.com
-    const isRiselCorporate = smtpEmail.toLowerCase().includes("@risel.com.br");
-    const defaultHost = isRiselCorporate ? "smtp.office365.com" : "smtp.gmail.com";
-    const host = (smtpHost && String(smtpHost).trim().length > 0) ? String(smtpHost).trim() : defaultHost;
-    const port = parseInt(smtpPort, 10) || 587;
-    const secure = port === 465;
+    // Caso 2: Relatório Semanal Consolidado de Lançamentos de Documentos
+    const targetRecipients = Array.isArray(destinatarios) ? destinatarios : (to ? [to] : []);
+    if (targetRecipients.length === 0) {
+      return res.status(400).json({ error: "Nenhum destinatário informado para o envio do relatório." });
+    }
 
     try {
-      console.log(`Risel SMTP Transporter: Conectando a ${host}:${port} com remetente ${smtpEmail}...`);
+      console.log(`[Risel SMTP Vault] Conectando a ${smtpConfig.host}:${smtpConfig.port} com remetente ${smtpConfig.user}...`);
       const transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure,
+        host: smtpConfig.host,
+        port: smtpConfig.port,
+        secure: smtpConfig.secure,
         auth: {
-          user: smtpEmail,
-          pass: smtpPassword,
+          user: smtpConfig.user,
+          pass: smtpConfig.pass,
         },
         tls: {
           rejectUnauthorized: false
@@ -698,13 +902,13 @@ async function startServer() {
       `;
 
       await transporter.sendMail({
-        from: `"Risel Combustíveis" <${smtpEmail}>`,
-        to: destinatarios.join(", "),
+        from: `"Risel Combustíveis" <${smtpConfig.user}>`,
+        to: targetRecipients.join(", "),
         subject: emailSubject,
         html: htmlContent,
       });
 
-      return res.json({ success: true });
+      return res.json({ success: true, host: smtpConfig.host });
     } catch (error: any) {
       console.error("Erro no envio de e-mail:", error);
       return res.status(500).json({ error: error.message || "Erro desconhecido ao enviar o e-mail pelo servidor SMTP." });
@@ -2033,24 +2237,25 @@ async function startServer() {
           </div>
         `;
 
-        // Se houver credenciais SMTP globais ou usar conta de alerta
-        if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
+        // Envio automático do e-mail do Checklist usando o SMTP Vault Risel
+        const checklistSmtp = getRiselSmtpConfig({ defaultSenderName: "Risel Frota" });
+        if (checklistSmtp.pass && checklistSmtp.pass.length > 0) {
           const transporter = nodemailer.createTransport({
-            host: "smtp.gmail.com",
-            port: 587,
-            secure: false,
-            auth: { user: process.env.SMTP_EMAIL, pass: process.env.SMTP_PASSWORD },
+            host: checklistSmtp.host,
+            port: checklistSmtp.port,
+            secure: checklistSmtp.secure,
+            auth: { user: checklistSmtp.user, pass: checklistSmtp.pass },
             tls: { rejectUnauthorized: false }
           });
           await transporter.sendMail({
-            from: `"Risel Frota" <${process.env.SMTP_EMAIL}>`,
+            from: `"Risel Frota" <${checklistSmtp.user}>`,
             to: mailRecipient,
             subject: emailSubject,
             html: htmlEmail
           });
-          console.log(`Risel Backend: E-mail de notificação de checklist enviado para ${mailRecipient}`);
+          console.log(`[Risel Frota] E-mail de notificação de checklist enviado com sucesso para ${mailRecipient} via ${checklistSmtp.host}`);
         } else {
-          console.log(`Risel Backend: Notificação de e-mail pronta para ${mailRecipient}.`);
+          console.log(`[Risel Frota] Notificação de e-mail de checklist pronta para ${mailRecipient}.`);
         }
       } catch (mailErr) {
         console.warn("Aviso ao enviar e-mail de notificação do checklist:", mailErr);
@@ -2066,6 +2271,81 @@ async function startServer() {
     } catch (error: any) {
       console.error("Risel Backend: Erro ao processar envio de checklist:", error);
       return res.status(500).json({ error: error.message || "Erro interno ao salvar checklist no sistema." });
+    }
+  });
+
+  // Endpoint de Assistente de IA Administrativo com Gemini (Restrito e Server-Side)
+  app.post("/api/gemini-assistant", express.json(), async (req, res) => {
+    try {
+      const { userEmail, prompt, history, systemContext } = req.body;
+      
+      // Validação estrita de segurança: apenas deny.goncalves@risel.com.br
+      if (!userEmail || userEmail.toLowerCase() !== "deny.goncalves@risel.com.br") {
+        return res.status(403).json({ error: "Acesso negado. O Assistente de IA é restrito ao gestor executivo." });
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: "Chave GEMINI_API_KEY não configurada no servidor." });
+      }
+
+      const systemInstructionText = systemContext || `Você é o Assistente Executivo de Inteligência Artificial e Engenheiro de Software Sênior do Sistema ERP Risel Combustíveis LTDA.
+Você atende exclusivamente ao gestor Deny Gonçalves (deny.goncalves@risel.com.br).
+Suas especialidades incluem:
+1. Análise de Dados e Business Intelligence da Frota Leve (75 veículos, locadoras, consumo, manutenções, contratos).
+2. Lançamentos de Documentos Fiscais, regras de alçada de aprovação e relatórios de vencimentos.
+3. Consultas SQL e manutenção do banco de dados PostgreSQL / Supabase.
+4. Orientações técnicas de implantação, deploys (Render, Netlify, Railway) e boas práticas de segurança.
+Responda sempre em Português do Brasil com clareza, objetividade, sofisticação e precisão técnica.`;
+
+      // Chamada direta à API do Google Gemini
+      const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+      const contents = [];
+      if (Array.isArray(history) && history.length > 0) {
+        for (const item of history) {
+          contents.push({
+            role: item.role === "user" ? "user" : "model",
+            parts: [{ text: item.text }]
+          });
+        }
+      }
+      contents.push({
+        role: "user",
+        parts: [{ text: prompt }]
+      });
+
+      const payload = {
+        contents: contents,
+        systemInstruction: {
+          parts: [{ text: systemInstructionText }]
+        },
+        generationConfig: {
+          temperature: 0.4,
+          topP: 0.95,
+          maxOutputTokens: 2500
+        }
+      };
+
+      const geminiRes = await fetch(geminiEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!geminiRes.ok) {
+        const errText = await geminiRes.text();
+        console.error("Erro Gemini API:", errText);
+        return res.status(geminiRes.status).json({ error: "Falha na comunicação com a API do Gemini.", details: errText });
+      }
+
+      const data = await geminiRes.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sem resposta gerada pelo modelo.";
+
+      return res.json({ success: true, reply });
+    } catch (err: any) {
+      console.error("Erro no /api/gemini-assistant:", err);
+      return res.status(500).json({ error: err.message || "Erro interno ao processar requisição do assistente." });
     }
   });
 

@@ -292,16 +292,30 @@ export async function fetchUsuariosSupabase(): Promise<any[]> {
 
     if (!data || data.length === 0) return [];
 
-    return data.map((item: any) => ({
-      email: item.email,
-      name: item.name,
-      role: item.role || (item.permissions?.admin ? "admin" : "user"),
-      permissions: typeof item.permissions === 'string' ? JSON.parse(item.permissions) : (item.permissions || {}),
-      status: item.status || "Ativa",
-      password: item.password || "",
-      mustChangePassword: item.must_change_password !== undefined ? item.must_change_password : true,
-      createdAt: item.created_at
-    }));
+    return data.map((item: any) => {
+      const perms = typeof item.permissions === 'string' 
+        ? (() => { try { return JSON.parse(item.permissions); } catch { return {}; } })() 
+        : (item.permissions || {});
+
+      const mustChange = item.must_change_password !== undefined 
+        ? item.must_change_password 
+        : (perms?.mustChangePassword !== undefined 
+            ? perms.mustChangePassword 
+            : (perms?.must_change_password !== undefined 
+                ? perms.must_change_password 
+                : true));
+
+      return {
+        email: item.email,
+        name: item.name,
+        role: item.role || (perms?.admin ? "admin" : "user"),
+        permissions: perms,
+        status: item.status || "Ativa",
+        password: item.password || "",
+        mustChangePassword: mustChange,
+        createdAt: item.created_at
+      };
+    });
   } catch (err) {
     console.error("Erro no fetchUsuariosSupabase:", err);
     return [];
@@ -314,19 +328,39 @@ export async function saveUsuarioSupabase(user: any): Promise<boolean> {
     const userEmail = (user.email || "").toLowerCase().trim();
     if (!userEmail) return false;
 
-    const dbRecord = {
+    const basePermissions = typeof user.permissions === 'object' && user.permissions !== null
+      ? user.permissions
+      : {};
+
+    const mustChangeVal = user.mustChangePassword !== undefined ? user.mustChangePassword : true;
+    const permissionsWithFallback = {
+      ...basePermissions,
+      mustChangePassword: mustChangeVal,
+      must_change_password: mustChangeVal
+    };
+
+    const dbRecord: any = {
       email: userEmail,
       name: user.name || userEmail,
       role: user.role || "user",
-      permissions: user.permissions || {},
+      permissions: permissionsWithFallback,
       status: user.status || "Ativa",
       password: user.password || "",
-      must_change_password: user.mustChangePassword !== undefined ? user.mustChangePassword : true
+      must_change_password: mustChangeVal
     };
 
-    const { error } = await client
+    let { error } = await client
       .from('usuarios')
       .upsert(dbRecord, { onConflict: 'email' });
+
+    // Se o banco ainda não possuir a coluna 'must_change_password', realiza fallback gravando sem essa coluna
+    if (error && (error.code === 'PGRST204' || error.message?.includes('must_change_password'))) {
+      const { must_change_password, ...safeRecord } = dbRecord;
+      const fallbackRes = await client
+        .from('usuarios')
+        .upsert(safeRecord, { onConflict: 'email' });
+      error = fallbackRes.error;
+    }
 
     if (error) {
       console.error("Erro ao salvar usuário no Supabase:", error.message || error);
@@ -824,12 +858,24 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       observacoes: extraData
     };
 
-    const { error } = await client
+    let { error } = await client
       .from('veiculos')
       .upsert(dbRecord, { onConflict: 'placa' });
 
+    // Fallback caso a tabela no Supabase não contenha colunas mais recentes
+    if (error && (error.code === 'PGRST204' || error.message?.includes('data_inativacao') || error.message?.includes('motivo_inativacao') || error.message?.includes('data_troca_condutor'))) {
+      const safeRecord: any = { ...dbRecord };
+      delete safeRecord.data_inativacao;
+      delete safeRecord.motivo_inativacao;
+      delete safeRecord.data_troca_condutor;
+      const fallbackRes = await client
+        .from('veiculos')
+        .upsert(safeRecord, { onConflict: 'placa' });
+      error = fallbackRes.error;
+    }
+
     if (error) {
-      console.error("Erro ao gravar veículo no Supabase:", error);
+      console.error("Erro ao gravar veículo no Supabase:", error.message || error);
       return false;
     }
     return true;
@@ -896,12 +942,27 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
       };
     });
 
-    const { error } = await client
+    let { error } = await client
       .from('veiculos')
       .upsert(dbRecords, { onConflict: 'placa' });
 
+    // Fallback caso a tabela no Supabase não contenha colunas mais recentes
+    if (error && (error.code === 'PGRST204' || error.message?.includes('data_inativacao') || error.message?.includes('motivo_inativacao') || error.message?.includes('data_troca_condutor'))) {
+      const safeBatch = dbRecords.map(r => {
+        const copy: any = { ...r };
+        delete copy.data_inativacao;
+        delete copy.motivo_inativacao;
+        delete copy.data_troca_condutor;
+        return copy;
+      });
+      const fallbackRes = await client
+        .from('veiculos')
+        .upsert(safeBatch, { onConflict: 'placa' });
+      error = fallbackRes.error;
+    }
+
     if (error) {
-      console.error("Erro ao gravar lote de veículos no Supabase:", error);
+      console.error("Erro ao gravar lote de veículos no Supabase:", error.message || error);
       return { count: 0, success: false };
     }
 
@@ -1187,7 +1248,216 @@ export async function saveCentroCustoSupabase(nome: string, codigo?: string, des
   }
 }
 
-// 11. Script SQL de Criação das Tabelas do Risel ERP no Supabase
+// 11. Interfaces e Funções para Multas no Supabase (Módulo de Controle de Multas)
+export interface SupabaseMulta {
+  id: string;
+  placa: string;
+  frota?: string;
+  ait?: string;
+  tipo?: string;
+  status?: string;
+  valor?: number;
+  valor_com_desconto?: number;
+  desconto?: number;
+  data_infracao?: string;
+  data_recebimento?: string;
+  prazo_indicacao?: string;
+  enquadramento?: string;
+  artigo_ctb?: string;
+  descricao_infracao?: string;
+  pontos_cnh?: number;
+  base?: string;
+  nome_motorista?: string;
+  orgao_autuador?: string;
+  endereco?: string;
+  municipio?: string;
+  uf?: string;
+  rodovia_urbano?: string;
+  recebida_com_prazo?: string;
+  retornou_com_prazo?: string;
+  empresa_ou_condutor?: string;
+  descontar_motorista?: string;
+  pago_com_desconto?: string;
+  enviado_rh?: string;
+  link_ait?: string;
+  link_autorizacao?: string;
+  obs?: string;
+  created_at?: string;
+}
+
+export async function fetchMultasSupabase(): Promise<any[]> {
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('multas')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn("Aviso ao carregar multas do Supabase:", error.message);
+      return [];
+    }
+
+    if (!data || data.length === 0) return [];
+
+    return data.map((row: any) => ({
+      id: String(row.id || row.ait || ''),
+      status: row.status || 'AGUARDANDO BOLETO',
+      frota: row.frota || row.placa || '',
+      placa: (row.placa || '').toUpperCase().trim(),
+      base: row.base || '',
+      ait: row.ait || row.id || '',
+      tipo: row.tipo || 'AUTO',
+      dataHoraInfracao: row.data_infracao || '',
+      dataRecebimento: row.data_recebimento || '',
+      prazoIndicacao: row.prazo_indicacao || '',
+      recebidaComPrazo: row.recebida_com_prazo || 'SIM',
+      enquadramento: row.enquadramento || '',
+      artigoCtb: row.artigo_ctb || '',
+      descricaoInfracao: row.descricao_infracao || '',
+      pontosCnh: Number(row.pontos_cnh !== undefined ? row.pontos_cnh : 0),
+      responsavelCodigo: '',
+      responsavelNome: row.nome_motorista || '',
+      orgaoAutuador: row.orgao_autuador || '',
+      endereco: row.endereco || '',
+      municipio: row.municipio || '',
+      uf: row.uf || '',
+      rodoviaOuUrbano: row.rodovia_urbano || 'URBANO',
+      retornouComPrazo: row.retornou_com_prazo || 'SIM',
+      valor: Number(row.valor || 0),
+      desconto: Number(row.desconto || 0),
+      valorComDesconto: Number(row.valor_com_desconto || (row.valor || 0)),
+      empresaOuCondutor: row.empresa_ou_condutor || 'CONDUTOR',
+      descontarMotorista: row.descontar_motorista || 'SIM',
+      pagoComDesconto: row.pago_com_desconto || 'SIM',
+      enviadoAoRh: row.enviado_rh || 'NÃO',
+      obs: row.obs || '',
+      linkAit: row.link_ait || '',
+      linkAuth: row.link_autorizacao || '',
+      createdAt: row.created_at || new Date().toISOString()
+    }));
+  } catch (err) {
+    console.error("Erro no fetchMultasSupabase:", err);
+    return [];
+  }
+}
+
+export async function saveMultaSupabase(item: any): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const id = String(item.id || item.ait || `multa-${Date.now()}`);
+    const placa = (item.placa || '').toUpperCase().trim();
+    
+    // Normalizar data_infracao para formato YYYY-MM-DD
+    let dataInfracao: string | null = null;
+    if (item.dataHoraInfracao) {
+      if (item.dataHoraInfracao.includes('T')) {
+        dataInfracao = item.dataHoraInfracao.split('T')[0];
+      } else if (item.dataHoraInfracao.length === 10) {
+        dataInfracao = item.dataHoraInfracao;
+      }
+    }
+
+    const dbRecord: SupabaseMulta = {
+      id,
+      placa: placa || 'SEM-PLACA',
+      frota: item.frota || placa,
+      ait: item.ait || id,
+      tipo: item.tipo || 'AUTO',
+      status: item.status || 'AGUARDANDO BOLETO',
+      valor: Number(item.valor) || 0,
+      valor_com_desconto: Number(item.valorComDesconto) || (Number(item.valor) || 0),
+      desconto: Number(item.desconto) || 0,
+      data_infracao: dataInfracao || undefined,
+      data_recebimento: item.dataRecebimento || undefined,
+      prazo_indicacao: item.prazoIndicacao || undefined,
+      enquadramento: item.enquadramento || '',
+      artigo_ctb: item.artigoCtb || '',
+      descricao_infracao: item.descricaoInfracao || '',
+      pontos_cnh: Number(item.pontosCnh) || 0,
+      base: item.base || '',
+      nome_motorista: item.responsavelNome || '',
+      orgao_autuador: item.orgaoAutuador || '',
+      endereco: item.endereco || '',
+      municipio: item.municipio || '',
+      uf: item.uf || '',
+      rodovia_urbano: item.rodoviaOuUrbano || 'URBANO',
+      recebida_com_prazo: item.recebidaComPrazo || 'SIM',
+      retornou_com_prazo: item.retornouComPrazo || 'SIM',
+      empresa_ou_condutor: item.empresaOuCondutor || 'CONDUTOR',
+      descontar_motorista: item.descontarMotorista || 'SIM',
+      pago_com_desconto: item.pagoComDesconto || 'SIM',
+      enviado_rh: item.enviadoAoRh || 'NÃO',
+      link_ait: item.linkAit || '',
+      link_autorizacao: item.linkAuth || '',
+      obs: item.obs || ''
+    };
+
+    const res = await client
+      .from('multas')
+      .upsert(dbRecord, { onConflict: 'id' });
+
+    if (res.error) {
+      console.warn("Aviso ao salvar multa no Supabase:", res.error.message);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("Erro no saveMultaSupabase:", err);
+    return false;
+  }
+}
+
+export async function deleteMultaSupabase(id: string): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const { error } = await client
+      .from('multas')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error("Erro ao deletar multa no Supabase:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Erro no deleteMultaSupabase:", err);
+    return false;
+  }
+}
+
+export async function clearAllMultasSupabase(): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const { error } = await client
+      .from('multas')
+      .delete()
+      .neq('id', '___NUNCA_EXISTE___');
+
+    if (error) {
+      console.error("Erro ao zerar tabela de multas no Supabase:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Erro no clearAllMultasSupabase:", err);
+    return false;
+  }
+}
+
+export async function saveBatchMultasSupabase(items: any[]): Promise<{ count: number; success: boolean }> {
+  if (!items || items.length === 0) return { count: 0, success: true };
+  let count = 0;
+  for (const item of items) {
+    const ok = await saveMultaSupabase(item);
+    if (ok) count++;
+  }
+  return { count, success: count > 0 };
+}
+
+// 12. Script SQL de Criação das Tabelas do Risel ERP no Supabase
 export const SUPABASE_SQL_SCHEMA = `-- Script Completo do Banco de Dados Real - Risel ERP (Supabase Oficial: https://ihowbxlqfcjzzzleasqq.supabase.co)
 
 -- 1. TABELA DE LANÇAMENTOS DE DOCUMENTOS

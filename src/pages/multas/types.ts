@@ -84,6 +84,8 @@ export interface Multa {
   numDocumento: string;
   vencimento: string; // Date
   obs: string;
+  latitude?: number;
+  longitude?: number;
   linkAit?: string; // Link para o arquivo AIT no Drive
   linkAuth?: string; // Link para o PDF de Autorização gerado
 }

@@ -107,9 +107,11 @@ export const fetchDistanceWithGemini = async (origin: string, destination: strin
     }
 };
 
+import { getAccurateCoordinates } from "./accurateGeocodingService";
+
 /**
- * Geocodes an address string to latitude and longitude using Gemini.
- * Implements aggressive caching (LocalStorage -> Static Memory -> API) to minimize quota usage.
+ * Geocodes an address string to latitude and longitude using Gemini and Multi-Provider Accurate Geocoding.
+ * Implements aggressive caching (LocalStorage -> Accurate Geocoding -> Static Memory -> API) to minimize quota usage.
  * @param address - The address to geocode.
  * @returns An object with lat and lng, or null if not found.
  */
@@ -133,25 +135,44 @@ export const geocodeAddress = async (address: string): Promise<{ lat: number; ln
         console.warn('Error reading geocoding cache from localStorage', e);
     }
 
-    // 2. Check Static Cache (Memory)
-    // This helps with very common regional cities known at build time.
-    for (const [key, coords] of Object.entries(STATIC_COORDINATES)) {
-        if (lowerAddr.includes(key)) {
-            // Cache this hit to localStorage for faster exact lookup next time
-            try {
-                localStorage.setItem(cacheKey, JSON.stringify(coords));
-            } catch(e) {}
-            return coords;
+    // 2. Se o endereço possuir rua, avenida, número ou vírgula, usar o motor de alta precisão
+    const isFullAddress = lowerAddr.includes('av') || lowerAddr.includes('rua') || lowerAddr.includes('rod') || 
+                          lowerAddr.includes('est') || lowerAddr.includes(',') || /\d+/.test(lowerAddr);
+
+    if (isFullAddress) {
+        try {
+            const accurate = await getAccurateCoordinates(address);
+            if (accurate) {
+                const coords = { lat: accurate.lat, lng: accurate.lng };
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify(coords));
+                } catch(e) {}
+                return coords;
+            }
+        } catch (e) {
+            console.warn('Accurate geocoding error in geminiService, continuing fallback:', e);
         }
     }
 
-    // 3. Call Gemini API
+    // 3. Check Static Cache (Apenas se a busca for estritamente o nome de uma cidade, sem rua/número)
+    if (!isFullAddress) {
+        for (const [key, coords] of Object.entries(STATIC_COORDINATES)) {
+            if (lowerAddr === key || lowerAddr === `${key}, sp` || lowerAddr === `${key} sp` || lowerAddr === `${key} - sp`) {
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify(coords));
+                } catch(e) {}
+                return coords;
+            }
+        }
+    }
+
+    // 4. Call Gemini API
     const model = 'gemini-2.5-flash';
     
     try {
         const response = await ai.models.generateContent({
             model,
-            contents: `Forneca as coordenadas de latitude e longitude para o seguinte endereco no Brasil: ${address}.`,
+            contents: `Forneca as coordenadas de latitude e longitude para o seguinte endereco no Brasil: ${address}. Se possuir número predial, forneça a coordenada exata daquele número na via.`,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
@@ -159,11 +180,11 @@ export const geocodeAddress = async (address: string): Promise<{ lat: number; ln
                     properties: {
                         lat: {
                             type: Type.NUMBER,
-                            description: "A latitude da localizacao."
+                            description: "A latitude da localizacao exata."
                         },
                         lng: {
                             type: Type.NUMBER,
-                            description: "A longitude da localizacao."
+                            description: "A longitude da localizacao exata."
                         }
                     },
                     required: ["lat", "lng"]
@@ -176,26 +197,15 @@ export const geocodeAddress = async (address: string): Promise<{ lat: number; ln
 
         if (result && typeof result.lat === 'number' && typeof result.lng === 'number') {
             const coords = { lat: result.lat, lng: result.lng };
-            // 4. Save successful API result to LocalStorage
             try {
                 localStorage.setItem(cacheKey, JSON.stringify(coords));
-            } catch (e) {
-                console.warn('Quota exceeded for localStorage or storage error', e);
-            }
+            } catch (e) {}
             return coords;
         } else {
-            console.warn(`Gemini response for geocoding "${address}" was not in the expected format.`, result);
             return null;
         }
     } catch (e: any) {
         console.error(`Error geocoding address "${address}" with Gemini:`, e);
-        
-        // If rate limited, try to return a generic fallback if possible or just throw
-        if (JSON.stringify(e).includes('429')) {
-             console.error("Rate limit exceeded for Geocoding API.");
-        }
-        
-        // Rethrow to allow MapView to potentially catch specific API errors.
         throw e;
     }
 };

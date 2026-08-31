@@ -1,6 +1,6 @@
 import { ReactNode, useState, useRef, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, Users, CalendarDays, Home, Bell, Search, ChevronLeft, ChevronRight, LogOut, Settings, Shield, Mail, Eye, X, AlertTriangle, Edit2, Check, Truck, CheckSquare, ShieldAlert, Navigation, LayoutGrid, Clock, Activity, DollarSign, BarChart3, Plus, FileSpreadsheet, Map, KeyRound, Siren, BellRing } from "lucide-react";
+import { LayoutDashboard, FileText, Users, CalendarDays, Home, Bell, Search, ChevronLeft, ChevronRight, LogOut, Settings, Shield, Mail, Eye, X, AlertTriangle, Edit2, Check, Truck, CheckSquare, ShieldAlert, Navigation, LayoutGrid, Clock, Activity, DollarSign, BarChart3, Plus, FileSpreadsheet, Map, KeyRound, Siren, BellRing, Car } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAuth, hasModuleAccess, hasSubmoduleAccess } from "../context/AuthContext";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
@@ -178,6 +178,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
         } else {
           baseMenuItems.push(
             { name: "Solicitar Reserva", path: "/frota?tab=reservas&sub=request", icon: FileText, visible: true },
+            { name: "Solicitar Locação RAC", path: "/frota?tab=reservas&sub=racRequest", icon: Car, visible: true },
             { name: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
             { name: "Status da Frota", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
             { name: "Área Administrativa", path: "/frota?tab=reservas&sub=login", icon: Shield, visible: true }
@@ -227,7 +228,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-slate-50 flex overflow-hidden w-full text-left">
       {/* Sidebar - Estilo Premium Matte Escuro, mais estreito para CRM moderno */}
       <aside className={cn(
-        "bg-[#07110C] border-r border-slate-800/40 py-8 flex flex-col relative z-20 flex-shrink-0 transition-all duration-300 ease-in-out",
+        "bg-[#07110C] border-r border-slate-800/40 py-8 hidden md:flex flex-col relative z-20 flex-shrink-0 transition-all duration-300 ease-in-out",
         isCollapsed ? "w-16 pl-3 pr-0" : "w-52 pl-4 pr-0"
       )}>
         <div className={cn("mb-10 flex items-center gap-2.5 transition-all", isCollapsed ? "pr-3" : "pr-4")}>

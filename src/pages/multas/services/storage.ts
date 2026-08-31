@@ -3,6 +3,7 @@ import { Veiculo, Motorista, CodigoMulta, Multa } from '../types';
 import { mockVeiculos, mockMotoristas, mockCodigosMulta, mockMultas } from './mockData';
 import { VEICULOS_REAIS } from '../../../data/veiculos_reais';
 import { idbGetAll, idbPut, idbDelete, idbBulkPut } from './db';
+import { fetchMultasSupabase, saveMultaSupabase, deleteMultaSupabase, clearAllMultasSupabase } from '../../../services/supabaseService';
 
 const API_URL_KEY = 'risel_api_url';
 const DRIVE_FOLDER_KEY = 'risel_drive_folder_id';
@@ -624,95 +625,6 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
         }
     }
 
-    // 2. Fetch da API
-    const data = await request({ action: 'read' });
-    if (!data) return localStore;
-    if (data.success === false) {
-        console.error("Google Script Error:", data.error);
-        return localStore; 
-    }
-
-    const usedKeys: string[] = [];
-
-    const multasResult = findDataArray(
-        data, 
-        ['multas', 'MULTAS', 'Multa', 'Infracoes'], 
-        (row) => {
-             return hasAnyKey(row, ['AIT', 'AUTODEINFRACAO', 'NAIT']) || 
-                    (hasAnyKey(row, ['FROTA', 'VEICULO']) && hasAnyKey(row, ['STATUS', 'SITUACAO'])) ||
-                    hasAnyKey(row, ['ENQUADRAMENTODAMULTA', 'ENQUADRAMENTO']);
-        },
-        usedKeys
-    );
-    let multas: Multa[] = [];
-    if (multasResult) {
-        usedKeys.push(multasResult.key);
-        multas = multasResult.data.map(mapMultaFromSheet).filter(m => (m.frota || (m.ait && m.ait.length > 1)));
-    }
-
-    const veiculosResult = findDataArray(
-        data, 
-        ['veiculos', 'VEICULOS', 'Frotas', 'FROTAS'], 
-        (row) => {
-             const values = Object.values(row);
-             const hasPlate = values.some(val => isPlate(String(val)));
-             const hasFrotaHeader = hasAnyKey(row, ['FROTA', 'VEICULO', 'PLACA']);
-             const isMulta = hasAnyKey(row, ['AIT', 'AUTODEINFRACAO', 'ENQUADRAMENTO', 'ENQUADRAMENTODAMULTA']);
-             return (hasPlate || hasFrotaHeader) && !isMulta;
-        },
-        usedKeys
-    );
-    let veiculos: Veiculo[] = [];
-    if (veiculosResult) {
-        usedKeys.push(veiculosResult.key);
-        veiculos = veiculosResult.data.map(mapVeiculoFromSheet).filter((v: Veiculo) => v.placa && v.placa.length > 5);
-    }
-
-    // --- CALCULAR CUSTOS DE MULTAS 2026 ---
-    // Itera sobre os veículos e soma o valor das multas do ano 2026
-    veiculos = veiculos.map(v => {
-        const cleanPlacaVeiculo = cleanString(v.placa);
-        
-        // Filtrar multas deste veículo no ano de 2026
-        const multas2026 = multas.filter(m => {
-            if (!m.dataHoraInfracao) return false;
-            const cleanPlacaMulta = cleanString(m.placa);
-            const isVeiculo = cleanPlacaMulta === cleanPlacaVeiculo;
-            // Verifica se a data começa com '2026' (ISO String YYYY-MM-DD...)
-            const is2026 = m.dataHoraInfracao.startsWith('2026');
-            return isVeiculo && is2026;
-        });
-
-        // Somar valor (usando valor com desconto se disponível, senão valor cheio)
-        const totalMultas2026 = multas2026.reduce((acc, m) => acc + (m.valorComDesconto || m.valor || 0), 0);
-        
-        const lic = v.custoLicenciamento2026 || 0;
-        const ipva = v.custoIpva2026 || 0;
-        const total = lic + ipva + totalMultas2026;
-
-        return {
-            ...v,
-            custoMultas2026: totalMultas2026,
-            custoTotal2026: total
-        };
-    });
-
-    const motoristasResult = findDataArray(
-        data, 
-        ['motoristas', 'MOTORISTAS', 'Condutores'], 
-        (row) => hasAnyKey(row, ['LOGIN', 'MATRICULA']) && hasAnyKey(row, ['NOME']),
-        usedKeys
-    );
-    const motoristas = motoristasResult ? motoristasResult.data.map(mapMotoristaFromSheet) : [];
-
-    const codigosResult = findDataArray(
-        data, 
-        ['codigos', 'CODIGOS', 'Cod Multas'], 
-        (row) => hasAnyKey(row, ['CODIGO', 'ENQUADRAMENTO']) && hasAnyKey(row, ['DESCRICAO']),
-        usedKeys
-    );
-    const codigos = codigosResult ? codigosResult.data.map(mapCodigoFromSheet) : mockCodigosMulta;
-
     // Carregar veículos do Controle de Frota Leve
     let localVeiculos: Veiculo[] = [];
     try {
@@ -755,47 +667,118 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
       }));
     }
 
-    // Carregar multas do LocalStorage e IndexedDB
+    // Carregar multas DIRETAMENTE E EXCLUSIVAMENTE do Supabase e Banco Local (100% desconectado de planilhas)
     let localMultas: Multa[] = [];
-    try {
-      const storedM = localStorage.getItem("risel_frota_multas");
-      if (storedM) {
-        localMultas = JSON.parse(storedM);
-      }
-    } catch (e) {}
 
-    // Tentar mesclar do IndexedDB se disponível
-    try {
-      const idbMultas = await idbGetAll<Multa>('multas');
-      if (idbMultas && idbMultas.length > 0) {
-        const idbMap = new Map<string, Multa>();
-        localMultas.forEach(m => idbMap.set(m.id, m));
-        idbMultas.forEach(m => idbMap.set(m.id, m));
-        localMultas = Array.from(idbMap.values());
+    // Reset solicitado: Limpa os 59 registros de teste/antigos mantendo o banco zerado e sem tocar em planilhas
+    const resetExecuted = localStorage.getItem("risel_multas_cleared_v1");
+    if (!resetExecuted) {
+      try {
+        await clearAllMultasSupabase();
+      } catch (e) {}
+      localStorage.removeItem("risel_frota_multas");
+      localStorage.setItem("risel_multas_cleared_v1", "true");
+      try {
+        const idbOld = await idbGetAll<Multa>('multas');
+        if (idbOld && idbOld.length > 0) {
+          for (const m of idbOld) {
+            if (m.id) await idbDelete('multas', m.id);
+            if (m.ait) await idbDelete('multas', m.ait);
+          }
+        }
+      } catch (e) {}
+    } else {
+      try {
+        const dbMultas = await fetchMultasSupabase();
+        if (Array.isArray(dbMultas) && dbMultas.length > 0) {
+          localMultas = dbMultas;
+        }
+      } catch (e) {
+        console.warn("Aviso ao buscar multas do Supabase:", e);
       }
-    } catch (e) {}
 
-    // Excluir multas de teste estáticas m1, m2, m3
-    localMultas = localMultas.filter(m => m.id !== 'm1' && m.id !== 'm2' && m.id !== 'm3');
+      try {
+        const storedM = localStorage.getItem("risel_frota_multas");
+        if (storedM) {
+          const parsedM = JSON.parse(storedM);
+          if (Array.isArray(parsedM) && parsedM.length > 0) {
+            const map = new Map<string, Multa>();
+            parsedM.forEach((m: Multa) => map.set(m.id || m.ait, m));
+            localMultas.forEach((m: Multa) => map.set(m.id || m.ait, m));
+            localMultas = Array.from(map.values());
+          }
+        }
+      } catch (e) {}
+
+      // Tentar mesclar do IndexedDB se disponível
+      try {
+        const idbMultas = await idbGetAll<Multa>('multas');
+        if (idbMultas && idbMultas.length > 0) {
+          const idbMap = new Map<string, Multa>();
+          localMultas.forEach(m => idbMap.set(m.id || m.ait, m));
+          idbMultas.forEach(m => idbMap.set(m.id || m.ait, m));
+          localMultas = Array.from(idbMap.values());
+        }
+      } catch (e) {}
+    }
+
+    // Função de saneamento rigorosa para descartar multas de teste estáticas, resíduos ou abas incorretas
+    const isMockOrTestMulta = (m: Multa) => {
+      if (!m) return true;
+      const id = String(m.id || '').toLowerCase().trim();
+      const ait = String(m.ait || '').toLowerCase().trim();
+      const placa = String(m.placa || '').toUpperCase().trim();
+      const motorista = String(m.responsavelNome || '').toLowerCase().trim();
+      const enquadramento = String(m.enquadramento || '').toLowerCase().trim();
+      const desc = String(m.descricaoInfracao || '').toLowerCase().trim();
+      
+      // IDs de teste conhecidos
+      if (id === 'm1' || id === 'm2' || id === 'm3' || id.startsWith('mock') || id.startsWith('sample') || id.startsWith('teste') || id.startsWith('ghost')) return true;
+      if (ait.includes('teste') || ait.includes('exemplo') || ait === '123456' || ait === '999999' || ait === '000000') return true;
+      if (placa === 'BRA2E19' || placa === 'ABC1234' || placa === 'XYZ0000' || placa === 'TESTE' || placa === 'SEM-PLACA' || placa === 'FROTA') return true;
+      if (motorista.includes('motorista teste') || motorista.includes('exemplo') || motorista === 'teste') return true;
+      if (desc.includes('exemplo de infração') || desc.includes('multa teste')) return true;
+      
+      // Validação de formato mínimo de placa (pelo menos 6-7 caracteres alfanuméricos)
+      if (!placa || placa.length < 6) return true;
+      
+      return false;
+    };
+
+    localMultas = localMultas.filter(m => !isMockOrTestMulta(m));
     idbDelete('multas', 'm1');
     idbDelete('multas', 'm2');
     idbDelete('multas', 'm3');
+    idbDelete('multas', 'teste-real-1');
     localStorage.setItem("risel_frota_multas", JSON.stringify(localMultas));
 
-    const finalVeiculos = localVeiculos.length > 0 ? localVeiculos : veiculos;
-    
-    // Unificar multas (priorizando as locais que possuem id)
-    const multasMap = new Map<string, Multa>();
-    multas.forEach(m => multasMap.set(m.id, m));
-    localMultas.forEach(m => multasMap.set(m.id, m));
-    const finalMultas = Array.from(multasMap.values()).filter(m => m.id !== 'm1' && m.id !== 'm2' && m.id !== 'm3');
+    const finalVeiculos = localVeiculos;
+    const finalMultas = localMultas.filter(m => !isMockOrTestMulta(m));
+
+    // Se houver multas válidas salvas localmente mas ainda não gravadas no Supabase, tenta sincronizar
+    if (finalMultas.length > 0) {
+      finalMultas.forEach(m => {
+        saveMultaSupabase(m).catch(() => {});
+      });
+    }
+
+    // Carregar motoristas locais do IndexedDB
+    let motoristas: Motorista[] = [];
+    try {
+      const idbMotoristas = await idbGetAll<Motorista>('motoristas');
+      if (idbMotoristas && idbMotoristas.length > 0) {
+        motoristas = idbMotoristas;
+      }
+    } catch (e) {}
 
     const resultData = {
         veiculos: finalVeiculos, 
         motoristas: motoristas.length > 0 ? motoristas : [],
-        codigos: codigos.length > 0 ? codigos : mockCodigosMulta,
-        multas: finalMultas.length > 0 ? finalMultas : mockMultas 
+        codigos: mockCodigosMulta,
+        multas: finalMultas
     };
+
+    localStore = resultData;
 
     // Sincronizar no IndexedDB em segundo plano para garantia total contra perda de dados
     try {
@@ -933,12 +916,19 @@ export const deleteMotorista = async (login: string) => {
 export const saveMulta = async (multa: Multa) => {
   updateCacheOptimistically('multas', multa, undefined, 'save');
   
-  // Persistência dupla segura: IndexedDB + LocalStorage
+  // 1. Persistência em Nuvem (Supabase Oficial)
+  try {
+    await saveMultaSupabase(multa);
+  } catch (e) {
+    console.warn("Aviso ao salvar multa no Supabase:", e);
+  }
+
+  // 2. Persistência dupla local segura: IndexedDB + LocalStorage
   await idbPut('multas', multa);
   try {
     const stored = localStorage.getItem("risel_frota_multas");
     let list: Multa[] = stored ? JSON.parse(stored) : [];
-    const idx = list.findIndex(m => m.id === multa.id);
+    const idx = list.findIndex(m => m.id === multa.id || m.ait === multa.ait);
     if (idx >= 0) {
       list[idx] = multa;
     } else {
@@ -947,16 +937,6 @@ export const saveMulta = async (multa: Multa) => {
     localStorage.setItem("risel_frota_multas", JSON.stringify(list));
   } catch (e) {
     console.error("Erro ao persistir multa localmente:", e);
-  }
-
-  // Se houver Google Script API configurado, envia também
-  const url = getApiUrl();
-  if (url && url !== DEFAULT_API_URL) {
-    try {
-      await request({ action: 'save', type: 'multa', payload: mapMultaToPayload(multa) });
-    } catch (e) {
-      console.warn("API de nuvem indisponível no momento, gravado localmente.", e);
-    }
   }
 
   return { success: true, id: multa.id };
@@ -972,24 +952,47 @@ export const saveCodigo = async (codigo: CodigoMulta) => {
 
 export const deleteMulta = async (id: string) => {
   updateCacheOptimistically('multas', null, id, 'delete');
+  
+  // Excluir do Supabase
+  try {
+    await deleteMultaSupabase(id);
+  } catch (e) {
+    console.warn("Aviso ao deletar multa no Supabase:", e);
+  }
+
   await idbDelete('multas', id);
   try {
     const stored = localStorage.getItem("risel_frota_multas");
     if (stored) {
       let list: Multa[] = JSON.parse(stored);
-      list = list.filter(m => m.id !== id);
+      list = list.filter(m => m.id !== id && m.ait !== id);
       localStorage.setItem("risel_frota_multas", JSON.stringify(list));
     }
   } catch (e) {
     console.error("Erro ao remover multa localmente:", e);
   }
 
-  const url = getApiUrl();
-  if (url && url !== DEFAULT_API_URL) {
-    try {
-      await request({ action: 'delete', type: 'multa', payload: { id, ID: id, AIT: id } });
-    } catch (e) {}
+  return { success: true };
+};
+
+export const clearAllMultasData = async () => {
+  try {
+    await clearAllMultasSupabase();
+  } catch (e) {
+    console.warn("Aviso ao limpar Supabase:", e);
   }
+  localStorage.removeItem("risel_frota_multas");
+  localStorage.removeItem(CACHE_KEY);
+  try {
+    const idbMultas = await idbGetAll<Multa>('multas');
+    if (idbMultas && idbMultas.length > 0) {
+      for (const m of idbMultas) {
+        if (m.id) await idbDelete('multas', m.id);
+        if (m.ait) await idbDelete('multas', m.ait);
+      }
+    }
+  } catch (e) {}
+  localStore.multas = [];
   return { success: true };
 };
 

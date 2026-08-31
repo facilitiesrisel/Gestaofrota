@@ -89,20 +89,37 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onLogout, is
           ))}
         </ul>
 
-        {/* Manual Link */}
-        {onOpenHelp && (
-            <ul className="space-y-1 mt-6 pt-6 border-t border-emerald-100/50">
-                {isSidebarOpen && <p className="px-6 text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-2">Ajuda</p>}
-                <li onClick={onOpenHelp} title={!isSidebarOpen ? "Manual do Sistema" : ''}>
-                    <a className={`${baseItemClass} ${inactiveItemClass}`}>
-                        <BookOpenIcon className="h-5 w-5 flex-shrink-0 transition-colors text-emerald-400 group-hover:text-primary" />
-                        <span className={`ml-3 text-sm whitespace-nowrap transition-all duration-300 ${isSidebarOpen ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 absolute'}`}>
-                            Manual do Sistema
-                        </span>
-                    </a>
-                </li>
-            </ul>
-        )}
+        {/* Manual Link & Portal Público */}
+        <ul className="space-y-1 mt-6 pt-6 border-t border-emerald-100/50">
+            {isSidebarOpen && <p className="px-6 text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-2">Portal Externo</p>}
+            <li title={!isSidebarOpen ? "Portal Público de Reservas (/reservas)" : ''}>
+                <a 
+                    href="/reservas" 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className={`${baseItemClass} text-amber-700 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-300/40`}
+                >
+                    <DocumentTextIcon className="h-5 w-5 flex-shrink-0 transition-colors text-[#F47920]" />
+                    <span className={`ml-3 text-xs font-bold whitespace-nowrap transition-all duration-300 ${isSidebarOpen ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 absolute'}`}>
+                        Portal dos Solicitantes
+                    </span>
+                </a>
+            </li>
+
+            {onOpenHelp && (
+                <>
+                    {isSidebarOpen && <p className="px-6 text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-2 mt-4">Ajuda</p>}
+                    <li onClick={onOpenHelp} title={!isSidebarOpen ? "Manual do Sistema" : ''}>
+                        <a className={`${baseItemClass} ${inactiveItemClass}`}>
+                            <BookOpenIcon className="h-5 w-5 flex-shrink-0 transition-colors text-emerald-400 group-hover:text-primary" />
+                            <span className={`ml-3 text-sm whitespace-nowrap transition-all duration-300 ${isSidebarOpen ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 absolute'}`}>
+                                Manual do Sistema
+                            </span>
+                        </a>
+                    </li>
+                </>
+            )}
+        </ul>
       </nav>
 
       {/* Footer Actions */}

@@ -317,17 +317,8 @@ const UserDailyUseForm: React.FC = () => {
     }
     
     return (
-        <div className="relative min-h-screen md:h-full overflow-hidden">
+        <div className="relative min-h-screen md:h-full bg-slate-50">
             <DailyUseGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
-
-            <div 
-                className="fixed inset-0 z-0 bg-cover bg-center md:absolute md:inset-0"
-                style={{ 
-                    backgroundImage: "url('https://i.imgur.com/oE41vE4.jpeg')" 
-                }}
-            >
-                <div className="absolute inset-0 bg-white/90 md:bg-white/95 backdrop-blur-[1px]"></div>
-            </div>
 
             <div className="relative z-10 p-4 md:p-6 space-y-6 pb-20">
                 {error && (

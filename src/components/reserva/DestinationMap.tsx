@@ -1,6 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
+import { mapQuotaService } from '../../services/mapQuotaService';
+import { MapQuotaIndicator } from './MapQuotaIndicator';
 
 const CITY_COORDINATES: Record<string, [number, number]> = {
   'paulinia': [-22.7639, -47.1539],
@@ -165,6 +167,15 @@ const DestinationMap: React.FC<DestinationMapProps> = ({ data }) => {
     });
   }, [sorted, total]);
 
+  const [mapLayers, setMapLayers] = useState(() => mapQuotaService.getLayers());
+
+  useEffect(() => {
+    const unsubscribe = mapQuotaService.subscribe(() => {
+      setMapLayers(mapQuotaService.getLayers());
+    });
+    return () => unsubscribe();
+  }, []);
+
   return (
     <div className="w-full h-full flex flex-col justify-between rounded-2xl overflow-hidden border border-slate-200 bg-slate-50">
       {/* Map Container */}
@@ -176,8 +187,9 @@ const DestinationMap: React.FC<DestinationMapProps> = ({ data }) => {
           style={{ width: '100%', height: '100%', zIndex: 1 }}
         >
           <TileLayer
-            attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+            key={mapLayers.streets.id}
+            attribution={mapLayers.streets.attribution}
+            url={mapLayers.streets.url}
           />
           
           {/* Sede Marker */}
@@ -220,10 +232,13 @@ const DestinationMap: React.FC<DestinationMapProps> = ({ data }) => {
           ))}
         </MapContainer>
 
-        {/* Floating Top Badge */}
-        <div className="absolute top-3 right-3 z-[400] bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-xl shadow-md border border-slate-200 text-[11px] font-bold text-slate-700 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>{sorted.length} Cidades | {total} Viagens Mapeadas</span>
+        {/* Floating Top Badges */}
+        <div className="absolute top-3 right-3 z-[400] flex items-center gap-2">
+          <MapQuotaIndicator compact />
+          <div className="bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-xl shadow-md border border-slate-200 text-[11px] font-bold text-slate-700 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>{sorted.length} Cidades | {total} Viagens Mapeadas</span>
+          </div>
         </div>
       </div>
 

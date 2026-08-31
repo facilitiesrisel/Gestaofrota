@@ -126,6 +126,20 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const MASTER_PERMISSIONS: UserPermissions = {
+  admin: true,
+  dashboard: true,
+  lancamentos: true,
+  fornecedores: true,
+  frota: true,
+  frota_veiculos: true,
+  frota_checklist: true,
+  frota_reservas: true,
+  frota_multas: true,
+  frota_rastreamento: true,
+  usuarios: true,
+};
+
 const DEFAULT_USERS: UserSession[] = [
   {
     email: "deny.goncalves@risel.com.br",
@@ -133,14 +147,15 @@ const DEFAULT_USERS: UserSession[] = [
     role: "admin",
     password: "@Cap150957",
     mustChangePassword: false,
-    permissions: {
-      admin: true,
-      dashboard: true,
-      lancamentos: true,
-      fornecedores: true,
-      frota: true,
-      usuarios: true,
-    }
+    permissions: MASTER_PERMISSIONS
+  },
+  {
+    email: "deny.risel@gmail.com",
+    name: "Deny Gonçalves",
+    role: "admin",
+    password: "@Cap150957",
+    mustChangePassword: false,
+    permissions: MASTER_PERMISSIONS
   }
 ];
 
@@ -148,13 +163,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserSession | null>(() => {
     const sessionSaved = sessionStorage.getItem("risel_session");
     if (sessionSaved) {
-      try { return JSON.parse(sessionSaved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(sessionSaved);
+        if (parsed.email && (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com")) {
+          parsed.role = "admin";
+          parsed.permissions = MASTER_PERMISSIONS;
+        }
+        return parsed;
+      } catch (e) {}
     }
     const localSaved = localStorage.getItem("risel_active_session");
     if (localSaved) {
-      try { return JSON.parse(localSaved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(localSaved);
+        if (parsed.email && (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com")) {
+          parsed.role = "admin";
+          parsed.permissions = MASTER_PERMISSIONS;
+        }
+        return parsed;
+      } catch (e) {}
     }
-    return null;
+    return DEFAULT_USERS[0];
   });
 
   const [usersList, setUsersList] = useState<UserSession[]>(() => {

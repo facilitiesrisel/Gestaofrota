@@ -255,8 +255,6 @@ Aqui é da equipe de Gestão de Frota da *Risel Combustíveis*.
 
 Identificamos em nosso sistema que a inspeção mensal de checklist do veículo *${v.placa}* (${v.modelo || "Frota"}) referente à competência de *${selectedMonthYear}* ainda está pendente de realização.
 
-Sua auditoria é fundamental para garantirmos a sua segurança, a manutenção preventiva e a integridade da nossa frota.
-
 Por favor, reserve alguns minutos para preencher o formulário no link abaixo:
 👉 ${linkChecklist}
 

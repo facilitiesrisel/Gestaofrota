@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useAuth, UserPermissions } from "../../context/AuthContext";
-import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap } from "lucide-react";
+import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap, Bot, BookOpen, Layers } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "../../lib/utils";
+import { AdminAiAssistant } from "../../components/AdminAiAssistant";
+import { SystemDocumentation } from "../../components/SystemDocumentation";
 import { 
   fetchLancamentosSupabase, 
   saveBatchAbastecimentosSupabase, 
@@ -61,6 +63,9 @@ export default function Usuarios() {
   const [isPreviewReportOpen, setIsPreviewReportOpen] = useState(false);
   const [isSendingReport, setIsSendingReport] = useState(false);
   const [reportSuccess, setReportSuccess] = useState("");
+
+  // Aba ativa do Painel Administrativo Master: Usuários, Assistente de IA ou Documentação
+  const [adminActiveTab, setAdminActiveTab] = useState<"usuarios" | "ia_assistant" | "documentacao">("usuarios");
 
   // Estados e Funções de Gestão do Banco Supabase Real
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
@@ -459,10 +464,10 @@ export default function Usuarios() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-3xl font-display font-bold text-slate-800 flex items-center gap-2">
-            <Users className="w-8 h-8 text-[#114D38]" /> Controle de Acessos e Usuários
+            <Users className="w-8 h-8 text-[#114D38]" /> Painel de Gestão Master & Usuários
           </h2>
           <p className="text-slate-500 mt-1">
-            Gerencie novos logins e parametrize permissões de módulos e menus para cada colaborador.
+            Controle de acessos, Assistente de IA Executivo, documentação de engenharia e parametrização do banco.
           </p>
         </div>
 
@@ -477,9 +482,62 @@ export default function Usuarios() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Formulário de Cadastro */}
-        <div className="lg:col-span-1 bg-white rounded-[24px] border border-slate-200/80 shadow-sm p-6 flex flex-col justify-between">
+      {/* Navegação de Abas do Painel Master Restrito */}
+      <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200/80 w-fit">
+        <button
+          onClick={() => setAdminActiveTab("usuarios")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            adminActiveTab === "usuarios"
+              ? "bg-[#114D38] text-white shadow-sm font-black"
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Usuários & Permissões</span>
+        </button>
+
+        <button
+          onClick={() => setAdminActiveTab("ia_assistant")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            adminActiveTab === "ia_assistant"
+              ? "bg-gradient-to-r from-[#07110C] to-[#114D38] text-emerald-300 shadow-sm font-black border border-emerald-500/30"
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+          }`}
+        >
+          <Bot className="w-4 h-4 text-emerald-500" />
+          <span>Assistente de IA Administrativo</span>
+          <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-700 text-[9px] font-black rounded-full">NOVO</span>
+        </button>
+
+        <button
+          onClick={() => setAdminActiveTab("documentacao")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            adminActiveTab === "documentacao"
+              ? "bg-[#114D38] text-white shadow-sm font-black"
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+          }`}
+        >
+          <BookOpen className="w-4 h-4 text-emerald-300" />
+          <span>Documentação do Sistema</span>
+        </button>
+      </div>
+
+      {/* Renderização Condicional: Assistente de IA */}
+      {adminActiveTab === "ia_assistant" && (
+        <AdminAiAssistant />
+      )}
+
+      {/* Renderização Condicional: Central de Documentação */}
+      {adminActiveTab === "documentacao" && (
+        <SystemDocumentation />
+      )}
+
+      {/* Renderização Condicional: Módulo de Usuários e Permissões */}
+      {adminActiveTab === "usuarios" && (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Formulário de Cadastro */}
+            <div className="lg:col-span-1 bg-white rounded-[24px] border border-slate-200/80 shadow-sm p-6 flex flex-col justify-between">
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="border-b border-slate-100 pb-3 mb-4">
               <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
@@ -1308,6 +1366,8 @@ export default function Usuarios() {
           </div>
         </div>
       </div>
+      </>
+      )}
 
       {/* Modal de Pré-visualização do Relatório Consolidado HTML por E-mail */}
       {isPreviewReportOpen && (

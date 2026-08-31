@@ -22,8 +22,11 @@ import {
   isRacRentalUsingFallback,
   getLocalRacRentalsCount,
   syncLocalRacRentalsWithFirebase,
-  INITIAL_RAC_RENTALS
+  INITIAL_RAC_RENTALS,
+  sendEmail,
+  generateRacEmailHtml
 } from '../../services/firebaseService';
+import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import { useAuth } from '../../context/ReservationAuthContext';
 import { 
   PlusIcon, 
@@ -157,7 +160,24 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     // Modal states
     const [isFormModalOpen, setIsFormModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
+    const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
     const [selectedRental, setSelectedRental] = useState<RacRental | null>(null);
+    const [viewingCnh, setViewingCnh] = useState<{ isOpen: boolean; name: string; url: string; fileName: string } | null>(null);
+
+    // Approve / Reject states
+    const [approveFormData, setApproveFormData] = useState({
+        rentalCompany: 'Localiza',
+        reservationNumber: '',
+        plate: '',
+        value: '',
+        pickupStore: '',
+        returnStore: '',
+        adminNotes: ''
+    });
+    const [rejectReason, setRejectReason] = useState('');
+    const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+    const [isSubmittingRejection, setIsSubmittingRejection] = useState(false);
 
     // Form inputs
     const [formData, setFormData] = useState({
@@ -165,12 +185,22 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         plate: '',
         requesterName: '',
         requesterSector: '',
+        requesterRole: '',
+        requesterEmail: '',
+        requesterPhone: '',
+        driverName: '',
+        driverRole: '',
         value: '',
         reservationNumber: '',
-        driverName: '',
-        status: 'Em Uso' as 'Em Uso' | 'Finalizada' | 'Aguardando retirada',
+        status: 'Aguardando retirada' as 'Solicitada' | 'Em Uso' | 'Finalizada' | 'Aguardando retirada' | 'Recusada',
         base: '',
         createdByUser: '',
+        category: '',
+        purpose: '',
+        observations: '',
+        adminNotes: '',
+        pickupCity: '',
+        returnCity: '',
         reservationDate: formatToLocalISO(new Date()),
         pickupDate: formatToLocalISO(new Date()),
         pickupStore: '',
@@ -271,7 +301,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             // Status Filter
             if (filterStatus !== 'all' && rental.status !== filterStatus) return false;
 
-            // Global text search (Plate, Solicitante, Driver, Reserva #, Base)
+            // Global text search (Plate, Solicitante, Driver, Reserva #, Base, Protocol, Cidades)
             if (filterSearch.trim()) {
                 const s = filterSearch.toLowerCase().trim();
                 const plateMatch = (rental.plate || '').toLowerCase().includes(s);
@@ -280,7 +310,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 const condMatch = (rental.driverName || '').toLowerCase().includes(s);
                 const baseMatch = (rental.base || '').toLowerCase().includes(s);
                 const compMatch = (rental.rentalCompany || '').toLowerCase().includes(s);
-                if (!plateMatch && !reqMatch && !rmMatch && !condMatch && !baseMatch && !compMatch) return false;
+                const protMatch = (rental.protocol || '').toLowerCase().includes(s);
+                const cityMatch = (rental.pickupCity || '').toLowerCase().includes(s) || (rental.returnCity || '').toLowerCase().includes(s);
+                if (!plateMatch && !reqMatch && !rmMatch && !condMatch && !baseMatch && !compMatch && !protMatch && !cityMatch) return false;
             }
 
             return true;
@@ -295,10 +327,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     // Statistics panel counters
     const stats = useMemo(() => {
         const total = rentals.length;
+        const requested = rentals.filter(r => r.status === 'Solicitada').length;
         const inUse = rentals.filter(r => r.status === 'Em Uso').length;
         const completed = rentals.filter(r => r.status === 'Finalizada').length;
         const awaiting = rentals.filter(r => r.status === 'Aguardando retirada').length;
-        return { total, inUse, completed, awaiting };
+        return { total, requested, inUse, completed, awaiting };
     }, [rentals]);
 
     // Analytical computations for Indicators & Charts
@@ -444,12 +477,22 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             plate: '',
             requesterName: '',
             requesterSector: '',
+            requesterRole: '',
+            requesterEmail: '',
+            requesterPhone: '',
+            driverName: '',
+            driverRole: '',
             value: '',
             reservationNumber: '',
-            driverName: '',
-            status: 'Em Uso',
+            status: 'Aguardando retirada',
             base: '',
             createdByUser: user?.email || 'Admin',
+            category: '',
+            purpose: '',
+            observations: '',
+            adminNotes: '',
+            pickupCity: '',
+            returnCity: '',
             reservationDate: formatToLocalISO(new Date()),
             pickupDate: formatToLocalISO(new Date()),
             pickupStore: '',
@@ -463,20 +506,30 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const handleOpenEditModal = (rental: RacRental) => {
         setSelectedRental(rental);
         setFormData({
-            rentalCompany: rental.rentalCompany,
+            rentalCompany: rental.rentalCompany || 'Localiza',
             plate: rental.plate || '',
-            requesterName: rental.requesterName,
+            requesterName: rental.requesterName || '',
             requesterSector: rental.requesterSector || '',
-            value: rental.value !== undefined ? String(rental.value) : '',
-            reservationNumber: rental.reservationNumber || '',
+            requesterRole: rental.requesterRole || '',
+            requesterEmail: rental.requesterEmail || '',
+            requesterPhone: rental.requesterPhone || '',
             driverName: rental.driverName || '',
-            status: rental.status,
+            driverRole: rental.driverRole || '',
+            value: rental.value !== undefined && rental.value !== null ? String(rental.value) : '',
+            reservationNumber: rental.reservationNumber || '',
+            status: rental.status || 'Aguardando retirada',
             base: rental.base || '',
             createdByUser: rental.createdByUser || user?.email || 'Admin',
-            reservationDate: formatToLocalISO(new Date(rental.reservationDate)),
-            pickupDate: formatToLocalISO(new Date(rental.pickupDate)),
+            category: rental.category || '',
+            purpose: rental.purpose || '',
+            observations: rental.observations || '',
+            adminNotes: rental.adminNotes || '',
+            pickupCity: rental.pickupCity || '',
+            returnCity: rental.returnCity || '',
+            reservationDate: formatToLocalISO(new Date(rental.reservationDate || new Date())),
+            pickupDate: formatToLocalISO(new Date(rental.pickupDate || new Date())),
             pickupStore: rental.pickupStore || '',
-            returnDate: formatToLocalISO(new Date(rental.returnDate)),
+            returnDate: formatToLocalISO(new Date(rental.returnDate || Date.now() + 86400000)),
             returnStore: rental.returnStore || '',
         });
         setIsFormModalOpen(true);
@@ -486,6 +539,140 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const handleOpenDeleteModal = (rental: RacRental) => {
         setSelectedRental(rental);
         setIsDeleteModalOpen(true);
+    };
+
+    // Open Approval Modal
+    const handleOpenApproveModal = (rental: RacRental) => {
+        setSelectedRental(rental);
+        setApproveFormData({
+            rentalCompany: rental.rentalCompany && rental.rentalCompany !== 'A Definir (Cotação RAC)' ? rental.rentalCompany : 'Localiza',
+            reservationNumber: rental.reservationNumber && !rental.reservationNumber.startsWith('RAC-') ? rental.reservationNumber : '',
+            plate: rental.plate && rental.plate !== 'A DEFINIR' ? rental.plate : '',
+            value: rental.value !== undefined && rental.value !== null ? String(rental.value) : '',
+            pickupStore: rental.pickupStore || (rental.pickupCity ? `${rental.pickupCity} (Loja Principal)` : ''),
+            returnStore: rental.returnStore || (rental.returnCity ? `${rental.returnCity} (Loja Principal)` : ''),
+            adminNotes: rental.adminNotes || ''
+        });
+        setIsApproveModalOpen(true);
+    };
+
+    // Confirm Approval and Send Email
+    const handleConfirmApprove = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedRental) return;
+        setIsSubmittingApproval(true);
+        try {
+            const updatedData: Partial<RacRental> = {
+                status: 'Aguardando retirada',
+                rentalCompany: approveFormData.rentalCompany || 'Localiza',
+                reservationNumber: approveFormData.reservationNumber.trim() || selectedRental.reservationNumber,
+                plate: approveFormData.plate.toUpperCase().trim() || selectedRental.plate,
+                value: parseCurrencyInput(approveFormData.value),
+                pickupStore: approveFormData.pickupStore.trim(),
+                returnStore: approveFormData.returnStore.trim(),
+                adminNotes: approveFormData.adminNotes.trim()
+            };
+
+            await updateRacRental(selectedRental.id, updatedData);
+
+            const fullUpdated: RacRental = {
+                ...selectedRental,
+                ...updatedData
+            };
+
+            // Dispara e-mail de Aprovação com observações do administrador
+            try {
+                const emailHtml = generateRacEmailHtml(fullUpdated, {
+                    actionType: 'approved',
+                    adminNotes: approveFormData.adminNotes.trim()
+                });
+
+                const recipients = [...ADMIN_EMAIL_RECIPIENTS];
+                if (fullUpdated.requesterEmail && !recipients.includes(fullUpdated.requesterEmail)) {
+                    recipients.push(fullUpdated.requesterEmail);
+                }
+
+                await sendEmail(
+                    recipients,
+                    `[Solicitação RAC APROVADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
+                    emailHtml
+                );
+            } catch (mailErr) {
+                console.warn("Aviso ao enviar e-mail de aprovação RAC:", mailErr);
+            }
+
+            showToast("Solicitação RAC aprovada e e-mails enviados com sucesso!", "success");
+            setIsApproveModalOpen(false);
+            setSelectedRental(null);
+        } catch (err) {
+            console.error("Erro ao aprovar solicitação RAC:", err);
+            showToast("Erro ao processar aprovação da locação.", "error");
+        } finally {
+            setIsSubmittingApproval(false);
+        }
+    };
+
+    // Open Rejection Modal
+    const handleOpenRejectModal = (rental: RacRental) => {
+        setSelectedRental(rental);
+        setRejectReason('');
+        setIsRejectModalOpen(true);
+    };
+
+    // Confirm Rejection and Send Email
+    const handleConfirmReject = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedRental) return;
+        if (!rejectReason.trim()) {
+            showToast("Por favor, informe a justificativa da recusa.", "error");
+            return;
+        }
+        setIsSubmittingRejection(true);
+        try {
+            const updatedData: Partial<RacRental> = {
+                status: 'Recusada',
+                rejectReason: rejectReason.trim(),
+                adminNotes: rejectReason.trim()
+            };
+
+            await updateRacRental(selectedRental.id, updatedData);
+
+            const fullUpdated: RacRental = {
+                ...selectedRental,
+                ...updatedData
+            };
+
+            // Dispara e-mail de Recusa com justificativa e observações
+            try {
+                const emailHtml = generateRacEmailHtml(fullUpdated, {
+                    actionType: 'rejected',
+                    rejectReason: rejectReason.trim(),
+                    adminNotes: rejectReason.trim()
+                });
+
+                const recipients = [...ADMIN_EMAIL_RECIPIENTS];
+                if (fullUpdated.requesterEmail && !recipients.includes(fullUpdated.requesterEmail)) {
+                    recipients.push(fullUpdated.requesterEmail);
+                }
+
+                await sendEmail(
+                    recipients,
+                    `[Solicitação RAC RECUSADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
+                    emailHtml
+                );
+            } catch (mailErr) {
+                console.warn("Aviso ao enviar e-mail de recusa RAC:", mailErr);
+            }
+
+            showToast("Solicitação RAC recusada e e-mail enviado ao solicitante.", "success");
+            setIsRejectModalOpen(false);
+            setSelectedRental(null);
+        } catch (err) {
+            console.error("Erro ao recusar solicitação RAC:", err);
+            showToast("Erro ao processar recusa da locação.", "error");
+        } finally {
+            setIsSubmittingRejection(false);
+        }
     };
 
     // Submit handler for both Create and Update
@@ -498,17 +685,27 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         }
 
         try {
-            const dataToSave = {
+            const dataToSave: Partial<RacRental> = {
                 rentalCompany: formData.rentalCompany || 'Localiza',
                 plate: (formData.plate || '').toUpperCase().trim(),
                 requesterName: (formData.requesterName || '').trim(),
                 requesterSector: (formData.requesterSector || '').trim(),
+                requesterRole: (formData.requesterRole || '').trim(),
+                requesterEmail: (formData.requesterEmail || '').trim(),
+                requesterPhone: (formData.requesterPhone || '').trim(),
+                driverName: (formData.driverName || '').trim(),
+                driverRole: (formData.driverRole || '').trim(),
                 value: parseCurrencyInput(formData.value),
                 reservationNumber: (formData.reservationNumber || '').trim(),
-                driverName: (formData.driverName || '').trim(),
                 status: formData.status,
                 base: (formData.base || '').trim(),
                 createdByUser: (formData.createdByUser || '').trim() || user?.email || 'Admin',
+                category: (formData.category || '').trim(),
+                purpose: (formData.purpose || '').trim(),
+                observations: (formData.observations || '').trim(),
+                adminNotes: (formData.adminNotes || '').trim(),
+                pickupCity: (formData.pickupCity || '').trim(),
+                returnCity: (formData.returnCity || '').trim(),
                 reservationDate: formData.reservationDate ? new Date(formData.reservationDate) : new Date(),
                 pickupDate: formData.pickupDate ? new Date(formData.pickupDate) : new Date(),
                 pickupStore: (formData.pickupStore || '').trim(),
@@ -518,9 +715,33 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
             if (selectedRental) {
                 await updateRacRental(selectedRental.id, dataToSave);
-                showToast("Locação RAC atualizada com sucesso!");
+
+                // Envia e-mail de atualização com observações se for edição
+                try {
+                    const fullUpdated: RacRental = {
+                        ...selectedRental,
+                        ...dataToSave
+                    };
+                    const emailHtml = generateRacEmailHtml(fullUpdated, {
+                        actionType: 'updated',
+                        adminNotes: (formData.adminNotes || '').trim()
+                    });
+                    const recipients = [...ADMIN_EMAIL_RECIPIENTS];
+                    if (fullUpdated.requesterEmail && !recipients.includes(fullUpdated.requesterEmail)) {
+                        recipients.push(fullUpdated.requesterEmail);
+                    }
+                    await sendEmail(
+                        recipients,
+                        `[Atualização de Locação RAC] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
+                        emailHtml
+                    );
+                } catch (mErr) {
+                    console.warn("Aviso ao enviar e-mail de atualização RAC:", mErr);
+                }
+
+                showToast("Locação RAC atualizada e notificação enviada!");
             } else {
-                await addRacRental(dataToSave);
+                await addRacRental(dataToSave as any);
                 showToast("Nova locação RAC cadastrada!");
             }
             setIsFormModalOpen(false);
@@ -533,9 +754,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
     // Quick toggle status
     const handleToggleStatus = async (rental: RacRental) => {
-        let nextStatus: 'Aguardando retirada' | 'Em Uso' | 'Finalizada' = 'Em Uso';
+        let nextStatus: 'Solicitada' | 'Aguardando retirada' | 'Em Uso' | 'Finalizada' = 'Em Uso';
         let msg = '';
-        if (rental.status === 'Aguardando retirada') {
+        if (rental.status === 'Solicitada') {
+            handleOpenApproveModal(rental);
+            return;
+        } else if (rental.status === 'Aguardando retirada') {
             nextStatus = 'Em Uso';
             msg = "Locação alterada para Em Uso!";
         } else if (rental.status === 'Em Uso') {
@@ -934,6 +1158,21 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-bold">{rentals.length}</span>
                             </button>
 
+                            {stats.requested > 0 && (
+                                <button
+                                    onClick={() => setFilterStatus('Solicitada')}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer animate-pulse ${
+                                        filterStatus === 'Solicitada'
+                                            ? 'bg-amber-500 text-white shadow-xs font-black'
+                                            : 'text-amber-700 hover:text-amber-900 bg-amber-50'
+                                    }`}
+                                >
+                                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                                    <span>Solicitadas</span>
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 font-black">{stats.requested}</span>
+                                </button>
+                            )}
+
                             <button
                                 onClick={() => setFilterStatus('Em Uso')}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
@@ -983,11 +1222,30 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             <option value="">Locadora: Todas</option>
                             <option value="Localiza">Localiza</option>
                             <option value="Movida">Movida</option>
+                            <option value="Unidas">Unidas</option>
                             <option value="Outras">Outras</option>
                         </select>
 
                     </div>
                 </div>
+
+                {/* Banner de Solicitações Pendentes dos Usuários */}
+                {stats.requested > 0 && filterStatus !== 'Solicitada' && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-3 text-xs text-amber-900">
+                        <div className="flex items-center gap-2">
+                            <span className="text-base">🔔</span>
+                            <span>
+                                <strong>{stats.requested} {stats.requested === 1 ? 'solicitação' : 'solicitações'} de locação RAC</strong> feita via portal público aguardando cotação e preenchimento de dados da locadora.
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => setFilterStatus('Solicitada')}
+                            className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-xs shrink-0 cursor-pointer shadow-xs transition-colors"
+                        >
+                            Ver Solicitações
+                        </button>
+                    </div>
+                )}
 
                 {/* Filtros Avançados Expansíveis */}
                 {isFiltersOpen && (
@@ -1027,12 +1285,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         <thead>
                             <tr className="bg-[#114D38] text-white text-[10px] font-black uppercase tracking-wider border-b border-[#0d3b2c]">
                                 <th scope="col" className="py-4 px-5 text-left">Locadora / Placa</th>
-                                <th scope="col" className="py-4 px-5 text-left">Solicitante / Criador</th>
-                                <th scope="col" className="py-4 px-5 text-left">Setor & Base</th>
+                                <th scope="col" className="py-4 px-5 text-left">Solicitante & Contato</th>
+                                <th scope="col" className="py-4 px-5 text-left">Itinerário (Cidades)</th>
                                 <th scope="col" className="py-4 px-5 text-left">Valor (R$)</th>
-                                <th scope="col" className="py-4 px-5 text-left">Reserva / Condutor</th>
+                                <th scope="col" className="py-4 px-5 text-left">Condutor & CNH</th>
                                 <th scope="col" className="py-4 px-5 text-left">Período de Locação</th>
-                                <th scope="col" className="py-4 px-5 text-left">Duração</th>
                                 <th scope="col" className="py-4 px-5 text-left">Status</th>
                                 <th scope="col" className="py-4 px-5 text-right">Ações</th>
                             </tr>
@@ -1040,7 +1297,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         <tbody className="bg-white divide-y divide-slate-100 text-xs font-semibold text-slate-700">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={9} className="text-center py-12 text-slate-400">
+                                    <td colSpan={8} className="text-center py-12 text-slate-400">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
                                             <span className="text-xs font-bold">Carregando locações RAC...</span>
@@ -1049,7 +1306,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 </tr>
                             ) : filteredRentals.length === 0 ? (
                                 <tr>
-                                    <td colSpan={9} className="text-center py-12 text-slate-400">
+                                    <td colSpan={8} className="text-center py-12 text-slate-400">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <CarIcon className="w-8 h-8 opacity-30 text-slate-400" />
                                             <span className="font-bold text-sm">Nenhuma locação RAC encontrada.</span>
@@ -1069,7 +1326,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                         compBadgeClass = "bg-emerald-50 text-emerald-800 border-emerald-200";
                                     } else if (r.rentalCompany === 'Movida') {
                                         compBadgeClass = "bg-orange-50 text-orange-850 border-orange-200";
+                                    } else if (r.rentalCompany === 'Unidas') {
+                                        compBadgeClass = "bg-blue-50 text-blue-800 border-blue-200";
                                     }
+
+                                    const hasCnhAttached = !!(r.cnhBase64 || r.hasCnhCopy);
 
                                     return (
                                         <tr key={r.id} className="hover:bg-slate-50/80 transition-colors group">
@@ -1080,50 +1341,95 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                     <MercosulPlateBadge plate={r.plate} />
                                                     <div className="flex flex-col gap-1">
                                                         <span className={`px-2 py-0.5 text-[10px] font-black rounded-md border w-fit ${compBadgeClass}`}>
-                                                            {r.rentalCompany}
+                                                            {r.rentalCompany || 'A Definir'}
                                                         </span>
                                                         {r.reservationNumber && (
                                                             <span className="text-[10px] font-mono font-bold text-slate-400">
                                                                 #{r.reservationNumber}
                                                             </span>
                                                         )}
+                                                        {r.protocol && (
+                                                            <span className="text-[9px] font-mono text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200/60">
+                                                                Prot: {r.protocol}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </td>
 
-                                            {/* Solicitante / Criador */}
+                                            {/* Solicitante & Contato */}
                                             <td className="px-5 py-4">
                                                 <div className="text-sm font-black text-slate-900">{r.requesterName}</div>
-                                                <div className="text-[10px] text-slate-400 font-medium truncate max-w-[140px] mt-0.5">
-                                                    {r.createdByUser || 'Sistema'}
+                                                <div className="text-[11px] text-slate-500 font-medium">
+                                                    {r.requesterSector || 'Geral'} {r.requesterRole ? `• ${r.requesterRole}` : ''}
                                                 </div>
+                                                {r.requesterPhone && (
+                                                    <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                                        📞 {r.requesterPhone}
+                                                    </div>
+                                                )}
                                             </td>
 
-                                            {/* Setor & Base */}
-                                            <td className="px-5 py-4 whitespace-nowrap">
-                                                <span className="px-2 py-0.5 text-[10px] font-black rounded bg-slate-100 text-slate-700 border border-slate-200 block w-fit">
-                                                    {r.requesterSector || 'Geral'}
-                                                </span>
-                                                <span className="text-[10px] font-bold text-slate-400 block mt-1 flex items-center gap-1">
-                                                    <MapPinIcon className="w-3 h-3 text-slate-300" />
-                                                    {r.base || 'Matriz'}
-                                                </span>
+                                            {/* Itinerário (Cidades de Retirada e Devolução) */}
+                                            <td className="px-5 py-4">
+                                                <div className="flex flex-col gap-1 text-[11px]">
+                                                    <div className="flex items-center gap-1.5 text-slate-800">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                                        <span className="font-bold">{r.pickupCity || r.pickupStore || 'Retirada a definir'}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 text-slate-500">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                                                        <span className="font-medium">{r.returnCity || r.returnStore || 'Devolução a definir'}</span>
+                                                    </div>
+                                                    {r.category && (
+                                                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                                            Cat: {r.category}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
 
                                             {/* Valor Total */}
                                             <td className="px-5 py-4 whitespace-nowrap">
                                                 <div className="text-sm font-black text-slate-900 font-sans">
-                                                    {formatCurrencyBRL(r.value)}
+                                                    {r.value ? formatCurrencyBRL(r.value) : <span className="text-slate-400 text-xs font-normal">A cotar</span>}
                                                 </div>
-                                                <span className="text-[10px] font-semibold text-slate-400 block mt-0.5">Custo Contratado</span>
+                                                <span className="text-[10px] font-semibold text-slate-400 block mt-0.5">
+                                                    {r.status === 'Solicitada' ? 'Aguardando Cotação' : 'Custo Contratado'}
+                                                </span>
                                             </td>
 
-                                            {/* Reserva / Condutor */}
+                                            {/* Condutor & CNH */}
                                             <td className="px-5 py-4">
                                                 <div className="text-xs font-bold text-slate-800">
                                                     {r.driverName || 'Não informado'}
                                                 </div>
-                                                <span className="text-[10px] text-slate-400 block mt-0.5">Condutor Autorizado</span>
+                                                <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                                                    {hasCnhAttached ? (
+                                                        <button
+                                                            onClick={() => {
+                                                                if (r.cnhBase64) {
+                                                                    setViewingCnh({
+                                                                        isOpen: true,
+                                                                        name: r.driverName || r.requesterName,
+                                                                        url: r.cnhBase64,
+                                                                        fileName: r.cnhFileName || 'cnh_anexo.jpg'
+                                                                    });
+                                                                } else {
+                                                                    showToast("CNH já cadastrada no histórico do condutor.", "success");
+                                                                }
+                                                            }}
+                                                            className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                                            title="Visualizar CNH"
+                                                        >
+                                                            📎 CNH Anexada
+                                                        </button>
+                                                    ) : (
+                                                        <span className="text-[10px] text-slate-400">
+                                                            {r.cnhAlreadyOnRecord ? '✅ CNH em Arquivo' : 'Sem anexo'}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
 
                                             {/* Período de Locação (Retirada / Devolução) */}
@@ -1144,24 +1450,26 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </div>
                                             </td>
 
-                                            {/* Duração Calculada */}
-                                            <td className="px-5 py-4 whitespace-nowrap">
-                                                <span className="bg-slate-100 px-2.5 py-1 rounded-xl text-[11px] font-bold text-slate-700 inline-flex items-center gap-1.5 border border-slate-200">
-                                                    <ClockIcon className="h-3 w-3 text-slate-400" />
-                                                    {calculateUsageTime(r.pickupDate, r.returnDate)}
-                                                </span>
-                                            </td>
-
                                             {/* Status */}
                                             <td className="px-5 py-4 whitespace-nowrap">
-                                                {r.status === 'Aguardando retirada' ? (
+                                                {r.status === 'Solicitada' ? (
+                                                    <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                                                        Solicitada
+                                                    </span>
+                                                ) : r.status === 'Recusada' ? (
+                                                    <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-rose-100 text-rose-800 border border-rose-200">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
+                                                        Recusada
+                                                    </span>
+                                                ) : r.status === 'Aguardando retirada' ? (
                                                     <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-amber-50 text-amber-800 border border-amber-200">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
                                                         Aguardando
                                                     </span>
                                                 ) : r.status === 'Em Uso' ? (
                                                     <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-blue-50 text-blue-700 border border-blue-200">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
                                                         Em Uso
                                                     </span>
                                                 ) : (
@@ -1175,25 +1483,55 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                             {/* Ações */}
                                             <td className="px-5 py-4 whitespace-nowrap text-right">
                                                 <div className="flex items-center gap-1.5 justify-end">
-                                                    <button 
-                                                        onClick={() => handleToggleStatus(r)}
-                                                        className={`p-2 rounded-xl border transition-all cursor-pointer ${
-                                                            r.status === 'Aguardando retirada' 
-                                                                ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200' 
-                                                                : r.status === 'Em Uso' 
-                                                                    ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200' 
-                                                                    : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
-                                                        }`}
-                                                        title={
-                                                            r.status === 'Aguardando retirada' 
-                                                                ? "Iniciar utilização (Mudar para Em Uso)" 
-                                                                : r.status === 'Em Uso' 
-                                                                    ? "Finalizar locação (Encerrar)" 
-                                                                    : "Reabrir locação"
-                                                        }
-                                                    >
-                                                        <CheckIcon className="h-4 w-4" />
-                                                    </button>
+                                                    {r.status === 'Solicitada' ? (
+                                                        <>
+                                                            <button
+                                                                onClick={() => handleOpenApproveModal(r)}
+                                                                className="px-2.5 py-1.5 text-xs font-black text-white bg-[#114D38] hover:bg-[#0d3b2c] rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95"
+                                                                title="Aprovar Solicitação RAC e Notificar Solicitante"
+                                                            >
+                                                                <CheckIcon className="h-3.5 w-3.5" />
+                                                                Aprovar
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleOpenRejectModal(r)}
+                                                                className="px-2 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95"
+                                                                title="Recusar Solicitação RAC com Justificativa"
+                                                            >
+                                                                <XCircleIcon className="h-3.5 w-3.5" />
+                                                                Recusar
+                                                            </button>
+                                                        </>
+                                                    ) : r.status === 'Recusada' ? (
+                                                        <button
+                                                            onClick={() => handleOpenApproveModal(r)}
+                                                            className="px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                                                            title="Reabrir e Aprovar Locação RAC"
+                                                        >
+                                                            <CheckIcon className="h-3.5 w-3.5" />
+                                                            Reavaliar
+                                                        </button>
+                                                    ) : (
+                                                        <button 
+                                                            onClick={() => handleToggleStatus(r)}
+                                                            className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                                                                r.status === 'Aguardando retirada' 
+                                                                    ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200' 
+                                                                    : r.status === 'Em Uso' 
+                                                                        ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200' 
+                                                                        : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
+                                                            }`}
+                                                            title={
+                                                                r.status === 'Aguardando retirada' 
+                                                                    ? "Iniciar utilização (Mudar para Em Uso)" 
+                                                                    : r.status === 'Em Uso' 
+                                                                        ? "Finalizar locação (Encerrar)" 
+                                                                        : "Reabrir locação"
+                                                            }
+                                                        >
+                                                            <CheckIcon className="h-4 w-4" />
+                                                        </button>
+                                                    )}
                                                     <button 
                                                         onClick={() => handleOpenEditModal(r)}
                                                         className="p-2 text-blue-600 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all cursor-pointer" 
@@ -1236,37 +1574,72 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                             {r.requesterName}
                                         </p>
                                         <p className="text-xs text-slate-500 font-bold mt-0.5">
-                                            {r.rentalCompany} • {r.requesterSector || 'Geral'}
+                                            {r.rentalCompany || 'Locadora a definir'} • {r.requesterSector || 'Geral'}
                                         </p>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-1">
-                                    <button onClick={() => handleToggleStatus(r)} className="p-1.5 rounded-lg border border-slate-200 text-slate-600">
-                                        <CheckIcon className="h-4 w-4" />
-                                    </button>
-                                    <button onClick={() => handleOpenEditModal(r)} className="p-1.5 text-blue-600 border border-blue-200 rounded-lg">
+                                    <button onClick={() => handleOpenEditModal(r)} className="p-1.5 text-blue-600 border border-blue-200 rounded-lg" title="Editar">
                                         <PencilIcon className="h-4 w-4" />
                                     </button>
-                                    <button onClick={() => handleOpenDeleteModal(r)} className="p-1.5 text-rose-600 border border-rose-200 rounded-lg">
+                                    <button onClick={() => handleOpenDeleteModal(r)} className="p-1.5 text-rose-600 border border-rose-200 rounded-lg" title="Excluir">
                                         <TrashIcon className="h-4 w-4" />
                                     </button>
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                                <div>
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Valor</span>
-                                    <span className="font-mono font-black text-slate-800">{formatCurrencyBRL(r.value)}</span>
+                            <div className="text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1.5">
+                                <div className="flex justify-between">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase">Itinerário</span>
+                                    <span className="font-bold text-slate-700">
+                                        {r.pickupCity || 'A definir'} ➔ {r.returnCity || 'A definir'}
+                                    </span>
                                 </div>
-                                <div>
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Status</span>
-                                    <span className={`text-[11px] font-black ${
-                                        r.status === 'Em Uso' ? 'text-blue-700' : r.status === 'Aguardando retirada' ? 'text-amber-700' : 'text-emerald-700'
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase">Status</span>
+                                    <span className={`text-[11px] font-black px-2 py-0.5 rounded-lg ${
+                                        r.status === 'Solicitada' ? 'text-amber-800 bg-amber-100 border border-amber-300' :
+                                        r.status === 'Recusada' ? 'text-rose-800 bg-rose-100 border border-rose-200' :
+                                        r.status === 'Em Uso' ? 'text-blue-700 bg-blue-50 border border-blue-200' : 
+                                        r.status === 'Aguardando retirada' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 
+                                        'text-emerald-700 bg-emerald-50 border border-emerald-200'
                                     }`}>
                                         {r.status}
                                     </span>
                                 </div>
                             </div>
+
+                            {/* Ações Mobile Rápidas */}
+                            {r.status === 'Solicitada' && (
+                                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+                                    <button
+                                        onClick={() => handleOpenApproveModal(r)}
+                                        className="w-full py-2 bg-[#114D38] hover:bg-[#0d3b2c] text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-xs"
+                                    >
+                                        <CheckIcon className="h-3.5 w-3.5" />
+                                        Aprovar
+                                    </button>
+                                    <button
+                                        onClick={() => handleOpenRejectModal(r)}
+                                        className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs"
+                                    >
+                                        <XCircleIcon className="h-3.5 w-3.5" />
+                                        Recusar
+                                    </button>
+                                </div>
+                            )}
+
+                            {r.status === 'Recusada' && (
+                                <div className="pt-1 border-t border-slate-100">
+                                    <button
+                                        onClick={() => handleOpenApproveModal(r)}
+                                        className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs"
+                                    >
+                                        <CheckIcon className="h-3.5 w-3.5" />
+                                        Reavaliar & Aprovar
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     ))
                 )}
@@ -1282,7 +1655,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             <CarIcon className="w-4 h-4" />
                         </div>
                         <span className="font-black text-base">
-                            {selectedRental ? "Editar Locação RAC" : "Cadastrar Nova Locação RAC"}
+                            {selectedRental ? "Editar / Completar Locação RAC" : "Cadastrar Nova Locação RAC"}
                         </span>
                     </div>
                 }
@@ -1304,6 +1677,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 >
                                     <option value="Localiza">Localiza</option>
                                     <option value="Movida">Movida</option>
+                                    <option value="Unidas">Unidas</option>
                                     <option value="Outras">Outras (Terceirizados)</option>
                                 </select>
                             </div>
@@ -1320,10 +1694,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </div>
                     </div>
 
-                    {/* Seção 2: Solicitante & Responsáveis */}
+                    {/* Seção 2: Solicitante & Condutor */}
                     <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
                         <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            2. Solicitante & Setor
+                            2. Solicitante & Condutor
                         </span>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <div>
@@ -1348,6 +1722,16 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 />
                             </div>
                             <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Telefone / WhatsApp</label>
+                                <input 
+                                    type="text" 
+                                    value={formData.requesterPhone} 
+                                    onChange={e => setFormData({ ...formData, requesterPhone: e.target.value })}
+                                    placeholder="(00) 00000-0000"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
+                                />
+                            </div>
+                            <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Condutor Autorizado</label>
                                 <input 
                                     type="text" 
@@ -1357,29 +1741,62 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
                                 />
                             </div>
+                        </div>
+                    </div>
+
+                    {/* Seção 3: Itinerário & Categoria */}
+                    <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
+                            3. Itinerário & Cidades de Retirada / Devolução
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Base Operacional</label>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade onde deseja Retirar</label>
                                 <input 
                                     type="text" 
-                                    list="bases-list-modal"
-                                    value={formData.base} 
-                                    onChange={e => setFormData({ ...formData, base: e.target.value })}
-                                    placeholder="Ex: Matriz, Filial SP"
-                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+                                    value={formData.pickupCity} 
+                                    onChange={e => setFormData({ ...formData, pickupCity: e.target.value })}
+                                    placeholder="Ex: Uberlândia, MG"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
                                 />
-                                <datalist id="bases-list-modal">
-                                    {uniqueBases.map(b => (
-                                        <option key={b} value={b} />
-                                    ))}
-                                </datalist>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade onde pretende Devolver</label>
+                                <input 
+                                    type="text" 
+                                    value={formData.returnCity} 
+                                    onChange={e => setFormData({ ...formData, returnCity: e.target.value })}
+                                    placeholder="Ex: Araguari, MG"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Categoria Pretendida</label>
+                                <input 
+                                    type="text" 
+                                    value={formData.category} 
+                                    onChange={e => setFormData({ ...formData, category: e.target.value })}
+                                    placeholder="Ex: Hatch Compacto, Sedan, SUV, Pick-up"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Finalidade / Motivo</label>
+                                <input 
+                                    type="text" 
+                                    value={formData.purpose} 
+                                    onChange={e => setFormData({ ...formData, purpose: e.target.value })}
+                                    placeholder="Ex: Visita a clientes / Operação"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
+                                />
                             </div>
                         </div>
                     </div>
 
-                    {/* Seção 3: Valores & Reserva */}
+                    {/* Seção 4: Valores & Status */}
                     <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
                         <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            3. Valores & Controle
+                            4. Valores & Status
                         </span>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                             <div>
@@ -1409,18 +1826,20 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     onChange={e => setFormData({ ...formData, status: e.target.value as any })}
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
                                 >
+                                    <option value="Solicitada">Solicitada (Aguardando Cotação)</option>
                                     <option value="Aguardando retirada">Aguardando retirada</option>
                                     <option value="Em Uso">Em Uso</option>
                                     <option value="Finalizada">Finalizada</option>
+                                    <option value="Recusada">Recusada</option>
                                 </select>
                             </div>
                         </div>
                     </div>
 
-                    {/* Seção 4: Retirada & Devolução */}
+                    {/* Seção 5: Retirada & Devolução */}
                     <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
                         <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            4. Retirada & Devolução
+                            5. Retirada & Devolução
                         </span>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -1465,6 +1884,23 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </div>
                     </div>
 
+                    {/* Seção 6: Observações da Gestão de Frota */}
+                    <div className="bg-amber-50/70 p-4 rounded-2xl border border-amber-200/60 space-y-3">
+                        <span className="text-xs font-black uppercase tracking-wider text-amber-900 block flex items-center gap-1.5">
+                            <span>💬</span> 6. Observações da Gestão de Frota / Instruções ao Solicitante
+                        </span>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Observações / Orientações (Enviadas por e-mail)</label>
+                            <textarea 
+                                value={formData.adminNotes || ''} 
+                                onChange={e => setFormData({ ...formData, adminNotes: e.target.value })}
+                                placeholder="Ex: Reserva confirmada na Localiza Aeroporto. Apresentar CNH física original e cartão corporativo ao retirar."
+                                rows={3}
+                                className="w-full px-3.5 py-2.5 bg-white border border-amber-300 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+                            />
+                        </div>
+                    </div>
+
                     <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
                         <button 
                             type="button" 
@@ -1482,6 +1918,273 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     </div>
                 </form>
             </Modal>
+
+            {/* Modal de Aprovação de Solicitação RAC */}
+            <Modal
+                isOpen={isApproveModalOpen}
+                onClose={() => {
+                    setIsApproveModalOpen(false);
+                    setSelectedRental(null);
+                }}
+                title={
+                    <div className="flex items-center gap-2 text-[#114D38]">
+                        <CheckCircleIcon className="h-5 w-5 text-emerald-600" />
+                        <span className="font-black text-base">Aprovar Solicitação de Locação RAC</span>
+                    </div>
+                }
+            >
+                <form onSubmit={handleConfirmApprove} className="space-y-4">
+                    <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200/60 space-y-1 text-xs">
+                        <p className="font-extrabold text-[#114D38]">
+                            Protocolo: <span className="font-mono text-[#F47920]">{selectedRental?.protocolNumber || selectedRental?.protocol || selectedRental?.reservationNumber}</span>
+                        </p>
+                        <p className="text-slate-700 font-semibold">
+                            Solicitante: <span className="font-bold">{selectedRental?.requesterName}</span> ({selectedRental?.requesterEmail || 'Sem e-mail cadastrado'})
+                        </p>
+                        <p className="text-slate-600 font-medium">
+                            Itinerário: <span className="font-bold">{selectedRental?.pickupCity || 'Origem'}</span> ➔ <span className="font-bold">{selectedRental?.returnCity || 'Destino'}</span>
+                        </p>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Locadora Selecionada *</label>
+                                <select
+                                    value={approveFormData.rentalCompany}
+                                    onChange={e => setApproveFormData({ ...approveFormData, rentalCompany: e.target.value })}
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-emerald-600 outline-none"
+                                    required
+                                >
+                                    <option value="Localiza">Localiza</option>
+                                    <option value="Movida">Movida</option>
+                                    <option value="Unidas">Unidas</option>
+                                    <option value="Foco">Foco</option>
+                                    <option value="Kovi">Kovi</option>
+                                    <option value="Outra Locadora">Outra Locadora</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Nº Reserva / Voucher Locadora *</label>
+                                <input
+                                    type="text"
+                                    value={approveFormData.reservationNumber}
+                                    onChange={e => setApproveFormData({ ...approveFormData, reservationNumber: e.target.value })}
+                                    placeholder="Ex: LOC-998877 ou MV-12345"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-emerald-600 outline-none"
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Valor Aprovado (R$)</label>
+                                <input
+                                    type="text"
+                                    value={approveFormData.value}
+                                    onChange={e => setApproveFormData({ ...approveFormData, value: e.target.value })}
+                                    placeholder="Ex: 850,00"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-emerald-600 outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Placa (se já atribuída)</label>
+                                <input
+                                    type="text"
+                                    value={approveFormData.plate}
+                                    onChange={e => setApproveFormData({ ...approveFormData, plate: e.target.value.toUpperCase() })}
+                                    placeholder="Ex: BRA2E19"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-emerald-600 outline-none"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Loja de Retirada</label>
+                                <input
+                                    type="text"
+                                    value={approveFormData.pickupStore}
+                                    onChange={e => setApproveFormData({ ...approveFormData, pickupStore: e.target.value })}
+                                    placeholder="Ex: Localiza Aeroporto VCP"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-emerald-600 outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Loja de Devolução</label>
+                                <input
+                                    type="text"
+                                    value={approveFormData.returnStore}
+                                    onChange={e => setApproveFormData({ ...approveFormData, returnStore: e.target.value })}
+                                    placeholder="Ex: Localiza Aeroporto VCP"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-emerald-600 outline-none"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                Observações do Administrador / Orientações ao Solicitante
+                            </label>
+                            <textarea
+                                value={approveFormData.adminNotes}
+                                onChange={e => setApproveFormData({ ...approveFormData, adminNotes: e.target.value })}
+                                placeholder="Instruções de retirada, código de confirmação, regras de abastecimento ou orientações específicas que irão no e-mail..."
+                                rows={3}
+                                className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl text-xs font-semibold text-slate-800 focus:border-emerald-600 outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsApproveModalOpen(false);
+                                setSelectedRental(null);
+                            }}
+                            disabled={isSubmittingApproval}
+                            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={isSubmittingApproval}
+                            className="px-5 py-2 bg-[#114D38] hover:bg-[#0d3b2c] text-white rounded-xl text-xs font-black shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                            {isSubmittingApproval ? (
+                                <>
+                                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    <span>Aprovando e Notificando...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircleIcon className="h-4 w-4 text-emerald-300" />
+                                    <span>Confirmar Aprovação & Notificar</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Modal de Recusa de Solicitação RAC */}
+            <Modal
+                isOpen={isRejectModalOpen}
+                onClose={() => {
+                    setIsRejectModalOpen(false);
+                    setSelectedRental(null);
+                }}
+                title={
+                    <div className="flex items-center gap-2 text-rose-700">
+                        <XCircleIcon className="h-5 w-5" />
+                        <span className="font-black text-base">Recusar Solicitação de Locação RAC</span>
+                    </div>
+                }
+            >
+                <form onSubmit={handleConfirmReject} className="space-y-4">
+                    <div className="bg-rose-50/70 p-3.5 rounded-2xl border border-rose-200/60 space-y-1 text-xs">
+                        <p className="font-extrabold text-rose-900">
+                            Protocolo: <span className="font-mono text-rose-700">{selectedRental?.protocolNumber || selectedRental?.protocol || selectedRental?.reservationNumber}</span>
+                        </p>
+                        <p className="text-slate-700 font-semibold">
+                            Solicitante: <span className="font-bold">{selectedRental?.requesterName}</span> ({selectedRental?.requesterEmail || 'Sem e-mail cadastrado'})
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Justificativa / Motivo da Recusa * (Será enviada por e-mail ao solicitante)
+                        </label>
+                        <textarea
+                            value={rejectReason}
+                            onChange={e => setRejectReason(e.target.value)}
+                            placeholder="Informe o motivo da não aprovação (ex: indisponibilidade orçamentária, substituição por veículo da frota própria, etc.)..."
+                            rows={4}
+                            className="w-full px-3.5 py-2.5 bg-white border border-rose-300 rounded-xl text-xs font-semibold text-slate-800 focus:border-rose-600 outline-none"
+                            required
+                        />
+                    </div>
+
+                    <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsRejectModalOpen(false);
+                                setSelectedRental(null);
+                            }}
+                            disabled={isSubmittingRejection}
+                            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={isSubmittingRejection}
+                            className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                            {isSubmittingRejection ? (
+                                <>
+                                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    <span>Enviando Recusa...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <XCircleIcon className="h-4 w-4" />
+                                    <span>Confirmar Recusa & Notificar</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Modal de Visualização da CNH */}
+            {viewingCnh && (
+                <Modal
+                    isOpen={viewingCnh.isOpen}
+                    onClose={() => setViewingCnh(null)}
+                    title={
+                        <div className="flex items-center gap-2 text-emerald-800">
+                            <span className="text-base">📄</span>
+                            <span className="font-bold text-sm">CNH de {viewingCnh.name}</span>
+                        </div>
+                    }
+                >
+                    <div className="space-y-4 flex flex-col items-center">
+                        {viewingCnh.url.startsWith('data:image/') ? (
+                            <img 
+                                src={viewingCnh.url} 
+                                alt={`CNH ${viewingCnh.name}`} 
+                                className="max-h-[60vh] rounded-xl border border-slate-200 shadow-sm object-contain"
+                            />
+                        ) : (
+                            <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200 w-full">
+                                <p className="text-sm font-bold text-slate-700 mb-2">Documento Anexado</p>
+                                <p className="text-xs text-slate-500">{viewingCnh.fileName}</p>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between w-full pt-2">
+                            <a
+                                href={viewingCnh.url}
+                                download={viewingCnh.fileName}
+                                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5"
+                            >
+                                ⬇️ Baixar CNH
+                            </a>
+                            <button
+                                onClick={() => setViewingCnh(null)}
+                                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+                            >
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
 
             {/* 8. Modal de Confirmação de Exclusão */}
             <Modal 

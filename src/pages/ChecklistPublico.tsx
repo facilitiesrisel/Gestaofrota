@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { ClipboardCheck, ShieldCheck, HelpCircle } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ClipboardCheck, ShieldCheck, HelpCircle, ArrowLeft } from "lucide-react";
 import { ChecklistForm } from "../components/reserva/ChecklistForm";
 
 interface Vehicle {
@@ -11,6 +12,7 @@ interface Vehicle {
 }
 
 export default function ChecklistPublico() {
+  const navigate = useNavigate();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,21 +70,39 @@ export default function ChecklistPublico() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-between font-sans">
       {/* Header Institucional */}
-      <header className="bg-gradient-to-r from-[#114D38] to-[#0d3b2b] text-white py-5 px-6 shadow-md border-b-4 border-[#F47920]">
-        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+      <header className="bg-gradient-to-r from-[#114D38] to-[#0d3b2b] text-white py-4 px-4 sm:px-6 shadow-md border-b-4 border-[#F47920] sticky top-0 z-50">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#F47920]/20 text-[#F47920] rounded-xl flex items-center justify-center border border-[#F47920]/30 shadow-inner">
-              <ClipboardCheck className="w-6 h-6 animate-pulse" />
+            <button
+              onClick={() => navigate(-1)}
+              title="Voltar"
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1 text-xs font-bold"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Voltar</span>
+            </button>
+
+            <div className="w-9 h-9 bg-[#F47920]/20 text-[#F47920] rounded-xl flex items-center justify-center border border-[#F47920]/30 shadow-inner shrink-0">
+              <ClipboardCheck className="w-5 h-5" />
             </div>
             <div className="text-left">
-              <h1 className="text-lg font-black tracking-wider uppercase font-display">Risel Combustíveis</h1>
-              <p className="text-[10px] text-emerald-300 font-extrabold uppercase tracking-widest">Portal de Checklist de Frota Leve</p>
+              <h1 className="text-base sm:text-lg font-black tracking-wider uppercase font-display leading-tight">Risel Combustíveis</h1>
+              <p className="text-[10px] text-emerald-300 font-extrabold uppercase tracking-widest leading-none mt-0.5">Portal de Checklist</p>
             </div>
           </div>
           
-          <div className="flex items-center gap-2 bg-[#F47920]/10 border border-[#F47920]/20 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase text-orange-400">
-            <ShieldCheck className="w-4 h-4 text-[#F47920]" />
-            Acesso Direto Seguro
+          <div className="flex items-center gap-2">
+            <Link
+              to="/reservas"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[11px] font-extrabold text-white transition-all cursor-pointer shadow-xs"
+            >
+              Portal de Reservas
+            </Link>
+
+            <div className="flex items-center gap-1.5 bg-[#F47920]/10 border border-[#F47920]/20 px-2.5 py-1.5 rounded-xl text-[10px] font-black uppercase text-orange-400">
+              <ShieldCheck className="w-4 h-4 text-[#F47920]" />
+              <span className="hidden xs:inline">Acesso Direto</span>
+            </div>
           </div>
         </div>
       </header>
@@ -115,7 +135,7 @@ export default function ChecklistPublico() {
             {/* Aviso Informativo */}
             <div className="bg-amber-50/50 border border-amber-200/60 p-4 rounded-2xl text-left text-xs font-bold text-amber-800 shadow-xs">
               <span className="uppercase text-amber-950 font-black block mb-1">📢 Instruções Importantes:</span>
-              Preencha com atenção todos os campos solicitados e envie as fotos reais do veículo. Sua auditoria de checklist é indispensável para a manutenção preventiva e segurança da frota.
+              Preencha com atenção todos os campos solicitados e envie as fotos reais do veículo.
             </div>
 
             {/* Formulário Principal */}

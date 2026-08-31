@@ -6,15 +6,18 @@ import ConfigPage from './pages/ConfigPage';
 import Loading from './components/Loading';
 import DashboardCharts from './components/DashboardCharts';
 import { Page } from './types';
-import { Truck, Siren, AlertOctagon, TrendingUp, Calendar, CheckCircle, XCircle, FileText, ArrowUpRight, ArrowDownRight, Car, DollarSign, CheckCircle2, BarChart3 } from 'lucide-react';
-import { fetchAllData } from './services/storage';
+import { Truck, Siren, AlertOctagon, TrendingUp, Calendar, CheckCircle, XCircle, FileText, ArrowUpRight, ArrowDownRight, Car, DollarSign, CheckCircle2, BarChart3, RefreshCw } from 'lucide-react';
+import { fetchAllData, clearCache } from './services/storage';
 import { parseLocalDate } from './services/dateUtils';
+import { useAuth } from '../../context/AuthContext';
+import { isDenyUser } from './services/authHelper';
 
 interface MultasDashboardProps {
   activePage: string;
 }
 
 const MultasDashboard: React.FC<MultasDashboardProps> = ({ activePage }) => {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   
   // Data States
@@ -140,6 +143,15 @@ const MultasDashboard: React.FC<MultasDashboardProps> = ({ activePage }) => {
   }, [rawMultas, rawVeiculos, selectedMonth, filteredMultasForCharts]);
 
 
+  const handleForceRefresh = async () => {
+    setLoading(true);
+    clearCache();
+    const data = await fetchAllData(true);
+    setRawMultas(data.multas || []);
+    setRawVeiculos(data.veiculos || []);
+    setLoading(false);
+  };
+
   const renderContent = () => {
     switch (activePage.toUpperCase()) {
       case 'DASHBOARD':
@@ -148,28 +160,39 @@ const MultasDashboard: React.FC<MultasDashboardProps> = ({ activePage }) => {
              {loading && <Loading />}
             
             {/* FROZEN HEADER AND CARDS CONTAINER */}
-            <div className="shrink-0 bg-slate-50 border-b border-slate-200 pb-4 pt-3 px-3 -mx-1 shadow-sm transition-all rounded-2xl">
+            <div className="shrink-0 bg-slate-50 border-b border-slate-200 pb-3 pt-2 px-3 -mx-1 shadow-sm transition-all rounded-2xl">
                 {/* Header Dashboard with Filter */}
-                <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 px-2">
+                <div className="flex flex-col md:flex-row justify-between items-center mb-3 gap-2 px-2">
                     <div>
-                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Dashboard Analítico</h2>
-                        <p className="text-slate-500 font-medium text-sm">Monitoramento de infrações e performance da frota</p>
+                        <h2 className="text-base sm:text-lg font-black text-slate-800 tracking-tight leading-tight">Dashboard Analítico</h2>
+                        <p className="text-slate-500 font-normal text-xs mt-0.5">Monitoramento de infrações e performance da frota</p>
                     </div>
                     
-                    <div className="flex items-center gap-3 bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm">
-                        <div className="px-3 text-risel-green">
-                            <Calendar size={18} />
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+                            <div className="px-2 text-risel-green">
+                                <Calendar size={15} />
+                            </div>
+                            <select 
+                                value={selectedMonth}
+                                onChange={(e) => setSelectedMonth(e.target.value)}
+                                className="bg-transparent text-slate-700 font-bold text-xs outline-none border-none p-1.5 focus:ring-0 cursor-pointer w-44"
+                            >
+                                <option value="">Todos os meses</option>
+                                {availableMonths.map((m) => (
+                                    <option key={m.value} value={m.value}>{m.label}</option>
+                                ))}
+                            </select>
                         </div>
-                        <select 
-                            value={selectedMonth}
-                            onChange={(e) => setSelectedMonth(e.target.value)}
-                            className="bg-transparent text-slate-700 font-bold text-sm outline-none border-none p-2 focus:ring-0 cursor-pointer w-48"
+
+                        <button
+                            onClick={handleForceRefresh}
+                            title="Sincronizar Banco e Atualizar Dados"
+                            className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95"
                         >
-                            <option value="">Todos os meses</option>
-                            {availableMonths.map((m) => (
-                                <option key={m.value} value={m.value}>{m.label}</option>
-                            ))}
-                        </select>
+                            <RefreshCw size={14} className={`text-risel-green ${loading ? 'animate-spin' : ''}`} />
+                            <span className="hidden sm:inline">Sincronizar</span>
+                        </button>
                     </div>
                 </div>
 
@@ -291,8 +314,23 @@ const MultasDashboard: React.FC<MultasDashboardProps> = ({ activePage }) => {
         return <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 h-full shadow-lg border border-slate-100 flex flex-col overflow-hidden"><MultasPage defaultMonth={selectedMonth} onMonthChange={setSelectedMonth} /></div>;
       case 'ALERTAS':
         return <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 h-full shadow-lg border border-slate-100 flex flex-col overflow-hidden"><AlertasPage defaultMonth={selectedMonth} /></div>;
-      case 'CONFIG':
+      case 'CONFIG': {
+        const isDeny = isDenyUser(user);
+        if (!isDeny) {
+          return (
+            <div className="bg-white/90 backdrop-blur-sm rounded-3xl p-8 h-full shadow-lg border border-slate-100 flex flex-col items-center justify-center text-center">
+              <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mb-4 border border-red-100">
+                <AlertOctagon size={32} />
+              </div>
+              <h3 className="text-lg font-black text-slate-800">Acesso Restrito ao Gestor</h3>
+              <p className="text-xs text-slate-500 max-w-md mt-2">
+                O menu de Configurações do Sistema é restrito exclusivamente ao usuário responsável (deny.goncalves@risel.com.br).
+              </p>
+            </div>
+          );
+        }
         return <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 h-full shadow-lg border border-slate-100 overflow-auto"><ConfigPage /></div>;
+      }
       default:
         return <div>Página não encontrada</div>;
     }

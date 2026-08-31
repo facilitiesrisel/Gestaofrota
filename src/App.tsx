@@ -16,6 +16,7 @@ import Frota from "./pages/Frota";
 import ResetPassword from "./pages/ResetPassword";
 
 import ChecklistPublico from "./pages/ChecklistPublico";
+import ReservaPublica from "./pages/ReservaPublica";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Login } from "./components/Login";
 import { pingSupabaseKeepAlive } from "./services/supabaseService";
@@ -55,6 +56,15 @@ function AppContent() {
         <Route path="/checklist" element={<ChecklistPublico />} />
         <Route path="/c" element={<ChecklistPublico />} />
         <Route path="/publico" element={<ChecklistPublico />} />
+
+        {/* Rotas públicas exclusivas e diretas para colaboradores solicitarem reservas sem login */}
+        <Route path="/reservas" element={<ReservaPublica />} />
+        <Route path="/reserva" element={<ReservaPublica />} />
+        <Route path="/r" element={<ReservaPublica />} />
+        <Route path="/solicitar-reserva" element={<ReservaPublica />} />
+        <Route path="/rac" element={<ReservaPublica initialView="racRequest" />} />
+        <Route path="/uso-diario" element={<ReservaPublica initialView="dailyUse" />} />
+        <Route path="/status-frota" element={<ReservaPublica initialView="fleetStatus" />} />
 
         {/* Rota pública de redefinição de senha com token */}
         <Route path="/redefinir-senha" element={<ResetPassword />} />

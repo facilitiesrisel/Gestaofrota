@@ -1,11 +1,16 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchAllData, saveMulta, deleteMulta, cleanString, uploadFileToDrive, generateAuthPdfDocs, getDriveFolderId, getDocsTemplateId, formatInputText, saveCodigo, fetchBaseEmailMappings, fetchPlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, deleteDriveFiles } from '../services/storage';
+import { generateAutorizacaoDescontoPdf, openTermoInNewTab } from '../services/pdfGenerator';
 import { VEICULOS_REAIS } from '../../../data/veiculos_reais';
 import { parseLocalDate } from '../services/dateUtils';
 import { Multa, StatusMulta, TipoMulta, Veiculo, Motorista, CodigoMulta } from '../types';
-import { Plus, Search, FileText, Download, Save, Send, AlertTriangle, Calendar, DollarSign, Clock, User, LayoutGrid, List as ListIcon, Edit2, Car, ArrowRight, Info, MapPin, Trash2, UploadCloud, Eye, Loader2, HelpCircle, X, Mail, ArrowLeft, Map as MapIcon, Layers, Paperclip, FileCheck, RectangleHorizontal, Filter, ChevronDown, ChevronUp, FileSpreadsheet, ArrowUpDown } from 'lucide-react';
+import { Plus, Search, FileText, Download, Save, Send, AlertTriangle, Calendar, DollarSign, Clock, User, LayoutGrid, List as ListIcon, Edit2, Car, ArrowRight, Info, MapPin, Trash2, UploadCloud, Eye, Loader2, HelpCircle, X, Mail, ArrowLeft, Map as MapIcon, Layers, Paperclip, FileCheck, RectangleHorizontal, Filter, ChevronDown, ChevronUp, FileSpreadsheet, ArrowUpDown, CheckCircle2, MessageSquare, AlertCircle } from 'lucide-react';
 import Loading from '../components/Loading';
+import { PdfViewerModal } from '../components/PdfViewerModal';
+import { mapQuotaService } from '../../../services/mapQuotaService';
+import { MapQuotaIndicator } from '../../../components/reserva/MapQuotaIndicator';
+import { getAccurateCoordinates, setManualCoordinateOverride } from '../../../services/accurateGeocodingService';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -30,16 +35,17 @@ const initialMulta: Partial<Multa> = {
 };
 
 // ... (Rest of the Map logic and helper functions remain unchanged) ...
-// --- OPÇÕES DE LAYERS DE MAPA ---
-const MAP_LAYERS = [
-    { id: 'voyager', name: 'Ruas (Voyager)', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attribution: 'CartoDB' },
-    { id: 'dark', name: 'Risel Dark', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: 'CartoDB' },
-    { id: 'light', name: 'Light (Claro)', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', attribution: 'CartoDB' },
-    { id: 'osm', name: 'OpenStreetMap', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: 'OSM' },
-    { id: 'satellite', name: 'Satélite (Esri)', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri' }
-];
+// --- OPÇÕES DE LAYERS DE MAPA SEGUROS (Zero Custo / PT-BR) ---
+const getDynamicMultasLayers = () => {
+    const layers = mapQuotaService.getLayers();
+    return [
+        { id: 'streets', name: layers.streets.label || 'Ruas (Google/Mapbox)', url: layers.streets.url, attribution: layers.streets.attribution },
+        { id: 'satellite', name: layers.satellite.label || 'Satélite Híbrido', url: layers.satellite.url, attribution: layers.satellite.attribution },
+        { id: 'osm', name: 'OpenStreetMap (Livre)', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors' }
+    ];
+};
 
-const GEO_CACHE_KEY = 'risel_geo_cache_v1';
+const GEO_CACHE_KEY = 'risel_multas_geocache_v3';
 const LINK_SEPARATOR = ' | ';
 const NAME_SEPARATOR = '::';
 
@@ -63,63 +69,106 @@ const MapModal: React.FC<{
     const mapRef = useRef<HTMLDivElement>(null);
     const [loadingMap, setLoadingMap] = useState(true);
     const [statusText, setStatusText] = useState("Inicializando mapa...");
-    const [currentLayer, setCurrentLayer] = useState(MAP_LAYERS.find(l => l.id === 'voyager') || MAP_LAYERS[0]);
+    const [cachedCount, setCachedCount] = useState(0);
+    const [newCount, setNewCount] = useState(0);
+    const [availableLayers, setAvailableLayers] = useState(getDynamicMultasLayers());
+    const [currentLayer, setCurrentLayer] = useState(availableLayers[0]);
     const mapInstanceRef = useRef<any>(null);
     const tileLayerRef = useRef<any>(null);
     const geoCacheRef = useRef<Record<string, any>>({});
 
+    // Sincronizar camadas caso haja chaveamento de cota
+    useEffect(() => {
+        const unsubscribe = mapQuotaService.subscribe(() => {
+            const updated = getDynamicMultasLayers();
+            setAvailableLayers(updated);
+            setCurrentLayer(prev => updated.find(l => l.id === prev.id) || updated[0]);
+        });
+        return unsubscribe;
+    }, []);
+
     useEffect(() => {
         try {
             const savedCache = localStorage.getItem(GEO_CACHE_KEY);
-            if (savedCache) geoCacheRef.current = JSON.parse(savedCache);
-        } catch (e) { console.error("Erro cache mapa", e); }
+            if (savedCache) {
+                geoCacheRef.current = JSON.parse(savedCache);
+            }
+        } catch (e) { console.error("Erro ao carregar cache de multas:", e); }
     }, []);
 
     const saveToCache = (key: string, data: any) => {
         geoCacheRef.current[key] = data;
-        try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(geoCacheRef.current)); } catch (e) {}
+        try { 
+            localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(geoCacheRef.current)); 
+        } catch (e) {}
     };
 
     const smartGeocode = async (m: Multa) => {
+        // 1. Se a multa já tiver coordenadas no próprio objeto
+        if (m.latitude && m.longitude) {
+            return { 
+                lat: m.latitude, 
+                lon: m.longitude, 
+                method: 'direct_object', 
+                precision: 'high',
+                sourceDescription: 'Coordenadas Fixadas da Multa',
+                cached: true 
+            };
+        }
+
+        const ait = m.ait ? m.ait.trim().toUpperCase() : '';
         const address = m.endereco ? m.endereco.trim() : '';
-        const city = m.municipio ? m.municipio.trim() : '';
-        const uf = m.uf ? m.uf.trim() : '';
+        const city = m.municipio ? m.municipio.trim() : 'Campinas';
+        const uf = m.uf ? m.uf.trim() : 'SP';
+        const keyAit = ait ? `AIT_${ait}` : '';
         const keyExact = `EXACT_${address}_${city}_${uf}`.toUpperCase().replace(/\s+/g, '');
-        const keyCity = `CITY_${city}_${uf}`.toUpperCase().replace(/\s+/g, '');
 
-        if (geoCacheRef.current[keyExact]) return { ...geoCacheRef.current[keyExact], cached: true };
+        // 2. Verificar cache por AIT ou Endereço Exato
+        if (keyAit && geoCacheRef.current[keyAit]) {
+            return { ...geoCacheRef.current[keyAit], cached: true };
+        }
+        if (geoCacheRef.current[keyExact]) {
+            return { ...geoCacheRef.current[keyExact], cached: true };
+        }
 
-        if (address && city && uf) {
+        // 3. Consulta de Alta Precisão (Multi-Provider com Interpolação Numérica e Gemini AI)
+        if (address) {
             try {
-                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(`${address}, ${city} - ${uf}, Brasil`)}&limit=1`);
-                const data = await res.json();
-                if (data && data.length > 0) {
-                    const result = { ...data[0], method: 'exact' };
+                const accurate = await getAccurateCoordinates(address, city, uf);
+                if (accurate && typeof accurate.lat === 'number' && typeof accurate.lng === 'number') {
+                    const result = {
+                        lat: accurate.lat,
+                        lon: accurate.lng,
+                        method: accurate.method,
+                        precision: accurate.precision,
+                        sourceDescription: accurate.sourceDescription,
+                        cached: false
+                    };
                     saveToCache(keyExact, result);
+                    if (keyAit) saveToCache(keyAit, result);
                     return result;
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.warn('Erro no motor de alta precisão:', e);
+            }
         }
-        if (address && city) {
-            try {
-                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(`${address}, ${city}, Brasil`)}&limit=1`);
-                const data = await res.json();
-                if (data && data.length > 0) {
-                    const result = { ...data[0], method: 'address_city' };
-                    saveToCache(keyExact, result);
-                    return result;
-                }
-            } catch (e) {}
-        }
-        if (geoCacheRef.current[keyCity]) return { ...geoCacheRef.current[keyCity], cached: true };
+
+        // 4. Fallback de Município (se endereço for inválido)
         if (city) {
             try {
                 const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(`${city} - ${uf}, Brasil`)}&limit=1`);
                 const data = await res.json();
                 if (data && data.length > 0) {
-                    const result = { ...data[0], method: 'city_fallback' };
-                    saveToCache(keyCity, result);
+                    const result = { 
+                        lat: parseFloat(data[0].lat), 
+                        lon: parseFloat(data[0].lon), 
+                        method: 'city_fallback', 
+                        precision: 'fallback',
+                        sourceDescription: 'Centro da Cidade (Aproximado)',
+                        cached: false 
+                    };
                     saveToCache(keyExact, result); 
+                    if (keyAit) saveToCache(keyAit, result);
                     return result;
                 }
             } catch (e) {}
@@ -156,13 +205,19 @@ const MapModal: React.FC<{
             const fmtMoney = (v: number) => v ? v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00';
             const fmtDate = (d: string) => d ? new Date(d).toLocaleDateString('pt-BR') + ' ' + new Date(d).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'}) : '-';
 
-            const generatePopupHtml = (m: Multa, isExact: boolean, count: number = 1) => {
+            const generatePopupHtml = (m: Multa, isExact: boolean, count: number = 1, resultInfo?: any) => {
                 const countBadge = count > 1 
                     ? `<span style="background: #ff9b00; color: #000; font-weight: bold; font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 8px;">+${count - 1} MULTAS</span>`
                     : '';
 
+                const lat = resultInfo ? resultInfo.lat : m.latitude;
+                const lon = resultInfo ? resultInfo.lon : m.longitude;
+                const gMapsUrl = lat && lon ? `https://www.google.com/maps/search/?api=1&query=${lat},${lon}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${m.endereco}, ${m.municipio} - ${m.uf}`)}`;
+                const sourceText = resultInfo?.sourceDescription || (isExact ? 'Alta Precisão (Número Exato)' : 'Aproximado');
+                const isHighPrecision = resultInfo?.precision === 'high' || isExact;
+
                 return `
-                    <div style="font-family: 'Outfit', sans-serif; min-width: 280px; background: #0f172a; color: #e2e8f0; border: 1px solid #00d664; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+                    <div style="font-family: 'Outfit', sans-serif; min-width: 300px; background: #0f172a; color: #e2e8f0; border: 1px solid #00d664; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
                         <div style="background: linear-gradient(90deg, #022c22, #064e3b); padding: 12px; border-bottom: 2px solid #00d664; display: flex; justify-content: space-between; align-items: center;">
                             <div style="display:flex; align-items:center;">
                                 <span style="font-weight: 800; font-size: 16px; color: #fff;">${m.placa}</span>
@@ -187,13 +242,20 @@ const MapModal: React.FC<{
                             </div>
                             <div style="margin-bottom: 8px;">
                                 <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Localização</strong><br/>
-                                <span style="color: #cbd5e1;">${m.endereco}</span><br/>
+                                <span style="color: #cbd5e1; font-weight: bold;">${m.endereco}</span><br/>
                                 <span style="color: #94a3b8; font-size: 11px;">${m.municipio} - ${m.uf}</span>
                             </div>
+                            <div style="background: #022c22; border: 1px solid #065f46; border-radius: 6px; padding: 6px 8px; margin-bottom: 10px; font-size: 10px;">
+                                <span style="color: #34d399; font-weight: bold; display: block;">📍 ${sourceText}</span>
+                                ${lat && lon ? `<span style="color: #6ee7b7; font-family: monospace; font-size: 9px;">${lat.toFixed(5)}, ${lon.toFixed(5)}</span>` : ''}
+                            </div>
                             <div style="margin-top: 10px; padding-top: 5px; text-align: right; display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="background: #334155; color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">${isExact ? 'LOCAL EXATO' : 'APROXIMADO'}</span>
+                                    <span style="background: ${isHighPrecision ? '#065f46' : '#334155'}; color: ${isHighPrecision ? '#34d399' : '#94a3b8'}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">${isHighPrecision ? 'LOCAL EXATO' : 'APROXIMADO'}</span>
                                     <span style="color: #ff9b00; font-weight: 900; font-size: 18px;">${fmtMoney(m.valorComDesconto)}</span>
                             </div>
+                            <a href="${gMapsUrl}" target="_blank" rel="noopener noreferrer" style="display: flex; align-items: center; justify-content: center; gap: 6px; background: #00d664; color: #022c22; font-weight: 800; font-size: 11px; padding: 7px 10px; border-radius: 6px; text-decoration: none; margin-top: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">
+                                <span>Abrir no Google Maps ↗</span>
+                            </a>
                         </div>
                     </div>
                 `;
@@ -201,19 +263,36 @@ const MapModal: React.FC<{
 
             const bounds = L.latLngBounds([]);
             let successCount = 0;
+            let loadedFromCache = 0;
+            let newlyConsulted = 0;
 
             if (singleMode) {
                 const m = multas[0];
-                setStatusText("Localizando infração...");
+                setStatusText("Localizando infração com alta precisão...");
                 const result = await smartGeocode(m);
                 if (result) {
-                    const isExact = result.method !== 'city_fallback';
-                    const popupContent = generatePopupHtml(m, isExact, 1);
+                    if (result.cached) loadedFromCache++;
+                    else newlyConsulted++;
+                    setCachedCount(loadedFromCache);
+                    setNewCount(newlyConsulted);
 
-                    L.marker([result.lat, result.lon], { icon: createIcon(isExact) })
+                    const isExact = result.precision === 'high' || result.method !== 'city_fallback';
+                    const popupContent = generatePopupHtml(m, isExact, 1, result);
+
+                    const marker = L.marker([result.lat, result.lon], { 
+                        icon: createIcon(isExact),
+                        draggable: true
+                    })
                         .addTo(map)
                         .bindPopup(popupContent)
                         .openPopup();
+
+                    marker.on('dragend', (ev: any) => {
+                        const newPos = ev.target.getLatLng();
+                        setManualCoordinateOverride(m.endereco, m.municipio || 'Campinas', m.uf || 'SP', newPos.lat, newPos.lng);
+                        const updatedInfo = { ...result, lat: newPos.lat, lon: newPos.lng, sourceDescription: 'Ajuste Manual do Usuário (Fixado)', precision: 'high' };
+                        marker.setPopupContent(generatePopupHtml(m, true, 1, updatedInfo)).openPopup();
+                    });
                     
                     map.setView([result.lat, result.lon], isExact ? 18 : 15);
                 } else setStatusText("Localização não encontrada.");
@@ -226,7 +305,7 @@ const MapModal: React.FC<{
                     uniqueLocations[key].push(m);
                 });
                 const locationKeys = Object.keys(uniqueLocations);
-                setStatusText(`Mapeando ${locationKeys.length} locais...`);
+                setStatusText(`Mapeando ${locationKeys.length} locais de infrações...`);
                 let processed = 0;
                 
                 const processBatch = async () => {
@@ -238,19 +317,24 @@ const MapModal: React.FC<{
                         try {
                             const result = await smartGeocode(m);
                             if (result) {
-                                const isExact = result.method !== 'city_fallback';
-                                const popupContent = generatePopupHtml(m, isExact, count);
+                                if (result.cached) loadedFromCache++;
+                                else newlyConsulted++;
+                                setCachedCount(loadedFromCache);
+                                setNewCount(newlyConsulted);
+
+                                const isExact = result.precision === 'high' || result.method !== 'city_fallback';
+                                const popupContent = generatePopupHtml(m, isExact, count, result);
 
                                 L.marker([result.lat, result.lon], { icon: createIcon(isExact) }).addTo(map)
                                     .bindPopup(popupContent);
                                 
                                 bounds.extend([result.lat, result.lon]);
                                 successCount++;
-                                if (!result.cached) await new Promise(r => setTimeout(r, 800));
+                                if (!result.cached) await new Promise(r => setTimeout(r, 300));
                             }
                         } catch (e) {}
                         processed++;
-                        if (processed % 5 === 0) setStatusText(`Processando: ${Math.round((processed / locationKeys.length) * 100)}%`);
+                        if (processed % 5 === 0) setStatusText(`Processando infrações: ${Math.round((processed / locationKeys.length) * 100)}%`);
                     }
                     if (successCount > 0 && bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
                     setLoadingMap(false);
@@ -263,18 +347,64 @@ const MapModal: React.FC<{
 
     return (
         <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
-            <div className="bg-[#0f172a] border border-gray-700 w-full max-w-7xl h-[90vh] rounded-2xl flex flex-col shadow-2xl relative">
-                <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-[#022c22]">
-                    <h3 className="text-white font-bold text-lg flex items-center"><MapIcon className="mr-2 text-risel-green" /> {title}</h3>
-                    <div className="flex bg-black/40 p-1 rounded-lg">
-                        {MAP_LAYERS.map(layer => (
-                            <button key={layer.id} onClick={() => setCurrentLayer(layer)} className={`px-3 py-1 text-xs font-bold rounded ${currentLayer.id === layer.id ? 'bg-risel-green text-black' : 'text-gray-400'}`}>{layer.name}</button>
-                        ))}
+            <div className="bg-[#0f172a] border border-gray-700 w-full max-w-7xl h-[90vh] rounded-2xl flex flex-col shadow-2xl relative overflow-hidden">
+                {/* Header */}
+                <div className="p-4 border-b border-gray-700 flex flex-wrap justify-between items-center bg-[#022c22] gap-3">
+                    <div className="flex items-center gap-3">
+                        <h3 className="text-white font-bold text-lg flex items-center">
+                            <MapIcon className="mr-2 text-risel-green" /> {title}
+                        </h3>
+                        {/* Estatísticas de Economia de Requisições */}
+                        <div className="hidden sm:flex items-center gap-2 bg-black/40 px-3 py-1 rounded-lg border border-emerald-800/40 text-xs font-semibold">
+                            <span className="text-emerald-400 flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                                {cachedCount} Salvas em Cache (0 req)
+                            </span>
+                            {newCount > 0 && (
+                                <span className="text-amber-400 border-l border-gray-700 pl-2">
+                                    {newCount} novas mapeadas
+                                </span>
+                            )}
+                        </div>
                     </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-red-500"><X size={24} /></button>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {/* Seletor de Camadas */}
+                        <div className="flex bg-black/40 p-1 rounded-lg border border-gray-700">
+                            {availableLayers.map(layer => (
+                                <button 
+                                    key={layer.id} 
+                                    onClick={() => setCurrentLayer(layer)} 
+                                    className={`px-3 py-1 text-xs font-bold rounded transition-all ${currentLayer.id === layer.id ? 'bg-risel-green text-black shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                                >
+                                    {layer.name}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Indicador de Cota Zero Custo */}
+                        <MapQuotaIndicator compact />
+
+                        <button 
+                            onClick={onClose} 
+                            className="p-1 text-gray-400 hover:text-red-400 rounded-lg hover:bg-white/10 transition"
+                            title="Fechar Mapa"
+                        >
+                            <X size={24} />
+                        </button>
+                    </div>
                 </div>
-                <div className="flex-1 relative bg-slate-900"><div ref={mapRef} className="w-full h-full z-10" />
-                    {loadingMap && <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white"><Loader2 size={48} className="animate-spin text-risel-green mb-4" /><p>{statusText}</p></div>}
+
+                {/* Map Body */}
+                <div className="flex-1 relative bg-slate-900">
+                    <div ref={mapRef} className="w-full h-full z-10" />
+                    {loadingMap && (
+                        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white backdrop-blur-sm">
+                            <Loader2 size={48} className="animate-spin text-risel-green mb-4" />
+                            <p className="font-bold text-sm tracking-wide">{statusText}</p>
+                            <span className="text-xs text-gray-400 mt-2">Reaproveitando coordenadas já salvas para máxima velocidade e economia de cota</span>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -342,6 +472,34 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       descontar: ''
   });
 
+  // Estado do Visualizador Seguro de PDF
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [pdfModalData, setPdfModalData] = useState<{ 
+      url: string; 
+      title: string; 
+      fileName: string;
+      multaData?: Partial<Multa> | null;
+  }>({
+      url: '',
+      title: 'Termo de Autorização de Desconto em Folha',
+      fileName: 'Autorizacao_Desconto.pdf',
+      multaData: null
+  });
+
+  const openPdfViewer = (url?: string, title?: string, fileName?: string, multaData?: Partial<Multa> | null) => {
+      if (!url && !multaData) {
+          alert("Nenhum arquivo ou documento disponível para visualização.");
+          return;
+      }
+      setPdfModalData({
+          url: url || '',
+          title: title || 'Visualização do Documento (PDF)',
+          fileName: fileName || 'documento.pdf',
+          multaData: multaData || null
+      });
+      setPdfModalOpen(true);
+  };
+
   const [showCodigosDropdown, setShowCodigosDropdown] = useState(false);
   const [filteredCodigos, setFilteredCodigos] = useState<any[]>([]);
 
@@ -392,45 +550,82 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       });
   }, [multas]);
 
+  // Indicadores de Gestão Executiva e Painel de Frotas
+  const metrics = useMemo(() => {
+      const totalCount = multas.length;
+      const totalValor = multas.reduce((acc, m) => acc + (Number(m.valorComDesconto) || Number(m.valor) || 0), 0);
+      const condutorCount = multas.filter(m => m.empresaOuCondutor === 'CONDUTOR').length;
+      const empresaCount = multas.filter(m => m.empresaOuCondutor === 'EMPRESA').length;
+      const descontosAutorizados = multas.filter(m => m.descontarMotorista === 'SIM').length;
+      const termosGerados = multas.filter(m => !!m.linkAuth).length;
+      
+      const hoje = new Date();
+      hoje.setHours(0,0,0,0);
+      const prazosCriticos = multas.filter(m => {
+          if (m.status === StatusMulta.FINALIZADA || m.status === StatusMulta.INDICACAO_ENVIADA || !m.prazoIndicacao) return false;
+          const d = parseLocalDate(m.prazoIndicacao);
+          if (!d) return false;
+          const diffDays = Math.ceil((d.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays <= 7;
+      }).length;
+
+      return {
+          totalCount,
+          totalValor,
+          condutorCount,
+          empresaCount,
+          descontosAutorizados,
+          termosGerados,
+          prazosCriticos
+      };
+  }, [multas]);
+
   const filteredMultas = useMemo(() => {
       return multas.filter(m => {
-          const lowerSearch = searchTerm.toLowerCase();
-          const matchSearch = !searchTerm || 
+          const lowerSearch = searchTerm.toLowerCase().trim();
+          const matchSearch = !lowerSearch || 
               (m.ait && m.ait.toLowerCase().includes(lowerSearch)) || 
               (m.placa && m.placa.toLowerCase().includes(lowerSearch)) || 
-              (m.frota && m.frota.toLowerCase().includes(lowerSearch));
+              (m.frota && m.frota.toLowerCase().includes(lowerSearch)) ||
+              (m.responsavelNome && m.responsavelNome.toLowerCase().includes(lowerSearch)) ||
+              (m.enquadramento && m.enquadramento.toLowerCase().includes(lowerSearch)) ||
+              (m.descricaoInfracao && m.descricaoInfracao.toLowerCase().includes(lowerSearch));
 
           if (!matchSearch) return false;
-          if (filters.placa && !m.placa.includes(filters.placa.toUpperCase())) return false;
+          if (filters.placa && !m.placa.toUpperCase().includes(filters.placa.toUpperCase().trim())) return false;
           if (filters.base && m.base !== filters.base) return false;
           if (filters.responsabilidade && m.empresaOuCondutor !== filters.responsabilidade) return false;
           if (filters.descontar && m.descontarMotorista !== filters.descontar) return false;
           if (filters.status && m.status !== filters.status) return false;
 
-          const dateStr = m.dataHoraInfracao;
-          if (!dateStr) return false; 
-          
-          const date = parseLocalDate(dateStr);
-          if (!date) return false;
+          const hasDateFilter = Boolean(filters.mes || filters.dataInicio || filters.dataFim);
+          if (hasDateFilter) {
+              const dateStr = m.dataHoraInfracao;
+              if (!dateStr) return false; 
+              
+              const date = parseLocalDate(dateStr);
+              if (!date) return false;
 
-          if (filters.mes) {
-              const [yFilter, mFilter] = filters.mes.split('-');
-              if (date.getFullYear() !== Number(yFilter) || (date.getMonth() + 1) !== Number(mFilter)) return false;
-          }
-          if (filters.dataInicio) {
-              const dInicio = parseLocalDate(filters.dataInicio);
-              if (dInicio) {
-                  dInicio.setHours(0,0,0,0);
-                  if (date < dInicio) return false;
+              if (filters.mes) {
+                  const [yFilter, mFilter] = filters.mes.split('-');
+                  if (date.getFullYear() !== Number(yFilter) || (date.getMonth() + 1) !== Number(mFilter)) return false;
+              }
+              if (filters.dataInicio) {
+                  const dInicio = parseLocalDate(filters.dataInicio);
+                  if (dInicio) {
+                      dInicio.setHours(0,0,0,0);
+                      if (date < dInicio) return false;
+                  }
+              }
+              if (filters.dataFim) {
+                  const dFim = parseLocalDate(filters.dataFim);
+                  if (dFim) {
+                      dFim.setHours(23,59,59,999);
+                      if (date > dFim) return false;
+                  }
               }
           }
-          if (filters.dataFim) {
-              const dFim = parseLocalDate(filters.dataFim);
-              if (dFim) {
-                  dFim.setHours(23,59,59,999);
-                  if (date > dFim) return false;
-              }
-          }
+
           return true;
       });
   }, [multas, searchTerm, filters]);
@@ -563,15 +758,24 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
   const selectCodigo = (codigo: any) => {
       if (!codigo) return;
-      const valorFinal = (Number(codigo.valor) || 0) - (Number(codigo.desconto) || 0);
+      const valorNominal = Number(codigo.valor) || 0;
+      let descVal = Number(codigo.desconto) || 0;
+      
+      // Proteção para registros antigos onde desconto podia estar cadastrado com valor do boleto com desconto (80%)
+      if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
+        descVal = Number((valorNominal - descVal).toFixed(2));
+      }
+      
+      const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
+
       setFormData(prev => ({
         ...prev, 
         enquadramento: String(codigo.codigo || '').toUpperCase(), 
         artigoCtb: String(codigo.baseLegal || '').toUpperCase(), 
         descricaoInfracao: codigo.isNew ? '' : String(codigo.descricao || '').toUpperCase(),
         pontosCnh: Number(codigo.pontos || 0), 
-        valor: Number(codigo.valor || 0), 
-        desconto: Number(codigo.desconto || 0), 
+        valor: valorNominal, 
+        desconto: descVal, 
         valorComDesconto: valorFinal
       }));
       setShowCodigosDropdown(false);
@@ -580,12 +784,18 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const handleBlurEnquadramento = () => { setTimeout(() => { setShowCodigosDropdown(false); }, 250); };
 
   const handleMoneyChange = (field: 'valor' | 'desconto', val: number) => {
-      if (val < 0) return;
-      const newData = { ...formData, [field]: val };
-      newData.valorComDesconto = (field === 'valor' ? val : (formData.valor || 0)) - (field === 'desconto' ? val : (formData.desconto || 0));
-      setFormData(newData);
+      if (val < 0 || isNaN(val)) return;
+      const currentValor = field === 'valor' ? val : (Number(formData.valor) || 0);
+      const currentDesconto = field === 'desconto' ? val : (Number(formData.desconto) || 0);
+      const valorFinal = Number(Math.max(0, currentValor - currentDesconto).toFixed(2));
+      
+      setFormData(prev => ({
+        ...prev,
+        [field]: val,
+        valorComDesconto: valorFinal
+      }));
       clearError(field);
-  }
+  };
 
   const handleResponsavelChange = (val: string) => {
     const formattedVal = formatInputText(val);
@@ -718,7 +928,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         }
     }
 
-    await saveMulta({ ...formData, id: formData.id || formData.ait || Math.random().toString(36).substr(2, 9) } as Multa);
+    const savedMulta = { ...formData, id: formData.id || formData.ait || `multa-${Date.now()}` } as Multa;
+    await saveMulta(savedMulta);
+    
+    // Limpar filtros de busca/mês para garantir que o registro apareça na tabela imediatamente
+    setFilters(prev => ({ ...prev, mes: '', dataInicio: '', dataFim: '', placa: '', base: '', status: '', responsabilidade: '', descontar: '' }));
+    setSearchTerm('');
+    
     await loadData(true);
     setView('LIST');
     setFormData(initialMulta);
@@ -735,61 +951,112 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       }
   };
 
-  // ... (Upload, PDF, Email logic functions - keep same) ...
-  const handleAitUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files && e.target.files.length > 0) {
-          const files = Array.from(e.target.files) as File[];
+  // --- UPLOAD DE ATÉ 3 ARQUIVOS COM RESILIÊNCIA E PREVIEW ---
+  const handleAitUpload = async (e: React.ChangeEvent<HTMLInputElement> | { target: { files: FileList | File[] } }) => {
+      const inputFiles = e.target.files;
+      if (inputFiles && inputFiles.length > 0) {
+          const files = Array.from(inputFiles) as File[];
           const currentLinks = parseLinks(formData.linkAit);
-          if (currentLinks.length + files.length > 3) { alert(`Limite de 3 arquivos excedido.`); e.target.value = ''; return; }
+          
+          if (currentLinks.length >= 3) {
+              alert('Limite máximo de 3 arquivos anexos já foi atingido. Remova um anexo antes de adicionar outro.');
+              return;
+          }
+
+          const availableSlots = 3 - currentLinks.length;
+          const filesToProcess = files.slice(0, availableSlots);
+
+          if (files.length > availableSlots) {
+              alert(`Você selecionou ${files.length} arquivo(s), mas há espaço para apenas mais ${availableSlots}. Processando ${availableSlots} arquivo(s).`);
+          }
+
           setUploadingAit(true);
           try {
-              const folderId = getDriveFolderId();
-              if (!folderId) throw new Error("Drive ID não configurado.");
+              const folderId = getDriveFolderId() || 'LOCAL';
               const newLinksParts: string[] = [];
-              for (const file of files) {
-                  const defaultName = file.name.split('.').slice(0, -1).join('.');
-                  const customName = window.prompt(`Nome para o arquivo "${file.name}" (como aparecerá no e-mail):`, defaultName);
-                  if (customName === null) continue;
-                  const finalName = customName.trim() || defaultName;
-                  const driveFileName = `AIT_${formData.ait || 'SEM_AIT'}_${finalName}_${Date.now()}`;
+              
+              for (let i = 0; i < filesToProcess.length; i++) {
+                  const file = filesToProcess[i];
+                  const cleanFileName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ").trim();
+                  const finalName = cleanFileName || `Anexo_${currentLinks.length + i + 1}`;
+                  const driveFileName = `AIT_${formData.ait || formData.placa || 'DOC'}_${finalName}_${Date.now()}`;
+                  
                   const response = await uploadFileToDrive(file, folderId, driveFileName) as any;
-                  if (response && response.fileUrl) newLinksParts.push(`${finalName}${NAME_SEPARATOR}${response.fileUrl}`);
+                  if (response && response.fileUrl) {
+                      newLinksParts.push(`${finalName}${NAME_SEPARATOR}${response.fileUrl}`);
+                  }
               }
+
               if (newLinksParts.length > 0) {
                   const existingString = formData.linkAit ? formData.linkAit + LINK_SEPARATOR : '';
-                  setFormData(prev => ({ ...prev, linkAit: existingString + newLinksParts.join(LINK_SEPARATOR) }));
-                  alert(`${newLinksParts.length} arquivo(s) anexado(s)!`);
+                  const updatedLinksString = existingString + newLinksParts.join(LINK_SEPARATOR);
+                  setFormData(prev => ({ ...prev, linkAit: updatedLinksString }));
               }
-          } catch (error: any) { alert('Erro: ' + error.message); } finally { setUploadingAit(false); e.target.value = ''; }
+          } catch (error: any) {
+              console.error("Erro no upload de anexo:", error);
+              alert('Erro no envio do arquivo: ' + (error.message || 'Falha ao processar anexo'));
+          } finally {
+              setUploadingAit(false);
+              const fileInput = document.getElementById('file-ait') as HTMLInputElement;
+              if (fileInput) fileInput.value = '';
+          }
       }
   };
 
   const removeAttachment = (index: number) => {
-      if(!confirm("Remover este anexo?")) return;
       const links = parseLinks(formData.linkAit);
+      const target = links[index];
+      if (!confirm(`Remover o anexo "${target?.name || 'Arquivo'}"?`)) return;
+      
       const updated = links.filter((_, i) => i !== index);
       const newString = updated.map(l => l.name === 'AIT (Anexo)' ? l.url : `${l.name}${NAME_SEPARATOR}${l.url}`).join(LINK_SEPARATOR);
-      setFormData(prev => ({...prev, linkAit: newString}));
+      setFormData(prev => ({ ...prev, linkAit: newString }));
   };
 
-  const generateAuthPDF = async () => {
-      if (!formData.placa || !formData.responsavelNome) { alert("Dados incompletos."); return; }
+  // --- GERADOR DE PDF DE AUTORIZAÇÃO DE DESCONTO COM TIMBRADO OFICIAL RISEL ---
+  const generateAuthPDF = async (silent: boolean = false) => {
+      if (!formData.placa) {
+          if (!silent) alert("Por favor, preencha ao menos a Placa do veículo antes de gerar o Termo de Desconto.");
+          return null;
+      }
       setGeneratingPdf(true);
       try {
-          const folderId = getDriveFolderId(); const templateId = getDocsTemplateId();
-          if (!folderId || !templateId) throw new Error("Config incompletas.");
-          const fmtMoney = (val?: number) => val ? val.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : "0,00";
-          const fmtDate = (val?: string) => { if (!val) return ""; const date = new Date(val); if (val.length === 10 && val.includes('-')) { const parts = val.split('-'); return `${parts[2]}/${parts[1]}/${parts[0]}`; } return isNaN(date.getTime()) ? val : date.toLocaleDateString('pt-BR'); };
-          const templateData = {
-              "<<PLACA>>": formData.placa || "", "<<AIT>>": formData.ait || "", "<<DATA>>": new Date().toLocaleDateString('pt-BR'),
-              "<<NOME MOTORISTA>>": formData.responsavelNome || "", "<<VALOR COM DESCONTO>>": fmtMoney(formData.valorComDesconto),
-              "<<FROTA>>": formData.frota || "", "<<DATA INFRACAO>>": fmtDate(formData.dataHoraInfracao),
-              "<<MUNICIPIO>>": formData.municipio || "", "<<UF>>": formData.uf || "", "<<DESCRICAO INFRACAO>>": formData.descricaoInfracao || "",
-              "<<PONTOS CNH>>": String(formData.pontosCnh || "0"), "<<NOME>>": formData.responsavelNome || "", "<<CPF>>": formData.responsavelCodigo || "", "<<VALOR>>": fmtMoney(formData.valorComDesconto)
-          };
-          const response = await generateAuthPdfDocs(templateData, templateId, folderId) as any;
-          if (response && response.fileUrl) { setFormData(prev => ({ ...prev, linkAuth: response.fileUrl })); alert('PDF Gerado!'); } else alert(`Erro: ${response?.error}`);
-      } catch (error: any) { alert('Erro: ' + error.message); } finally { setGeneratingPdf(false); }
+          // Gerar PDF oficial institucional formatado
+          const pdfResult = await generateAutorizacaoDescontoPdf(formData);
+          
+          // Salva Data URL no registro
+          setFormData(prev => ({ ...prev, linkAuth: pdfResult.dataUrl }));
+
+          // Dispara o download automático do arquivo .pdf gerado no computador do usuário se não for silencioso
+          if (!silent) {
+              try {
+                  pdfResult.download();
+              } catch (e) {
+                  console.warn("Download automático:", e);
+              }
+          }
+
+          // Se houver Google Drive configurado, sincroniza em segundo plano
+          const folderId = getDriveFolderId();
+          if (folderId && folderId !== 'LOCAL') {
+              try {
+                  const fileObj = new File([pdfResult.blob], pdfResult.fileName, { type: 'application/pdf' });
+                  uploadFileToDrive(fileObj, folderId, pdfResult.fileName).then((resp: any) => {
+                      if (resp && resp.fileUrl) {
+                          setFormData(prev => ({ ...prev, linkAuth: resp.fileUrl }));
+                      }
+                  }).catch(e => console.warn("Sincronização opcional de PDF com Drive:", e));
+              } catch (e) {}
+          }
+
+          return pdfResult;
+      } catch (error: any) {
+          console.error("Erro na geração de PDF:", error);
+          if (!silent) alert('Falha ao gerar PDF de Autorização: ' + error.message);
+          return null;
+      } finally {
+          setGeneratingPdf(false);
+      }
   };
 
   const generateEmailHTML = (data: Partial<Multa>) => {
@@ -800,42 +1067,63 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       let attachmentsSection = '';
       
       if (aitLinks.length > 0 || data.linkAuth) {
+          const totalDocs = aitLinks.length + (data.linkAuth ? 1 : 0);
           attachmentsSection = `
-            <div style="background-color:#f8fafc;padding:15px 20px;border-radius:8px;margin-top:25px;border:1px solid #e2e8f0;text-align:center;">
-                <p style="margin:0;font-size:13px;color:#475569;font-weight:600;">📎 Os documentos referentes a esta notificação foram anexados diretamente a este e-mail.</p>
+            <div style="background-color:#f0fdf4;padding:16px 20px;border-radius:10px;margin-top:25px;border:1px solid #bbf7d0;text-align:left;">
+                <p style="margin:0 0 8px 0;font-size:13px;color:#166534;font-weight:bold;">📎 Documentos Anexados (${totalDocs} arquivo(s)):</p>
+                <ul style="margin:0;padding-left:20px;font-size:12px;color:#334155;">
+                    ${aitLinks.map(l => `<li style="margin-bottom:4px;"><strong>Auto de Infração:</strong> ${l.name}</li>`).join('')}
+                    ${data.linkAuth ? `<li style="margin-bottom:4px;"><strong>Termo:</strong> Autorização de Desconto em Folha (PDF Timbrado Risel)</li>` : ''}
+                </ul>
             </div>`;
       }
 
-      // Mercosul Plate Icon (Reduced Size - 24x14 approx)
-      const iconPlaca = `<span style="display:inline-block;width:24px;height:14px;background:#fff;border:1px solid #94a3b8;border-top:3px solid #1e3a8a;border-radius:2px;vertical-align:middle;margin-right:6px;box-shadow:0 1px 1px rgba(0,0,0,0.1);position:relative;"><span style="position:absolute;top:1px;left:1px;right:1px;height:1px;background:repeating-linear-gradient(90deg,transparent,transparent 1px,#e2e8f0 1px,#e2e8f0 2px);"></span></span>`;
+      // Mercosul Plate Icon
+      const iconPlaca = `<span style="display:inline-block;width:24px;height:14px;background:#fff;border:1px solid #94a3b8;border-top:3px solid #1e3a8a;border-radius:2px;vertical-align:middle;margin-right:6px;box-shadow:0 1px 1px rgba(0,0,0,0.1);position:relative;"></span>`;
       
-      // CNH Icon (Reduced Size - 18x12 approx)
-      const iconCNH = `<span style="display:inline-block;width:18px;height:12px;background:#fefce8;border:1px solid #d97706;border-radius:2px;vertical-align:middle;margin-right:6px;position:relative;"><span style="position:absolute;top:1px;left:1px;width:4px;height:4px;background:#e5e7eb;border:1px solid #d1d5db;"></span><span style="position:absolute;top:2px;left:7px;width:6px;height:1px;background:#cbd5e1;"></span><span style="position:absolute;top:5px;left:7px;width:4px;height:1px;background:#cbd5e1;"></span></span>`;
+      // CNH Icon
+      const iconCNH = `<span style="display:inline-block;width:18px;height:12px;background:#fefce8;border:1px solid #d97706;border-radius:2px;vertical-align:middle;margin-right:6px;position:relative;"></span>`;
 
       return `
-        <div style="font-family:'Aptos', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;font-size:12pt;color:#334155;max-width:650px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background-color:#ffffff;">
-          <div style="background-color:#022c22;padding:25px;text-align:center;"><h1 style="color:#00d664;margin:0;font-size:22px;">NOTIFICAÇÃO DE MULTA</h1><p style="color:#cbd5e1;margin-top:5px;font-size:12px;">Gestão de Frotas Risel</p></div>
-          <div style="padding:30px;">
-            <p style="margin-bottom:20px;">Olá, seguem informações referentes a Notificação aplicada ao veículo da Frota:</p>
-            <p style="margin-bottom:20px;">Gentileza, enviar cópia da CNH, e solicitar a assinatura do condutor nos documentos, idêntica a assinatura da CNH.</p>
-            <p style="margin-bottom:20px;font-weight:bold;">Motorista identificado através do rastreador. Gentileza confirmar:</p>
-            
-            <table style="width:100%;border-collapse:collapse;margin-top:15px;font-size:14px;">
-              <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">👤 Motorista:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;">${data.responsavelNome || '-'}</td></tr>
-              <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">📄 AIT:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;">${data.ait || '-'}</td></tr>
-              <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">🚛 Frota:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;">${data.frota || '-'}</td></tr>
-              <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">${iconPlaca} Placa:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;">${data.placa || '-'}</td></tr>
-              <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">🏢 Base:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;">${data.base || '-'}</td></tr>
-              <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">📅 Data:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;">${fmtDate(data.dataHoraInfracao)}</td></tr>
-              <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">⚠️ Infração:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;">${data.descricaoInfracao || '-'}</td></tr>
-              <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">💲 Valor:</td><td style="padding:10px;color:#16a34a;font-weight:bold;border-bottom:1px solid #e2e8f0;">${fmtMoney(data.valorComDesconto)}</td></tr>
-              <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;">${iconCNH} Pontuação CNH:</td><td style="padding:10px;color:#334155;border-bottom:1px solid #e2e8f0;">${data.pontosCnh || '0'}</td></tr>
-              <tr><td style="padding:10px;font-weight:bold;color:#dc2626;">⏳ Prazo:</td><td style="padding:10px;font-weight:bold;color:#dc2626;">${fmtDate(data.prazoIndicacao)}</td></tr>
+        <div style="font-family:'Aptos', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;font-size:12pt;color:#334155;max-width:680px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background-color:#ffffff;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+          <div style="background-color:#114D38;padding:25px;text-align:left;border-bottom:3px solid #00d664;">
+            <table style="width:100%;border-collapse:collapse;">
+              <tr>
+                <td style="vertical-align:middle;">
+                  <h1 style="color:#ffffff;margin:0;font-size:20px;font-weight:900;letter-spacing:-0.5px;">NOTIFICAÇÃO DE INFRAÇÃO DE TRÂNSITO</h1>
+                  <p style="color:#a7f3d0;margin:4px 0 0 0;font-size:12px;">Risel Combustíveis Ltda • Gestão Integrada de Frotas</p>
+                </td>
+              </tr>
             </table>
-            ${attachmentsSection}
           </div>
-          <div style="background-color:#f8fafc;padding:20px;text-align:center;border-top:1px solid #e2e8f0;">
-             <p style="color:#94a3b8;font-size:11px;margin:0;">Este é um e-mail automático enviado pelo sistema G F Risel.</p>
+          <div style="padding:28px;">
+            <p style="margin:0 0 16px 0;font-size:14px;color:#1e293b;">Prezados(as),</p>
+            <p style="margin:0 0 16px 0;font-size:13px;line-height:1.6;color:#475569;">
+              Seguem as informações detalhadas da notificação de infração aplicada ao veículo da frota. 
+              <strong>Gentileza providenciar a cópia da CNH do condutor responsável e a assinatura no Termo de Autorização de Desconto idêntica à CNH.</strong>
+            </p>
+            
+            <table style="width:100%;border-collapse:collapse;margin-top:15px;font-size:13px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;width:38%;">👤 Motorista / Condutor:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#0f172a;">${data.responsavelNome || '-'}</td></tr>
+              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">📄 Auto de Infração (AIT):</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-family:monospace;font-weight:bold;color:#0f172a;">${data.ait || '-'}</td></tr>
+              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">🚛 Frota / Identificação:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${data.frota || '-'}</td></tr>
+              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">${iconPlaca} Placa do Veículo:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-family:monospace;font-weight:900;color:#0f172a;">${data.placa || '-'}</td></tr>
+              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">🏢 Base / Filial:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${data.base || '-'}</td></tr>
+              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">📅 Data e Hora da Infração:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${fmtDate(data.dataHoraInfracao)}</td></tr>
+              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">⚠️ Infração Cometida:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;color:#0f172a;">${data.descricaoInfracao || data.enquadramento || '-'}</td></tr>
+              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">💲 Valor com Desconto:</td><td style="padding:10px 14px;color:#16a34a;font-weight:900;border-bottom:1px solid #e2e8f0;">${fmtMoney(data.valorComDesconto)}</td></tr>
+              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">${iconCNH} Pontuação CNH:</td><td style="padding:10px 14px;color:#334155;font-weight:bold;border-bottom:1px solid #e2e8f0;">${data.pontosCnh || '0'} Pontos</td></tr>
+              <tr style="background-color:#fef2f2;"><td style="padding:10px 14px;font-weight:bold;color:#dc2626;">⏳ Prazo Limite para Indicação:</td><td style="padding:10px 14px;font-weight:900;color:#dc2626;">${fmtDate(data.prazoIndicacao)}</td></tr>
+            </table>
+
+            ${attachmentsSection}
+
+            <p style="margin:25px 0 0 0;font-size:12px;color:#64748b;line-height:1.5;">
+              Em caso de dúvidas ou necessidade de informações adicionais, favor responder a este e-mail ou contatar a equipe de Gestão de Frotas Risel.
+            </p>
+          </div>
+          <div style="background-color:#f8fafc;padding:16px 20px;text-align:center;border-top:1px solid #e2e8f0;">
+             <p style="color:#94a3b8;font-size:11px;margin:0;font-weight:600;">© 2026 Risel Combustíveis Ltda • Sistema de Gestão de Frotas & Multas</p>
           </div>
         </div>`;
   };
@@ -846,12 +1134,44 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       let toEmail = '';
       let ccEmail = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
 
-      if (placaClean && placaMappings[placaClean]) {
-          toEmail = placaMappings[placaClean].to || '';
-          if (placaMappings[placaClean].cc) {
-              ccEmail = placaMappings[placaClean].cc;
+      // 1. Prioridade: Buscar no campo E-mail da Placa do Controle de Frota Leve (Lista em memória, LocalStorage ou VEICULOS_REAIS)
+      if (placaClean) {
+          const veiculoLocal = veiculos.find(v => cleanString(v.placa) === placaClean);
+          if (veiculoLocal && (veiculoLocal as any).email) {
+              toEmail = (veiculoLocal as any).email.trim();
           }
-      } else {
+
+          if (!toEmail) {
+              try {
+                  const storedV = localStorage.getItem("risel_frota_veiculos_v2");
+                  if (storedV) {
+                      const list = JSON.parse(storedV);
+                      const lv = list.find((item: any) => cleanString(item.placa) === placaClean);
+                      if (lv && lv.email) {
+                          toEmail = lv.email.trim();
+                      }
+                  }
+              } catch (e) {}
+          }
+
+          if (!toEmail && Array.isArray(VEICULOS_REAIS)) {
+              const vr = VEICULOS_REAIS.find(v => cleanString(v.placa) === placaClean);
+              if (vr && vr.email) {
+                  toEmail = vr.email.trim();
+              }
+          }
+      }
+
+      // 2. Se não encontrou no veículo da frota, verificar mapeamento específico de placa
+      if (!toEmail && placaClean && placaMappings[placaClean] && placaMappings[placaClean].to) {
+          toEmail = placaMappings[placaClean].to.trim();
+          if (placaMappings[placaClean].cc) {
+              ccEmail = placaMappings[placaClean].cc.trim();
+          }
+      }
+
+      // 3. Fallback: Mapeamento de e-mail por Base/Filial
+      if (!toEmail) {
           const baseUpper = formData.base ? formData.base.toUpperCase().trim() : '';
           const matchedKey = Object.keys(baseMappings).find(k => baseUpper.includes(k.toUpperCase()) || k.toUpperCase().includes(baseUpper));
           if (matchedKey && baseMappings[matchedKey]) {
@@ -860,6 +1180,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           }
       }
 
+      // 4. Sempre garantir Lorena e Deny em CC
       if (!ccEmail.toLowerCase().includes('lorena.padilha@risel.com.br')) {
           ccEmail = `${ccEmail}; lorena.padilha@risel.com.br`;
       }
@@ -872,16 +1193,97 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       setIsEmailModalOpen(true);
   };
 
+  const handleOpenOutlookOrWebmail = async () => {
+      // 1. Garantir que os arquivos anexos estejam baixados localmente para anexar no Outlook/Webmail
+      const aitLinks = parseLinks(formData.linkAit);
+      let authLink = formData.linkAuth;
+      
+      // Se não gerou Termo de Desconto, gera silenciosamente agora
+      if (!authLink && formData.placa) {
+          try {
+              const res = await generateAutorizacaoDescontoPdf(formData);
+              if (res) {
+                  authLink = res.dataUrl;
+                  setFormData(prev => ({ ...prev, linkAuth: res.dataUrl }));
+                  // Baixa o termo gerado
+                  res.download();
+              }
+          } catch (e) {}
+      } else if (authLink) {
+          // Se já existe Termo, baixa uma cópia para facilitar o anexo manual no Outlook
+          try {
+              const res = await generateAutorizacaoDescontoPdf(formData);
+              res.download();
+          } catch (e) {}
+      }
+
+      // Baixa os AITs anexados se forem data URLs ou URLs disponíveis
+      aitLinks.forEach((att, idx) => {
+          if (att.url.startsWith('data:')) {
+              const a = document.createElement('a');
+              a.href = att.url;
+              a.download = att.name.endsWith('.pdf') ? att.name : `${att.name}.pdf`;
+              document.body.appendChild(a);
+              a.click();
+              setTimeout(() => { try { document.body.removeChild(a); } catch (e) {} }, 200);
+          }
+      });
+
+      // 2. Copiar tabela HTML rica e texto formatado para a área de transferência
+      const htmlContent = generateEmailHTML({ ...formData, linkAuth: authLink });
+      try {
+          if (navigator.clipboard && window.ClipboardItem) {
+              const blobHtml = new Blob([htmlContent], { type: 'text/html' });
+              const blobText = new Blob([`NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa || '-'} - AIT: ${formData.ait || '-'}\nMotorista: ${formData.responsavelNome || '-'}\nValor: ${(formData.valorComDesconto || formData.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nPrazo Indicação: ${formData.prazoIndicacao || '-'}`], { type: 'text/plain' });
+              const data = [new ClipboardItem({ 'text/html': blobHtml, 'text/plain': blobText })];
+              await navigator.clipboard.write(data);
+          }
+      } catch (clipErr) {
+          console.warn("Clipboard rich text:", clipErr);
+      }
+
+      // 3. Abrir o cliente de e-mail padrão (Outlook / Webmail) pré-preenchido
+      const dataFormatada = formData.dataHoraInfracao ? formData.dataHoraInfracao.split('T')[0] : '';
+      const subject = encodeURIComponent(`NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa || 'S/P'} - FROTA: ${formData.frota || formData.placa || 'S/F'} - BASE: ${formData.base || '-'} - DATA ${dataFormatada}`);
+      
+      const bodyPlainText = `Prezados(as),\n\nSeguem as informações da Notificação de Infração de Trânsito para providências:\n\n` +
+          `• Motorista / Condutor: ${formData.responsavelNome || '-'}\n` +
+          `• Auto de Infração (AIT): ${formData.ait || '-'}\n` +
+          `• Placa do Veículo: ${formData.placa || '-'}\n` +
+          `• Frota / Unidade: ${formData.frota || '-'}\n` +
+          `• Base / Filial: ${formData.base || '-'}\n` +
+          `• Infração Cometida: ${formData.descricaoInfracao || formData.enquadramento || '-'}\n` +
+          `• Valor Líquido com Desconto: ${(formData.valorComDesconto || formData.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\n` +
+          `• Pontuação CNH: ${formData.pontosCnh || 0} Pontos\n` +
+          `• Prazo Limite para Indicação: ${formData.prazoIndicacao || '-'}\n` +
+          `• Observações: ${formData.obs || 'Nenhuma'}\n\n` +
+          `[DICA: A formatação visual completa e elegante foi copiada para sua área de transferência (Ctrl+V)].\n\n` +
+          `Atenciosamente,\nGestão Integrada de Frotas • Risel Combustíveis Ltda`;
+
+      const body = encodeURIComponent(bodyPlainText);
+      const mailLink = document.createElement('a');
+      mailLink.href = `mailto:${emailTo}?cc=${emailCc}&subject=${subject}&body=${body}`;
+      mailLink.target = '_blank';
+      document.body.appendChild(mailLink);
+      mailLink.click();
+      setTimeout(() => { try { document.body.removeChild(mailLink); } catch (e) {} }, 300);
+
+      alert("1. Os arquivos anexos (AIT e Termo em PDF) foram salvos na sua pasta de Downloads.\n2. O corpo do e-mail formatado foi copiado (basta colar no corpo da mensagem se desejar a tabela colorida).\n3. Seu cliente de e-mail (Outlook / Webmail) foi aberto!");
+  };
+
   const handleSendEmail = async () => {
-      if (!formData.placa || !formData.ait) { alert("Faltam dados."); return; }
+      if (!formData.placa && !formData.ait) { 
+          alert("Por favor, preencha os dados da multa antes de enviar a notificação."); 
+          return; 
+      }
       setSendingEmail(true);
       
-      // Parse main recipients list (split by ; or ,)
+      // Parse main recipients list
       const toRecipientsList = emailTo.split(/[;,]+/)
           .map(e => e.trim())
           .filter(e => e.length > 0 && e.includes('@'));
       
-      // Parse CC recipients list (split by ; or ,)
+      // Parse CC recipients list
       const ccRecipientsList = emailCc.split(/[;,]+/)
           .map(e => e.trim())
           .filter(e => e.length > 0 && e.includes('@'));
@@ -902,17 +1304,36 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       };
 
       const dataFormatada = getFormattedSubjectDate(formData.dataHoraInfracao);
-      const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa} - FROTA: ${formData.frota} - BASE: ${formData.base || '-'} - DATA ${dataFormatada}`;
+      const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa || 'S/P'} - FROTA: ${formData.frota || formData.placa || 'S/F'} - BASE: ${formData.base || '-'} - DATA ${dataFormatada}`;
       
-      // Coleta links do Google Drive para que o backend os baixe e anexe fisicamente no e-mail
+      // Coleta todos os anexos (AITs anexados + Autorização de Desconto em PDF)
       const aitLinks = parseLinks(formData.linkAit);
       const driveUrls: Array<{ name: string; url: string }> = [...aitLinks];
-      if (formData.linkAuth) {
+      
+      // Se não gerou PDF ainda, geramos silenciosamente agora
+      let authLink = formData.linkAuth;
+      if (!authLink && formData.placa) {
+          try {
+              const pdfRes = await generateAutorizacaoDescontoPdf(formData);
+              if (pdfRes) {
+                  authLink = pdfRes.dataUrl;
+                  setFormData(prev => ({ ...prev, linkAuth: pdfRes.dataUrl }));
+              }
+          } catch (e) {}
+      }
+
+      if (authLink) {
           driveUrls.push({
-              name: `Autorizacao_Desconto_${formData.placa}`,
-              url: formData.linkAuth
+              name: `Autorizacao_Desconto_${formData.placa || 'MULTA'}`,
+              url: authLink
           });
       }
+
+      // Tenta obter credenciais de SMTP salvas pelo módulo de Checklist/Usuários ou variáveis de ambiente
+      const smtpHost = localStorage.getItem("risel_smtp_host") || undefined;
+      const smtpPort = localStorage.getItem("risel_smtp_port") || undefined;
+      const smtpEmail = localStorage.getItem("risel_smtp_email") || undefined;
+      const smtpPassword = localStorage.getItem("risel_smtp_password") || undefined;
 
       try {
           const response = await fetch('/api/send-email', {
@@ -921,38 +1342,39 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   'Content-Type': 'application/json'
               },
               body: JSON.stringify({
+                  smtpHost,
+                  smtpPort,
+                  smtpEmail,
+                  smtpPassword,
                   to: toRecipientsList.join(', ') || ADMIN_EMAIL,
                   cc: ccRecipientsList.join(', '),
                   subject,
-                  html: generateEmailHTML(formData),
+                  html: generateEmailHTML({ ...formData, linkAuth: authLink }),
                   driveUrls
               })
           });
 
           const result = await response.json();
           if (response.ok && result.success) { 
-              // Exclui os arquivos temporários do Google Drive para evitar acúmulo e liberação de cota
-              const urlsToDelete = driveUrls.map(u => u.url);
-              if (urlsToDelete.length > 0) {
-                  console.log("Excluindo arquivos temporários do Google Drive após o envio...", urlsToDelete);
-                  await deleteDriveFiles(urlsToDelete);
+              // Se os arquivos eram links remotos temporários do Drive, remove
+              const driveRemoteUrls = driveUrls.filter(u => u.url.startsWith('http')).map(u => u.url);
+              if (driveRemoteUrls.length > 0) {
+                  deleteDriveFiles(driveRemoteUrls).catch(e => console.warn(e));
               }
 
-              // Limpa links locais e salva atualização no formulário
-              const updatedForm = { ...formData, linkAit: '', linkAuth: '' };
-              setFormData(updatedForm);
-              if (formData.id) {
-                  await saveMulta(updatedForm as Multa);
+              if (result.delivered) {
+                  alert(`Notificação enviada com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL} com ${driveUrls.length} anexo(s) incluído(s)!`);
+              } else {
+                  alert(result.message || `Notificação e ${driveUrls.length} anexo(s) registrados com sucesso!`);
               }
-
-              alert("E-mail enviado com sucesso com os anexos anexados fisicamente! Os arquivos do Google Drive foram removidos para liberar espaço."); 
               setIsEmailModalOpen(false); 
           } else { 
               console.error(result); 
-              alert("Erro ao enviar e-mail via servidor SMTP: " + (result.error || "Verifique o console")); 
+              alert("Aviso no envio: " + (result.message || result.error || "Verifique o console")); 
+              setIsEmailModalOpen(false);
           }
       } catch (error: any) { 
-          alert("Falha no envio: " + error.message); 
+          alert("Falha no envio de e-mail: " + error.message); 
       } finally { 
           setSendingEmail(false); 
       }
@@ -968,18 +1390,123 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   );
 
   if (view === 'LIST') {
-    // ... (LIST view code same as previous block - no changes requested for list view) ...
-    // Using existing List view structure
     return (
-        <div className="space-y-4 animate-in fade-in relative h-full flex flex-col pb-0">
+        <div className="space-y-3 animate-in fade-in relative h-full flex flex-col pb-0">
             {loading && <Loading />}
-            <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/60 backdrop-blur-md p-4 rounded-xl shadow-sm border border-white/30 shrink-0">
-            <div><h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-800 to-teal-600 drop-shadow-sm">Gestão de Multas</h2><p className="text-slate-600 text-xs font-medium">Controle e Processamento de Infrações</p></div>
-            <div className="flex items-center space-x-3 w-full md:w-auto justify-end">
-                <button onClick={() => setIsExportModalOpen(true)} className="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-200 px-4 py-2 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><FileSpreadsheet size={16} className="mr-2" /> Exportar Relatório</button>
-                <button onClick={() => setShowGlobalMap(true)} className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg flex items-center shadow-lg transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><MapIcon size={16} className="mr-2 text-risel-green" /> Mapa Geral</button>
-                <button onClick={() => { setFormData(initialMulta); setErrors({}); setView('FORM'); }} className="bg-emerald-600 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg flex items-center shadow-lg shadow-emerald-200 hover:shadow-xl transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><Plus size={16} className="mr-2" /> Nova Multa</button>
+            
+            {/* Header Compacto para ganho de espaço de tela */}
+            <div className="flex flex-col md:flex-row justify-between items-center gap-2.5 bg-white/70 backdrop-blur-md px-3.5 py-2 rounded-xl shadow-sm border border-white/30 shrink-0">
+                <div className="flex items-center space-x-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                    <div>
+                        <h2 className="text-base font-black text-slate-800 tracking-tight leading-tight">Gestão de Multas</h2>
+                        <p className="text-slate-500 text-[10px] font-medium leading-none">Controle e Processamento de Infrações</p>
+                    </div>
+                </div>
+                <div className="flex items-center space-x-2 w-full md:w-auto justify-end">
+                    <button onClick={() => setIsExportModalOpen(true)} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><FileSpreadsheet size={14} className="mr-1.5" /> Exportar</button>
+                    <button onClick={() => setShowGlobalMap(true)} className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><MapIcon size={14} className="mr-1.5 text-risel-green" /> Mapa Geral</button>
+                    <button onClick={() => { setFormData(initialMulta); setErrors({}); setView('FORM'); }} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg flex items-center shadow-sm hover:shadow transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><Plus size={14} className="mr-1.5" /> Nova Multa</button>
+                </div>
             </div>
+
+            {/* Painel Executivo de Indicadores com Layout Assimétrico (Bento Grid) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5 shrink-0">
+                {/* Card 1 (Span 4): Resumo Geral & Montante Financeiro */}
+                <div className="sm:col-span-2 lg:col-span-4 bg-gradient-to-br from-[#032b21] via-[#043d2f] to-[#02221a] text-white p-3.5 rounded-2xl shadow-sm border border-emerald-800/40 relative overflow-hidden flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400/90 flex items-center">
+                                <FileText size={12} className="mr-1 text-emerald-400"/> Total de Lançamentos
+                            </span>
+                            <div className="text-2xl font-black tracking-tight mt-0.5 text-white flex items-baseline gap-2">
+                                {metrics.totalCount} <span className="text-xs font-normal text-emerald-300/80">notificações</span>
+                            </div>
+                        </div>
+                        <div className="bg-emerald-500/20 p-2 rounded-xl border border-emerald-400/30">
+                            <DollarSign size={18} className="text-emerald-300"/>
+                        </div>
+                    </div>
+                    <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs">
+                        <span className="text-[11px] text-emerald-200/90 font-medium">Impacto Financeiro:</span>
+                        <span className="font-black text-sm text-emerald-300 font-mono">
+                            {metrics.totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Card 2 (Span 3): Prazos de Indicação em Alerta */}
+                <div className="sm:col-span-1 lg:col-span-3 bg-white/80 backdrop-blur-md p-3.5 rounded-2xl shadow-sm border border-amber-200/80 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 flex items-center">
+                                <AlertTriangle size={12} className="mr-1 text-amber-600"/> Prazos Críticos (≤ 7 dias)
+                            </span>
+                            <div className="text-2xl font-black text-slate-800 tracking-tight mt-0.5">
+                                {metrics.prazosCriticos}
+                            </div>
+                        </div>
+                        <div className={`p-2 rounded-xl border ${metrics.prazosCriticos > 0 ? 'bg-amber-100/80 border-amber-300 text-amber-700' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>
+                            <Clock size={18}/>
+                        </div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-medium mt-1">
+                        {metrics.prazosCriticos > 0 ? 'Exigem indicação urgente de condutor' : 'Prazos operacionais regularizados'}
+                    </p>
+                </div>
+
+                {/* Card 3 (Span 3): Responsabilidade Condutor vs Empresa */}
+                <div className="sm:col-span-1 lg:col-span-3 bg-white/80 backdrop-blur-md p-3.5 rounded-2xl shadow-sm border border-blue-200/80 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 flex items-center">
+                                <User size={12} className="mr-1 text-blue-600"/> Responsabilidade
+                            </span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-lg font-black text-slate-800">{metrics.condutorCount}</span>
+                                <span className="text-[11px] font-bold text-slate-500">Condutor</span>
+                                <span className="text-slate-300">|</span>
+                                <span className="text-lg font-black text-slate-800">{metrics.empresaCount}</span>
+                                <span className="text-[11px] font-bold text-slate-500">Empresa</span>
+                            </div>
+                        </div>
+                        <div className="bg-blue-50 p-2 rounded-xl border border-blue-200 text-blue-700">
+                            <Car size={18}/>
+                        </div>
+                    </div>
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden flex mt-2">
+                        <div 
+                            className="bg-blue-600 h-full" 
+                            style={{ width: `${metrics.totalCount > 0 ? (metrics.condutorCount / metrics.totalCount) * 100 : 0}%` }}
+                            title={`Condutor: ${metrics.condutorCount}`}
+                        />
+                        <div 
+                            className="bg-slate-400 h-full" 
+                            style={{ width: `${metrics.totalCount > 0 ? (metrics.empresaCount / metrics.totalCount) * 100 : 0}%` }}
+                            title={`Empresa: ${metrics.empresaCount}`}
+                        />
+                    </div>
+                </div>
+
+                {/* Card 4 (Span 2): Descontos em Folha & Termos */}
+                <div className="sm:col-span-2 lg:col-span-2 bg-white/80 backdrop-blur-md p-3.5 rounded-2xl shadow-sm border border-purple-200/80 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 flex items-center">
+                                <FileCheck size={12} className="mr-1 text-purple-600"/> Termos & Folha
+                            </span>
+                            <div className="text-xl font-black text-slate-800 tracking-tight mt-0.5">
+                                {metrics.descontosAutorizados} <span className="text-[10px] font-bold text-slate-400">aut.</span>
+                            </div>
+                        </div>
+                        <div className="bg-purple-50 p-2 rounded-xl border border-purple-200 text-purple-700">
+                            <FileText size={16}/>
+                        </div>
+                    </div>
+                    <div className="text-[10px] text-purple-800 font-bold bg-purple-50 px-2 py-0.5 rounded-md self-start mt-1">
+                        {metrics.termosGerados} PDF(s) Timbrados
+                    </div>
+                </div>
             </div>
             
             {/* Filter Bar */}
@@ -1009,43 +1536,92 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                         <table className="min-w-full text-left text-xs border-collapse">
                             <thead className="sticky top-0 z-20 shadow-md">
                                 <tr className="bg-gradient-to-r from-[#022c22] to-risel-green text-white">
-                                    <th className="px-3 py-3.5 w-20 text-white/90 font-bold uppercase tracking-wider text-[10px] text-center border-r border-white/10">Ações</th>
-                                    <th onClick={() => handleSort('status')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] text-left border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Status <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('dataHoraInfracao')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Multa <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('prazoIndicacao')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Prazo <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('placa')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Placa <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('ait')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">AIT <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('descricaoInfracao')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 min-w-[180px] max-w-[280px] cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Infração Cometida <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('responsavelNome')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 min-w-[130px] cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Motorista <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('valor')} className="px-3 py-3.5 text-white/90 font-bold uppercase tracking-wider text-[10px] text-right rounded-tr-lg whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-end gap-1">Valor <ArrowUpDown size={12}/></div></th>
+                                    <th className="px-3 py-3 w-20 text-white/90 font-bold uppercase tracking-wider text-[10px] text-center border-r border-white/10">Ações</th>
+                                    <th onClick={() => handleSort('status')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] text-left border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Status <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('dataHoraInfracao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Multa <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('prazoIndicacao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Prazo <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('placa')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Placa <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('ait')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">AIT <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('descricaoInfracao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 min-w-[180px] max-w-[280px] cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Infração Cometida <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('responsavelNome')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 min-w-[130px] cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Motorista <ArrowUpDown size={12}/></div></th>
+                                    <th className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] text-center border-r border-white/10 whitespace-nowrap">Obs</th>
+                                    <th className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] text-center border-r border-white/10 whitespace-nowrap">Docs</th>
+                                    <th onClick={() => handleSort('valor')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] text-right rounded-tr-lg whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-end gap-1">Valor <ArrowUpDown size={12}/></div></th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200/50">
                                 {sortedMultas.map((multa, idx) => {
                                     const rowClass = idx % 2 === 0 ? 'bg-white/40' : 'bg-white/20';
+                                    const atts = parseLinks(multa.linkAit);
                                     return (
                                         <tr key={multa.id} className={`${rowClass} hover:bg-blue-50/60 transition-colors group`}>
-                                            <td className="px-2 py-2.5 text-center border-r border-gray-200/50 align-middle">
+                                            <td className="px-2 py-2 text-center border-r border-gray-200/50 align-middle">
                                                 <div className="flex justify-center space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={(e) => { e.stopPropagation(); setFormData(multa); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all"><Edit2 size={15} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all"><MapPin size={15} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleDelete(multa.id); }} className="text-gray-400 hover:text-red-600 p-1.5 rounded-full transition-all"><Trash2 size={15} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setFormData(multa); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Localizar no Mapa"><MapPin size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleDelete(multa.id); }} className="text-gray-400 hover:text-red-600 p-1.5 rounded-full transition-all" title="Excluir"><Trash2 size={14} /></button>
                                                 </div>
                                             </td>
-                                            <td className="px-3 py-2.5 text-left border-r border-gray-200/50 whitespace-nowrap align-middle">{getStatusBadge(multa.status)}</td>
-                                            <td className="px-3 py-2.5 border-r border-gray-200/50 whitespace-nowrap align-middle text-center">
+                                            <td className="px-3 py-2 text-left border-r border-gray-200/50 whitespace-nowrap align-middle">{getStatusBadge(multa.status)}</td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center">
                                                 <span className="text-[10px] font-mono text-gray-600">{formatDateString(multa.dataHoraInfracao)}</span>
                                             </td>
-                                            <td className="px-3 py-2.5 border-r border-gray-200/50 whitespace-nowrap align-middle text-center">
+                                            <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center">
                                                 <span className="text-[10px] font-mono text-gray-600">{formatDateString(multa.prazoIndicacao)}</span>
                                             </td>
-                                            <td className="px-3 py-2.5 border-r border-gray-200/50 font-mono font-bold text-gray-700 whitespace-nowrap align-middle">{multa.placa}</td>
-                                            <td className="px-3 py-2.5 border-r border-gray-200/50 font-medium text-gray-600 text-[10px] whitespace-nowrap align-middle">{multa.ait}</td>
-                                            <td className="px-3 py-2.5 border-r border-gray-200/50 text-gray-800 text-xs font-medium align-middle truncate max-w-[260px]" title={multa.descricaoInfracao || multa.enquadramento}>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 font-mono font-bold text-gray-700 whitespace-nowrap align-middle">{multa.placa}</td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 font-medium text-gray-600 text-[10px] whitespace-nowrap align-middle">{multa.ait}</td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 text-gray-800 text-xs font-medium align-middle truncate max-w-[260px]" title={multa.descricaoInfracao || multa.enquadramento}>
                                                 {multa.descricaoInfracao || multa.enquadramento || '-'}
                                             </td>
-                                            <td className="px-3 py-2.5 border-r border-gray-200/50 text-gray-600 align-middle truncate max-w-[140px] text-xs font-medium">{multa.responsavelNome || '-'}</td>
-                                            <td className="px-3 py-2.5 text-right font-bold text-gray-800 whitespace-nowrap align-middle text-xs">{formatMoneyString(multa.valor)}</td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 text-gray-600 align-middle truncate max-w-[140px] text-xs font-medium">{multa.responsavelNome || '-'}</td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 text-center align-middle whitespace-nowrap">
+                                                {multa.obs && multa.obs.trim().length > 0 ? (
+                                                    <div className="group/obs relative inline-block">
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 cursor-help">
+                                                            <MessageSquare size={10} className="mr-1 text-amber-600"/> Nota
+                                                        </span>
+                                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-60 p-2.5 bg-slate-900 text-white text-[11px] rounded-xl shadow-xl hidden group-hover/obs:block z-50 text-left leading-relaxed">
+                                                            <p className="font-bold text-amber-400 mb-0.5 text-[10px] uppercase">Observação do Lançamento:</p>
+                                                            <p className="text-slate-200">{multa.obs}</p>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-[10px] text-slate-300">-</span>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 text-center align-middle whitespace-nowrap">
+                                                <div className="flex items-center justify-center space-x-1.5">
+                                                    {multa.linkAuth && (
+                                                        <button 
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                openTermoInNewTab(multa, multa.linkAuth);
+                                                            }}
+                                                            className="text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-1 rounded-md transition-colors"
+                                                            title="Visualizar Termo de Desconto em Nova Aba"
+                                                        >
+                                                            <FileText size={14} />
+                                                        </button>
+                                                    )}
+                                                    {atts.length > 0 && (
+                                                        <button 
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                openPdfViewer(atts[0].url, `AIT - ${multa.placa} (${atts[0].name})`, `${atts[0].name}.pdf`);
+                                                            }}
+                                                            className="text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 p-1 rounded-md transition-colors"
+                                                            title={`Visualizar AIT Anexo (${atts.length} arquivo(s))`}
+                                                        >
+                                                            <Paperclip size={14} />
+                                                        </button>
+                                                    )}
+                                                    {!multa.linkAuth && atts.length === 0 && (
+                                                        <span className="text-[10px] text-slate-300">-</span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-bold text-gray-800 whitespace-nowrap align-middle text-xs">{formatMoneyString(multa.valor)}</td>
                                         </tr>
                                     );
                                 })}
@@ -1057,97 +1633,177 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
             
             {showGlobalMap && <MapModal multas={multas} onClose={() => setShowGlobalMap(false)} title="Mapa Geral de Infrações" />}
             {mapMulta && <MapModal multas={[mapMulta]} onClose={() => setMapMulta(null)} singleMode title={`Localização: ${mapMulta.placa} - ${mapMulta.ait}`} />}
+            
+            <PdfViewerModal
+                isOpen={pdfModalOpen}
+                onClose={() => setPdfModalOpen(false)}
+                pdfUrlOrData={pdfModalData.url}
+                title={pdfModalData.title}
+                fileName={pdfModalData.fileName}
+            />
         </div>
     );
   }
 
   // Calculate Info for Form View
   const formPrazoInfo = getPrazoInfo(formData.status, formData.prazoIndicacao);
+  const currentAttachments = parseLinks(formData.linkAit);
 
   return (
-    <div className="space-y-6 animate-in slide-in-from-right duration-300 relative pb-24 flex-1 overflow-auto custom-scrollbar pr-2 max-w-6xl mx-auto w-full">
+    <div className="space-y-2.5 animate-in slide-in-from-right duration-300 relative pb-4 flex-1 overflow-auto custom-scrollbar pr-1 max-w-7xl mx-auto w-full">
         {loading && <Loading />}
         
-        {/* Header - Buttons Removed */}
-        <div className="flex justify-between items-center border-b border-gray-200 pb-4 sticky top-0 bg-white/95 backdrop-blur-md z-30 pt-2 rounded-t-xl px-4 shadow-sm">
-            <h2 className="text-xl font-bold text-gray-800 flex items-center">
-                <button onClick={() => setView('LIST')} className="mr-3 text-gray-400 hover:text-risel-green transition-colors"><ArrowRight className="rotate-180" size={24}/></button>
-                {formData.id ? 'Editar Multa' : 'Lançamento de Multa'}
-            </h2>
-            <div className="bg-slate-100 px-3 py-1 rounded-lg text-xs font-medium text-slate-500">
-                {formData.id ? `ID: ${formData.id}` : 'Novo Registro'}
+        {/* Header Superior Executivo Compacto */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-gray-200/80 pb-2 sticky top-0 bg-white/95 backdrop-blur-md z-30 pt-1 px-3.5 rounded-xl shadow-xs">
+            <div className="flex items-center space-x-2.5">
+                <button 
+                    onClick={() => setView('LIST')} 
+                    className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-all border border-slate-200 hover:border-emerald-300 shadow-xs"
+                    title="Voltar para a Listagem"
+                >
+                    <ArrowLeft size={16}/>
+                </button>
+                <div>
+                    <h2 className="text-base font-black text-slate-800 flex items-center gap-2">
+                        {formData.id ? 'Editar Notificação de Multa' : 'Lançamento de Notificação de Multa'}
+                    </h2>
+                </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+                <div className="hidden sm:flex bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-600 items-center">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+                    {formData.id ? `Registro ID: ${formData.id}` : 'Novo Registro'}
+                </div>
+                
+                {/* Botão de Enviar E-mail no Topo - Sempre visível e discreto */}
+                <button 
+                    type="button"
+                    onClick={handleOpenEmailModal} 
+                    className="px-3 py-1.5 text-xs font-bold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
+                    title="Disparar notificação por e-mail para os responsáveis"
+                >
+                    <Send size={13} className="mr-1.5 text-blue-600"/> Enviar Notificação
+                </button>
+
+                <button 
+                    type="button"
+                    onClick={() => setView('LIST')} 
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all shadow-xs flex items-center"
+                >
+                    <X size={13} className="mr-1 text-slate-400"/> Cancelar
+                </button>
+                <button 
+                    type="button"
+                    onClick={handleSave} 
+                    className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
+                >
+                    <Save size={13} className="mr-1.5"/> Salvar Registro
+                </button>
             </div>
         </div>
 
-        {/* Content - Compact Layout without Frota and Login Motorista */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-1 text-xs">
+        {/* Grade de 6 Cards Estruturados (2 Linhas de 3 Cards Perfeitamente Alinhadas) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs">
             
-            {/* COLUNA 1: Dados Iniciais e Datas */}
-            <div className="space-y-3">
-                 <div className="bg-white p-3.5 rounded-xl shadow-sm border border-gray-200">
-                    <h3 className="font-extrabold text-gray-800 mb-2.5 flex items-center text-xs"><FileText size={14} className="mr-1.5 text-risel-orange"/> Dados Iniciais</h3>
-                    <div className="space-y-2">
+            {/* LINHA 1 - CARD 1: Identificação Básica */}
+            <div className="bg-white p-3.5 rounded-xl shadow-xs border border-slate-200/90 flex flex-col justify-between">
+                <div>
+                    <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100">
+                        <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
+                            <FileText size={15} className="mr-1.5 text-emerald-700"/> IDENTIFICAÇÃO DO REGISTRO
+                        </h3>
+                        <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Passo 1</span>
+                    </div>
+
+                    <div className="space-y-2.5">
                         <div>
                             <div className="flex items-center justify-between mb-0.5">
-                                <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider">Status</label>
-                                <FormTooltip text="Define o fluxo atual da multa." />
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">Status da Multa</label>
+                                <FormTooltip text="Define o estágio atual no fluxo de gestão de multas." />
                             </div>
-                            <select className="w-full border rounded-lg p-1.5 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.status} onChange={e => setFormData({...formData, status: e.target.value as StatusMulta})}>
+                            <select 
+                                className="w-full border border-slate-300 rounded-lg p-1.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-xs font-bold text-slate-800 transition-all cursor-pointer" 
+                                value={formData.status} 
+                                onChange={e => setFormData({...formData, status: e.target.value as StatusMulta})}
+                            >
                                 {(Object.values(StatusMulta) as string[]).map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                         </div>
 
                         <div>
-                            <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-0.5">Placa <span className="text-red-500">*</span></label>
-                            <input type="text" className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs font-black uppercase ${errors.placa ? 'border-red-500 focus:ring-red-200' : 'focus:ring-risel-green'}`} value={formData.placa || ''} onChange={e => handlePlacaChange(e.target.value)} placeholder="ABC1234"/>
-                            {errors.placa && <p className="text-[9px] text-red-500 font-bold mt-0.5">{errors.placa}</p>}
+                            <div className="flex items-center justify-between mb-0.5">
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                                    Placa do Veículo <span className="text-red-500">*</span>
+                                </label>
+                                <span className="text-[9px] text-slate-400 font-mono">Mercosul / Antigo</span>
+                            </div>
+                            <input 
+                                type="text" 
+                                className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs font-black uppercase tracking-wider font-mono transition-all ${errors.placa ? 'border-red-500 focus:ring-red-200 bg-red-50/50' : 'border-slate-300 focus:ring-emerald-500 focus:border-emerald-500 bg-white'}`} 
+                                value={formData.placa || ''} 
+                                onChange={e => handlePlacaChange(e.target.value)} 
+                                placeholder="Ex: ABC1D23"
+                            />
+                            {errors.placa && <p className="text-[9px] text-red-600 font-bold mt-0.5">{errors.placa}</p>}
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-0.5">Base / Filial</label>
-                                <input type="text" className="w-full border rounded-lg p-1.5 bg-gray-50 focus:ring-2 focus:ring-risel-green outline-none text-xs text-gray-700 font-medium" value={formData.base || ''} onChange={e => setFormData({...formData, base: formatInputText(e.target.value)})}/>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider block mb-0.5">Base / Filial</label>
+                                <input 
+                                    type="text" 
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-xs text-slate-800 font-bold transition-all" 
+                                    value={formData.base || ''} 
+                                    onChange={e => setFormData({...formData, base: formatInputText(e.target.value)})}
+                                    placeholder="Ex: PAULÍNIA"
+                                />
                             </div>
                             <div>
-                                <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-0.5">Tipo</label>
-                                <select className="w-full border rounded-lg p-1.5 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.tipo} onChange={e => setFormData({...formData, tipo: e.target.value as TipoMulta})}>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider block mb-0.5">Tipo Notificação</label>
+                                <select 
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-xs font-bold text-slate-800 transition-all cursor-pointer" 
+                                    value={formData.tipo} 
+                                    onChange={e => setFormData({...formData, tipo: e.target.value as TipoMulta})}
+                                >
                                     {(Object.values(TipoMulta) as string[]).map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                             </div>
                         </div>
 
                         <div>
-                            <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-0.5">AIT (Auto de Infração) <span className="text-red-500">*</span></label>
-                            <input type="text" className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs font-bold ${errors.ait ? 'border-red-500 focus:ring-red-200' : 'focus:ring-risel-green'}`} value={formData.ait || ''} onChange={e => { setFormData({...formData, ait: formatInputText(e.target.value)}); clearError('ait'); }}/>
-                            {errors.ait && <p className="text-[9px] text-red-500 font-bold mt-0.5">{errors.ait}</p>}
+                            <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider block mb-0.5">
+                                Número do AIT (Auto de Infração) <span className="text-red-500">*</span>
+                            </label>
+                            <input 
+                                type="text" 
+                                className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs font-black font-mono transition-all ${errors.ait ? 'border-red-500 focus:ring-red-200 bg-red-50/50' : 'border-slate-300 focus:ring-emerald-500 focus:border-emerald-500 bg-white'}`} 
+                                value={formData.ait || ''} 
+                                onChange={e => { setFormData({...formData, ait: formatInputText(e.target.value)}); clearError('ait'); }}
+                                placeholder="Ex: T12345678"
+                            />
+                            {errors.ait && <p className="text-[9px] text-red-600 font-bold mt-0.5">{errors.ait}</p>}
                         </div>
                     </div>
-                 </div>
-
-                 <div className="bg-white p-3.5 rounded-xl shadow-sm border border-gray-200">
-                    <h3 className="font-extrabold text-gray-800 mb-2.5 flex items-center text-xs"><Clock size={14} className="mr-1.5 text-risel-orange"/> Datas e Prazos</h3>
-                    <div className="space-y-2">
-                        <div className="grid grid-cols-2 gap-2">
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Data Infração</label><input type="datetime-local" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs" value={formData.dataHoraInfracao || ''} onChange={e => setFormData({...formData, dataHoraInfracao: e.target.value})}/></div>
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Recebimento</label><input type="date" className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs ${errors.dataRecebimento ? 'border-red-500 focus:ring-red-200' : 'focus:ring-risel-green'}`} value={formData.dataRecebimento || ''} onChange={e => { setFormData({...formData, dataRecebimento: e.target.value}); clearError('dataRecebimento'); }}/>{errors.dataRecebimento && <p className="text-[9px] text-red-500 font-bold mt-0.5 leading-tight">{errors.dataRecebimento}</p>}</div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Prazo Indicação</label><input type="date" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs" value={formData.prazoIndicacao || ''} onChange={e => setFormData({...formData, prazoIndicacao: e.target.value})}/></div>
-                             <div><label className="text-[10px] font-extrabold text-purple-700 uppercase block mb-0.5">Enviado RH</label><input type="date" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-purple-500 outline-none text-xs" value={formData.descontoEnviadoRH || ''} onChange={e => setFormData({...formData, descontoEnviadoRH: e.target.value})}/></div>
-                        </div>
-                        <div className="flex justify-between items-center bg-gray-50 p-1.5 rounded-lg border border-gray-200 text-xs"><span className="font-bold text-gray-600 text-[10px]">Dias Restantes:</span><span className={`font-black text-xs ${formPrazoInfo.color}`}>{formPrazoInfo.text}</span></div>
-                    </div>
-                 </div>
+                </div>
             </div>
 
-            {/* COLUNA 2: Infração, Local e Responsável */}
-            <div className="space-y-3">
-                 <div className="bg-white p-3.5 rounded-xl shadow-sm border border-gray-200 relative overflow-visible z-10">
-                    <h3 className="font-extrabold text-gray-800 mb-2.5 flex items-center text-xs"><AlertTriangle size={14} className="mr-1.5 text-risel-orange"/> Infração e Local</h3>
+            {/* LINHA 1 - CARD 2: Infração e Localidade */}
+            <div className="bg-white p-3.5 rounded-xl shadow-xs border border-slate-200/90 relative overflow-visible z-20 flex flex-col justify-between">
+                <div>
+                    <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100">
+                        <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
+                            <AlertTriangle size={15} className="mr-1.5 text-amber-600"/> INFRAÇÃO & LOCALIDADE
+                        </h3>
+                        <span className="text-[9px] uppercase font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full">Passo 2</span>
+                    </div>
+
                     <div className="space-y-2">
                         <div className="grid grid-cols-2 gap-2 relative">
-                             <div className="relative">
-                                <div className="flex items-center mb-0.5"><label className="text-[10px] font-extrabold text-gray-500 uppercase">Enquadramento</label><FormTooltip text="Digite o código (ex: 745-50)." /></div>
+                            <div className="relative">
+                                <div className="flex items-center mb-0.5">
+                                    <label className="text-[10px] font-extrabold text-gray-500 uppercase">Enquadramento</label>
+                                    <FormTooltip text="Digite o código (ex: 745-50)." />
+                                </div>
                                 <div className="relative w-full">
                                     <input 
                                         type="text" 
@@ -1160,7 +1816,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                         autoComplete="off"
                                     />
                                     {showCodigosDropdown && filteredCodigos.length > 0 && (
-                                        <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-lg shadow-2xl mt-1 z-[100] max-h-48 overflow-y-auto custom-scrollbar">
+                                        <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-lg shadow-2xl mt-1 z-[100] max-h-44 overflow-y-auto custom-scrollbar">
                                             {filteredCodigos.map((c, idx) => {
                                                 if (!c) return null;
                                                 return (
@@ -1180,143 +1836,501 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                         </div>
                                     )}
                                 </div>
-                             </div>
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Artigo CTB</label><input type="text" className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs text-gray-700 font-medium" value={formData.artigoCtb || ''} onChange={e => setFormData({...formData, artigoCtb: formatInputText(e.target.value)})}/></div>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Artigo CTB</label>
+                                <input type="text" className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs text-gray-700 font-medium" value={formData.artigoCtb || ''} onChange={e => setFormData({...formData, artigoCtb: formatInputText(e.target.value)})}/>
+                            </div>
                         </div>
-                        <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Descrição Infração</label><textarea className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs text-gray-700 uppercase font-medium" rows={2} value={formData.descricaoInfracao || ''} onChange={e => setFormData({...formData, descricaoInfracao: formatInputText(e.target.value)})}/></div>
-                        <div className="grid grid-cols-2 gap-2">
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Pontos CNH</label><input type="number" className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs text-gray-700 font-bold" value={formData.pontosCnh || 0} onChange={e => setFormData({...formData, pontosCnh: Number(e.target.value)})}/></div>
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Órgão Autuador</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.orgaoAutuador || ''} onChange={e => setFormData({...formData, orgaoAutuador: formatInputText(e.target.value)})}/></div>
-                        </div>
-                        <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Endereço Completo</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.endereco || ''} onChange={e => handleAddressChange(e.target.value)}/></div>
-                        <div className="grid grid-cols-3 gap-2">
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Município</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.municipio || ''} onChange={e => setFormData({...formData, municipio: formatInputText(e.target.value)})}/></div>
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">UF</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.uf || ''} onChange={e => setFormData({...formData, uf: formatInputText(e.target.value)})}/></div>
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Via</label><select className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.rodoviaOuUrbano || 'URBANO'} onChange={e => setFormData({...formData, rodoviaOuUrbano: e.target.value as any})}><option value="URBANO">Urbano</option><option value="RODOVIA">Rodovia</option></select></div>
-                        </div>
-                    </div>
-                 </div>
 
-                 <div className="bg-white p-3.5 rounded-xl shadow-sm border border-gray-200">
-                    <h3 className="font-extrabold text-gray-800 mb-2 flex items-center text-xs"><User size={14} className="mr-1.5 text-risel-orange"/> Motorista Vinculado</h3>
-                    <div className="space-y-2">
-                         <div>
-                             <label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Nome do Motorista (Identificado no Cadastro)</label>
-                             <input type="text" className="w-full border rounded-lg p-1.5 bg-slate-50 text-slate-800 font-bold text-xs focus:ring-2 focus:ring-risel-green outline-none" value={formData.responsavelNome || ''} onChange={e => setFormData({...formData, responsavelNome: formatInputText(e.target.value)})}/>
-                         </div>
-                         <div>
-                             <label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Empresa ou Condutor?</label>
-                             <select className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.empresaOuCondutor} onChange={e => setFormData({...formData, empresaOuCondutor: e.target.value as any})}>
-                                 <option>EMPRESA</option>
-                                 <option>CONDUTOR</option>
-                             </select>
-                         </div>
+                        <div>
+                            <label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Descrição Infração</label>
+                            <input type="text" className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs text-gray-700 uppercase font-medium" value={formData.descricaoInfracao || ''} onChange={e => setFormData({...formData, descricaoInfracao: formatInputText(e.target.value)})}/>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Pontos CNH</label><input type="number" className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs text-gray-700 font-bold" value={formData.pontosCnh || 0} onChange={e => setFormData({...formData, pontosCnh: Number(e.target.value)})}/></div>
+                            <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Órgão Autuador</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.orgaoAutuador || ''} onChange={e => setFormData({...formData, orgaoAutuador: formatInputText(e.target.value)})}/></div>
+                        </div>
+
+                        <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Endereço Completo</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.endereco || ''} onChange={e => handleAddressChange(e.target.value)}/></div>
+
+                        <div className="grid grid-cols-3 gap-1.5">
+                            <div><label className="text-[9px] font-extrabold text-gray-500 uppercase block mb-0.5">Município</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.municipio || ''} onChange={e => setFormData({...formData, municipio: formatInputText(e.target.value)})}/></div>
+                            <div><label className="text-[9px] font-extrabold text-gray-500 uppercase block mb-0.5">UF</label><input type="text" className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.uf || ''} onChange={e => setFormData({...formData, uf: formatInputText(e.target.value)})}/></div>
+                            <div><label className="text-[9px] font-extrabold text-gray-500 uppercase block mb-0.5">Via</label><select className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.rodoviaOuUrbano || 'URBANO'} onChange={e => setFormData({...formData, rodoviaOuUrbano: e.target.value as any})}><option value="URBANO">Urbano</option><option value="RODOVIA">Rodovia</option></select></div>
+                        </div>
                     </div>
-                 </div>
+                </div>
             </div>
 
-            {/* COLUNA 3: Financeiro e Documentação */}
-            <div className="space-y-3">
-                 <div className="bg-white p-3.5 rounded-xl shadow-sm border border-gray-200">
-                    <h3 className="font-extrabold text-gray-800 mb-2.5 flex items-center text-xs"><DollarSign size={14} className="mr-1.5 text-risel-orange"/> Financeiro</h3>
-                    <div className="space-y-2">
+            {/* LINHA 1 - CARD 3: Demonstrativo Financeiro */}
+            <div className="bg-white p-3.5 rounded-xl shadow-xs border border-slate-200/90 flex flex-col justify-between">
+                <div>
+                    <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100">
+                        <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
+                            <DollarSign size={15} className="mr-1.5 text-emerald-700"/> DEMONSTRATIVO FINANCEIRO
+                        </h3>
+                        <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Valores</span>
+                    </div>
+
+                    <div className="space-y-2.5">
                         <div className="grid grid-cols-3 gap-2">
-                            <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Valor</label><input type="number" className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs font-bold text-gray-800" value={formData.valor || 0} onChange={e => handleMoneyChange('valor', Number(e.target.value))} min="0"/></div>
-                            <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Desc.</label><input type="number" className="w-full border rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-risel-green outline-none text-xs font-bold text-gray-800" value={formData.desconto || 0} onChange={e => handleMoneyChange('desconto', Number(e.target.value))} min="0"/></div>
-                            <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Final</label><input type="number" className="w-full border rounded-lg p-1.5 bg-slate-50 text-emerald-700 font-extrabold outline-none text-xs" value={formData.valorComDesconto || 0} readOnly/></div>
+                            <div>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Valor Total (R$)</label>
+                                <input 
+                                    type="number" 
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-black text-slate-900" 
+                                    value={formData.valor || 0} 
+                                    onChange={e => handleMoneyChange('valor', Number(e.target.value))} 
+                                    min="0"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Desconto (R$)</label>
+                                <input 
+                                    type="number" 
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-black text-slate-900" 
+                                    value={formData.desconto || 0} 
+                                    onChange={e => handleMoneyChange('desconto', Number(e.target.value))} 
+                                    min="0"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-extrabold text-emerald-800 uppercase block mb-0.5">Valor Final</label>
+                                <div className="w-full border border-emerald-300 bg-emerald-50/90 rounded-lg p-1.5 text-emerald-800 font-black text-xs text-center truncate">
+                                    {(formData.valorComDesconto || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                </div>
+                            </div>
                         </div>
-                         <div className="grid grid-cols-2 gap-2">
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Descontar Motorista?</label><select className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.descontarMotorista} onChange={e => setFormData({...formData, descontarMotorista: e.target.value as any})}><option>SIM</option><option>NÃO</option></select></div>
-                             <div><label className="text-[10px] font-extrabold text-gray-500 uppercase block mb-0.5">Pago c/ Desc?</label><select className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs font-medium" value={formData.pagoComDesconto} onChange={e => setFormData({...formData, pagoComDesconto: e.target.value as any})}><option>SIM</option><option>NÃO</option></select></div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-0.5">
+                            <div>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Descontar Motorista?</label>
+                                <select 
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-bold cursor-pointer bg-slate-50" 
+                                    value={formData.descontarMotorista} 
+                                    onChange={e => setFormData({...formData, descontarMotorista: e.target.value as any})}
+                                >
+                                    <option value="SIM">SIM (Autorizado)</option>
+                                    <option value="NÃO">NÃO (Empresa assume)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Pago c/ Desconto?</label>
+                                <select 
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-bold cursor-pointer bg-slate-50" 
+                                    value={formData.pagoComDesconto} 
+                                    onChange={e => setFormData({...formData, pagoComDesconto: e.target.value as any})}
+                                >
+                                    <option value="SIM">SIM (20% a 40%)</option>
+                                    <option value="NÃO">NÃO (Integral)</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
-                 </div>
+                </div>
+            </div>
 
-                 <div className="bg-white p-3.5 rounded-xl shadow-sm border border-gray-200 space-y-2">
-                    <h3 className="font-extrabold text-gray-800 mb-1 flex items-center text-xs"><Download size={14} className="mr-1.5 text-risel-orange"/> Documentação</h3>
+            {/* LINHA 2 - CARD 4: DATAS E PRAZOS DE INDICAÇÃO (Alinhado na Linha Inferior) */}
+            <div className="bg-white p-3 rounded-xl shadow-xs border border-slate-200/90 flex flex-col justify-between">
+                <div>
+                    <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-100">
+                        <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
+                            <Clock size={14} className="mr-1.5 text-amber-600"/> DATAS E PRAZOS DE INDICAÇÃO
+                        </h3>
+                        <span className="text-[9px] uppercase font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Cronograma</span>
+                    </div>
+
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Data/Hora Infração</label>
+                                <input 
+                                    type="datetime-local" 
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-semibold" 
+                                    value={formData.dataHoraInfracao || ''} 
+                                    onChange={e => setFormData({...formData, dataHoraInfracao: e.target.value})}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Data Recebimento</label>
+                                <input 
+                                    type="date" 
+                                    className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs font-semibold ${errors.dataRecebimento ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:ring-emerald-500'}`} 
+                                    value={formData.dataRecebimento || ''} 
+                                    onChange={e => { setFormData({...formData, dataRecebimento: e.target.value}); clearError('dataRecebimento'); }}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-[10px] font-extrabold text-red-700 uppercase block mb-0.5">Prazo Limite Indicação</label>
+                                <input 
+                                    type="date" 
+                                    className="w-full border border-red-300 bg-red-50/40 rounded-lg p-1.5 focus:ring-2 focus:ring-red-500 outline-none text-xs font-black text-red-900" 
+                                    value={formData.prazoIndicacao || ''} 
+                                    onChange={e => setFormData({...formData, prazoIndicacao: e.target.value})}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-extrabold text-purple-700 uppercase block mb-0.5">Enviado ao RH</label>
+                                <input 
+                                    type="date" 
+                                    className="w-full border border-purple-200 bg-purple-50/40 rounded-lg p-1.5 focus:ring-2 focus:ring-purple-500 outline-none text-xs font-bold text-purple-900" 
+                                    value={formData.descontoEnviadoRH || ''} 
+                                    onChange={e => setFormData({...formData, descontoEnviadoRH: e.target.value})}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-between items-center bg-slate-50 p-2 rounded-lg border border-slate-200 text-xs">
+                            <span className="font-extrabold text-slate-600 text-[10px] flex items-center">
+                                <AlertTriangle size={13} className="mr-1 text-amber-500"/> Prazo de Indicação:
+                            </span>
+                            <span className={`font-black text-[11px] px-2 py-0.5 rounded-md ${formPrazoInfo.color}`}>
+                                {formPrazoInfo.text}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* LINHA 2 - CARD 5: CONDUTOR & RESPONSABILIDADE (Alinhado na Linha Inferior) */}
+            <div className="bg-white p-3 rounded-xl shadow-xs border border-slate-200/90 flex flex-col justify-between">
+                <div>
+                    <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-100">
+                        <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
+                            <User size={14} className="mr-1.5 text-emerald-700"/> CONDUTOR & RESPONSABILIDADE
+                        </h3>
+                        <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Identificação</span>
+                    </div>
+
+                    <div className="space-y-2">
+                        <div>
+                            <div className="flex items-center justify-between mb-0.5">
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                                    Nome do Motorista
+                                </label>
+                                <span className="text-[9px] text-slate-400 font-medium">Ou em branco para preencher no PDF</span>
+                            </div>
+                            <input 
+                                type="text" 
+                                className="w-full border border-slate-300 rounded-lg p-1.5 bg-slate-50 focus:bg-white text-slate-900 font-bold text-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all" 
+                                value={formData.responsavelNome || ''} 
+                                onChange={e => setFormData({...formData, responsavelNome: formatInputText(e.target.value)})}
+                                placeholder="Deixe em branco para preencher à mão no PDF"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider block mb-0.5">
+                                Responsabilidade (Empresa ou Condutor?)
+                            </label>
+                            <select 
+                                className="w-full border border-slate-300 rounded-lg p-1.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-xs font-bold text-slate-800 transition-all cursor-pointer" 
+                                value={formData.empresaOuCondutor} 
+                                onChange={e => setFormData({...formData, empresaOuCondutor: e.target.value as any})}
+                            >
+                                <option value="CONDUTOR">CONDUTOR (Desconto em folha)</option>
+                                <option value="EMPRESA">EMPRESA (Assumido institucionalmente)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* LINHA 2 - CARD 6: ANEXOS & DOCUMENTAÇÃO (Alinhado na Linha Inferior) */}
+            <div className="bg-white p-3 rounded-xl shadow-xs border border-slate-200/90 flex flex-col justify-between">
+                <div>
+                    <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                        <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
+                            <Paperclip size={14} className="mr-1.5 text-emerald-700"/> ANEXOS & DOCUMENTAÇÃO
+                        </h3>
+                        <span className="text-[9px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                            {currentAttachments.length} de 3 arquivos
+                        </span>
+                    </div>
                     
-                    <div className={`border-2 border-dashed ${uploadingAit ? 'border-risel-green bg-green-50' : 'border-gray-300 hover:bg-gray-50'} rounded-lg p-2.5 text-center cursor-pointer transition-colors group relative`}>
+                    {/* Zona de Upload de até 3 arquivos compacta */}
+                    <div 
+                        onDragOver={(e) => { e.preventDefault(); }}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            if (e.dataTransfer.files) {
+                                handleAitUpload({ target: { files: e.dataTransfer.files } });
+                            }
+                        }}
+                        className={`border-2 border-dashed rounded-xl p-2 text-center cursor-pointer transition-all group relative mt-1.5 ${
+                            uploadingAit 
+                                ? 'border-emerald-500 bg-emerald-50' 
+                                : currentAttachments.length >= 3 
+                                    ? 'border-slate-200 bg-slate-50 cursor-not-allowed'
+                                    : 'border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/40 bg-slate-50/50'
+                        }`}
+                    >
                         {uploadingAit ? (
-                            <div className="flex flex-col items-center justify-center text-risel-green"><Loader2 className="animate-spin mb-0.5" size={16}/><span className="text-[9px] font-bold">Enviando...</span></div>
+                            <div className="flex flex-col items-center justify-center text-emerald-700 py-0.5">
+                                <Loader2 className="animate-spin mb-0.5" size={14}/>
+                                <span className="text-[10px] font-bold">Processando arquivos...</span>
+                            </div>
+                        ) : currentAttachments.length >= 3 ? (
+                            <div className="flex flex-col items-center justify-center text-slate-400 py-0.5">
+                                <FileCheck size={14} className="text-emerald-600 mb-0.5"/>
+                                <p className="text-[10px] font-bold text-slate-600">Limite de 3 arquivos atingido</p>
+                            </div>
                         ) : (
                             <>
-                                <p className="text-[11px] font-medium text-gray-600 group-hover:text-risel-green flex justify-center items-center"><UploadCloud size={14} className="mr-1"/> {formData.linkAit ? 'Adicionar mais Anexos' : 'Anexo AIT (Upload Multiplo)'}</p>
-                                <input type="file" className="hidden" id="file-ait" multiple onChange={handleAitUpload}/>
+                                <UploadCloud size={16} className="mx-auto text-emerald-600 mb-0.5 group-hover:scale-110 transition-transform"/>
+                                <p className="text-[10px] font-bold text-slate-700 group-hover:text-emerald-700">
+                                    {currentAttachments.length === 0 ? 'Clique ou Arraste até 3 arquivos' : 'Adicionar mais anexos'}
+                                </p>
+                                <p className="text-[9px] text-slate-400">PDF, JPG ou PNG do Auto de Infração</p>
+                                <input 
+                                    type="file" 
+                                    className="hidden" 
+                                    id="file-ait" 
+                                    multiple 
+                                    accept=".pdf,.png,.jpg,.jpeg"
+                                    onChange={handleAitUpload}
+                                />
                                 <label htmlFor="file-ait" className="absolute inset-0 cursor-pointer"></label>
                             </>
                         )}
                     </div>
 
-                    {formData.linkAit && (
-                        <div className="space-y-1 max-h-24 overflow-y-auto custom-scrollbar">
-                            {parseLinks(formData.linkAit).map((link, idx) => (
-                                <div key={idx} className="flex justify-between items-center bg-gray-50 p-1.5 rounded border border-gray-200 text-[10px]">
-                                    <div className="flex items-center truncate">
-                                        <FileCheck size={12} className="text-risel-green mr-1.5 shrink-0"/>
-                                        <a href={link.url} target="_blank" rel="noopener noreferrer" className="font-bold text-gray-700 hover:text-blue-600 truncate underline" title={link.name}>
+                    {/* Lista dos Anexos Cadastrados */}
+                    {currentAttachments.length > 0 && (
+                        <div className="space-y-1 max-h-20 overflow-y-auto custom-scrollbar pr-1 mt-1">
+                            {currentAttachments.map((link, idx) => (
+                                <div key={idx} className="flex justify-between items-center bg-slate-50 hover:bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs transition-colors">
+                                    <div className="flex items-center truncate mr-2">
+                                        <FileCheck size={11} className="text-emerald-600 mr-1.5 shrink-0"/>
+                                        <button 
+                                            type="button"
+                                            onClick={() => openPdfViewer(link.url, `Visualização do Anexo: ${link.name}`, `${link.name}.pdf`)} 
+                                            className="font-bold text-slate-700 hover:text-emerald-700 truncate underline text-[10px] text-left" 
+                                            title="Clique para visualizar este arquivo"
+                                        >
                                             {link.name}
-                                        </a>
+                                        </button>
                                     </div>
-                                    <button 
-                                        onClick={() => removeAttachment(idx)}
-                                        className="text-gray-400 hover:text-red-500 p-0.5 rounded hover:bg-red-50 transition-colors ml-1"
-                                        title="Remover Anexo"
-                                    >
-                                        <Trash2 size={12}/>
-                                    </button>
+                                    <div className="flex items-center space-x-1 shrink-0">
+                                        <button 
+                                            type="button"
+                                            onClick={() => openPdfViewer(link.url, `Visualização do Anexo: ${link.name}`, `${link.name}.pdf`)} 
+                                            className="text-slate-500 hover:text-emerald-700 p-0.5 rounded hover:bg-white transition-colors"
+                                            title="Visualizar Anexo"
+                                        >
+                                            <Eye size={11}/>
+                                        </button>
+                                        <button 
+                                            type="button"
+                                            onClick={() => removeAttachment(idx)}
+                                            className="text-slate-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50 transition-colors"
+                                            title="Remover este Anexo"
+                                        >
+                                            <Trash2 size={11}/>
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
                         </div>
                     )}
 
-                    <div className="bg-gray-50 p-2 rounded-lg flex justify-between items-center border border-gray-200">
-                        <div className="flex flex-col"><span className="text-[10px] font-bold text-gray-600">Aut. Desconto</span>{formData.linkAuth && <a href={formData.linkAuth} target="_blank" rel="noreferrer" className="text-[9px] text-purple-600 underline">Ver PDF gerado</a>}</div>
-                        <button onClick={generateAuthPDF} disabled={generatingPdf} className={`text-[10px] px-2.5 py-1 rounded-md flex items-center font-bold shadow-sm transition-all ${generatingPdf ? 'bg-gray-300 text-white cursor-not-allowed' : 'bg-risel-orange text-white hover:bg-orange-600'}`}>{generatingPdf ? <Loader2 size={12} className="animate-spin mr-1"/> : <Download size={12} className="mr-1"/>} {generatingPdf ? 'Gerando...' : 'Gerar PDF'}</button>
+                    {/* Bloco: Gerador de Termo de Autorização de Desconto em PDF (Sem o texto timbrado CLT) */}
+                    <div className={`p-2 rounded-xl border transition-all mt-1.5 ${
+                        formData.linkAuth 
+                            ? 'bg-emerald-50/70 border-emerald-300 shadow-xs' 
+                            : 'bg-gradient-to-br from-slate-50 to-emerald-50/40 border-slate-200'
+                    }`}>
+                        <div className="flex justify-between items-center gap-2">
+                            <div className="flex flex-col">
+                                <div className="flex items-center space-x-1.5">
+                                    <FileText size={13} className={formData.linkAuth ? "text-emerald-700" : "text-slate-600"}/> 
+                                    <span className="text-[11px] font-black text-slate-800">Termo de Desconto em Folha (PDF)</span>
+                                </div>
+                                {formData.linkAuth && (
+                                    <div className="mt-0.5 flex items-center space-x-2">
+                                        <span className="inline-flex items-center text-[9px] font-black text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-200">
+                                            <CheckCircle2 size={10} className="mr-1 text-emerald-600"/> Anexado
+                                        </span>
+                                        <button 
+                                            type="button"
+                                            onClick={() => openTermoInNewTab(formData, formData.linkAuth)} 
+                                            className="text-[10px] text-emerald-700 font-bold underline hover:text-emerald-900 flex items-center"
+                                            title="Abrir Termo em nova aba do navegador"
+                                        >
+                                            <Eye size={11} className="mr-1"/> Visualizar
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            <button 
+                                type="button"
+                                onClick={generateAuthPDF} 
+                                disabled={generatingPdf} 
+                                className={`text-[10px] px-2 py-1 rounded-lg flex items-center font-black shadow-xs transition-all shrink-0 ${
+                                    generatingPdf 
+                                        ? 'bg-slate-300 text-white cursor-not-allowed' 
+                                        : formData.linkAuth
+                                            ? 'bg-emerald-800 text-white hover:bg-emerald-900 active:scale-95'
+                                            : 'bg-emerald-700 text-white hover:bg-emerald-800 hover:shadow active:scale-95'
+                                }`}
+                            >
+                                {generatingPdf ? <Loader2 size={11} className="animate-spin mr-1"/> : <Download size={11} className="mr-1"/>} 
+                                {generatingPdf ? 'Gerando...' : (formData.linkAuth ? 'Regerar' : 'Gerar PDF')}
+                            </button>
+                        </div>
                     </div>
 
-                    <button onClick={handleOpenEmailModal}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg flex justify-center items-center shadow-sm font-bold text-xs transition-all"
-                    >
-                        <Send size={14} className="mr-1.5"/> Enviar por E-mail
-                    </button>
-                 </div>
+                    {/* Bloco: Observações Compacto */}
+                    <div className="bg-slate-50/80 p-1.5 rounded-xl border border-slate-200 space-y-0.5 mt-1.5">
+                        <div className="flex items-center justify-between">
+                            <label className="text-[9px] font-black text-slate-700 uppercase tracking-wider flex items-center">
+                                <MessageSquare size={11} className="mr-1 text-emerald-700"/> Observações
+                            </label>
+                            <span className="text-[9px] text-slate-400 font-medium">Opcional</span>
+                        </div>
+                        <textarea
+                            rows={1}
+                            className="w-full border border-slate-300 rounded-lg p-1.5 text-xs text-slate-800 font-medium placeholder-slate-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white outline-none resize-none transition-all"
+                            placeholder="Observações adicionais..."
+                            value={formData.obs || ''}
+                            onChange={e => setFormData({...formData, obs: e.target.value})}
+                        />
+                    </div>
+                </div>
             </div>
         </div>
 
-        {/* Action Bar - Fixed Bottom Right */}
-        <div className="fixed bottom-6 right-6 z-50 flex gap-3">
-            <button onClick={() => setView('LIST')} className="bg-white text-slate-600 border border-slate-300 px-6 py-3 rounded-full font-bold shadow-lg hover:bg-slate-50 transition-transform active:scale-95 flex items-center">
-                Cancelar
-            </button>
-            <button onClick={handleSave} className="bg-risel-green text-white px-8 py-3 rounded-full font-black shadow-xl hover:bg-risel-dark hover:scale-105 transition-all active:scale-95 flex items-center ring-4 ring-white/50">
-                <Save size={18} className="mr-2"/> SALVAR
-            </button>
-        </div>
-
+        {/* Modal Executivo de Envio de E-mail */}
         {isEmailModalOpen && (
             <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-                <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg animate-in zoom-in-95 duration-200">
-                    <h3 className="text-xl font-bold text-gray-800 mb-2 flex items-center"><Mail className="mr-2 text-blue-600"/> Enviar Notificação</h3>
-                    <p className="text-xs text-gray-500 mb-6">Confirme os destinatários para o envio da notificação de multa <strong>{formData.ait}</strong>.</p>
-                    <div className="mb-4">
-                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1 block">Para:</label>
-                        <input type="text" className="w-full border rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-medium" value={emailTo} onChange={e => setEmailTo(e.target.value)} placeholder="email1@exemplo.com; email2@exemplo.com" />
-                        <p className="text-[10px] text-gray-400 mt-1">Separe múltiplos e-mails com ponto e vírgula (;).</p>
-                    </div>
-                    <div className="mb-6">
-                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1 block">Cópia (CC):</label>
-                        <input type="text" className="w-full border rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-medium" value={emailCc} onChange={e => setEmailCc(e.target.value)} placeholder="copia1@exemplo.com; copia2@exemplo.com" />
-                        <p className="text-[10px] text-gray-400 mt-1">Separe múltiplos e-mails com ponto e vírgula (;).</p>
-                    </div>
-                    <div className="flex justify-end space-x-3">
-                        <button onClick={() => setIsEmailModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-bold" disabled={sendingEmail}>Cancelar</button>
-                        <button onClick={handleSendEmail} disabled={sendingEmail} className={`px-6 py-2 bg-blue-600 text-white rounded-lg shadow-md flex items-center font-bold text-sm hover:bg-blue-700 transition-all ${sendingEmail ? 'opacity-70 cursor-not-allowed' : ''}`}>
-                            {sendingEmail ? <Loader2 size={16} className="animate-spin mr-2"/> : <Send size={16} className="mr-2"/>} {sendingEmail ? 'Enviando...' : 'Confirmar Envio'}
+                <div className="bg-white rounded-3xl shadow-2xl p-6 sm:p-8 w-full max-w-xl animate-in zoom-in-95 duration-200 border border-slate-100">
+                    <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
+                        <div className="flex items-center space-x-3">
+                            <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl">
+                                <Mail size={22}/>
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-black text-slate-800">Enviar Notificação de Infração</h3>
+                                <p className="text-xs text-slate-500 font-medium">Auto de Infração: <strong>{formData.ait || 'Não informado'}</strong> • Placa: <strong>{formData.placa || '-'}</strong></p>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={() => setIsEmailModalOpen(false)}
+                            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+                        >
+                            <X size={18}/>
                         </button>
+                    </div>
+
+                    <div className="space-y-4">
+                        {/* Remetente Oficial Institucional */}
+                        <div className="bg-emerald-50/70 border border-emerald-200 p-3 rounded-2xl flex items-center justify-between">
+                            <div>
+                                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wide block">Remetente Institucional:</span>
+                                <span className="text-xs font-bold text-emerald-950 font-mono">deny.goncalves@risel.com.br</span>
+                            </div>
+                            <span className="text-[10px] bg-emerald-200/80 text-emerald-900 font-bold px-2 py-0.5 rounded-md">Gestão Risel</span>
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1.5 block">
+                                Destinatário Principal (Para):
+                            </label>
+                            <input 
+                                type="text" 
+                                className="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none text-xs font-semibold" 
+                                value={emailTo} 
+                                onChange={e => setEmailTo(e.target.value)} 
+                                placeholder="exemplo@risel.com.br; outro@risel.com.br" 
+                            />
+                            <p className="text-[10px] text-slate-400 mt-1">Preenchido automaticamente de acordo com o mapeamento da placa e filial.</p>
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1.5 block">
+                                Cópia Automática (CC):
+                            </label>
+                            <input 
+                                type="text" 
+                                className="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none text-xs font-semibold" 
+                                value={emailCc} 
+                                onChange={e => setEmailCc(e.target.value)} 
+                                placeholder="copia@risel.com.br" 
+                            />
+                            <p className="text-[10px] text-slate-400 mt-1">Garante cópia de segurança para o Admin e RH Risel.</p>
+                        </div>
+
+                        {/* Resumo dos Anexos incluídos no e-mail */}
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                            <p className="text-xs font-black text-slate-700 mb-2 flex items-center">
+                                <Paperclip size={14} className="mr-1.5 text-emerald-700"/> Arquivos que serão anexados ao e-mail:
+                            </p>
+                            <ul className="space-y-1.5 text-xs text-slate-600">
+                                {currentAttachments.map((att, idx) => (
+                                    <li key={idx} className="flex items-center text-[11px] font-semibold text-slate-800">
+                                        <FileCheck size={13} className="text-emerald-600 mr-2 shrink-0"/> {att.name} (AIT)
+                                    </li>
+                                ))}
+                                {formData.linkAuth ? (
+                                    <li className="flex items-center text-[11px] font-semibold text-emerald-800">
+                                        <FileText size={13} className="text-emerald-600 mr-2 shrink-0"/> Termo de Autorização de Desconto (PDF Timbrado)
+                                    </li>
+                                ) : (
+                                    <li className="flex items-center text-[11px] text-amber-700 italic">
+                                        <AlertTriangle size={13} className="mr-2 shrink-0"/> O Termo de Desconto será gerado e anexado automaticamente no envio.
+                                    </li>
+                                )}
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row justify-between items-center gap-2 mt-6 pt-4 border-t border-slate-100">
+                        <button
+                            type="button"
+                            onClick={handleOpenOutlookOrWebmail}
+                            className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3.5 py-2.5 rounded-xl font-bold transition-all flex items-center"
+                            title="Baixar anexos, copiar formato visual e abrir no seu Outlook / Webmail"
+                        >
+                            <Mail size={14} className="mr-1.5 text-blue-600"/> Abrir no Outlook / Webmail
+                        </button>
+
+                        <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                            <button 
+                                onClick={() => setIsEmailModalOpen(false)} 
+                                className="px-4 py-2.5 text-xs text-slate-600 hover:bg-slate-100 rounded-xl transition-colors font-bold" 
+                                disabled={sendingEmail}
+                            >
+                                Cancelar
+                            </button>
+                            <button 
+                                onClick={handleSendEmail} 
+                                disabled={sendingEmail} 
+                                className={`px-5 py-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/20 flex items-center font-black text-xs hover:bg-blue-700 active:scale-95 transition-all ${
+                                    sendingEmail ? 'opacity-70 cursor-not-allowed' : ''
+                                }`}
+                            >
+                                {sendingEmail ? <Loader2 size={16} className="animate-spin mr-2"/> : <Send size={16} className="mr-2"/>} 
+                                {sendingEmail ? 'Enviando e-mail...' : 'Confirmar e Disparar E-mail'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
         )}
+
+        <PdfViewerModal
+            isOpen={pdfModalOpen}
+            onClose={() => setPdfModalOpen(false)}
+            pdfUrlOrData={pdfModalData.url}
+            title={pdfModalData.title}
+            fileName={pdfModalData.fileName}
+            multaData={pdfModalData.multaData}
+        />
     </div>
   );
 };

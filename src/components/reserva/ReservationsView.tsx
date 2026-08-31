@@ -10,6 +10,8 @@ import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
+import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 // Helper para calcular duração estimada
 const formatDuration = (start: Date | string, end: Date | string) => {
@@ -87,12 +89,25 @@ const ReservationsView: React.FC = () => {
   const [isFinalizeModalOpen, setIsFinalizeModalOpen] = useState(false);
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isPublicLinkModalOpen, setIsPublicLinkModalOpen] = useState(false);
+  const [copiedPublicLink, setCopiedPublicLink] = useState(false);
+
+  const handleCopyPublicPortalLink = () => {
+    const link = `${window.location.origin}/reservas`;
+    navigator.clipboard.writeText(link).then(() => {
+      setCopiedPublicLink(true);
+      showToast("Link do Portal Público copiado com sucesso!", "success");
+      setTimeout(() => setCopiedPublicLink(false), 3000);
+    });
+  };
   
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   const [availableVehiclesForChange, setAvailableVehiclesForChange] = useState<Vehicle[]>([]);
   const [finalizeFormData, setFinalizeFormData] = useState({ finalKm: '', actualReturnDateTime: '' });
   const [rejectReason, setRejectReason] = useState('');
+  const [approveAdminNotes, setApproveAdminNotes] = useState('');
 
   // --- Filtros ---
   const [activeTab, setActiveTab] = useState<'active' | 'history' | 'locacoes'>('active');
@@ -127,55 +142,72 @@ const ReservationsView: React.FC = () => {
     }
   };
   
-  const confirmApprove = async (reservation: Reservation) => {
+  const confirmApprove = async (reservation: Reservation, notes?: string) => {
       try {
-        await updateReservation(reservation.id, { status: ReservationStatus.Approved });
+        const finalNotes = notes !== undefined ? notes : approveAdminNotes;
+        await updateReservation(reservation.id, { 
+          status: ReservationStatus.Approved,
+          adminNotes: finalNotes.trim() || undefined
+        });
         const vehicle = getVehicleById(reservation.vehicleId);
         const departureDate = new Date(reservation.departureDateTime);
         const formattedDate = departureDate.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-');
 
+        const details = [
+            { label: "Status", value: "✅ APROVADA" },
+            { label: "Solicitante", value: reservation.requesterName },
+            { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "N/A" },
+            { label: "Saída", value: departureDate.toLocaleString('pt-BR') },
+            { label: "Retorno", value: new Date(reservation.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) },
+            { label: "Destino", value: `${reservation.destinationCity} - ${reservation.destination}` }
+        ];
+
+        if (finalNotes && finalNotes.trim()) {
+          details.push({ label: "Observações da Administração", value: finalNotes.trim() });
+        }
+
         const emailHtml = generateEmailHtml(
             "Confirmação de Reserva",
-            [
-                { label: "Status", value: "✅ APROVADA" },
-                { label: "Solicitante", value: reservation.requesterName },
-                { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "N/A" },
-                { label: "Saída", value: departureDate.toLocaleString('pt-BR') },
-                { label: "Retorno", value: new Date(reservation.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) },
-                { label: "Destino", value: `${reservation.destinationCity} - ${reservation.destination}` }
-            ],
+            details,
             "#ff9b00",
             undefined,
             `Prezado(a) ${reservation.requesterName}, informamos que sua solicitação de reserva foi aprovada.`,
-            "Orientamos checar se o veículo possui alguma avaria antes de sair. Lembre-se de devolver o veículo abastecido e informar o KM Final ao retornar.",
+            finalNotes && finalNotes.trim() 
+              ? `Observações da Gestão de Frota: ${finalNotes.trim()}` 
+              : "Orientamos checar se o veículo possui alguma avaria antes de sair. Lembre-se de devolver o veículo abastecido e informar o KM Final ao retornar.",
             "#00753f"
         );
 
         const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-        if (reservation.email) recipients.push(reservation.email);
+        if (reservation.email && !recipients.includes(reservation.email)) {
+          recipients.push(reservation.email);
+        }
         await sendEmail(recipients, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml);
-        showToast("Reserva aprovada com sucesso!", 'success');
+        showToast("Reserva aprovada e e-mails enviados com sucesso!", 'success');
     } catch (updateError) {
         console.error("Falha ao aprovar reserva:", updateError);
         showToast("Erro ao processar a aprovação.", 'error');
     } finally {
         setIsMaintenanceModalOpen(false);
+        setIsApproveModalOpen(false);
         setSelectedReservation(null);
+        setApproveAdminNotes('');
     }
   };
 
   const handleApprove = async (reservation: Reservation) => {
+    setSelectedReservation(reservation);
+    setApproveAdminNotes(reservation.adminNotes || '');
     const vehicle = getVehicleById(reservation.vehicleId);
     if (vehicle) {
         const currentKm = vehicle.lastKm || 0;
         const nextServiceKm = (vehicle.lastServiceKm || 0) + 10000;
         if (currentKm > nextServiceKm) {
-            setSelectedReservation(reservation);
             setIsMaintenanceModalOpen(true);
             return;
         }
     }
-    confirmApprove(reservation);
+    setIsApproveModalOpen(true);
   };
   
   const handleOpenRejectModal = (reservation: Reservation) => {
@@ -189,22 +221,32 @@ const ReservationsView: React.FC = () => {
     if (!selectedReservation || !rejectReason.trim()) return;
 
     try {
-      await updateReservation(selectedReservation.id, { status: ReservationStatus.Rejected, rejectReason });
+      await updateReservation(selectedReservation.id, { 
+        status: ReservationStatus.Rejected, 
+        rejectReason: rejectReason.trim() 
+      });
       const departureDate = new Date(selectedReservation.departureDateTime);
       const emailHtml = generateEmailHtml(
           "Solicitação de Reserva Rejeitada",
           [
               { label: "Status", value: "❌ REJEITADA" }, 
               { label: "Solicitante", value: selectedReservation.requesterName }, 
-              { label: "Data", value: departureDate.toLocaleDateString('pt-BR') },
-              { label: "Motivo da Recusa", value: rejectReason }
+              { label: "Data de Saída", value: departureDate.toLocaleString('pt-BR') },
+              { label: "Destino", value: `${selectedReservation.destinationCity} - ${selectedReservation.destination}` },
+              { label: "Motivo da Recusa", value: rejectReason.trim() }
           ],
+          "#dc2626",
+          undefined,
+          `Prezado(a) ${selectedReservation.requesterName}, informamos que sua solicitação de reserva não pôde ser aprovada.`,
+          `Motivo da Recusa / Parecer da Administração: ${rejectReason.trim()}`,
           "#dc2626"
       );
       const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-      if (selectedReservation.email) recipients.push(selectedReservation.email);
-      await sendEmail(recipients, `Atualização de Reserva`, emailHtml);
-      showToast("Reserva rejeitada.", 'success');
+      if (selectedReservation.email && !recipients.includes(selectedReservation.email)) {
+        recipients.push(selectedReservation.email);
+      }
+      await sendEmail(recipients, `Solicitação de Reserva Recusada - ${selectedReservation.requesterName}`, emailHtml);
+      showToast("Reserva rejeitada e e-mail enviado.", 'success');
     } catch (err) { 
       showToast("Erro ao rejeitar.", 'error'); 
     } finally {
@@ -270,10 +312,53 @@ const ReservationsView: React.FC = () => {
   const handleOpenEditModal = (reservation: Reservation) => { setSelectedReservation(reservation); setIsEditModalOpen(true); }
   const handleSaveEdit = async (updatedData: Partial<Reservation>) => {
     if(selectedReservation) {
-        await updateReservation(selectedReservation.id, updatedData);
-        setIsEditModalOpen(false);
-        setSelectedReservation(null);
-        showToast("Reserva atualizada com sucesso.", 'success');
+        try {
+          await updateReservation(selectedReservation.id, updatedData);
+          
+          // Envia notificação por e-mail sobre a atualização para administradores e solicitante
+          const vehicle = getVehicleById(updatedData.vehicleId || selectedReservation.vehicleId);
+          const depDate = new Date(updatedData.departureDateTime || selectedReservation.departureDateTime);
+          const retDate = new Date(updatedData.returnDate || selectedReservation.returnDate);
+          const recipientEmail = updatedData.email || selectedReservation.email;
+          const adminNotes = updatedData.adminNotes !== undefined ? updatedData.adminNotes : selectedReservation.adminNotes;
+          
+          const details = [
+            { label: "Status", value: (updatedData.status || selectedReservation.status).toUpperCase() },
+            { label: "Solicitante", value: updatedData.requesterName || selectedReservation.requesterName },
+            { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "N/A" },
+            { label: "Saída", value: depDate.toLocaleString('pt-BR') },
+            { label: "Retorno", value: retDate.toLocaleString('pt-BR') },
+            { label: "Destino", value: `${updatedData.destinationCity || selectedReservation.destinationCity} - ${updatedData.destination || selectedReservation.destination}` },
+          ];
+
+          if (adminNotes && adminNotes.trim()) {
+            details.push({ label: "Observações da Administração", value: adminNotes.trim() });
+          }
+
+          const emailHtml = generateEmailHtml(
+            "Atualização na Reserva de Veículo",
+            details,
+            "#ff9b00",
+            undefined,
+            `Prezado(a) ${updatedData.requesterName || selectedReservation.requesterName}, sua reserva de veículo foi atualizada pela Gestão de Frota.`,
+            adminNotes && adminNotes.trim() ? `Observações da Gestão de Frota: ${adminNotes.trim()}` : undefined,
+            "#00753f"
+          );
+
+          const recipients = [...ADMIN_EMAIL_RECIPIENTS];
+          if (recipientEmail && !recipients.includes(recipientEmail)) {
+            recipients.push(recipientEmail);
+          }
+
+          await sendEmail(recipients, `Atualização de Reserva - ${updatedData.requesterName || selectedReservation.requesterName}`, emailHtml);
+          showToast("Reserva atualizada e e-mails enviados com sucesso.", 'success');
+        } catch (err) {
+          console.error("Erro ao salvar edição de reserva:", err);
+          showToast("Reserva atualizada.", 'success');
+        } finally {
+          setIsEditModalOpen(false);
+          setSelectedReservation(null);
+        }
     }
   }
 
@@ -372,6 +457,85 @@ const ReservationsView: React.FC = () => {
            </div>
        )}
       
+      {/* Modal Link Público de Reservas */}
+      <Modal isOpen={isPublicLinkModalOpen} onClose={() => setIsPublicLinkModalOpen(false)} title="Portal Público de Reservas">
+          <div className="space-y-4 text-left">
+              <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-2xl flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                      <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                      <h4 className="text-xs font-black text-emerald-950 uppercase tracking-wide">Acesso Exclusivo para Solicitantes</h4>
+                      <p className="text-[11px] text-emerald-800 mt-0.5 leading-relaxed">
+                          Neste link, os colaboradores acessam <strong>apenas o submódulo de reservas</strong> (solicitação de frotas leves, locações RAC terceirizadas, diário de bordo e status da frota), sem acesso aos outros módulos ou menus do ERP.
+                      </p>
+                  </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm shrink-0 flex flex-col items-center">
+                      <QRCodeSVG value={`${window.location.origin}/reservas`} size={130} />
+                      <span className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-wider">Escanear com Celular</span>
+                  </div>
+                  <div className="flex-1 space-y-2.5 w-full">
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                          Link Direto do Portal:
+                      </label>
+                      <div className="flex items-center gap-2">
+                          <input 
+                              type="text" 
+                              readOnly 
+                              value={`${window.location.origin}/reservas`} 
+                              className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 font-bold focus:outline-none select-all"
+                          />
+                          <button
+                              type="button"
+                              onClick={handleCopyPublicPortalLink}
+                              className="px-3 py-2 bg-[#114D38] hover:bg-[#1d7053] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer shadow-xs"
+                          >
+                              {copiedPublicLink ? <Check className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
+                              <span>{copiedPublicLink ? 'Copiado!' : 'Copiar'}</span>
+                          </button>
+                      </div>
+
+                      <div className="pt-2 flex items-center gap-2">
+                          <a
+                              href="/reservas"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 text-[#F47920] border border-orange-300/40 text-xs font-extrabold transition-all cursor-pointer"
+                          >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Abrir Portal em Nova Aba</span>
+                          </a>
+                      </div>
+                  </div>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2">Opções disponíveis para o solicitante:</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-700">
+                      <div className="flex items-center gap-2 p-2 bg-slate-100/70 rounded-lg">
+                          <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
+                          <span>1. Solicitação de Frota Leve</span>
+                      </div>
+                      <div className="flex items-center gap-2 p-2 bg-slate-100/70 rounded-lg">
+                          <Car className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>2. Locação RAC Terceirizada</span>
+                      </div>
+                      <div className="flex items-center gap-2 p-2 bg-slate-100/70 rounded-lg">
+                          <ClipboardList className="w-4 h-4 text-emerald-700 shrink-0" />
+                          <span>3. Diário de Bordo (Uso Diário)</span>
+                      </div>
+                      <div className="flex items-center gap-2 p-2 bg-slate-100/70 rounded-lg">
+                          <CheckCircleIcon className="w-4 h-4 text-emerald-700 shrink-0" />
+                          <span>4. Status & Disponibilidade</span>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      </Modal>
+
       {/* Modals (Keep existing implementations) */}
       <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Nova Reserva (Admin)">
           <div className="max-h-[80vh] overflow-y-auto pr-2">
@@ -420,6 +584,66 @@ const ReservationsView: React.FC = () => {
              </div>
          </div>
       </Modal>
+      <Modal isOpen={isApproveModalOpen} onClose={() => { setIsApproveModalOpen(false); setSelectedReservation(null); }} title="Aprovar Solicitação de Reserva">
+        {selectedReservation && (
+          <form onSubmit={(e) => { e.preventDefault(); confirmApprove(selectedReservation, approveAdminNotes); }} className="space-y-4">
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5 text-slate-700">
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Solicitante:</span>
+                <span className="font-bold text-slate-900">{selectedReservation.requesterName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Veículo:</span>
+                <span className="font-bold text-slate-900">{getVehicleById(selectedReservation.vehicleId)?.model} - {getVehicleById(selectedReservation.vehicleId)?.plate}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Destino:</span>
+                <span className="font-bold text-slate-900">{selectedReservation.destinationCity} - {selectedReservation.destination}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Período:</span>
+                <span className="font-bold text-slate-900">
+                  {new Date(selectedReservation.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} até {new Date(selectedReservation.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-200 space-y-1.5">
+              <label className="block text-xs font-bold text-emerald-900">
+                📝 Observações da Gestão de Frota / Instruções de Retirada (Opcional)
+              </label>
+              <p className="text-[11px] text-emerald-700 leading-tight">
+                Estas orientações serão incluídas com destaque no e-mail enviado ao solicitante e aos administradores.
+              </p>
+              <textarea 
+                value={approveAdminNotes} 
+                onChange={e => setApproveAdminNotes(e.target.value)} 
+                rows={3}
+                className="w-full bg-white border border-emerald-300 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none" 
+                placeholder="Ex: Chave disponível na recepção. Veículo higienizado e liberado para a rota informada."
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button 
+                type="button" 
+                onClick={() => { setIsApproveModalOpen(false); setSelectedReservation(null); }} 
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="submit" 
+                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors"
+              >
+                <CheckIcon className="w-4 h-4" />
+                Confirmar e Aprovar
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
       <Modal isOpen={isRejectModalOpen} onClose={() => setIsRejectModalOpen(false)} title="Rejeitar Reserva">
          <form onSubmit={confirmReject} className="space-y-4">
              <p className="text-sm text-gray-600">Por favor, informe o motivo da rejeição. Esta mensagem será enviada ao solicitante.</p>
@@ -446,6 +670,15 @@ const ReservationsView: React.FC = () => {
             <p className="text-[11px] text-slate-400 mt-0.5">Aprovação e controle de agendamentos de frotas e viagens leves.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+              <button 
+                  onClick={() => setIsPublicLinkModalOpen(true)} 
+                  title="Abrir Link e QR Code do Portal Público de Reservas"
+                  className="bg-amber-500/10 hover:bg-amber-500/20 text-[#F47920] border border-amber-300/40 font-extrabold uppercase tracking-wider py-2 px-3.5 rounded-xl transition duration-300 shadow-xs text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                  <QrCode className="w-4 h-4 text-[#F47920]" />
+                  <span>Link Público de Reservas</span>
+              </button>
+
               <button 
                   onClick={() => setIsAddModalOpen(true)} 
                   className="bg-[#114D38] hover:bg-[#1d7053] text-white font-extrabold uppercase tracking-wider py-2 px-4 rounded-xl transition duration-300 shadow-sm text-xs flex items-center gap-1.5 cursor-pointer"

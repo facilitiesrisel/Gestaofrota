@@ -48,6 +48,7 @@ export interface Reservation {
   finalKm?: number;
   purpose?: string;
   rejectReason?: string;
+  adminNotes?: string;
   requestTimestamp?: Date;
 }
 
@@ -94,10 +95,14 @@ export interface RacRental {
   plate: string;
   requesterName: string; // Solicitante
   requesterSector?: string; // Setor do Solicitante
+  requesterRole?: string; // Cargo do Solicitante
+  requesterEmail?: string; // E-mail do Solicitante
+  requesterPhone?: string; // Telefone do Solicitante
   value?: number; // Valor da locação
   reservationNumber: string; // Nº Reserva
   driverName: string; // Condutor
-  status: 'Em Uso' | 'Finalizada' | 'Aguardando retirada';
+  driverRole?: string; // Cargo do Condutor
+  status: 'Solicitada' | 'Aguardando retirada' | 'Em Uso' | 'Finalizada' | string;
   base?: string; // Base operacional (ex: Matriz, Filial RJ, etc)
   createdByUser: string; // Usuário de Criação da Reserva
   reservationDate: Date; // Data Reserva
@@ -105,4 +110,16 @@ export interface RacRental {
   pickupStore: string; // Loja Retirada
   returnDate: Date; // Data Devolução
   returnStore: string; // Loja Devolução
+  pickupCity?: string; // Cidade onde deseja retirar o veículo (Obrigatório)
+  returnCity?: string; // Cidade onde pretende devolver o veículo (Obrigatório)
+  category?: string; // Categoria do Veículo pretendido
+  purpose?: string; // Finalidade / Justificativa
+  observations?: string; // Observações adicionais do solicitante
+  adminNotes?: string; // Observações do administrador / parecer da gestão
+  rejectReason?: string; // Motivo da recusa (quando reprovada)
+  hasCnhCopy?: boolean; // Se possui cópia da CNH vinculada
+  cnhFileName?: string; // Nome do arquivo da CNH
+  cnhBase64?: string; // Cópia da CNH em formato base64/dataURL para anexo
+  cnhUploadDate?: Date; // Data em que a CNH foi enviada
+  protocolNumber?: string; // Número de protocolo da solicitação (ex: RAC-2026-0829-01)
 }

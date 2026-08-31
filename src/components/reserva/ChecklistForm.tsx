@@ -345,13 +345,19 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
           </p>
         </div>
 
-        <div className="flex gap-3 justify-center pt-2">
+        <div className="flex flex-wrap gap-3 justify-center pt-2">
           <button
             onClick={handleResetForm}
             className="px-6 py-3 bg-[#114D38] hover:bg-[#1d7053] text-xs font-extrabold uppercase tracking-wider text-white rounded-xl shadow-md transition-all cursor-pointer"
           >
             Realizar Novo Checklist
           </button>
+          <a
+            href="/"
+            className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold uppercase tracking-wider rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5"
+          >
+            Voltar ao Início
+          </a>
         </div>
       </div>
     );

@@ -18,6 +18,8 @@ import autoTable from 'jspdf-autotable';
 import { ALLOWED_PLATES } from '../../constants_reserva';
 import { getProcessedFleetWithReservations } from '../../utils/telemetryFleetHelper';
 import { fetchSnapToRoadsRoute } from '../../utils/roadRoutingService';
+import { mapQuotaService } from '../../services/mapQuotaService';
+import { MapQuotaIndicator } from './MapQuotaIndicator';
 
 export interface TelemetryReportsAndFencesProps {
   geoPositions: any[];
@@ -25,27 +27,30 @@ export interface TelemetryReportsAndFencesProps {
   reservations?: any[];
 }
 
-// Provedores de mapas reais de satélite e vetorial
-const MAP_PROVIDERS = [
-  {
-    id: 'google_sat',
-    label: 'Google Maps (Satélite)',
-    url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-    attribution: '&copy; Google Satélite'
-  },
-  {
-    id: 'google_road',
-    label: 'Google Maps (Padrão)',
-    url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
-    attribution: '&copy; Google Maps'
-  },
-  {
-    id: 'osm',
-    label: 'OpenStreetMap (Clássico)',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap contributors'
-  }
-];
+// Provedores dinâmicos de mapas reais sincronizados com o controle de cota (Google Maps e Mapbox Failover)
+const getReportMapProviders = () => {
+  const layers = mapQuotaService.getLayers();
+  return [
+    {
+      id: 'sat',
+      label: layers.satellite.label,
+      url: layers.satellite.url,
+      attribution: layers.satellite.attribution
+    },
+    {
+      id: 'road',
+      label: layers.streets.label,
+      url: layers.streets.url,
+      attribution: layers.streets.attribution
+    },
+    {
+      id: 'osm',
+      label: 'OpenStreetMap (Clássico)',
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap contributors'
+    }
+  ];
+};
 
 export interface CercaVirtual {
   id: string;
@@ -200,8 +205,18 @@ export const TelemetryReportsAndFences: React.FC<TelemetryReportsAndFencesProps>
   // Abas do Módulo
   const [activeTab, setActiveTab] = useState<'trajeto' | 'cercas' | 'pois' | 'analitico'>('trajeto');
 
-  // Provedor de Mapa
-  const [mapProvider, setMapProvider] = useState(MAP_PROVIDERS[0]);
+  // Provedores de Mapa dinâmicos sincronizados com a cota (Google Maps vs Mapbox)
+  const [reportMapProviders, setReportMapProviders] = useState(() => getReportMapProviders());
+  const [mapProvider, setMapProvider] = useState(() => reportMapProviders[0]);
+
+  useEffect(() => {
+    const unsubscribe = mapQuotaService.subscribe(() => {
+      const updated = getReportMapProviders();
+      setReportMapProviders(updated);
+      setMapProvider(prev => updated.find(p => p.id === prev.id) || updated[0]);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Lista dos veículos do Controle de Frota Leve que possuem rastreador no GeoFrotas
   const processedFleet = useMemo(() => {
@@ -1834,19 +1849,22 @@ export const TelemetryReportsAndFences: React.FC<TelemetryReportsAndFencesProps>
                   </span>
                 </div>
 
-                {/* Seletor de Tipo de Mapa */}
-                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-                  {MAP_PROVIDERS.map(prov => (
-                    <button
-                      key={prov.id}
-                      onClick={() => setMapProvider(prov)}
-                      className={`px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${
-                        mapProvider.id === prov.id ? 'bg-white text-slate-900 shadow-xs font-black' : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      {prov.label.split(' ')[0]} {prov.label.includes('Satélite') ? 'Satélite' : 'Rua'}
-                    </button>
-                  ))}
+                {/* Seletor de Tipo de Mapa e Indicador de Cota Zero Custo */}
+                <div className="flex items-center gap-2">
+                  <MapQuotaIndicator compact />
+                  <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                    {reportMapProviders.map(prov => (
+                      <button
+                        key={prov.id}
+                        onClick={() => setMapProvider(prov)}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${
+                          mapProvider.id === prov.id ? 'bg-white text-slate-900 shadow-xs font-black' : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {prov.label.includes('Satélite') ? '🛰️ Satélite' : prov.label.includes('OpenStreetMap') ? '🗺️ OSM' : '🛣️ Ruas'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

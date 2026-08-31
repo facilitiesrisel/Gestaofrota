@@ -9,6 +9,8 @@ import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { ALLOWED_PLATES } from '../../constants_reserva';
 import { getProcessedFleetWithReservations, ProcessedTelemetryVehicle } from '../../utils/telemetryFleetHelper';
+import { mapQuotaService } from '../../services/mapQuotaService';
+import { MapQuotaIndicator } from './MapQuotaIndicator';
 
 export interface TelemetryMapAndGridProps {
   geoPositions: any[];
@@ -25,36 +27,33 @@ interface MapProvider {
   isSatellite: boolean;
 }
 
-const MAP_PROVIDERS: MapProvider[] = [
-  {
-    id: 'google_road',
-    label: 'Google Maps (Padrão)',
-    url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
-    attribution: '&copy; Google Maps',
-    isSatellite: false
-  },
-  {
-    id: 'google_sat',
-    label: 'Google Maps (Satélite)',
-    url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-    attribution: '&copy; Google Satélite',
-    isSatellite: true
-  },
-  {
-    id: 'osm',
-    label: 'OpenStreetMap (Clássico)',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap contributors',
-    isSatellite: false
-  },
-  {
-    id: 'esri_sat',
-    label: 'Esri Satellite (Alternativo)',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: '&copy; Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-    isSatellite: true
-  }
-];
+// Função para gerar provedores de mapa sincronizados com a cota (Google Maps ou Mapbox Failover em PT-BR)
+const getDynamicMapProviders = (): MapProvider[] => {
+  const layers = mapQuotaService.getLayers();
+  return [
+    {
+      id: 'primary_road',
+      label: layers.streets.label,
+      url: layers.streets.url,
+      attribution: layers.streets.attribution,
+      isSatellite: false
+    },
+    {
+      id: 'primary_sat',
+      label: layers.satellite.label,
+      url: layers.satellite.url,
+      attribution: layers.satellite.attribution,
+      isSatellite: true
+    },
+    {
+      id: 'osm_clean',
+      label: 'OpenStreetMap (Padrão)',
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap contributors',
+      isSatellite: false
+    }
+  ];
+};
 
 // Helper para obter a base operacional de forma consistente
 export const getVehicleBase = (plate: string): string => {
@@ -271,13 +270,22 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
   fleetVehicles, 
   reservations 
 }) => {
-  const [mapType, setMapType] = useState('google_sat');
+  const [mapProvidersList, setMapProvidersList] = useState<MapProvider[]>(() => getDynamicMapProviders());
+  const [mapType, setMapType] = useState('primary_road');
   const [viewMode, setViewMode] = useState<'map' | 'list' | 'kanban'>('map');
   const [selectedPlate, setSelectedPlate] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showOnlyWithGeoFrotas, setShowOnlyWithGeoFrotas] = useState(false);
   const [showPois, setShowPois] = useState(true);
   const [gridTab, setGridTab] = useState<'vehicles' | 'pois'>('vehicles');
+
+  // Atualiza provedores caso ocorra failover para Mapbox ou retorno para Google Maps
+  useEffect(() => {
+    const unsubscribe = mapQuotaService.subscribe(() => {
+      setMapProvidersList(getDynamicMapProviders());
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Carregar Pontos de Referência (POIs) cadastrados
   const [poisList, setPoisList] = useState<any[]>(() => {
@@ -372,8 +380,8 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
   };
 
   const selectedMapProvider = useMemo(() => {
-    return MAP_PROVIDERS.find(m => m.id === mapType) || MAP_PROVIDERS[0];
-  }, [mapType]);
+    return mapProvidersList.find(m => m.id === mapType) || mapProvidersList[0];
+  }, [mapType, mapProvidersList]);
 
   // Lista unificada e filtrada estritamente: Veículos do Controle de Frota Leve QUE POSSUEM rastreador GeoFrotas
   const processedFleet = useMemo(() => {
@@ -547,12 +555,13 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
           {/* Seletor de Tipo de Mapa (Só aplicável se estiver em modo Mapa) */}
           {viewMode === 'map' && (
             <div className="flex items-center gap-1.5">
+              <MapQuotaIndicator compact />
               <select
                 value={mapType}
                 onChange={(e) => setMapType(e.target.value)}
                 className="bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-xl px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
               >
-                {MAP_PROVIDERS.map(m => (
+                {mapProvidersList.map(m => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>

@@ -12,7 +12,7 @@ export const EMAILJS_SERVICE_ID = "service_k59tsfo";
 export const EMAILJS_TEMPLATE_ID = "template_cjkcpr6";
 export const EMAILJS_PUBLIC_KEY = "cuqP-0hxxKwPdRE5g";
 
-export const SP_CITIES: string[] = [
+export const SP_CITIES: string[] = Array.from(new Set([
   "Adamantina", "Aguai", "Agudos", "Águas Da Prata", "Águas de Lindoia", "Águas de Santa Barbara", 
   "Águas de São Pedro", "Alambari", "Alfredo Marcondes", "Altair", "Altinópolis", "Alto Alegre", 
   "Alumínio", "Álvares Florence", "Álvares Machado", "Álvaro de Carvalho", "Alvinlândia", 
@@ -43,8 +43,8 @@ export const SP_CITIES: string[] = [
   "Euclides Da Cunha Paulista", "Fartura do Piauí", "Fernandópolis", "Fernando Prestes", "Fernão", 
   "Ferraz de Vasconcelos", "Flora Rica", "Floreal", "Flórida Paulista", "Florínea", "Franca", 
   "Francisco Morato", "Franco Da Rocha", "Gabriel Monteiro", "Gália", "Garça", "Gastão Vidigal", 
-  "Gavião Peixoto", "General Salgado", "Getulina", "Glicério", "Guaiçara", "Guaimbê", "Guará", 
-  "Guapiara", "Guapiara", "Guará", "Guaraçaí", "Guaraci", "Guarani d'Oeste", "Guarantã", 
+  "Gavião Peixoto", "General Salgado", "Getulina", "Glicério", "Guaiçara", "Guaimbê", 
+  "Guapiara", "Guará", "Guaraçaí", "Guaraci", "Guarani d'Oeste", "Guarantã", 
   "Guararapes", "Guararema", "Guaratinguetá", "Guareí", "Guariba", "Guarujá", "Guarulhos", 
   "Guatapará", "Guzolândia", "Herculândia", "Holambra", "Hortolândia", "Iacanga", "Iacri", 
   "Iaras", "Ibaté", "Ibirá", "Ibirarema", "Ibitinga", "Ibiúna", "Icem", "Iepê", "Igarçu do Tietê", 
@@ -116,7 +116,7 @@ export const SP_CITIES: string[] = [
   "Valentim Gentil", "Valinhos", "Valparaíso", "Vargem", "Vargem Grande do Sul", 
   "Vargem Grande Paulista", "Várzea Paulista", "Vera Cruz", "Vinhedo", "Viradouro", 
   "Vista Alegre do Alto", "Vitória Brasil", "Votorantim", "Votuporanga", "Zacarias"
-].sort();
+])).sort();
 
 export const ALLOWED_PLATES: string[] = [
   "SYL0A67", "SYL0A68", "SYL0A69", "SYL0A66", "SHM5H54", "SHN2I61", "RNT6J71", "SIL3B70", "RTS2B13", "SIU1J48",

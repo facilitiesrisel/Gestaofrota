@@ -155,6 +155,27 @@ export default function Home() {
             onClick={() => handleCardClick("Controle de Frota Leve", "/frota")}
           />
         </div>
+
+        {/* Links Públicos Diretos para Colaboradores (Sem exigência de senha/módulos restritos) */}
+        <div className="mt-8 max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={() => navigate("/reservas")}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-2xl bg-white hover:bg-emerald-50 border border-emerald-300 text-[#114D38] text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer"
+          >
+            <Sparkles className="w-4 h-4 text-emerald-600" />
+            <span>Portal Público de Reservas (/reservas)</span>
+            <ArrowRight className="w-3.5 h-3.5 text-emerald-600" />
+          </button>
+
+          <button
+            onClick={() => navigate("/checklist-publico")}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-2xl bg-white hover:bg-orange-50 border border-orange-200 text-orange-700 text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer"
+          >
+            <ShieldCheck className="w-4 h-4 text-[#F47920]" />
+            <span>Checklist Público (/checklist)</span>
+            <ArrowRight className="w-3.5 h-3.5 text-orange-600" />
+          </button>
+        </div>
       </main>
 
       {/* Rodapé Institucional */}

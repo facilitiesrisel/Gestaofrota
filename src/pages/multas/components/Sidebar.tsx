@@ -2,6 +2,8 @@
 import React from 'react';
 import { BarChart3, Siren, Truck, Users, Settings, LogOut, ChevronLeft, ChevronRight, BellRing } from 'lucide-react';
 import { Page } from '../types';
+import { useAuth } from '../../../context/AuthContext';
+import { isDenyUser } from '../services/authHelper';
 
 interface SidebarProps {
   currentPage: Page;
@@ -12,6 +14,7 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, toggleSidebar, onLogout }) => {
+  const { user } = useAuth();
   const menuItems = [
     { id: 'DASHBOARD', label: 'Dashboard', icon: BarChart3 },
     { id: 'MULTAS', label: 'Multas', icon: Siren },
@@ -103,14 +106,16 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, togg
       </nav>
 
       <div className="p-4 border-t border-white/10 space-y-2">
-        <button 
-            onClick={() => onNavigate('CONFIG')}
-            className={`w-full flex items-center p-3 transition-all rounded-xl border ${currentPage === 'CONFIG' ? 'bg-orange-500/20 text-risel-orange border-orange-500/30 font-bold' : 'border-transparent text-white/60 hover:bg-white/10 hover:text-white'} ${!isOpen ? 'justify-center' : ''}`}
-            title={!isOpen ? 'Configurações' : ''}
-        >
-            <Settings size={20} className={`${currentPage === 'CONFIG' ? 'text-risel-orange' : 'text-white/60 group-hover:text-white'} shrink-0`} />
-            {isOpen && <span className="ml-3 text-xs uppercase font-bold tracking-wider animate-in fade-in slide-in-from-left-2 duration-200">Configurações</span>}
-        </button>
+        {isDenyUser(user) && (
+          <button 
+              onClick={() => onNavigate('CONFIG')}
+              className={`w-full flex items-center p-3 transition-all rounded-xl border ${currentPage === 'CONFIG' ? 'bg-orange-500/20 text-risel-orange border-orange-500/30 font-bold' : 'border-transparent text-white/60 hover:bg-white/10 hover:text-white'} ${!isOpen ? 'justify-center' : ''}`}
+              title={!isOpen ? 'Configurações' : ''}
+          >
+              <Settings size={20} className={`${currentPage === 'CONFIG' ? 'text-risel-orange' : 'text-white/60 group-hover:text-white'} shrink-0`} />
+              {isOpen && <span className="ml-3 text-xs uppercase font-bold tracking-wider animate-in fade-in slide-in-from-left-2 duration-200">Configurações</span>}
+          </button>
+        )}
 
         <button 
             onClick={onLogout}

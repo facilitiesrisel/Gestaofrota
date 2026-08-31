@@ -9,6 +9,9 @@ import { ReservationStatus, GeoFrotasPosition } from '../../types_reserva';
 import { geocodeAddress } from '../../services/geminiService';
 import { FunnelIcon, MapPinIcon, ClockIcon, ExclamationTriangleIcon, CarIcon, SteeringWheelIcon, RouteIcon } from './icons';
 import { LayoutGrid, Map as LucideMap, Download, Activity, BookOpen, Check, X } from 'lucide-react';
+import { mapQuotaService } from '../../services/mapQuotaService';
+import { MapQuotaIndicator } from './MapQuotaIndicator';
+import { VEICULOS_REAIS } from '../../data/veiculos_reais';
 
 // Coordenadas da Sede da Risel
 const OFFICE_COORDS: [number, number] = [-22.75186, -47.15010];
@@ -154,6 +157,16 @@ const MapView: React.FC = () => {
     const [historyData, setHistoryData] = useState<any[]>([]);
     const [historyFilters, setHistoryFilters] = useState({ vehicleId: '', startDate: '', endDate: '' });
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+    // Estado reativo das camadas do mapa (Google Maps na cota free ou Mapbox no failover)
+    const [mapLayers, setMapLayers] = useState(() => mapQuotaService.getLayers());
+
+    useEffect(() => {
+        const unsubscribe = mapQuotaService.subscribe(() => {
+            setMapLayers(mapQuotaService.getLayers());
+        });
+        return () => unsubscribe();
+    }, []);
 
     // Helper para download de CSV
     const downloadCSV = (data: any[], filename: string) => {
@@ -339,12 +352,64 @@ const MapView: React.FC = () => {
                 }
             }
 
-            let driverName = 'Livre / Desconhecido';
-            const activeTrip = dailyTrips.find(t => t.vehicleId === vehicle.id && t.status === ReservationStatus.InUse);
-            const activeRes = reservations.find(r => r.vehicleId === vehicle.id && r.status === ReservationStatus.InUse);
-            
-            if (activeTrip) driverName = activeTrip.driverName;
-            else if (activeRes) driverName = activeRes.requesterName;
+            // 1. Buscar condutor cadastrado no Controle de Frota Leve como padrão
+            let defaultDriver = (vehicle as any).condutor || '';
+            if (!defaultDriver || defaultDriver.trim() === '') {
+                const fleetItem = VEICULOS_REAIS.find(f => f.placa?.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPlate);
+                if (fleetItem && fleetItem.condutor) {
+                    defaultDriver = fleetItem.condutor;
+                }
+            }
+            if (!defaultDriver) {
+                try {
+                    const stored = localStorage.getItem('risel_frota_veiculos_v2');
+                    if (stored) {
+                        const parsed = JSON.parse(stored);
+                        const found = parsed.find((p: any) => p.placa?.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPlate);
+                        if (found && found.condutor) defaultDriver = found.condutor;
+                    }
+                } catch (e) {}
+            }
+
+            // 2. Verificar uso diário ativo e reservas ativas
+            const activeTrip = dailyTrips.find(t => {
+                const matchId = t.vehicleId === vehicle.id;
+                const matchPlate = (t as any).plate?.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPlate || (t as any).placa?.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPlate;
+                const st = (t.status || '').toString().toLowerCase();
+                return (matchId || matchPlate) && (st === 'inuse' || st === 'in_use' || st.includes('andamento') || st.includes('uso'));
+            });
+
+            const activeRes = !activeTrip ? reservations.find(r => {
+                const matchId = r.vehicleId === vehicle.id;
+                const matchPlate = (r as any).placa?.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPlate || (r as any).plate?.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPlate;
+                const st = (r.status || '').toString().toLowerCase();
+                if ((matchId || matchPlate) && (st.includes('andamento') || st.includes('uso') || st === 'inuse' || st === 'in_use')) {
+                    return true;
+                }
+                if ((matchId || matchPlate) && (st.includes('confirmad') || st.includes('aprovad'))) {
+                    const now = new Date();
+                    const dDe = r.departureDateTime ? new Date(r.departureDateTime) : ((r as any).de ? new Date((r as any).de) : null);
+                    const dAte = r.returnDate ? new Date(r.returnDate) : ((r as any).ate ? new Date((r as any).ate) : null);
+                    if (dDe && dAte && !isNaN(dDe.getTime()) && !isNaN(dAte.getTime())) {
+                        return now >= dDe && now <= dAte;
+                    }
+                }
+                return false;
+            }) : null;
+
+            let driverName = defaultDriver || 'Disponível / Pátio';
+            let driverStatusBadge = 'Controle de Frota';
+            let usageType: 'USO_DIARIO' | 'RESERVA' | 'FROTA_LEVE' = 'FROTA_LEVE';
+
+            if (activeTrip) {
+                driverName = activeTrip.driverName;
+                driverStatusBadge = 'Em Uso Diário';
+                usageType = 'USO_DIARIO';
+            } else if (activeRes) {
+                driverName = activeRes.requesterName || (activeRes as any).condutor || (activeRes as any).driverName;
+                driverStatusBadge = 'Reservado';
+                usageType = 'RESERVA';
+            }
 
             if (plateFilter && cleanPlate !== plateFilter.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()) {
                 return null;
@@ -352,7 +417,7 @@ const MapView: React.FC = () => {
 
             return {
                 ...vehicle,
-                lat, lng, isOffline, speed, ignition, gpsTime, driverName, address
+                lat, lng, isOffline, speed, ignition, gpsTime, driverName, driverStatusBadge, usageType, originalDriver: defaultDriver, address
             };
         }).filter(Boolean);
     }, [vehicles, positions, plateFilter, dailyTrips, reservations, viewMode]);
@@ -522,7 +587,8 @@ const MapView: React.FC = () => {
                         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 inline-block"></span> Offline</span>
                         {apiError && <span className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded-lg flex items-center gap-1"><ExclamationTriangleIcon className="h-3.5 w-3.5"/> {apiError}</span>}
                     </div>
-                    <div className="flex gap-4 font-bold text-slate-500 text-[11px]">
+                    <div className="flex items-center gap-3 font-bold text-slate-500 text-[11px]">
+                        <MapQuotaIndicator compact />
                         {lastUpdate && <span>SINCRO: {lastUpdate.toLocaleTimeString()}</span>}
                     </div>
                 </div>
@@ -537,21 +603,35 @@ const MapView: React.FC = () => {
                             <MapInvalidator />
                             
                             <LayersControl position="topright">
-                                <LayersControl.BaseLayer checked name="Mapa Claro (Voyager)">
+                                <LayersControl.BaseLayer checked name={mapLayers.streets.label}>
                                     <TileLayer
-                                        attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
-                                        url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+                                        key={mapLayers.streets.id}
+                                        attribution={mapLayers.streets.attribution}
+                                        url={mapLayers.streets.url}
+                                        maxZoom={mapLayers.streets.maxZoom || 20}
                                     />
                                 </LayersControl.BaseLayer>
-                                <LayersControl.BaseLayer name="Satélite (Esri)">
+                                <LayersControl.BaseLayer name={mapLayers.satellite.label}>
                                     <TileLayer
-                                        attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
-                                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                                        key={mapLayers.satellite.id}
+                                        attribution={mapLayers.satellite.attribution}
+                                        url={mapLayers.satellite.url}
+                                        maxZoom={mapLayers.satellite.maxZoom || 20}
                                     />
                                 </LayersControl.BaseLayer>
-                                <LayersControl.BaseLayer name="Ruas Detalhado (OSM)">
+                                {mapLayers.terrain && (
+                                    <LayersControl.BaseLayer name={mapLayers.terrain.label}>
+                                        <TileLayer
+                                            key={mapLayers.terrain.id}
+                                            attribution={mapLayers.terrain.attribution}
+                                            url={mapLayers.terrain.url}
+                                            maxZoom={mapLayers.terrain.maxZoom || 20}
+                                        />
+                                    </LayersControl.BaseLayer>
+                                )}
+                                <LayersControl.BaseLayer name="OpenStreetMap (Padrão)">
                                     <TileLayer
-                                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                                         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                                     />
                                 </LayersControl.BaseLayer>
@@ -617,8 +697,17 @@ const MapView: React.FC = () => {
                                                      <MetricBox label="Ignição" value={v.ignition ? 'Ligada' : 'Desl.'} color={v.ignition ? 'text-green-600' : 'text-gray-400'} />
                                                      
                                                      {/* Driver Info */}
-                                                     <div className="flex-1 bg-green-50 border border-green-100 rounded p-2 flex flex-col justify-center min-w-[100px]">
-                                                        <span className="text-[9px] uppercase text-[#114D38] font-bold mb-0.5">Condutor Atual</span>
+                                                     <div className="flex-1 bg-green-50 border border-green-100 rounded p-2 flex flex-col justify-center min-w-[120px]">
+                                                        <div className="flex justify-between items-center mb-0.5">
+                                                            <span className="text-[9px] uppercase text-[#114D38] font-bold">Condutor Atual</span>
+                                                            <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${
+                                                                v.usageType === 'USO_DIARIO' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                                                                v.usageType === 'RESERVA' ? 'bg-amber-100 text-amber-900 border border-amber-200' :
+                                                                'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                                            }`}>
+                                                                {v.driverStatusBadge || 'Frota Leve'}
+                                                            </span>
+                                                        </div>
                                                         <div className="flex items-center gap-1 truncate">
                                                             <SteeringWheelIcon className="h-3 w-3 text-[#114D38] shrink-0" />
                                                             <span className="text-xs font-bold text-[#114D38] truncate" title={v.driverName}>{v.driverName}</span>
@@ -698,8 +787,16 @@ const MapView: React.FC = () => {
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div className="flex items-center gap-1.5">
-                                                            <span className="text-slate-600 font-semibold">{v.driverName}</span>
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <span className="text-slate-900 font-bold text-xs">{v.driverName}</span>
+                                                            <span className="text-[10px] text-slate-500 flex items-center gap-1 font-semibold">
+                                                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                                                    v.usageType === 'USO_DIARIO' ? 'bg-blue-500' :
+                                                                    v.usageType === 'RESERVA' ? 'bg-amber-500' :
+                                                                    'bg-emerald-600'
+                                                                }`}></span>
+                                                                {v.driverStatusBadge || 'Controle de Frota'}
+                                                            </span>
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap">

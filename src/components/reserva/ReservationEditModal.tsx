@@ -134,6 +134,19 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
                 <label className="block text-sm font-medium text-gray-700">Motivo da Viagem</label>
                 <input type="text" name="purpose" value={formData.purpose || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
             </div>
+            <div className="md:col-span-2 bg-emerald-50/60 p-3 rounded-xl border border-emerald-200">
+                <label className="block text-xs font-bold text-emerald-900 mb-1">
+                  📝 Observações da Gestão de Frota / Administrador (Serão enviadas por e-mail ao solicitante)
+                </label>
+                <textarea 
+                  name="adminNotes" 
+                  rows={3}
+                  value={formData.adminNotes || ''} 
+                  onChange={(e) => setFormData({ ...formData, adminNotes: e.target.value })} 
+                  placeholder="Ex: Chave disponível na portaria. Veículo revisado e liberado para a rota informada."
+                  className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+            </div>
         </div>
         <div className="flex justify-end gap-3 pt-4">
           <button type="button" onClick={onClose} className="bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded hover:bg-gray-300">Cancelar</button>
