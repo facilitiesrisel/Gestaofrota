@@ -122,6 +122,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
   const isSubModuleAuthenticated = (tab: string) => {
     if (tab === "portal") return true;
+    if (user && user.email) return true;
     const auths = localStorage.getItem("risel_auth_submodules");
     if (!auths) return false;
     try {
@@ -164,7 +165,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
           { name: "Formulário Checklist", path: "/frota?tab=checklist&sub=formulario", icon: CheckSquare, visible: true }
         );
       } else if (activeTab === "reservas") {
-        const isAdminLogado = localStorage.getItem("reserva_admin_logado") === "true";
+        const isAdminLogado = Boolean(user && user.email) || localStorage.getItem("reserva_admin_logado") === "true";
         if (isAdminLogado) {
           baseMenuItems.push(
             { name: "Dashboard Analítico", path: "/frota?tab=reservas&sub=dashboard", icon: BarChart3, visible: true },

@@ -11,6 +11,7 @@ import HelpGuideModal from './HelpGuideModal';
 import { RiselLogo } from './RiselLogo';
 import { MenuIcon, DocumentTextIcon, ClipboardListIcon, MapPinIcon, LogoutIcon, CarIcon } from './icons';
 import { ReservationAuthProvider, useAuth } from '../../context/ReservationAuthContext';
+import { useAuth as useGlobalAuth } from '../../context/AuthContext';
 import { ReservationProvider, useReservations } from '../../context/ReservationContext';
 
 const firestoreRulesForPublicAccess = `rules_version = '2';
@@ -283,21 +284,31 @@ const PublicLayout: React.FC = () => {
 };
 
 const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean }> = ({ forcePublic = false }) => {
-    const { user, signOut: handleLogout, loading } = useAuth();
+    const { user: globalUser } = useGlobalAuth();
+    const { user: fbUser, signOut: handleFbLogout, loading } = useAuth();
     const [searchParams] = useSearchParams();
     const subParam = searchParams.get("sub");
     
+    const isUserAdmin = Boolean((globalUser && globalUser.email) || (fbUser && !fbUser.isAnonymous));
+
     useEffect(() => {
         if (!loading) {
-            const isAdmin = !!(user && !user.isAnonymous);
             const currentStored = localStorage.getItem("reserva_admin_logado") === "true";
-            if (isAdmin !== currentStored) {
-                localStorage.setItem("reserva_admin_logado", isAdmin ? "true" : "false");
+            if (isUserAdmin !== currentStored) {
+                localStorage.setItem("reserva_admin_logado", isUserAdmin ? "true" : "false");
                 window.dispatchEvent(new Event("risel_submodule_auth_change"));
             }
         }
-    }, [user, loading]);
+    }, [isUserAdmin, loading]);
     
+    const handleLogout = async () => {
+        localStorage.removeItem("reserva_admin_logado");
+        window.dispatchEvent(new Event("risel_submodule_auth_change"));
+        try {
+            await handleFbLogout();
+        } catch (e) {}
+    };
+
     if (loading) {
         return (
             <div className="flex flex-1 min-h-0 items-center justify-center bg-slate-50">
@@ -312,7 +323,7 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean }> = ({ forcePubli
     // Se estiver em modo público forçado (link público para solicitantes)
     if (forcePublic) {
         if (subParam === 'login' || subParam === 'admin') {
-            return user && !user.isAnonymous ? (
+            return isUserAdmin ? (
                 <AdminDashboard onLogout={handleLogout} />
             ) : (
                 <PublicLayout />
@@ -321,7 +332,7 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean }> = ({ forcePubli
         return <PublicLayout />;
     }
 
-    return user && !user.isAnonymous ? (
+    return isUserAdmin ? (
         <AdminDashboard onLogout={handleLogout} />
     ) : (
         <PublicLayout />

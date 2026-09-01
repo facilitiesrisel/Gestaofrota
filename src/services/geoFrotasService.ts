@@ -293,3 +293,74 @@ export const fetchVehicleHistory = async (plate: string, startDate: Date, endDat
         return fallbackList;
     }
 };
+
+export interface TrackerMatchResult {
+    lat: number;
+    lng: number;
+    speed: number;
+    ignitionStatus: boolean;
+    gpsTime: string;
+    address?: string;
+    driverName?: string;
+    timeDifferenceMinutes: number;
+    googleMapsUrl: string;
+}
+
+/**
+ * Busca a posição do veículo mais próxima do horário da multa/infração.
+ */
+export const fetchVehiclePositionAtTime = async (plate: string, targetDateStr: string): Promise<TrackerMatchResult | null> => {
+    if (!plate || !targetDateStr) return null;
+    
+    try {
+        const targetDate = new Date(targetDateStr);
+        if (isNaN(targetDate.getTime())) return null;
+
+        // Janela de busca: 2 horas antes e 2 horas depois do horário informado
+        const startDate = new Date(targetDate.getTime() - 2 * 60 * 60 * 1000);
+        const endDate = new Date(targetDate.getTime() + 2 * 60 * 60 * 1000);
+
+        const history = await fetchVehicleHistory(plate, startDate, endDate);
+        if (!history || history.length === 0) return null;
+
+        let closestPoint: GeoFrotasPosition | null = null;
+        let minDiff = Infinity;
+
+        for (const point of history) {
+            if (!point.geoLocation || !point.geoLocation.includes(',')) continue;
+            const pointTime = new Date(point.gpsTime || point.lastUpdate || '').getTime();
+            if (isNaN(pointTime)) continue;
+
+            const diff = Math.abs(pointTime - targetDate.getTime());
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestPoint = point;
+            }
+        }
+
+        if (!closestPoint || !closestPoint.geoLocation) return null;
+
+        const [latStr, lngStr] = closestPoint.geoLocation.split(',');
+        const lat = parseFloat(latStr);
+        const lng = parseFloat(lngStr);
+
+        if (isNaN(lat) || isNaN(lng)) return null;
+
+        const diffMinutes = Math.round(minDiff / (1000 * 60));
+
+        return {
+            lat,
+            lng,
+            speed: closestPoint.speed || 0,
+            ignitionStatus: !!closestPoint.ignitionStatus,
+            gpsTime: closestPoint.gpsTime || closestPoint.lastUpdate || '',
+            address: closestPoint.address,
+            driverName: closestPoint.driverName,
+            timeDifferenceMinutes: diffMinutes,
+            googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+        };
+    } catch (e) {
+        console.warn(`Erro ao buscar rastreador no horário da multa (${plate}):`, e);
+        return null;
+    }
+};

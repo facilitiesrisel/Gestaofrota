@@ -5,12 +5,13 @@ import { generateAutorizacaoDescontoPdf, openTermoInNewTab } from '../services/p
 import { VEICULOS_REAIS } from '../../../data/veiculos_reais';
 import { parseLocalDate } from '../services/dateUtils';
 import { Multa, StatusMulta, TipoMulta, Veiculo, Motorista, CodigoMulta } from '../types';
-import { Plus, Search, FileText, Download, Save, Send, AlertTriangle, Calendar, DollarSign, Clock, User, LayoutGrid, List as ListIcon, Edit2, Car, ArrowRight, Info, MapPin, Trash2, UploadCloud, Eye, Loader2, HelpCircle, X, Mail, ArrowLeft, Map as MapIcon, Layers, Paperclip, FileCheck, RectangleHorizontal, Filter, ChevronDown, ChevronUp, FileSpreadsheet, ArrowUpDown, CheckCircle2, MessageSquare, AlertCircle } from 'lucide-react';
+import { Plus, Search, FileText, Download, Save, Send, AlertTriangle, Calendar, DollarSign, Clock, User, LayoutGrid, List as ListIcon, Edit2, Car, ArrowRight, Info, MapPin, Trash2, UploadCloud, Eye, Loader2, HelpCircle, X, Mail, ArrowLeft, Map as MapIcon, Layers, Paperclip, FileCheck, RectangleHorizontal, Filter, ChevronDown, ChevronUp, FileSpreadsheet, ArrowUpDown, CheckCircle2, MessageSquare, AlertCircle, Radio, Navigation } from 'lucide-react';
 import Loading from '../components/Loading';
 import { PdfViewerModal } from '../components/PdfViewerModal';
 import { mapQuotaService } from '../../../services/mapQuotaService';
 import { MapQuotaIndicator } from '../../../components/reserva/MapQuotaIndicator';
 import { getAccurateCoordinates, setManualCoordinateOverride } from '../../../services/accurateGeocodingService';
+import { fetchVehiclePositionAtTime, TrackerMatchResult } from '../../../services/geoFrotasService';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -71,6 +72,7 @@ const MapModal: React.FC<{
     const [statusText, setStatusText] = useState("Inicializando mapa...");
     const [cachedCount, setCachedCount] = useState(0);
     const [newCount, setNewCount] = useState(0);
+    const [trackerInfo, setTrackerInfo] = useState<TrackerMatchResult | null>(null);
     const [availableLayers, setAvailableLayers] = useState(getDynamicMultasLayers());
     const [currentLayer, setCurrentLayer] = useState(availableLayers[0]);
     const mapInstanceRef = useRef<any>(null);
@@ -193,7 +195,9 @@ const MapModal: React.FC<{
                 tileLayerRef.current = L.tileLayer(currentLayer.url, { attribution: currentLayer.attribution, maxZoom: 19 }).addTo(mapInstanceRef.current);
             }
             const map = mapInstanceRef.current;
-            map.eachLayer((layer: any) => { if (layer instanceof L.Marker) map.removeLayer(layer); });
+            map.eachLayer((layer: any) => { 
+                if (layer instanceof L.Marker || layer instanceof L.Polyline) map.removeLayer(layer); 
+            });
 
             const truckSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#022c22" stroke="#00d664" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.6));"><path d="M10 17h4V5H2v12h3" /><path d="M20 17h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5v8h1" /><circle cx="7.5" cy="17.5" r="2.5" fill="#00d664" /><circle cx="17.5" cy="17.5" r="2.5" fill="#00d664" /></svg>`;
             const createIcon = (isExact: boolean) => L.divIcon({
@@ -241,7 +245,7 @@ const MapModal: React.FC<{
                                 </div>
                             </div>
                             <div style="margin-bottom: 8px;">
-                                <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Localização</strong><br/>
+                                <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Localização da Autuação</strong><br/>
                                 <span style="color: #cbd5e1; font-weight: bold;">${m.endereco}</span><br/>
                                 <span style="color: #94a3b8; font-size: 11px;">${m.municipio} - ${m.uf}</span>
                             </div>
@@ -254,7 +258,7 @@ const MapModal: React.FC<{
                                     <span style="color: #ff9b00; font-weight: 900; font-size: 18px;">${fmtMoney(m.valorComDesconto)}</span>
                             </div>
                             <a href="${gMapsUrl}" target="_blank" rel="noopener noreferrer" style="display: flex; align-items: center; justify-content: center; gap: 6px; background: #00d664; color: #022c22; font-weight: 800; font-size: 11px; padding: 7px 10px; border-radius: 6px; text-decoration: none; margin-top: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">
-                                <span>Abrir no Google Maps ↗</span>
+                                <span>Abrir Endereço no Google Maps ↗</span>
                             </a>
                         </div>
                     </div>
@@ -268,8 +272,22 @@ const MapModal: React.FC<{
 
             if (singleMode) {
                 const m = multas[0];
-                setStatusText("Localizando infração com alta precisão...");
+                setStatusText("Localizando infração e consultando telemetria do rastreador...");
+                
+                // 1. Geocodificar endereço da autuação
                 const result = await smartGeocode(m);
+                
+                // 2. Buscar posição do rastreador no horário da multa
+                let trackerMatch: TrackerMatchResult | null = null;
+                if (m.placa && m.dataHoraInfracao) {
+                    try {
+                        trackerMatch = await fetchVehiclePositionAtTime(m.placa, m.dataHoraInfracao);
+                        setTrackerInfo(trackerMatch);
+                    } catch (e) {
+                        console.warn("Aviso ao buscar telemetria do rastreador:", e);
+                    }
+                }
+
                 if (result) {
                     if (result.cached) loadedFromCache++;
                     else newlyConsulted++;
@@ -294,8 +312,83 @@ const MapModal: React.FC<{
                         marker.setPopupContent(generatePopupHtml(m, true, 1, updatedInfo)).openPopup();
                     });
                     
-                    map.setView([result.lat, result.lon], isExact ? 18 : 15);
-                } else setStatusText("Localização não encontrada.");
+                    bounds.extend([result.lat, result.lon]);
+                }
+
+                // 3. Se houver telemetria do rastreador, adicionar marcador de GPS
+                if (trackerMatch) {
+                    const trackerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#0284c7" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.8));"><circle cx="12" cy="12" r="10" fill="#0f172a" stroke="#38bdf8" stroke-width="2.5"/><circle cx="12" cy="12" r="4" fill="#38bdf8"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>`;
+                    const trackerIcon = L.divIcon({
+                        className: 'custom-tracker-icon',
+                        html: `<div style="width: 42px; height: 42px; transform: scale(1.1); filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.8));">${trackerSvg}</div>`,
+                        iconSize: [42, 42],
+                        iconAnchor: [21, 21],
+                        popupAnchor: [0, -20]
+                    });
+
+                    const trackerPopupHtml = `
+                        <div style="font-family: 'Outfit', sans-serif; min-width: 290px; background: #0b1329; color: #e2e8f0; border: 2px solid #38bdf8; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.7);">
+                            <div style="background: linear-gradient(90deg, #0c4a6e, #1e3a8a); padding: 10px 12px; border-bottom: 2px solid #38bdf8; display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-weight: 900; font-size: 13px; color: #fff; display: flex; align-items: center; gap: 4px;">🛰️ RASTREADOR GPS</span>
+                                <span style="background: #38bdf8; color: #082f49; font-weight: 900; font-size: 10px; padding: 2px 6px; border-radius: 4px;">${m.placa}</span>
+                            </div>
+                            <div style="padding: 12px; font-size: 12px;">
+                                <div style="margin-bottom: 8px;">
+                                    <strong style="color: #38bdf8; text-transform: uppercase; font-size: 10px;">Horário Telemetria GPS</strong><br/>
+                                    <span style="color: #fff; font-weight: bold; font-family: monospace;">${fmtDate(trackerMatch.gpsTime)}</span>
+                                    <span style="font-size: 10px; color: #94a3b8; margin-left: 4px;">(Dif: ${trackerMatch.timeDifferenceMinutes} min)</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 8px;">
+                                    <div>
+                                        <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Velocidade</strong><br/>
+                                        <span style="color: #38bdf8; font-weight: 900; font-size: 14px;">${Math.round(trackerMatch.speed)} km/h</span>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Ignição</strong><br/>
+                                        <span style="color: ${trackerMatch.ignitionStatus ? '#4ade80' : '#f87171'}; font-weight: bold;">${trackerMatch.ignitionStatus ? 'Ligada' : 'Desligada'}</span>
+                                    </div>
+                                </div>
+                                ${trackerMatch.address ? `
+                                <div style="margin-bottom: 8px;">
+                                    <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Endereço Telemetria</strong><br/>
+                                    <span style="color: #cbd5e1; font-size: 11px;">${trackerMatch.address}</span>
+                                </div>` : ''}
+                                <a href="${trackerMatch.googleMapsUrl}" target="_blank" rel="noopener noreferrer" style="display: flex; align-items: center; justify-content: center; gap: 6px; background: #0284c7; color: #fff; font-weight: 800; font-size: 11px; padding: 7px 10px; border-radius: 6px; text-decoration: none; margin-top: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">
+                                    <span>Abrir Rastreador no Google Maps ↗</span>
+                                </a>
+                            </div>
+                        </div>
+                    `;
+
+                    L.marker([trackerMatch.lat, trackerMatch.lng], { icon: trackerIcon })
+                        .addTo(map)
+                        .bindPopup(trackerPopupHtml);
+
+                    bounds.extend([trackerMatch.lat, trackerMatch.lng]);
+
+                    // Linha conectando o local autuado com o ponto do rastreador
+                    if (result) {
+                        L.polyline([[result.lat, result.lon], [trackerMatch.lat, trackerMatch.lng]], {
+                            color: '#38bdf8',
+                            weight: 3,
+                            dashArray: '8, 8',
+                            opacity: 0.85
+                        }).addTo(map);
+                    }
+                }
+
+                if (bounds.isValid()) {
+                    if (result && trackerMatch) {
+                        map.fitBounds(bounds, { padding: [70, 70], maxZoom: 16 });
+                    } else if (result) {
+                        map.setView([result.lat, result.lon], result.precision === 'high' ? 18 : 15);
+                    } else if (trackerMatch) {
+                        map.setView([trackerMatch.lat, trackerMatch.lng], 16);
+                    }
+                } else {
+                    setStatusText("Localização não encontrada.");
+                }
+
                 setLoadingMap(false);
             } else {
                 const uniqueLocations: Record<string, Multa[]> = {};
@@ -354,6 +447,21 @@ const MapModal: React.FC<{
                         <h3 className="text-white font-bold text-lg flex items-center">
                             <MapIcon className="mr-2 text-risel-green" /> {title}
                         </h3>
+                        {/* Status de Rastreador GPS quando presente */}
+                        {trackerInfo && (
+                            <div className="flex items-center gap-2 bg-sky-950/80 px-3 py-1 rounded-lg border border-sky-500/50 text-xs font-bold text-sky-300">
+                                <Radio className="w-3.5 h-3.5 text-sky-400 animate-pulse" />
+                                <span>Rastreador GPS ({Math.round(trackerInfo.speed)} km/h · {trackerInfo.ignitionStatus ? 'Ligado' : 'Desligado'})</span>
+                                <a 
+                                    href={trackerInfo.googleMapsUrl} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="ml-1.5 underline text-sky-200 hover:text-white flex items-center gap-1"
+                                >
+                                    Abrir no Maps ↗
+                                </a>
+                            </div>
+                        )}
                         {/* Estatísticas de Economia de Requisições */}
                         <div className="hidden sm:flex items-center gap-2 bg-black/40 px-3 py-1 rounded-lg border border-emerald-800/40 text-xs font-semibold">
                             <span className="text-emerald-400 flex items-center gap-1">
@@ -834,23 +942,59 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   };
 
   const getPrazoInfo = (status: string | undefined, prazoDate: string | undefined) => {
+      if (!prazoDate) return { text: "-", class: "text-gray-400 font-mono text-[10px]", badge: null, isUrgent: false };
       const days = calculateDaysRemaining(prazoDate);
       const isFinished = status === StatusMulta.FINALIZADA;
       
-      if (isFinished) return { text: "OK", class: "bg-emerald-100/50 text-emerald-800 border-emerald-200", color: "text-emerald-600" };
-      
-      if (days !== null && days < 0) return { text: "Prazo encerrado", class: "bg-red-100/50 text-red-800 border-red-200 animate-pulse", color: "text-red-600" };
-      
-      let colorClass = "bg-gray-100/50 border-gray-200 text-gray-700";
-      let textColor = "text-gray-600";
-      
-      if (days !== null) {
-          if (days <= 5) { colorClass = "bg-red-50/50 text-red-600 border-red-100"; textColor = "text-red-600"; }
-          else if (days <= 15) { colorClass = "bg-orange-50/50 text-orange-600 border-orange-100"; textColor = "text-orange-600"; }
-          else { colorClass = "bg-emerald-50/50 text-emerald-600 border-emerald-100"; textColor = "text-emerald-600"; }
+      if (isFinished) {
+          return { 
+              text: "Finalizado", 
+              class: "bg-emerald-50 text-emerald-800 border border-emerald-200/80 font-bold", 
+              badge: "Finalizado",
+              isUrgent: false,
+              cellGradient: ""
+          };
       }
       
-      return { text: days !== null ? `${days} dias` : '-', class: colorClass, color: textColor };
+      if (days !== null && days < 0) {
+          return { 
+              text: "Encerrado", 
+              class: "bg-gradient-to-r from-red-600 to-red-700 text-white border border-red-800 font-black shadow-xs animate-pulse", 
+              badge: `${Math.abs(days)}d vencido`,
+              isUrgent: true,
+              cellGradient: "bg-red-50/60"
+          };
+      }
+      
+      if (days !== null) {
+          if (days <= 5) {
+              return { 
+                  text: `${days}d`, 
+                  class: "bg-gradient-to-r from-red-100 via-red-50 to-red-100/70 text-red-950 border border-red-300 font-black shadow-2xs", 
+                  badge: `${days}d restantes`,
+                  isUrgent: true,
+                  cellGradient: "bg-gradient-to-r from-red-50/80 to-transparent"
+              };
+          }
+          if (days <= 10) {
+              return { 
+                  text: `${days}d`, 
+                  class: "bg-gradient-to-r from-amber-100 via-amber-50 to-amber-100/70 text-amber-950 border border-amber-300 font-black shadow-2xs", 
+                  badge: `${days}d restantes`,
+                  isUrgent: false,
+                  cellGradient: "bg-gradient-to-r from-amber-50/80 to-transparent"
+              };
+          }
+          return { 
+              text: `${days}d`, 
+              class: "bg-emerald-50/70 text-emerald-800 border border-emerald-200/60 font-semibold", 
+              badge: `${days}d`,
+              isUrgent: false,
+              cellGradient: ""
+          };
+      }
+      
+      return { text: '-', class: "text-gray-500 font-mono", badge: null, isUrgent: false, cellGradient: "" };
   };
 
   // ... (Other status badges and visual helpers remain the same) ...
@@ -1553,12 +1697,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                 {sortedMultas.map((multa, idx) => {
                                     const rowClass = idx % 2 === 0 ? 'bg-white/40' : 'bg-white/20';
                                     const atts = parseLinks(multa.linkAit);
+                                    const prazoInfo = getPrazoInfo(multa.status, multa.prazoIndicacao);
                                     return (
                                         <tr key={multa.id} className={`${rowClass} hover:bg-blue-50/60 transition-colors group`}>
                                             <td className="px-2 py-2 text-center border-r border-gray-200/50 align-middle">
                                                 <div className="flex justify-center space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
                                                     <button onClick={(e) => { e.stopPropagation(); setFormData(multa); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Localizar no Mapa"><MapPin size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all relative" title="Localizar no Mapa & Rastreador GPS">
+                                                        <MapPin size={14} />
+                                                    </button>
                                                     <button onClick={(e) => { e.stopPropagation(); handleDelete(multa.id); }} className="text-gray-400 hover:text-red-600 p-1.5 rounded-full transition-all" title="Excluir"><Trash2 size={14} /></button>
                                                 </div>
                                             </td>
@@ -1566,8 +1713,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center">
                                                 <span className="text-[10px] font-mono text-gray-600">{formatDateString(multa.dataHoraInfracao)}</span>
                                             </td>
-                                            <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center">
-                                                <span className="text-[10px] font-mono text-gray-600">{formatDateString(multa.prazoIndicacao)}</span>
+                                            <td className={`px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center ${prazoInfo.cellGradient || ''}`}>
+                                                <div className="flex flex-col items-center justify-center gap-0.5">
+                                                    <span className="text-[10px] font-mono font-bold text-gray-700">{formatDateString(multa.prazoIndicacao)}</span>
+                                                    {prazoInfo.badge && (
+                                                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md leading-tight ${prazoInfo.class}`}>
+                                                            {prazoInfo.badge}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 font-mono font-bold text-gray-700 whitespace-nowrap align-middle">{multa.placa}</td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 font-medium text-gray-600 text-[10px] whitespace-nowrap align-middle">{multa.ait}</td>
@@ -2228,15 +2382,6 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     </div>
 
                     <div className="space-y-4">
-                        {/* Remetente Oficial Institucional */}
-                        <div className="bg-emerald-50/70 border border-emerald-200 p-3 rounded-2xl flex items-center justify-between">
-                            <div>
-                                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wide block">Remetente Institucional:</span>
-                                <span className="text-xs font-bold text-emerald-950 font-mono">deny.goncalves@risel.com.br</span>
-                            </div>
-                            <span className="text-[10px] bg-emerald-200/80 text-emerald-900 font-bold px-2 py-0.5 rounded-md">Gestão Risel</span>
-                        </div>
-
                         <div>
                             <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1.5 block">
                                 Destinatário Principal (Para):

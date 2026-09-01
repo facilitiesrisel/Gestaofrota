@@ -2328,7 +2328,9 @@ export default function Frota() {
     return `${(deltaKm / totalLitros).toFixed(2)} km/L`;
   };
 
-  if (activeTab !== "portal" && !authenticatedTabs[activeTab]) {
+  const isUserAuthenticated = Boolean(user && user.email);
+
+  if (activeTab !== "portal" && !isUserAuthenticated && !authenticatedTabs[activeTab]) {
     return (
       <SubModuleAuthScreen
         tab={activeTab}

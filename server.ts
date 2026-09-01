@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import dns from "dns";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import Papa from "papaparse";
@@ -9,6 +10,31 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret } from "./src/services/smtpSecurity";
 import { sanitizeRequestBody, cleanHtmlContent } from "./src/services/securityMiddleware";
+
+// Forçar resolução IPv4 prioritária no Node.js para evitar ENETUNREACH em contêineres de nuvem (Render, Docker, Cloud Run)
+if (dns && typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
+function createSafeTransporter(smtpConfig: any) {
+  return nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: smtpConfig.secure,
+    auth: {
+      user: smtpConfig.user,
+      pass: smtpConfig.pass,
+    },
+    tls: {
+      ciphers: "SSLv3",
+      rejectUnauthorized: false,
+    },
+    family: 4, // Força conexão direta IPv4 para SMTP
+    connectionTimeout: 20000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
+  } as any);
+}
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const ABASTECIMENTOS_FILE = path.join(DATA_DIR, "imported_abastecimentos.json");
@@ -716,18 +742,7 @@ async function startServer() {
 
       if (smtpConfig.pass && smtpConfig.pass.length > 0) {
         try {
-          const transporter = nodemailer.createTransport({
-            host: smtpConfig.host,
-            port: smtpConfig.port,
-            secure: smtpConfig.secure,
-            auth: {
-              user: smtpConfig.user,
-              pass: smtpConfig.pass,
-            },
-            tls: {
-              rejectUnauthorized: false
-            }
-          });
+          const transporter = createSafeTransporter(smtpConfig);
 
           const senderHeader = fromName ? `"${fromName}" <${smtpConfig.user}>` : `"Risel Combustíveis" <${smtpConfig.user}>`;
 
@@ -781,18 +796,7 @@ async function startServer() {
 
     try {
       console.log(`[Risel SMTP Vault] Conectando a ${smtpConfig.host}:${smtpConfig.port} com remetente ${smtpConfig.user}...`);
-      const transporter = nodemailer.createTransport({
-        host: smtpConfig.host,
-        port: smtpConfig.port,
-        secure: smtpConfig.secure,
-        auth: {
-          user: smtpConfig.user,
-          pass: smtpConfig.pass,
-        },
-        tls: {
-          rejectUnauthorized: false
-        }
-      });
+      const transporter = createSafeTransporter(smtpConfig);
 
       // Calcular valor acumulado
       const totalAcumulado = (lancamentosPendentes || []).reduce((acc: number, curr: any) => {
@@ -2240,13 +2244,7 @@ async function startServer() {
         // Envio automático do e-mail do Checklist usando o SMTP Vault Risel
         const checklistSmtp = getRiselSmtpConfig({ defaultSenderName: "Risel Frota" });
         if (checklistSmtp.pass && checklistSmtp.pass.length > 0) {
-          const transporter = nodemailer.createTransport({
-            host: checklistSmtp.host,
-            port: checklistSmtp.port,
-            secure: checklistSmtp.secure,
-            auth: { user: checklistSmtp.user, pass: checklistSmtp.pass },
-            tls: { rejectUnauthorized: false }
-          });
+          const transporter = createSafeTransporter(checklistSmtp);
           await transporter.sendMail({
             from: `"Risel Frota" <${checklistSmtp.user}>`,
             to: mailRecipient,

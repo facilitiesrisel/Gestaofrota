@@ -568,29 +568,22 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                 </div>
 
                                 <div className="p-3.5 flex-1 flex flex-col justify-between min-w-0 gap-1.5 relative">
-                                    {trackerInfo && (
+                                    {isAdmin && trackerInfo && (
                                         <div className="absolute top-2.5 right-2.5">
-                                            {isAdmin ? (
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleOpenInTracking(vehicle.plate);
-                                                    }}
-                                                    className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border shadow-2xs cursor-pointer hover:shadow-xs active:scale-95 transition-all ${isOffline ? 'bg-slate-100/90 border-slate-300 text-slate-600 hover:bg-slate-200' : 'bg-emerald-50/90 border-emerald-200/80 text-emerald-800 hover:bg-emerald-100'}`}
-                                                    title={`Clique para abrir a posição de ${vehicle.plate} no Rastreamento`}
-                                                >
-                                                    <div className={`h-2 w-2 rounded-full ${!isOffline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
-                                                    <span className="text-[9px] font-black uppercase tracking-wider flex items-center gap-1">
-                                                        GPS <Navigation className="w-2.5 h-2.5 inline" />
-                                                    </span>
-                                                </button>
-                                            ) : (
-                                                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border shadow-2xs ${isOffline ? 'bg-slate-100/90 border-slate-200 text-slate-500' : 'bg-emerald-50/90 border-emerald-200/80 text-emerald-800'}`} title={`Status GPS: ${displayStatusText}`}>
-                                                    <div className={`h-2 w-2 rounded-full ${!isOffline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
-                                                    <span className="text-[9px] font-black uppercase tracking-wider">GPS</span>
-                                                </div>
-                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleOpenInTracking(vehicle.plate);
+                                                }}
+                                                className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border shadow-2xs cursor-pointer hover:shadow-xs active:scale-95 transition-all ${isOffline ? 'bg-slate-100/90 border-slate-300 text-slate-600 hover:bg-slate-200' : 'bg-emerald-50/90 border-emerald-200/80 text-emerald-800 hover:bg-emerald-100'}`}
+                                                title={`Clique para abrir a posição de ${vehicle.plate} no Rastreamento`}
+                                            >
+                                                <div className={`h-2 w-2 rounded-full ${!isOffline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
+                                                <span className="text-[9px] font-black uppercase tracking-wider flex items-center gap-1">
+                                                    GPS <Navigation className="w-2.5 h-2.5 inline" />
+                                                </span>
+                                            </button>
                                         </div>
                                     )}
 
@@ -656,7 +649,7 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                 </div>
                             </div>
 
-                            {trackerInfo && (
+                            {isAdmin && trackerInfo && (
                                 <div className={`border-t border-slate-200/80 p-3 text-xs text-slate-700 flex flex-col gap-1.5 ${isRecentSignal ? 'bg-emerald-50/40' : 'bg-slate-50/70'}`}>
                                     <div className="flex items-center justify-between">
                                          <div className="flex items-center gap-1.5 text-[#114D38] font-black uppercase tracking-wider text-[10px]">
@@ -669,20 +662,18 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                                     {distanceInfo.text}
                                                 </span>
                                             )}
-                                            {isAdmin && (
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleOpenInTracking(vehicle.plate);
-                                                    }}
-                                                    title={`Abrir localização de ${vehicle.plate} direto no Menu Rastreamento`}
-                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#114D38] hover:bg-[#0e3d2c] text-white font-bold text-[10px] shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer ml-1"
-                                                >
-                                                    <Navigation className="h-2.5 w-2.5" />
-                                                    <span>Ver no Mapa</span>
-                                                </button>
-                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleOpenInTracking(vehicle.plate);
+                                                }}
+                                                title={`Abrir localização de ${vehicle.plate} direto no Menu Rastreamento`}
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#114D38] hover:bg-[#0e3d2c] text-white font-bold text-[10px] shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer ml-1"
+                                            >
+                                                <Navigation className="h-2.5 w-2.5" />
+                                                <span>Ver no Mapa</span>
+                                            </button>
                                         </div>
                                     </div>
                                    

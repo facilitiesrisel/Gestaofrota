@@ -54,35 +54,79 @@ interface ChecklistDashboardProps {
 
 type PeriodMode = "mes" | "intervalo" | "trimestre_ano" | "todos";
 
-// Robust date parser for all checklist date formats (ISO, BR, timestamp, etc.)
+// Robust date parser for all checklist date formats (ISO, BR, timestamp, sheets serial, etc.)
 function parseChecklistDate(dateStr?: string, timestampStr?: string): { year: string; month: string; day: string; key: string; monthYear: string } | null {
   const val = dateStr || timestampStr || "";
   if (!val) return null;
-  const clean = val.replace(",", "").trim();
+  const clean = String(val).replace(",", "").trim();
+  if (!clean) return null;
+
+  // 1. Se for timestamp numérico ou serial do Excel/Google Sheets (> 30000 e < 60000)
+  const numVal = Number(clean);
+  if (!isNaN(numVal) && numVal > 0) {
+    if (numVal > 30000 && numVal < 70000) {
+      // Excel/Sheets serial date to JS Date
+      const date = new Date(Math.round((numVal - 25569) * 86400 * 1000));
+      const yStr = String(date.getUTCFullYear());
+      const mPad = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const dPad = String(date.getUTCDate()).padStart(2, "0");
+      return { year: yStr, month: mPad, day: dPad, key: `${yStr}-${mPad}`, monthYear: `${mPad}/${yStr}` };
+    } else if (numVal > 1000000000) {
+      // Timestamp Unix em milissegundos ou segundos
+      const date = new Date(numVal < 10000000000 ? numVal * 1000 : numVal);
+      if (!isNaN(date.getTime())) {
+        const yStr = String(date.getFullYear());
+        const mPad = String(date.getMonth() + 1).padStart(2, "0");
+        const dPad = String(date.getDate()).padStart(2, "0");
+        return { year: yStr, month: mPad, day: dPad, key: `${yStr}-${mPad}`, monthYear: `${mPad}/${yStr}` };
+      }
+    }
+  }
   
+  // 2. Formato com barra (DD/MM/YYYY ou YYYY/MM/DD)
   if (clean.includes("/")) {
     const parts = clean.split(" ")[0].split("/");
     if (parts.length === 3) {
-      const [d, m, y] = parts;
-      const dPad = d.padStart(2, "0");
-      const mPad = m.padStart(2, "0");
-      const yStr = y.length === 2 ? `20${y}` : y;
-      return { year: yStr, month: mPad, day: dPad, key: `${yStr}-${mPad}`, monthYear: `${mPad}/${yStr}` };
+      if (parts[0].length === 4) {
+        // YYYY/MM/DD
+        const [y, m, d] = parts;
+        const yStr = y;
+        const mPad = m.padStart(2, "0");
+        const dPad = d.padStart(2, "0");
+        return { year: yStr, month: mPad, day: dPad, key: `${yStr}-${mPad}`, monthYear: `${mPad}/${yStr}` };
+      } else {
+        // DD/MM/YYYY
+        const [d, m, y] = parts;
+        const dPad = d.padStart(2, "0");
+        const mPad = m.padStart(2, "0");
+        const yStr = y.length === 2 ? `20${y}` : y;
+        return { year: yStr, month: mPad, day: dPad, key: `${yStr}-${mPad}`, monthYear: `${mPad}/${yStr}` };
+      }
     }
   }
   
+  // 3. Formato com hífen (YYYY-MM-DD ou DD-MM-YYYY)
   if (clean.includes("-")) {
     const datePart = clean.split("T")[0].split(" ")[0];
     const parts = datePart.split("-");
-    if (parts.length >= 2) {
-      const [y, m, d] = parts;
-      const mPad = m.padStart(2, "0");
-      const dPad = (d || "01").padStart(2, "0");
-      const yStr = y.length === 2 ? `20${y}` : y;
-      return { year: yStr, month: mPad, day: dPad, key: `${yStr}-${mPad}`, monthYear: `${mPad}/${yStr}` };
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        // YYYY-MM-DD
+        const [y, m, d] = parts;
+        const mPad = m.padStart(2, "0");
+        const dPad = d.padStart(2, "0");
+        return { year: y, month: mPad, day: dPad, key: `${y}-${mPad}`, monthYear: `${mPad}/${y}` };
+      } else if (parts[2].length === 4) {
+        // DD-MM-YYYY
+        const [d, m, y] = parts;
+        const mPad = m.padStart(2, "0");
+        const dPad = d.padStart(2, "0");
+        return { year: y, month: mPad, day: dPad, key: `${y}-${mPad}`, monthYear: `${mPad}/${y}` };
+      }
     }
   }
 
+  // 4. Fallback padrão via Date parser nativo
   const t = new Date(clean).getTime();
   if (!isNaN(t) && t > 0) {
     const d = new Date(t);
