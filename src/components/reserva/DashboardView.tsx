@@ -1343,7 +1343,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
             case 'requesterName': key = res.requesterName; break;
             case 'leadTime': {
                 const depTime = new Date(res.departureDateTime).getTime();
-                const creTime = res.createdAt ? new Date(res.createdAt).getTime() : (depTime - 86400000);
+                const creTime = (res as any).createdAt ? new Date((res as any).createdAt).getTime() : (depTime - 86400000);
                 const diffDays = Math.max(0, Math.floor((depTime - creTime) / (1000 * 60 * 60 * 24)));
                 if (diffDays === 0) key = 'Mesmo Dia (0d)';
                 else if (diffDays <= 2) key = '1 a 2 Dias';
@@ -1597,7 +1597,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
           <div className={`grid grid-cols-1 md:grid-cols-2 ${dashboardMode === 'reservations' ? 'lg:grid-cols-6' : 'lg:grid-cols-4'} gap-4`}>
             {kpiCards.map((card, index) => (
                 <KPICard key={index} {...card} 
-                    numericValue={card.numericValue !== undefined ? card.numericValue : (typeof card.value === 'number' ? card.value : undefined)} 
+                    numericValue={(card as any).numericValue !== undefined ? (card as any).numericValue : (typeof card.value === 'number' ? card.value : undefined)} 
                 />
             ))}
           </div>

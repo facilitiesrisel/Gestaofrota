@@ -738,7 +738,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         const resultList = [...matches].slice(0, 15);
         
         if (!exactMatchExists && upperVal.trim().length >= 2) {
-            resultList.push({
+            (resultList as any).push({
                 codigo: upperVal.trim(),
                 baseLegal: '',
                 descricao: 'CADASTRAR NOVO CÓDIGO (DIGITAÇÃO LIVRE)',
@@ -2169,7 +2169,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                             </div>
                             <button 
                                 type="button"
-                                onClick={generateAuthPDF} 
+                                onClick={() => { generateAuthPDF(); }} 
                                 disabled={generatingPdf} 
                                 className={`text-[10px] px-2 py-1 rounded-lg flex items-center font-black shadow-xs transition-all shrink-0 ${
                                     generatingPdf 

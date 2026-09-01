@@ -2320,9 +2320,9 @@ export default function Frota() {
 
   // Average fuel consumption helper per vehicle
   const getConsumoMedio = (placa: string) => {
-    const list = abastecimentos.filter(f => f.placa === placa).sort((a,b) => a.odometro - b.odometro);
+    const list = abastecimentos.filter(f => f.placa === placa).sort((a,b) => (a.hodometro || 0) - (b.hodometro || 0));
     if (list.length < 2) return "N/D";
-    const deltaKm = list[list.length - 1].odometro - list[0].odometro;
+    const deltaKm = (list[list.length - 1].hodometro || 0) - (list[0].hodometro || 0);
     const totalLitros = list.slice(1).reduce((sum, item) => sum + item.litros, 0);
     if (totalLitros === 0 || deltaKm <= 0) return "N/D";
     return `${(deltaKm / totalLitros).toFixed(2)} km/L`;

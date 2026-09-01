@@ -992,7 +992,8 @@ export default function Lancamento() {
         setOcrProcessing(false);
 
         // Preenche o formulário com dados dinâmicos do OCR ou extraídos do arquivo!
-        setFormData({
+        setFormData(prev => ({
+          ...prev,
           lancadoPor: primeiroNome, // Usa o lançador logado
           cnpj: formattedCnpj,
           estabelecimento: localEstab,
@@ -1017,7 +1018,7 @@ export default function Lancamento() {
           multaMotorista: "",
           multaGravidade: "Média",
           nomeArquivoAnexo: fileName
-        });
+        }));
       }
     }, 400);
   };

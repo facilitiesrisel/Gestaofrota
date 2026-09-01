@@ -122,4 +122,6 @@ export interface RacRental {
   cnhBase64?: string; // Cópia da CNH em formato base64/dataURL para anexo
   cnhUploadDate?: Date; // Data em que a CNH foi enviada
   protocolNumber?: string; // Número de protocolo da solicitação (ex: RAC-2026-0829-01)
+  protocol?: string; // Alias de protocolo para compatibilidade
+  cnhAlreadyOnRecord?: boolean; // Se a CNH já consta no arquivo
 }

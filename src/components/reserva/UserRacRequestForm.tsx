@@ -413,7 +413,6 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                 setFormData({
                   requesterName: '',
                   requesterSector: '',
-                  customSector: '',
                   requesterRole: '',
                   requesterEmail: '',
                   requesterPhone: '',

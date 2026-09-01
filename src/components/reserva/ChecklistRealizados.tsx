@@ -1240,7 +1240,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                       </div>
                       <div className="border-t border-slate-100 pt-2 col-span-2">
                         <span className="text-[9px] text-slate-400 font-extrabold uppercase block">🚘 Marca / Modelo</span>
-                        <span className="font-bold">{selectedChecklist.marcaModelo || selectedChecklist.modelo || "-"}</span>
+                        <span className="font-bold">{selectedChecklist.marcaModelo || (selectedChecklist as any).modelo || "-"}</span>
                       </div>
                       <div className="border-t border-slate-100 pt-2">
                         <span className="text-[9px] text-slate-400 font-extrabold uppercase block">🎨 Cor do Veículo</span>

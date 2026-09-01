@@ -105,9 +105,9 @@ export default function Dashboard() {
   }, []);
 
   // Lista dinâmica de fornecedores e meses para popular os filtros
-  const fornecedoresUnicos = useMemo(() => {
-    const list = lancamentos.map(l => l.fornecedor);
-    return ["Todos", ...Array.from(new Set(list))];
+  const fornecedoresUnicos = useMemo<string[]>(() => {
+    const list = lancamentos.map(l => String(l.fornecedor || "")).filter(Boolean);
+    return ["Todos", ...(Array.from(new Set(list)) as string[])];
   }, [lancamentos]);
 
   const mesesDisponiveis = useMemo(() => {
@@ -1167,7 +1167,7 @@ export default function Dashboard() {
           </div>
           <div className="h-[240px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dataPorTipo.length > 0 ? dataPorTipo : [{ name: "Sem dados", value: 0 }]} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <BarChart data={(dataPorTipo.length > 0 ? dataPorTipo : [{ name: "Sem dados", value: 0, color: "#94a3b8" }]) as any} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 10, fontWeight: 700}} />
                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 10, fontWeight: 700}} />

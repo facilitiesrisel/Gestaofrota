@@ -517,7 +517,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             driverRole: rental.driverRole || '',
             value: rental.value !== undefined && rental.value !== null ? String(rental.value) : '',
             reservationNumber: rental.reservationNumber || '',
-            status: rental.status || 'Aguardando retirada',
+            status: (rental.status || 'Aguardando retirada') as any,
             base: rental.base || '',
             createdByUser: rental.createdByUser || user?.email || 'Admin',
             category: rental.category || '',
