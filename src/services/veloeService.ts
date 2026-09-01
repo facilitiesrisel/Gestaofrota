@@ -8,9 +8,9 @@
 // PREENCHA AQUI COM SEUS DADOS REAIS PARA ATIVAR A API
 // Se estas variáveis estiverem vazias, o sistema usará o modo SIMULAÇÃO (Mock).
 
-const VELOE_CLIENT_ID = process.env.REACT_APP_VELOE_CLIENT_ID || ''; 
-const VELOE_CLIENT_SECRET = process.env.REACT_APP_VELOE_CLIENT_SECRET || '';
-const VELOE_CONTRACT_ID = process.env.REACT_APP_VELOE_CONTRACT_ID || ''; 
+const VELOE_CLIENT_ID = (typeof process !== "undefined" && process.env ? process.env.REACT_APP_VELOE_CLIENT_ID : "") || ""; 
+const VELOE_CLIENT_SECRET = (typeof process !== "undefined" && process.env ? process.env.REACT_APP_VELOE_CLIENT_SECRET : "") || "";
+const VELOE_CONTRACT_ID = (typeof process !== "undefined" && process.env ? process.env.REACT_APP_VELOE_CONTRACT_ID : "") || ""; 
 
 // Endpoint base Produção
 const BASE_URL = 'https://api.alelo.com.br/alelo/prd/auto/partner/api/fuel-supply-data';

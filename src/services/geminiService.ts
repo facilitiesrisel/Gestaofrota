@@ -1,8 +1,22 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-// According to guidelines, API_KEY is from process.env.
-// This will be polyfilled or replaced by the build tool (e.g., Vite, Webpack).
-const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+// Lazy-initialized AI client to prevent module-load crashes in browser
+let aiClient: GoogleGenAI | null = null;
+
+function getAiClient(): GoogleGenAI | null {
+  if (aiClient) return aiClient;
+  const apiKey = (typeof process !== "undefined" && process.env ? (process.env.GEMINI_API_KEY || process.env.API_KEY) : "") || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+  if (!apiKey) {
+    return null;
+  }
+  try {
+    aiClient = new GoogleGenAI({ apiKey });
+    return aiClient;
+  } catch (e) {
+    console.warn("Failed to initialize GoogleGenAI client:", e);
+    return null;
+  }
+}
 
 // Cache estático para cidades comuns da região para economizar cota da API (evitar erro 429)
 const STATIC_COORDINATES: Record<string, { lat: number; lng: number }> = {
@@ -62,7 +76,11 @@ export const fetchDistanceWithGemini = async (origin: string, destination: strin
     const model = 'gemini-2.5-flash';
     
     try {
-        const response = await ai.models.generateContent({
+        const client = getAiClient();
+        if (!client) {
+            return { distance: null, error: "Chave da API Gemini não configurada." };
+        }
+        const response = await client.models.generateContent({
             model,
             contents: `Qual e a distancia de conducao de ida e volta em quilometros entre ${origin} e ${destination}?`,
             config: {
@@ -170,7 +188,11 @@ export const geocodeAddress = async (address: string): Promise<{ lat: number; ln
     const model = 'gemini-2.5-flash';
     
     try {
-        const response = await ai.models.generateContent({
+        const client = getAiClient();
+        if (!client) {
+            return null;
+        }
+        const response = await client.models.generateContent({
             model,
             contents: `Forneca as coordenadas de latitude e longitude para o seguinte endereco no Brasil: ${address}. Se possuir número predial, forneça a coordenada exata daquele número na via.`,
             config: {

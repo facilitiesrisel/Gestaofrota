@@ -62,14 +62,19 @@ export interface SmtpConfig {
  * - Módulo Lançamento de Documentos
  */
 export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig {
-  const user = overrides?.user || process.env.SMTP_EMAIL || 'deny.goncalves@risel.com.br';
+  const envEmail = (typeof process !== "undefined" && process.env ? process.env.SMTP_EMAIL : "") || "";
+  const envHost = (typeof process !== "undefined" && process.env ? process.env.SMTP_HOST : "") || "";
+  const envPort = (typeof process !== "undefined" && process.env ? process.env.SMTP_PORT : "") || "";
+  const envPass = (typeof process !== "undefined" && process.env ? process.env.SMTP_PASSWORD : "") || "";
+
+  const user = overrides?.user || envEmail || 'deny.goncalves@risel.com.br';
   const isRiselCorporate = user.toLowerCase().includes('@risel.com.br');
   const defaultHost = isRiselCorporate ? 'smtp.office365.com' : 'smtp.gmail.com';
-  const host = overrides?.host || process.env.SMTP_HOST || defaultHost;
-  const port = overrides?.port || parseInt(process.env.SMTP_PORT || '587', 10) || (host === 'smtp.gmail.com' ? 465 : 587);
+  const host = overrides?.host || envHost || defaultHost;
+  const port = overrides?.port || parseInt(envPort || '587', 10) || (host === 'smtp.gmail.com' ? 465 : 587);
   const secure = port === 465;
 
-  let rawPass = overrides?.pass || process.env.SMTP_PASSWORD || ENCRYPTED_DEFAULT_PASSWORD;
+  let rawPass = overrides?.pass || envPass || ENCRYPTED_DEFAULT_PASSWORD;
   const pass = decryptSecret(rawPass);
 
   return {

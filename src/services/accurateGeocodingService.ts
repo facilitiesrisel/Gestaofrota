@@ -216,7 +216,9 @@ function interpolateCorridor(streetName: string, streetNumber: number, city: str
  */
 async function geocodeWithGemini(fullQuery: string, streetNumber: number | null): Promise<GeocodeResult | null> {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = (typeof process !== "undefined" && process.env ? (process.env.GEMINI_API_KEY || process.env.API_KEY) : "") || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
     const model = 'gemini-2.5-flash';
 
     const prompt = `Você é um motor de geocodificação de alta precisão para o Brasil.

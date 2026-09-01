@@ -4,7 +4,7 @@ import { VEICULOS_REAIS } from '../data/veiculos_reais';
 // Configurações Padrão do Supabase (projeto oficial fornecido)
 const env = (import.meta as any).env || {};
 const DEFAULT_SUPABASE_URL = env.VITE_SUPABASE_URL || "https://ihowbxlqfcjzzzleasqq.supabase.co";
-const DEFAULT_SUPABASE_KEY = env.VITE_SUPABASE_ANON_KEY || "sb_publishable_kCEXALABru5BC-cZ3k3vOA_gtSOThfI";
+const DEFAULT_SUPABASE_KEY = env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlob3dieGxxZmNqenp6bGVhc3FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDAwNzksImV4cCI6MjEwMTMxNjA3OX0.nTbdmUa16BrXPlcX_RyWAzpPmCjqeivR1Yo1qjF_Ld0";
 
 export interface SupabaseConfig {
   url: string;
