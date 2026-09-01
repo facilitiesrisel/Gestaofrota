@@ -4,7 +4,8 @@ import { useReservations } from '../../context/ReservationContext';
 import { DatabaseIcon, ExclamationTriangleIcon, MailIcon } from './icons';
 import Modal from './Modal';
 import { activeDatabaseId, activeEnv } from '../../firebaseConfig';
-import config from '../../../firebase-applet-config.json';
+
+const sandboxProjectId = "gen-lang-client-0160517443";
 
 const SettingsView: React.FC = () => {
     const { clearAllData, reservations, dailyTrips, isLoading } = useReservations();
@@ -199,7 +200,7 @@ const SettingsView: React.FC = () => {
                                 className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-orange-500"
                             >
                                 <option value="production">Ambiente de Produção (Risel Frota - "clean-sector-477820-u3")</option>
-                                <option value="sandbox">Ambiente de Sandbox (AI Studio - "{config.projectId}")</option>
+                                <option value="sandbox">Ambiente de Sandbox (AI Studio - "{sandboxProjectId}")</option>
                             </select>
                         </div>
 
@@ -213,7 +214,7 @@ const SettingsView: React.FC = () => {
                     </div>
 
                     <div className="mt-4 text-xs text-gray-600 font-medium border-t pt-3 border-orange-100">
-                        <strong>Projeto Ativo Atualmente:</strong> <code className="bg-white px-1.5 py-0.5 rounded border border-orange-200 text-orange-700 font-mono">{activeEnv === "sandbox" ? config.projectId : "clean-sector-477820-u3"}</code>
+                        <strong>Projeto Ativo Atualmente:</strong> <code className="bg-white px-1.5 py-0.5 rounded border border-orange-200 text-orange-700 font-mono">{activeEnv === "sandbox" ? sandboxProjectId : "clean-sector-477820-u3"}</code>
                         <span className="mx-2">|</span>
                         <strong>Database:</strong> <code className="bg-white px-1.5 py-0.5 rounded border border-orange-200 text-orange-700 font-mono">{activeDatabaseId}</code>
                     </div>

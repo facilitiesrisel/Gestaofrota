@@ -14,31 +14,15 @@ const prodConfig = {
 };
 
 // Configurações do ambiente de sandbox gerenciado pelo AI Studio
-let sandboxConfig = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: "",
+const sandboxConfig = {
+  apiKey: "AIzaSyDvxDY7jCYrVo_y_FwW9mAr1Dmg1kITld4",
+  authDomain: "gen-lang-client-0160517443.firebaseapp.com",
+  projectId: "gen-lang-client-0160517443",
+  storageBucket: "gen-lang-client-0160517443.firebasestorage.app",
+  messagingSenderId: "1694781557",
+  appId: "1:1694781557:web:8b10899daa4123f5a0283c",
   measurementId: ""
 };
-
-// Tenta ler o arquivo de sandbox se existir
-try {
-  // @ts-ignore
-  import("../firebase-applet-config.json").then((config: any) => {
-    sandboxConfig = {
-      apiKey: config.default.apiKey,
-      authDomain: config.default.authDomain,
-      projectId: config.default.projectId,
-      storageBucket: config.default.storageBucket,
-      messagingSenderId: config.default.messagingSenderId,
-      appId: config.default.appId,
-      measurementId: config.default.measurementId || ""
-    };
-  }).catch(() => {});
-} catch (e) {}
 
 // Determina o ambiente ativo (padrão é produção para recuperar o histórico)
 let activeEnv = "production";
