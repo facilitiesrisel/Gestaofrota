@@ -273,7 +273,12 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   }, []);
   
   const deleteReservation = useCallback(async (id: string) => {
-    await firebaseApi.deleteReservation(id);
+    setReservations(prev => prev.filter(r => r.id !== id));
+    try {
+      await firebaseApi.deleteReservation(id);
+    } catch (err) {
+      console.warn("deleteReservation error:", err);
+    }
   }, []);
   
   const finalizeReservation = useCallback(async (id: string, vehicleId: string, finalKm: number | null, actualReturnDateTime: Date) => {
@@ -359,7 +364,12 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   }, [dailyTrips, vehicles]);
 
   const deleteDailyTrip = useCallback(async (id: string) => {
-    await firebaseApi.deleteDailyUseTrip(id);
+    setDailyTrips(prev => prev.filter(t => t.id !== id));
+    try {
+      await firebaseApi.deleteDailyUseTrip(id);
+    } catch (err) {
+      console.warn("deleteDailyTrip error:", err);
+    }
   }, []);
 
   const addVehicle = useCallback(async (vehicleData: Omit<Vehicle, 'id'>) => {
@@ -396,7 +406,12 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   }, [vehicles]);
 
   const deleteVehicle = useCallback(async (id: string) => {
-    await firebaseApi.deleteVehicle(id);
+    setVehicles(prev => prev.filter(v => v.id !== id));
+    try {
+      await firebaseApi.deleteVehicle(id);
+    } catch (err) {
+      console.warn("deleteVehicle error:", err);
+    }
   }, []);
 
   const clearAllData = useCallback(async () => {

@@ -17,22 +17,24 @@ if (dns && typeof dns.setDefaultResultOrder === "function") {
 }
 
 function createSafeTransporter(smtpConfig: any) {
+  const isPort465 = Number(smtpConfig.port) === 465;
   return nodemailer.createTransport({
-    host: smtpConfig.host,
-    port: smtpConfig.port,
-    secure: smtpConfig.secure,
+    host: smtpConfig.host || "smtp.office365.com",
+    port: Number(smtpConfig.port) || (isPort465 ? 465 : 587),
+    secure: isPort465, // true para porta 465, false para porta 587 (STARTTLS)
     auth: {
       user: smtpConfig.user,
       pass: smtpConfig.pass,
     },
     tls: {
-      ciphers: "SSLv3",
+      minVersion: "TLSv1.2",
       rejectUnauthorized: false,
     },
+    requireTLS: !isPort465,
     family: 4, // Força conexão direta IPv4 para SMTP
-    connectionTimeout: 20000,
-    greetingTimeout: 15000,
-    socketTimeout: 30000,
+    connectionTimeout: 25000,
+    greetingTimeout: 20000,
+    socketTimeout: 35000,
   } as any);
 }
 
@@ -676,8 +678,18 @@ async function startServer() {
 
     // Caso 1: Envio Direto de Notificação (Multas, Rastreamento, Frota, Reservas, E-mails Gerais)
     if (to || subject || html) {
-      const emailTo = to || (Array.isArray(destinatarios) ? destinatarios.join(", ") : "");
-      const emailCc = cc || "";
+      const formatRecipients = (val: any): string => {
+        if (Array.isArray(val)) {
+          return val.filter(Boolean).map(s => String(s).trim()).filter(s => s.length > 0).join(", ");
+        }
+        if (typeof val === 'string') {
+          return val.trim();
+        }
+        return "";
+      };
+
+      const emailTo = formatRecipients(to) || formatRecipients(destinatarios) || "deny.goncalves@risel.com.br";
+      const emailCc = formatRecipients(cc);
       const emailSubject = subject || "Notificação Risel Combustíveis";
       const emailHtml = html || "<p>Notificação automática do Sistema Risel.</p>";
 

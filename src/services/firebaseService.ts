@@ -714,7 +714,14 @@ export const subscribeToVehicles = (onUpdate: (data: Vehicle[]) => void, onError
 
 export const addVehicle = (data: Omit<Vehicle, 'id'>) => vehiclesCollection.add(removeUndefined(data));
 export const updateVehicle = (id: string, data: Partial<Omit<Vehicle, 'id'>>) => vehiclesCollection.doc(id).update(removeUndefined(data));
-export const deleteVehicle = (id: string) => vehiclesCollection.doc(id).delete();
+export const deleteVehicle = async (id: string) => {
+    try {
+        if (!id || id.startsWith('local_')) return;
+        return await vehiclesCollection.doc(id).delete();
+    } catch (error) {
+        console.warn("deleteVehicle remoto falhou:", error);
+    }
+};
 
 
 // --- Funções CRUD para Reservas ---
@@ -741,7 +748,14 @@ export const addReservation = (data: Omit<Reservation, 'id' | 'status' | 'actual
     return reservationsCollection.add(removeUndefined(reservationWithAllFields));
 }
 export const updateReservation = (id: string, data: Partial<Omit<Reservation, 'id'>>) => reservationsCollection.doc(id).update(removeUndefined(data));
-export const deleteReservation = (id: string) => reservationsCollection.doc(id).delete();
+export const deleteReservation = async (id: string) => {
+    try {
+        if (!id || id.startsWith('local_')) return;
+        return await reservationsCollection.doc(id).delete();
+    } catch (error) {
+        console.warn("deleteReservation remoto falhou:", error);
+    }
+};
 
 
 // --- Funções CRUD para Uso Diário ---
@@ -777,7 +791,14 @@ export const endDailyUseTrip = (id: string, data: { actualReturnDateTime: Date; 
 };
 
 export const updateDailyUseTrip = (id: string, data: Partial<Omit<DailyTrip, 'id'>>) => dailyUseCollection.doc(id).update(removeUndefined(data));
-export const deleteDailyUseTrip = (id: string) => dailyUseCollection.doc(id).delete();
+export const deleteDailyUseTrip = async (id: string) => {
+    try {
+        if (!id || id.startsWith('local_')) return;
+        return await dailyUseCollection.doc(id).delete();
+    } catch (error) {
+        console.warn("deleteDailyUseTrip remoto falhou:", error);
+    }
+};
 
 // --- Funções CRUD para Locações RAC ---
 

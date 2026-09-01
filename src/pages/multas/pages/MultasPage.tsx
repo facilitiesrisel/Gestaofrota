@@ -942,59 +942,44 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   };
 
   const getPrazoInfo = (status: string | undefined, prazoDate: string | undefined) => {
-      if (!prazoDate) return { text: "-", class: "text-gray-400 font-mono text-[10px]", badge: null, isUrgent: false };
+      if (!prazoDate) return { text: "-", textColor: "text-gray-400 font-mono", cellGradient: "" };
       const days = calculateDaysRemaining(prazoDate);
       const isFinished = status === StatusMulta.FINALIZADA;
       
       if (isFinished) {
           return { 
-              text: "Finalizado", 
-              class: "bg-emerald-50 text-emerald-800 border border-emerald-200/80 font-bold", 
-              badge: "Finalizado",
-              isUrgent: false,
-              cellGradient: ""
+              textColor: "text-emerald-700 font-medium", 
+              cellGradient: "bg-emerald-50/30"
           };
       }
       
       if (days !== null && days < 0) {
           return { 
-              text: "Encerrado", 
-              class: "bg-gradient-to-r from-red-600 to-red-700 text-white border border-red-800 font-black shadow-xs animate-pulse", 
-              badge: `${Math.abs(days)}d vencido`,
-              isUrgent: true,
-              cellGradient: "bg-red-50/60"
+              textColor: "text-red-700 font-bold", 
+              cellGradient: "bg-gradient-to-r from-red-100/70 via-red-50/40 to-transparent border-l-2 border-red-500"
           };
       }
       
       if (days !== null) {
           if (days <= 5) {
               return { 
-                  text: `${days}d`, 
-                  class: "bg-gradient-to-r from-red-100 via-red-50 to-red-100/70 text-red-950 border border-red-300 font-black shadow-2xs", 
-                  badge: `${days}d restantes`,
-                  isUrgent: true,
-                  cellGradient: "bg-gradient-to-r from-red-50/80 to-transparent"
+                  textColor: "text-rose-700 font-bold", 
+                  cellGradient: "bg-gradient-to-r from-rose-100/60 via-rose-50/30 to-transparent border-l-2 border-rose-400"
               };
           }
           if (days <= 10) {
               return { 
-                  text: `${days}d`, 
-                  class: "bg-gradient-to-r from-amber-100 via-amber-50 to-amber-100/70 text-amber-950 border border-amber-300 font-black shadow-2xs", 
-                  badge: `${days}d restantes`,
-                  isUrgent: false,
-                  cellGradient: "bg-gradient-to-r from-amber-50/80 to-transparent"
+                  textColor: "text-amber-800 font-bold", 
+                  cellGradient: "bg-gradient-to-r from-amber-100/60 via-amber-50/30 to-transparent border-l-2 border-amber-400"
               };
           }
           return { 
-              text: `${days}d`, 
-              class: "bg-emerald-50/70 text-emerald-800 border border-emerald-200/60 font-semibold", 
-              badge: `${days}d`,
-              isUrgent: false,
-              cellGradient: ""
+              textColor: "text-emerald-800 font-medium", 
+              cellGradient: "bg-gradient-to-r from-emerald-50/40 via-emerald-50/10 to-transparent"
           };
       }
       
-      return { text: '-', class: "text-gray-500 font-mono", badge: null, isUrgent: false, cellGradient: "" };
+      return { textColor: "text-gray-600 font-mono", cellGradient: "" };
   };
 
   // ... (Other status badges and visual helpers remain the same) ...
@@ -1714,14 +1699,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                                 <span className="text-[10px] font-mono text-gray-600">{formatDateString(multa.dataHoraInfracao)}</span>
                                             </td>
                                             <td className={`px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center ${prazoInfo.cellGradient || ''}`}>
-                                                <div className="flex flex-col items-center justify-center gap-0.5">
-                                                    <span className="text-[10px] font-mono font-bold text-gray-700">{formatDateString(multa.prazoIndicacao)}</span>
-                                                    {prazoInfo.badge && (
-                                                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md leading-tight ${prazoInfo.class}`}>
-                                                            {prazoInfo.badge}
-                                                        </span>
-                                                    )}
-                                                </div>
+                                                <span className={`text-[11px] font-mono ${prazoInfo.textColor || 'text-gray-700'}`}>
+                                                    {formatDateString(multa.prazoIndicacao)}
+                                                </span>
                                             </td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 font-mono font-bold text-gray-700 whitespace-nowrap align-middle">{multa.placa}</td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 font-medium text-gray-600 text-[10px] whitespace-nowrap align-middle">{multa.ait}</td>

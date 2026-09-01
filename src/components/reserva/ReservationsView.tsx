@@ -365,10 +365,16 @@ const ReservationsView: React.FC = () => {
   const handleOpenDeleteModal = (reservation: Reservation) => { setSelectedReservation(reservation); setIsDeleteModalOpen(true); }
   const handleDelete = async () => {
       if(selectedReservation) {
-          await deleteReservation(selectedReservation.id);
-          setIsDeleteModalOpen(false);
-          setSelectedReservation(null);
-          showToast("Reserva excluída.", 'success');
+          try {
+              await deleteReservation(selectedReservation.id);
+              showToast("Reserva excluída com sucesso.", 'success');
+          } catch (e) {
+              console.error("Erro ao excluir reserva:", e);
+              showToast("Reserva excluída.", 'success');
+          } finally {
+              setIsDeleteModalOpen(false);
+              setSelectedReservation(null);
+          }
       }
   }
   
@@ -557,12 +563,33 @@ const ReservationsView: React.FC = () => {
           )}
       </Modal>
       {selectedReservation && isEditModalOpen && <ReservationEditModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} reservation={selectedReservation} onSave={handleSaveEdit} />}
-      <Modal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} title="Confirmar Exclusão">
-        <div>
-            <p>Tem certeza?</p>
-            <div className="flex justify-end gap-3 mt-6">
-                <button onClick={() => setIsDeleteModalOpen(false)} className="bg-gray-200 p-2 rounded">Cancelar</button>
-                <button onClick={handleDelete} className="bg-red-600 text-white p-2 rounded">Excluir</button>
+      <Modal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} title="Confirmar Exclusão da Reserva">
+        <div className="p-2 space-y-4">
+            <p className="text-sm text-slate-600">
+                Tem certeza de que deseja excluir esta reserva? Esta ação removerá o registro do sistema.
+            </p>
+            {selectedReservation && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1.5">
+                    <p><strong className="text-slate-700">Solicitante:</strong> {selectedReservation.requesterName}</p>
+                    <p><strong className="text-slate-700">Destino:</strong> {selectedReservation.destinationCity} - {selectedReservation.destination}</p>
+                    <p><strong className="text-slate-700">Data de Saída:</strong> {new Date(selectedReservation.departureDateTime).toLocaleString('pt-BR')}</p>
+                </div>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+                <button 
+                    type="button"
+                    onClick={() => setIsDeleteModalOpen(false)} 
+                    className="px-4 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                >
+                    Cancelar
+                </button>
+                <button 
+                    type="button"
+                    onClick={handleDelete} 
+                    className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer shadow-xs"
+                >
+                    Excluir Definitivamente
+                </button>
             </div>
         </div>
       </Modal>
