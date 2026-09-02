@@ -942,44 +942,62 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   };
 
   const getPrazoInfo = (status: string | undefined, prazoDate: string | undefined) => {
-      if (!prazoDate) return { text: "-", textColor: "text-gray-400 font-mono", cellGradient: "" };
+      if (!prazoDate) return { text: "-", textColor: "text-gray-400 font-mono", cellGradient: "", color: "text-gray-400 font-mono" };
       const days = calculateDaysRemaining(prazoDate);
       const isFinished = status === StatusMulta.FINALIZADA;
       
       if (isFinished) {
           return { 
+              text: "Finalizada / Regularizada",
               textColor: "text-emerald-700 font-medium", 
-              cellGradient: "bg-emerald-50/30"
+              cellGradient: "bg-emerald-50/30",
+              color: "text-emerald-700 font-medium"
           };
       }
       
       if (days !== null && days < 0) {
           return { 
+              text: `Vencido há ${Math.abs(days)} dia(s)`,
               textColor: "text-red-700 font-bold", 
-              cellGradient: "bg-gradient-to-r from-red-100/70 via-red-50/40 to-transparent border-l-2 border-red-500"
+              cellGradient: "bg-gradient-to-r from-red-100/70 via-red-50/40 to-transparent border-l-2 border-red-500",
+              color: "text-red-700 bg-red-100/80 font-bold"
           };
       }
       
       if (days !== null) {
+          if (days === 0) {
+              return { 
+                  text: "Vence Hoje!",
+                  textColor: "text-rose-700 font-bold", 
+                  cellGradient: "bg-gradient-to-r from-rose-100/60 via-rose-50/30 to-transparent border-l-2 border-rose-400",
+                  color: "text-rose-700 bg-rose-100/80 font-bold"
+              };
+          }
           if (days <= 5) {
               return { 
+                  text: `${days} dias restantes (Crítico)`,
                   textColor: "text-rose-700 font-bold", 
-                  cellGradient: "bg-gradient-to-r from-rose-100/60 via-rose-50/30 to-transparent border-l-2 border-rose-400"
+                  cellGradient: "bg-gradient-to-r from-rose-100/60 via-rose-50/30 to-transparent border-l-2 border-rose-400",
+                  color: "text-rose-700 bg-rose-100/80 font-bold"
               };
           }
           if (days <= 10) {
               return { 
+                  text: `${days} dias restantes (Alerta)`,
                   textColor: "text-amber-800 font-bold", 
-                  cellGradient: "bg-gradient-to-r from-amber-100/60 via-amber-50/30 to-transparent border-l-2 border-amber-400"
+                  cellGradient: "bg-gradient-to-r from-amber-100/60 via-amber-50/30 to-transparent border-l-2 border-amber-400",
+                  color: "text-amber-800 bg-amber-100/80 font-bold"
               };
           }
           return { 
+              text: `${days} dias restantes`,
               textColor: "text-emerald-800 font-medium", 
-              cellGradient: "bg-gradient-to-r from-emerald-50/40 via-emerald-50/10 to-transparent"
+              cellGradient: "bg-gradient-to-r from-emerald-50/40 via-emerald-50/10 to-transparent",
+              color: "text-emerald-800 bg-emerald-100/80 font-medium"
           };
       }
       
-      return { textColor: "text-gray-600 font-mono", cellGradient: "" };
+      return { text: "-", textColor: "text-gray-600 font-mono", cellGradient: "", color: "text-gray-600 font-mono" };
   };
 
   // ... (Other status badges and visual helpers remain the same) ...

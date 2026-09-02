@@ -757,8 +757,45 @@ async function startServer() {
       const emailSubject = subject || "Notificação Risel Combustíveis";
       const emailHtml = html || "<p>Notificação automática do Sistema Risel.</p>";
 
-      // Processar Anexos (Suporta Data URLs, Base64 e Arquivos de Drive)
+      // Processar Anexos com decodificação limpa e segura (PDF, Imagens, Data URLs, Base64 e Arquivos de Drive)
       const mailAttachments: Array<{ filename: string; content?: Buffer; path?: string; contentType?: string }> = [];
+
+      const parseBase64Attachment = (rawInput: string, originalName?: string, defaultType?: string) => {
+        let cleanBase64 = rawInput;
+        let detectedType = defaultType || 'application/octet-stream';
+
+        // Detecta e extrai MIME type e base64 limpo se for Data URL
+        if (rawInput.includes('base64,')) {
+          const parts = rawInput.split('base64,');
+          const prefix = parts[0];
+          cleanBase64 = parts[1] || '';
+          const matchMime = prefix.match(/data:([^;]+);/);
+          if (matchMime && matchMime[1]) {
+            detectedType = matchMime[1];
+          }
+        }
+
+        cleanBase64 = cleanBase64.replace(/\s+/g, '').trim();
+        if (!cleanBase64) return null;
+
+        const buffer = Buffer.from(cleanBase64, 'base64');
+        let filename = originalName || 'anexo.pdf';
+
+        // Se o tipo for PDF e o nome não tiver extensão .pdf, adiciona
+        if (detectedType.includes('pdf') && !filename.toLowerCase().endsWith('.pdf')) {
+          filename += '.pdf';
+        } else if (detectedType.includes('jpeg') && !/\.(jpe?g)$/i.test(filename)) {
+          filename += '.jpg';
+        } else if (detectedType.includes('png') && !filename.toLowerCase().endsWith('.png')) {
+          filename += '.png';
+        }
+
+        return {
+          filename,
+          content: buffer,
+          contentType: detectedType
+        };
+      };
 
       // Anexos diretos passados no payload
       if (Array.isArray(rawAttachments)) {
@@ -767,19 +804,12 @@ async function startServer() {
           if (!att) continue;
           const fname = att.name || att.filename || `anexo_${i + 1}.pdf`;
           
-          if (att.dataUrl && typeof att.dataUrl === 'string' && att.dataUrl.includes('base64,')) {
-            const base64Data = att.dataUrl.split('base64,')[1];
-            mailAttachments.push({
-              filename: fname,
-              content: Buffer.from(base64Data, 'base64'),
-              contentType: att.type || 'application/octet-stream'
-            });
+          if (att.dataUrl && typeof att.dataUrl === 'string') {
+            const parsed = parseBase64Attachment(att.dataUrl, fname, att.type || att.contentType);
+            if (parsed) mailAttachments.push(parsed);
           } else if (att.content && typeof att.content === 'string') {
-            mailAttachments.push({
-              filename: fname,
-              content: Buffer.from(att.content, 'base64'),
-              contentType: att.type || 'application/octet-stream'
-            });
+            const parsed = parseBase64Attachment(att.content, fname, att.type || att.contentType);
+            if (parsed) mailAttachments.push(parsed);
           } else if (att.url && typeof att.url === 'string') {
             mailAttachments.push({
               filename: fname,
@@ -797,14 +827,8 @@ async function startServer() {
           const fname = item.name ? (item.name.endsWith('.pdf') ? item.name : `${item.name}.pdf`) : `Documento_${i + 1}.pdf`;
 
           if (item.url.startsWith('data:')) {
-            const base64Part = item.url.split('base64,')[1];
-            if (base64Part) {
-              mailAttachments.push({
-                filename: fname,
-                content: Buffer.from(base64Part, 'base64'),
-                contentType: 'application/pdf'
-              });
-            }
+            const parsed = parseBase64Attachment(item.url, fname, 'application/pdf');
+            if (parsed) mailAttachments.push(parsed);
           } else if (item.url.startsWith('http://') || item.url.startsWith('https://')) {
             mailAttachments.push({
               filename: fname,

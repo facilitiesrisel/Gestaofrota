@@ -272,12 +272,13 @@ export interface RacEmailOptions {
   actionType?: 'created' | 'approved' | 'rejected' | 'updated';
   cnhAttachedNow?: boolean;
   cnhAlreadyOnRecord?: boolean;
+  voucherAttachedNow?: boolean;
   adminNotes?: string;
   rejectReason?: string;
 }
 
 /**
- * Gera HTML formatado para notificação de Solicitação de Locação RAC
+ * Gera HTML formatado Premium para notificação de Solicitação e Aprovação de Locação RAC
  */
 export const generateRacEmailHtml = (
   rental: RacRental, 
@@ -286,6 +287,7 @@ export const generateRacEmailHtml = (
 ): string => {
   let cnhAttachedNow = false;
   let cnhAlreadyOnRecord = false;
+  let voucherAttachedNow = !!rental.hasVoucher || !!rental.voucherFileName;
   let actionType: 'created' | 'approved' | 'rejected' | 'updated' = 'created';
   let adminNotes = rental.adminNotes || '';
   let rejectReason = rental.rejectReason || '';
@@ -303,6 +305,9 @@ export const generateRacEmailHtml = (
   } else if (cnhAttachedOrOptions && typeof cnhAttachedOrOptions === 'object') {
     cnhAttachedNow = !!cnhAttachedOrOptions.cnhAttachedNow;
     cnhAlreadyOnRecord = !!cnhAlreadyOnRecordParam || !!cnhAttachedOrOptions.cnhAlreadyOnRecord;
+    if (cnhAttachedOrOptions.voucherAttachedNow !== undefined) {
+      voucherAttachedNow = cnhAttachedOrOptions.voucherAttachedNow;
+    }
     actionType = cnhAttachedOrOptions.actionType || 'created';
     if (cnhAttachedOrOptions.adminNotes) adminNotes = cnhAttachedOrOptions.adminNotes;
     if (cnhAttachedOrOptions.rejectReason) rejectReason = cnhAttachedOrOptions.rejectReason;
@@ -316,52 +321,103 @@ export const generateRacEmailHtml = (
   };
 
   const statusCnhHtml = cnhAttachedNow
-    ? `<span style="display:inline-block; padding:4px 8px; border-radius:6px; background-color:#ecfdf5; color:#065f46; font-weight:bold; font-size:12px; border:1px solid #a7f3d0;">📎 CNH ANEXADA NESTE E-MAIL</span>`
+    ? `<span style="display:inline-block; padding:4px 10px; border-radius:6px; background-color:#ecfdf5; color:#065f46; font-weight:bold; font-size:12px; border:1px solid #a7f3d0;">📎 CNH Anexada a este E-mail</span>`
     : cnhAlreadyOnRecord
-    ? `<span style="display:inline-block; padding:4px 8px; border-radius:6px; background-color:#eff6ff; color:#1e40af; font-weight:bold; font-size:12px; border:1px solid #bfdbfe;">✅ CNH JÁ CADASTRADA NO SISTEMA</span>`
-    : `<span style="display:inline-block; padding:4px 8px; border-radius:6px; background-color:#fffbeb; color:#92400e; font-weight:bold; font-size:12px; border:1px solid #fde68a;">⚠️ PENDENTE DE CNH</span>`;
+    ? `<span style="display:inline-block; padding:4px 10px; border-radius:6px; background-color:#eff6ff; color:#1e40af; font-weight:bold; font-size:12px; border:1px solid #bfdbfe;">✅ CNH Já Cadastrada no Sistema</span>`
+    : `<span style="display:inline-block; padding:4px 10px; border-radius:6px; background-color:#fffbeb; color:#92400e; font-weight:bold; font-size:12px; border:1px solid #fde68a;">⚠️ Pendente de CNH</span>`;
 
-  // Configurações visuais de acordo com o tipo de ação
+  // Configurações visuais por status
   let headerTitle = "Nova Solicitação de Locação RAC";
-  let headerSubtitle = "Solicitação de veículo terceirizado cadastrada no sistema";
-  let headerBg = "linear-gradient(135deg, #114D38 0%, #0c3829 100%)";
+  let headerSubtitle = "Solicitação de veículo terceirizado cadastrada para análise";
+  let headerBg = "linear-gradient(135deg, #093928 0%, #114D38 50%, #0c3829 100%)";
   let tagColor = "#F47920";
   let tagText = `Protocolo: ${rental.protocolNumber || rental.reservationNumber || 'RAC-PENDENTE'}`;
-  let statusBadgeHtml = `<span style="display:inline-block; padding:5px 12px; border-radius:20px; background-color:#fef3c7; color:#92400e; font-weight:800; font-size:13px; border:1px solid #fde68a;">⏳ SOLICITADA (EM ANÁLISE)</span>`;
+  let statusBadgeHtml = `<span style="display:inline-block; padding:6px 14px; border-radius:20px; background-color:#fef3c7; color:#92400e; font-weight:800; font-size:13px; border:1px solid #fde68a;">⏳ SOLICITAÇÃO RECEBIDA (EM ANÁLISE)</span>`;
 
   if (actionType === 'approved') {
     headerTitle = "Solicitação de Locação RAC APROVADA";
-    headerSubtitle = "Sua solicitação de veículo terceirizado foi aprovada pela Gestão de Frota";
-    headerBg = "linear-gradient(135deg, #00753f 0%, #0c3829 100%)";
+    headerSubtitle = "Sua solicitação de veículo foi autorizada pela Gestão de Frota";
+    headerBg = "linear-gradient(135deg, #064e3b 0%, #047857 50%, #065f46 100%)";
     tagColor = "#10b981";
     tagText = `Aprovada • ${rental.protocolNumber || rental.reservationNumber || 'RAC-OK'}`;
-    statusBadgeHtml = `<span style="display:inline-block; padding:5px 14px; border-radius:20px; background-color:#ecfdf5; color:#065f46; font-weight:800; font-size:13px; border:1px solid #a7f3d0;">✅ APROVADA / AGUARDANDO RETIRADA</span>`;
+    statusBadgeHtml = `<span style="display:inline-block; padding:6px 16px; border-radius:20px; background-color:#ecfdf5; color:#065f46; font-weight:800; font-size:13px; border:1px solid #a7f3d0;">✅ RESERVA APROVADA / AGUARDANDO RETIRADA</span>`;
   } else if (actionType === 'rejected') {
     headerTitle = "Solicitação de Locação RAC RECUSADA";
     headerSubtitle = "Informamos que sua solicitação de locação de veículo terceirizado não foi autorizada";
-    headerBg = "linear-gradient(135deg, #991b1b 0%, #7f1d1d 100%)";
+    headerBg = "linear-gradient(135deg, #7f1d1d 0%, #b91c1c 50%, #991b1b 100%)";
     tagColor = "#ef4444";
     tagText = `Recusada • ${rental.protocolNumber || rental.reservationNumber || 'RAC-RECUSADA'}`;
-    statusBadgeHtml = `<span style="display:inline-block; padding:5px 14px; border-radius:20px; background-color:#fef2f2; color:#991b1b; font-weight:800; font-size:13px; border:1px solid #fecaca;">❌ SOLICITAÇÃO RECUSADA</span>`;
+    statusBadgeHtml = `<span style="display:inline-block; padding:6px 16px; border-radius:20px; background-color:#fef2f2; color:#991b1b; font-weight:800; font-size:13px; border:1px solid #fecaca;">❌ SOLICITAÇÃO RECUSADA</span>`;
   } else if (actionType === 'updated') {
     headerTitle = "Atualização na Solicitação de Locação RAC";
     headerSubtitle = "Os dados da sua solicitação de locação RAC foram atualizados pela Gestão de Frota";
-    headerBg = "linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)";
+    headerBg = "linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #172554 100%)";
     tagColor = "#3b82f6";
     tagText = `Atualizada • ${rental.protocolNumber || rental.reservationNumber || 'RAC-INFO'}`;
-    statusBadgeHtml = `<span style="display:inline-block; padding:5px 14px; border-radius:20px; background-color:#eff6ff; color:#1e40af; font-weight:800; font-size:13px; border:1px solid #bfdbfe;">ℹ️ STATUS: ${(rental.status || 'Atualizada').toUpperCase()}</span>`;
+    statusBadgeHtml = `<span style="display:inline-block; padding:6px 16px; border-radius:20px; background-color:#eff6ff; color:#1e40af; font-weight:800; font-size:13px; border:1px solid #bfdbfe;">ℹ️ STATUS: ${(rental.status || 'Atualizada').toUpperCase()}</span>`;
   }
 
   // Bloco de Observações da Administração (se houver)
   const notesToDisplay = adminNotes || (actionType === 'rejected' ? rejectReason : '');
   const adminNotesHtml = notesToDisplay ? `
-    <div style="background-color: ${actionType === 'rejected' ? '#fef2f2' : '#f0fdf4'}; border-left: 5px solid ${actionType === 'rejected' ? '#dc2626' : '#16a34a'}; padding: 16px; border-radius: 8px; margin: 18px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+    <div style="background-color: ${actionType === 'rejected' ? '#fef2f2' : '#f0fdf4'}; border-left: 5px solid ${actionType === 'rejected' ? '#dc2626' : '#16a34a'}; padding: 16px; border-radius: 10px; margin: 18px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.04);">
       <div style="font-size: 13px; font-weight: 800; text-transform: uppercase; color: ${actionType === 'rejected' ? '#991b1b' : '#166534'}; margin-bottom: 6px; letter-spacing: 0.5px;">
-        ${actionType === 'rejected' ? '❌ Motivo da Recusa / Parecer da Administração:' : '📝 Observações & Instruções da Gestão de Frota:'}
+        ${actionType === 'rejected' ? '❌ Motivo da Recusa / Parecer da Administração:' : '📝 Orientações & Instruções da Gestão de Frota:'}
       </div>
       <div style="font-size: 14px; color: ${actionType === 'rejected' ? '#7f1d1d' : '#14532d'}; line-height: 1.6; font-weight: 600; white-space: pre-wrap;">
         ${notesToDisplay}
       </div>
+    </div>
+  ` : '';
+
+  // Bloco de Confirmação da Locadora e Voucher (Apenas quando aprovada/atualizada e com dados cadastrados)
+  const isApprovedOrUpdated = actionType === 'approved' || actionType === 'updated';
+  const hasReservationConfirmedData = isApprovedOrUpdated && (rental.rentalCompany || rental.reservationNumber || rental.plate);
+
+  const voucherAlertHtml = (isApprovedOrUpdated && (voucherAttachedNow || rental.voucherFileName)) ? `
+    <div style="background: #ecfdf5; border: 1.5px dashed #10b981; border-radius: 10px; padding: 14px 18px; margin: 16px 0; text-align: center;">
+      <div style="font-size: 14px; font-weight: 800; color: #065f46; margin-bottom: 4px;">
+        📎 VOUCHER DA RESERVA ANEXADO
+      </div>
+      <div style="font-size: 13px; color: #047857; font-weight: 600;">
+        O documento oficial da reserva (${rental.voucherFileName || 'Voucher_Reserva.pdf'}) está anexo a esta mensagem. Apresente-o no balcão da locadora juntamente com sua CNH física original.
+      </div>
+    </div>
+  ` : '';
+
+  const confirmedRentalDetailsHtml = hasReservationConfirmedData ? `
+    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; margin: 18px 0;">
+      <div style="font-size: 13px; font-weight: 800; text-transform: uppercase; color: #166534; margin-bottom: 12px; letter-spacing: 0.5px; border-bottom: 1px solid #dcfce7; padding-bottom: 6px;">
+        🚗 Dados Confirmados da Locação
+      </div>
+      <table style="width: 100%; border-collapse: collapse;">
+        ${rental.rentalCompany ? `
+        <tr>
+          <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #475569; width: 40%;">Locadora / Prestador:</td>
+          <td style="padding: 6px 0; font-size: 14px; font-weight: 800; color: #0f172a;">${rental.rentalCompany}</td>
+        </tr>` : ''}
+        ${rental.reservationNumber ? `
+        <tr>
+          <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #475569;">Nº Reserva / Voucher:</td>
+          <td style="padding: 6px 0; font-size: 14px; font-weight: 800; color: #00753f; font-family: monospace;">${rental.reservationNumber}</td>
+        </tr>` : ''}
+        ${rental.plate && rental.plate !== 'A DEFINIR' ? `
+        <tr>
+          <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #475569;">Placa do Veículo:</td>
+          <td style="padding: 6px 0; font-size: 14px; font-weight: 800; color: #0f172a; font-family: monospace;">${rental.plate}</td>
+        </tr>` : ''}
+        ${rental.pickupStore ? `
+        <tr>
+          <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #475569;">Loja de Retirada:</td>
+          <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0f172a;">${rental.pickupStore}</td>
+        </tr>` : ''}
+        ${rental.returnStore ? `
+        <tr>
+          <td style="padding: 6px 0; font-size: 13px; font-weight: 700; color: #475569;">Loja de Devolução:</td>
+          <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0f172a;">${rental.returnStore}</td>
+        </tr>` : ''}
+      </table>
+      ${voucherAlertHtml}
     </div>
   ` : '';
 
@@ -371,15 +427,15 @@ export const generateRacEmailHtml = (
     <head>
       <meta charset="UTF-8">
       <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
-        .card { max-width: 650px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
-        .header { background: ${headerBg}; color: #ffffff; padding: 26px 24px; text-align: center; }
+        body { font-family: 'Aptos Narrow', 'Segoe UI', Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; -webkit-font-smoothing: antialiased; }
+        .card { max-width: 650px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+        .header { background: ${headerBg}; color: #ffffff; padding: 28px 24px; text-align: center; }
         .header h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.5px; text-transform: uppercase; }
         .header p { margin: 6px 0 0; font-size: 13px; opacity: 0.92; }
-        .tag-proto { display: inline-block; background: ${tagColor}; color: #ffffff; font-size: 11px; font-weight: 800; padding: 4px 12px; border-radius: 20px; text-transform: uppercase; margin-top: 12px; letter-spacing: 0.5px; }
+        .tag-proto { display: inline-block; background: ${tagColor}; color: #ffffff; font-size: 11px; font-weight: 800; padding: 5px 14px; border-radius: 20px; text-transform: uppercase; margin-top: 12px; letter-spacing: 0.5px; }
         .body { padding: 24px; }
         .status-container { text-align: center; margin-bottom: 18px; }
-        .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #114D38; letter-spacing: 0.5px; margin: 18px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
+        .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #114D38; letter-spacing: 0.5px; margin: 20px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
         .grid { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
         .grid td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
         .grid td.label { font-weight: 700; color: #64748b; width: 38%; }
@@ -387,7 +443,7 @@ export const generateRacEmailHtml = (
         .route-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin: 16px 0; text-align: center; }
         .route-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 6px; }
         .route-flow { font-size: 15px; font-weight: 800; color: #0f172a; }
-        .footer { background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px; text-align: center; font-size: 11px; color: #94a3b8; }
+        .footer { background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 18px; text-align: center; font-size: 11px; color: #94a3b8; }
         .btn { display: inline-block; background: #00753f; color: #ffffff !important; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 13px; text-decoration: none; margin-top: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
       </style>
     </head>
@@ -404,6 +460,7 @@ export const generateRacEmailHtml = (
           </div>
 
           ${adminNotesHtml}
+          ${confirmedRentalDetailsHtml}
 
           <div class="route-box">
             <div class="route-title">Itinerário de Retirada e Devolução</div>
@@ -446,23 +503,8 @@ export const generateRacEmailHtml = (
             </tr>
           </table>
 
-          <div class="section-title">Datas e Detalhes da Locação</div>
+          <div class="section-title">Datas e Detalhes da Solicitação</div>
           <table class="grid">
-            ${rental.rentalCompany ? `
-            <tr>
-              <td class="label">Locadora / Prestador:</td>
-              <td class="value"><strong>${rental.rentalCompany}</strong></td>
-            </tr>` : ''}
-            ${rental.reservationNumber ? `
-            <tr>
-              <td class="label">Nº Reserva Locadora / Voucher:</td>
-              <td class="value"><strong style="color: #00753f;">${rental.reservationNumber}</strong></td>
-            </tr>` : ''}
-            ${rental.plate ? `
-            <tr>
-              <td class="label">Placa do Veículo:</td>
-              <td class="value"><strong style="font-family:monospace; font-size:14px;">${rental.plate}</strong></td>
-            </tr>` : ''}
             <tr>
               <td class="label">Data/Hora de Retirada:</td>
               <td class="value"><strong>${formatDateTime(rental.pickupDate)}</strong></td>
@@ -471,11 +513,6 @@ export const generateRacEmailHtml = (
               <td class="label">Cidade de Retirada:</td>
               <td class="value"><strong>${rental.pickupCity || rental.pickupStore || 'Não informada'}</strong></td>
             </tr>
-            ${rental.pickupStore ? `
-            <tr>
-              <td class="label">Loja de Retirada:</td>
-              <td class="value">${rental.pickupStore}</td>
-            </tr>` : ''}
             <tr>
               <td class="label">Data/Hora de Devolução:</td>
               <td class="value"><strong>${formatDateTime(rental.returnDate)}</strong></td>
@@ -484,13 +521,8 @@ export const generateRacEmailHtml = (
               <td class="label">Cidade de Devolução:</td>
               <td class="value"><strong>${rental.returnCity || rental.returnStore || 'Não informada'}</strong></td>
             </tr>
-            ${rental.returnStore ? `
             <tr>
-              <td class="label">Loja de Devolução:</td>
-              <td class="value">${rental.returnStore}</td>
-            </tr>` : ''}
-            <tr>
-              <td class="label">Categoria Pretendida:</td>
+              <td class="label">Categoria Solicitada:</td>
               <td class="value">${rental.category || 'Hatch / Compacto'}</td>
             </tr>
             <tr>
@@ -509,7 +541,7 @@ export const generateRacEmailHtml = (
           </div>
         </div>
         <div class="footer">
-          <p style="margin: 0 0 4px;">Risel Combustíveis &bull; Gestão de Frota &bull; Locações RAC</p>
+          <p style="margin: 0 0 4px; font-weight: bold; color: #64748b;">Risel Combustíveis &bull; Gestão de Frota &bull; Locações RAC</p>
           <p style="margin: 0;">E-mail automático gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}</p>
         </div>
       </div>

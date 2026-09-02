@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RacRental } from '../../types_reserva';
 import { 
   ResponsiveContainer, 
@@ -164,6 +164,50 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
     const [selectedRental, setSelectedRental] = useState<RacRental | null>(null);
     const [viewingCnh, setViewingCnh] = useState<{ isOpen: boolean; name: string; url: string; fileName: string } | null>(null);
+    const [viewingVoucher, setViewingVoucher] = useState<{ isOpen: boolean; name: string; url: string; fileName: string } | null>(null);
+
+    // Voucher upload state in approval modal
+    const [voucherFile, setVoucherFile] = useState<{
+        file: File;
+        fileName: string;
+        base64: string;
+        previewUrl: string;
+        isImage: boolean;
+    } | null>(null);
+    const voucherInputRef = useRef<HTMLInputElement>(null);
+
+    const handleVoucherSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            processVoucherFile(e.target.files[0]);
+        }
+    };
+
+    const processVoucherFile = (file: File) => {
+        if (file.size > 15 * 1024 * 1024) {
+            showToast('O arquivo do voucher é muito grande. O tamanho máximo permitido é 15MB.', 'error');
+            return;
+        }
+        const isImage = file.type.startsWith('image/');
+        const reader = new FileReader();
+        reader.onload = () => {
+            const base64 = reader.result as string;
+            setVoucherFile({
+                file,
+                fileName: file.name,
+                base64,
+                previewUrl: isImage ? base64 : '',
+                isImage
+            });
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleRemoveVoucher = () => {
+        setVoucherFile(null);
+        if (voucherInputRef.current) {
+            voucherInputRef.current.value = '';
+        }
+    };
 
     // Approve / Reject states
     const [approveFormData, setApproveFormData] = useState({
@@ -544,6 +588,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     // Open Approval Modal
     const handleOpenApproveModal = (rental: RacRental) => {
         setSelectedRental(rental);
+        setVoucherFile(null);
+        if (voucherInputRef.current) {
+            voucherInputRef.current.value = '';
+        }
         setApproveFormData({
             rentalCompany: rental.rentalCompany && rental.rentalCompany !== 'A Definir (Cotação RAC)' ? rental.rentalCompany : 'Localiza',
             reservationNumber: rental.reservationNumber && !rental.reservationNumber.startsWith('RAC-') ? rental.reservationNumber : '',
@@ -570,7 +618,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 value: parseCurrencyInput(approveFormData.value),
                 pickupStore: approveFormData.pickupStore.trim(),
                 returnStore: approveFormData.returnStore.trim(),
-                adminNotes: approveFormData.adminNotes.trim()
+                adminNotes: approveFormData.adminNotes.trim(),
+                hasVoucher: !!voucherFile || !!selectedRental.hasVoucher,
+                voucherFileName: voucherFile ? voucherFile.fileName : selectedRental.voucherFileName,
+                voucherBase64: voucherFile ? voucherFile.base64 : selectedRental.voucherBase64,
+                voucherUploadDate: voucherFile ? new Date().toISOString() : selectedRental.voucherUploadDate
             };
 
             await updateRacRental(selectedRental.id, updatedData);
@@ -580,11 +632,29 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 ...updatedData
             };
 
-            // Dispara e-mail de Aprovação com observações do administrador
+            // Prepara anexos do e-mail de aprovação (Voucher da Reserva)
+            const emailAttachments: Array<{ filename: string; content?: string; contentType?: string }> = [];
+            
+            if (voucherFile && voucherFile.base64) {
+                emailAttachments.push({
+                    filename: voucherFile.fileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
+                    content: voucherFile.base64,
+                    contentType: voucherFile.file.type || 'application/pdf'
+                });
+            } else if (selectedRental.voucherBase64) {
+                emailAttachments.push({
+                    filename: selectedRental.voucherFileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
+                    content: selectedRental.voucherBase64,
+                    contentType: 'application/pdf'
+                });
+            }
+
+            // Dispara e-mail de Aprovação com observações do administrador e Voucher anexo
             try {
                 const emailHtml = generateRacEmailHtml(fullUpdated, {
                     actionType: 'approved',
-                    adminNotes: approveFormData.adminNotes.trim()
+                    adminNotes: approveFormData.adminNotes.trim(),
+                    voucherAttachedNow: emailAttachments.length > 0
                 });
 
                 const recipients = [...ADMIN_EMAIL_RECIPIENTS];
@@ -595,15 +665,21 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 await sendEmail(
                     recipients,
                     `[Solicitação RAC APROVADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
-                    emailHtml
+                    emailHtml,
+                    {
+                        fromName: 'Gestão de Reservas Risel',
+                        cc: fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : undefined,
+                        attachments: emailAttachments.length > 0 ? emailAttachments : undefined
+                    }
                 );
             } catch (mailErr) {
                 console.warn("Aviso ao enviar e-mail de aprovação RAC:", mailErr);
             }
 
-            showToast("Solicitação RAC aprovada e e-mails enviados com sucesso!", "success");
+            showToast("Solicitação RAC aprovada, voucher anexado e e-mails enviados com sucesso!", "success");
             setIsApproveModalOpen(false);
             setSelectedRental(null);
+            setVoucherFile(null);
         } catch (err) {
             console.error("Erro ao aprovar solicitação RAC:", err);
             showToast("Erro ao processar aprovação da locação.", "error");
@@ -1331,6 +1407,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     }
 
                                     const hasCnhAttached = !!(r.cnhBase64 || r.hasCnhCopy);
+                                    const hasVoucherAttached = !!(r.voucherBase64 || r.hasVoucher);
 
                                     return (
                                         <tr key={r.id} className="hover:bg-slate-50/80 transition-colors group">
@@ -1399,7 +1476,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </span>
                                             </td>
 
-                                            {/* Condutor & CNH */}
+                                            {/* Condutor & Documentos (CNH / Voucher) */}
                                             <td className="px-5 py-4">
                                                 <div className="text-xs font-bold text-slate-800">
                                                     {r.driverName || 'Não informado'}
@@ -1422,12 +1499,33 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                             className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
                                                             title="Visualizar CNH"
                                                         >
-                                                            📎 CNH Anexada
+                                                            📎 CNH
                                                         </button>
                                                     ) : (
                                                         <span className="text-[10px] text-slate-400">
-                                                            {r.cnhAlreadyOnRecord ? '✅ CNH em Arquivo' : 'Sem anexo'}
+                                                            {r.cnhAlreadyOnRecord ? '✅ CNH OK' : 'Sem CNH'}
                                                         </span>
+                                                    )}
+
+                                                    {hasVoucherAttached && (
+                                                        <button
+                                                            onClick={() => {
+                                                                if (r.voucherBase64) {
+                                                                    setViewingVoucher({
+                                                                        isOpen: true,
+                                                                        name: r.requesterName,
+                                                                        url: r.voucherBase64,
+                                                                        fileName: r.voucherFileName || `Voucher_${r.protocolNumber || r.reservationNumber || 'Reserva'}.pdf`
+                                                                    });
+                                                                } else {
+                                                                    showToast("Voucher registrado pela administração.", "success");
+                                                                }
+                                                            }}
+                                                            className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                                            title="Visualizar Voucher da Reserva"
+                                                        >
+                                                            🎫 Voucher
+                                                        </button>
                                                     )}
                                                 </div>
                                             </td>
@@ -2024,6 +2122,69 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             </div>
                         </div>
 
+                        {/* Upload do Voucher da Reserva */}
+                        <div className="border border-emerald-200 bg-emerald-50/40 p-3.5 rounded-xl space-y-2">
+                            <div className="flex items-center justify-between">
+                                <label className="block text-xs font-black text-emerald-950">
+                                    📎 Anexar Voucher da Reserva (PDF ou Foto)
+                                </label>
+                                {voucherFile && (
+                                    <button
+                                        type="button"
+                                        onClick={handleRemoveVoucher}
+                                        className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                                    >
+                                        Remover Arquivo
+                                    </button>
+                                )}
+                            </div>
+                            <p className="text-[11px] text-emerald-800/80">
+                                O voucher anexado será encaminhado automaticamente no e-mail de aprovação para o solicitante.
+                            </p>
+
+                            <input
+                                ref={voucherInputRef}
+                                type="file"
+                                accept=".pdf,image/png,image/jpeg,image/jpg"
+                                onChange={handleVoucherSelect}
+                                className="hidden"
+                            />
+
+                            {voucherFile ? (
+                                <div className="flex items-center justify-between p-2.5 bg-white border border-emerald-300 rounded-xl">
+                                    <div className="flex items-center gap-2 overflow-hidden">
+                                        <span className="text-base">{voucherFile.isImage ? '🖼️' : '📄'}</span>
+                                        <div className="truncate">
+                                            <p className="text-xs font-bold text-slate-800 truncate">{voucherFile.fileName}</p>
+                                            <p className="text-[10px] text-slate-400">
+                                                {(voucherFile.file.size / 1024).toFixed(1)} KB • Pronto para envio
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => voucherInputRef.current?.click()}
+                                        className="px-2.5 py-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg cursor-pointer transition-colors"
+                                    >
+                                        Trocar
+                                    </button>
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => voucherInputRef.current?.click()}
+                                    className="w-full py-3 border-2 border-dashed border-emerald-300 hover:border-emerald-500 rounded-xl bg-white hover:bg-emerald-50/50 flex flex-col items-center justify-center gap-1 cursor-pointer transition-all"
+                                >
+                                    <span className="text-sm font-bold text-emerald-800">
+                                        Clique para selecionar o Voucher (PDF / Imagem)
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">
+                                        Tamanho máximo: 15MB
+                                    </span>
+                                </button>
+                            )}
+                        </div>
+
                         <div>
                             <label className="block text-xs font-bold text-slate-700 mb-1">
                                 Observações do Administrador / Orientações ao Solicitante
@@ -2177,6 +2338,53 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             </a>
                             <button
                                 onClick={() => setViewingCnh(null)}
+                                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+                            >
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* Modal de Visualização do Voucher da Reserva */}
+            {viewingVoucher && (
+                <Modal
+                    isOpen={viewingVoucher.isOpen}
+                    onClose={() => setViewingVoucher(null)}
+                    title={
+                        <div className="flex items-center gap-2 text-blue-900">
+                            <span className="text-base">🎫</span>
+                            <span className="font-bold text-sm">Voucher da Reserva • {viewingVoucher.name}</span>
+                        </div>
+                    }
+                >
+                    <div className="space-y-4 flex flex-col items-center">
+                        {viewingVoucher.url.startsWith('data:image/') ? (
+                            <img 
+                                src={viewingVoucher.url} 
+                                alt={`Voucher ${viewingVoucher.name}`} 
+                                className="max-h-[60vh] rounded-xl border border-slate-200 shadow-sm object-contain"
+                            />
+                        ) : (
+                            <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200 w-full">
+                                <div className="w-12 h-12 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center mx-auto mb-3 text-xl">
+                                    📄
+                                </div>
+                                <p className="text-sm font-bold text-slate-800 mb-1">Voucher da Reserva Oficial</p>
+                                <p className="text-xs text-slate-500 font-mono">{viewingVoucher.fileName}</p>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between w-full pt-2">
+                            <a
+                                href={viewingVoucher.url}
+                                download={viewingVoucher.fileName}
+                                className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5"
+                            >
+                                ⬇️ Baixar Voucher da Reserva
+                            </a>
+                            <button
+                                onClick={() => setViewingVoucher(null)}
                                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
                             >
                                 Fechar

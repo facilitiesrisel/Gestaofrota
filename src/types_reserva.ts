@@ -124,4 +124,8 @@ export interface RacRental {
   protocolNumber?: string; // Número de protocolo da solicitação (ex: RAC-2026-0829-01)
   protocol?: string; // Alias de protocolo para compatibilidade
   cnhAlreadyOnRecord?: boolean; // Se a CNH já consta no arquivo
+  hasVoucher?: boolean; // Se possui voucher anexado
+  voucherFileName?: string; // Nome do arquivo do voucher
+  voucherBase64?: string; // Voucher da reserva em base64/dataURL
+  voucherUploadDate?: Date; // Data em que o voucher foi anexado
 }

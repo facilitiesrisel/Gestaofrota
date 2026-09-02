@@ -70,7 +70,7 @@ const ReservationContext = createContext<ReservationContextType | undefined>(und
 
 export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [vehicles, setVehicles] = useState<Vehicle[]>(getInitialFleetVehicles);
-  const [reservations, setReservas] = useState<Reservation[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
   const [dailyTrips, setDailyTrips] = useState<DailyTrip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [permissionError, setPermissionError] = useState(false);
@@ -114,7 +114,7 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
 
     const unsubReservations = firebaseApi.subscribeToReservations(
         (data) => {
-            setReservas(data);
+            setReservations(data);
             reservationsLoaded = true;
             checkLoadingComplete();
         },

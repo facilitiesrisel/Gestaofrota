@@ -34,11 +34,16 @@ export function hasSubmoduleAccess(
   const specificKey = keyMap[submodule];
   const specificVal = permissions[specificKey];
 
+  // Se explicitamente permitido
   if (specificVal === true) return true;
+  // Se explicitamente bloqueado
   if (specificVal === false) return false;
 
-  // Se o submódulo não foi especificado explicitamente, usa a permissão mestre 'frota'
-  return Boolean(permissions.frota);
+  // Se o submódulo não foi especificado explicitamente, usa a permissão geral 'frota'
+  if (permissions.frota !== undefined) {
+    return Boolean(permissions.frota);
+  }
+  return true;
 }
 
 export function hasModuleAccess(
@@ -49,17 +54,16 @@ export function hasModuleAccess(
   if (permissions.admin) return true;
 
   if (module === "frota") {
-    return (
-      Boolean(permissions.frota) ||
-      Boolean(permissions.frota_veiculos) ||
-      Boolean(permissions.frota_checklist) ||
-      Boolean(permissions.frota_reservas) ||
-      Boolean(permissions.frota_multas) ||
-      Boolean(permissions.frota_rastreamento)
-    );
+    if (permissions.frota === false) return false;
+    return true;
   }
 
-  return Boolean(permissions[module]);
+  if (permissions[module] === false) {
+    return false;
+  }
+
+  // Por padrão, permite acesso a menos que esteja explicitamente bloqueado como false
+  return true;
 }
 
 export interface UserSession {
