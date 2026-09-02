@@ -7,7 +7,8 @@ import { CarIcon, MapPinIcon, ClockIcon, SteeringWheelIcon, CalendarIcon, Exclam
 import { Navigation } from 'lucide-react';
 import Modal from './Modal';
 import { fetchFleetPositions } from '../../services/geoFrotasService';
-import { useAuth } from '../../context/ReservationAuthContext';
+import { useAuth as useReservationAuth } from '../../context/ReservationAuthContext';
+import { useAuth as useGlobalAuth } from '../../context/AuthContext';
 import { generateEmailHtml, sendEmail } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import { firebaseConfig } from '../../firebaseConfig';
@@ -138,8 +139,9 @@ interface FleetStatusViewProps {
 
 const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation }) => {
     const { vehicles, reservations, dailyTrips, isLoading } = useReservations();
-    const { user } = useAuth();
-    const isAdmin = user && !user.isAnonymous;
+    const { user: globalUser } = useGlobalAuth();
+    const { user: resUser } = useReservationAuth();
+    const isAdmin = Boolean((globalUser && globalUser.email) || (resUser && !resUser.isAnonymous));
     const [, setSearchParams] = useSearchParams();
 
     const handleOpenInTracking = (plate: string) => {

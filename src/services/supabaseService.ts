@@ -297,13 +297,20 @@ export async function fetchUsuariosSupabase(): Promise<any[]> {
         ? (() => { try { return JSON.parse(item.permissions); } catch { return {}; } })() 
         : (item.permissions || {});
 
-      const mustChange = item.must_change_password !== undefined 
-        ? item.must_change_password 
-        : (perms?.mustChangePassword !== undefined 
-            ? perms.mustChangePassword 
-            : (perms?.must_change_password !== undefined 
-                ? perms.must_change_password 
-                : true));
+      const isMaster = item.email && (
+        item.email.toLowerCase() === "deny.goncalves@risel.com.br" || 
+        item.email.toLowerCase() === "deny.risel@gmail.com"
+      );
+
+      const mustChange = isMaster 
+        ? false 
+        : (item.must_change_password !== undefined && item.must_change_password !== null
+            ? Boolean(item.must_change_password)
+            : (perms?.mustChangePassword !== undefined && perms?.mustChangePassword !== null
+                ? Boolean(perms.mustChangePassword)
+                : (perms?.must_change_password !== undefined && perms?.must_change_password !== null
+                    ? Boolean(perms.must_change_password)
+                    : false)));
 
       const resolvedName = item.name || item.nome || item.full_name || item.username || (item.email ? item.email.split('@')[0] : "Usuário");
 

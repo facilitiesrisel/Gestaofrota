@@ -1324,10 +1324,19 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         </html>`;
   };
 
-  const handleOpenEmailModal = async (targetMulta?: Partial<Multa>) => {
-      const activeData = targetMulta || formData;
-      if (targetMulta) {
-          setFormData(targetMulta);
+  const handleOpenEmailModal = async (targetMulta?: Partial<Multa> | React.MouseEvent) => {
+      // Garante que se a função for chamada via onClick de botão, o SyntheticEvent não seja interpretado como dados da Multa
+      const isMultaObject = Boolean(
+          targetMulta && 
+          typeof targetMulta === 'object' && 
+          !('nativeEvent' in targetMulta) && 
+          !('currentTarget' in targetMulta) &&
+          ('placa' in targetMulta || 'id' in targetMulta || 'ait' in targetMulta || 'valor' in targetMulta)
+      );
+
+      const activeData: Partial<Multa> = isMultaObject ? (targetMulta as Partial<Multa>) : formData;
+      if (isMultaObject) {
+          setFormData(activeData);
       }
       const placaClean = cleanString(activeData.placa || '');
       const placaMappings = await fetchPlacaEmailMappings();
@@ -1883,7 +1892,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 {/* Botão de Enviar E-mail no Topo - Sempre visível e discreto */}
                 <button 
                     type="button"
-                    onClick={handleOpenEmailModal} 
+                    onClick={() => handleOpenEmailModal()} 
                     className="px-3 py-1.5 text-xs font-bold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
                     title="Disparar notificação por e-mail para os responsáveis"
                 >

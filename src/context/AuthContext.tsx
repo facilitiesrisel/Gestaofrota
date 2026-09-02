@@ -228,6 +228,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           return Array.from(mapUsers.values());
         });
+
+        // Atualiza a sessão ativa se o usuário já estiver logado
+        setUser(currentUser => {
+          if (!currentUser || !currentUser.email) return currentUser;
+          const currentEmail = currentUser.email.toLowerCase();
+          const isMaster = currentEmail === "deny.goncalves@risel.com.br" || currentEmail === "deny.risel@gmail.com";
+          const dbMatch = dbUsers.find(u => u.email.toLowerCase() === currentEmail);
+          
+          if (dbMatch) {
+            const updated: UserSession = {
+              ...currentUser,
+              ...dbMatch,
+              mustChangePassword: isMaster ? false : Boolean(dbMatch.mustChangePassword)
+            };
+            sessionStorage.setItem("risel_session", JSON.stringify(updated));
+            if (localStorage.getItem("risel_active_session")) {
+              localStorage.setItem("risel_active_session", JSON.stringify(updated));
+            }
+            return updated;
+          }
+          return currentUser;
+        });
       } else {
         // Se a tabela estiver vazia no Supabase, envia a lista local
         usersList.forEach(u => saveUsuarioSupabase(u));
@@ -259,11 +281,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     if (masterPassValid || userPassValid) {
+      const isMaster = cleanEmail === "deny.goncalves@risel.com.br" || cleanEmail === "deny.risel@gmail.com";
       const activeSession: UserSession = found ? {
         ...found,
+        mustChangePassword: isMaster ? false : Boolean(found.mustChangePassword),
         status: "Ativa"
       } : {
         ...DEFAULT_USERS[0],
+        mustChangePassword: false,
         status: "Ativa"
       };
 
