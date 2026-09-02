@@ -322,33 +322,33 @@ function SubModuleCard({ title, description, icon: Icon, onClick, theme, delay }
   const selectedTheme = THEMES[theme as keyof typeof THEMES] || THEMES.orange;
   return (
     <motion.div
-      initial={{ opacity: 0, y: 25 }}
+      initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -8, scale: 1.02 }}
+      whileHover={{ y: -5, scale: 1.02 }}
       transition={{ 
         type: "spring", 
         stiffness: 260, 
         damping: 20, 
-        delay: delay * 0.5 
+        delay: delay * 0.3 
       }}
       className="h-full"
     >
       <button onClick={onClick} className="w-full text-left block group h-full cursor-pointer focus:outline-none">
-        <div className={`rounded-[32px] p-8 border shadow-sm transition-all duration-500 relative overflow-hidden h-full flex flex-col justify-between bg-gradient-to-br ${selectedTheme.gradientBg} ${selectedTheme.glowColor}`}>
-          <div className={`absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl opacity-10 transition-all duration-500 group-hover:opacity-25 group-hover:scale-110 ${selectedTheme.bgBlur}`} />
+        <div className={`rounded-2xl p-5 border shadow-sm transition-all duration-300 relative overflow-hidden h-full flex flex-col justify-between bg-gradient-to-br ${selectedTheme.gradientBg} ${selectedTheme.glowColor}`}>
+          <div className={`absolute -top-16 -right-16 w-40 h-40 rounded-full blur-2xl opacity-10 transition-all duration-500 group-hover:opacity-25 group-hover:scale-110 ${selectedTheme.bgBlur}`} />
           
           <div>
-            <div className={`w-16 h-16 rounded-[20px] flex items-center justify-center mb-6 shadow-sm border transition-all duration-500 group-hover:scale-110 group-hover:-rotate-3 relative z-10 ${selectedTheme.iconContainer}`}>
-              <Icon className="w-8 h-8" />
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 shadow-sm border transition-all duration-300 group-hover:scale-105 relative z-10 ${selectedTheme.iconContainer}`}>
+              <Icon className="w-6 h-6" />
             </div>
             
-            <h2 className="text-xl font-display font-bold text-slate-800 mb-3 relative z-10">{title}</h2>
-            <p className="text-slate-500 leading-relaxed mb-6 text-xs font-semibold relative z-10">{description}</p>
+            <h2 className="text-base font-display font-bold text-slate-800 mb-2 relative z-10">{title}</h2>
+            <p className="text-slate-500 leading-relaxed mb-4 text-[11px] font-medium relative z-10 line-clamp-3">{description}</p>
           </div>
           
-          <div className={`inline-flex items-center gap-1.5 font-black tracking-wide uppercase text-[10px] transition-colors mt-auto relative z-10 ${selectedTheme.textAccent}`}>
+          <div className={`inline-flex items-center gap-1 font-black tracking-wide uppercase text-[10px] transition-colors mt-auto relative z-10 ${selectedTheme.textAccent}`}>
             Acessar área 
-            <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1.5" />
+            <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-1" />
           </div>
         </div>
       </button>
@@ -2358,33 +2358,33 @@ export default function Frota() {
             </div>
           </div>
 
-          <div className="text-center mb-12">
+          <div className="text-center mb-6">
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-lg shadow-orange-500/20 mx-auto mb-6"
+              className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-md shadow-orange-500/20 mx-auto mb-3"
             >
-              <Truck className="w-8 h-8" />
+              <Truck className="w-6 h-6" />
             </motion.div>
             
             <motion.h1 
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
-              className="text-4xl font-display font-black text-slate-800 tracking-tight"
+              className="text-2xl sm:text-3xl font-display font-black text-slate-800 tracking-tight"
             >
               Módulo de <span className="bg-gradient-to-r from-orange-600 to-amber-500 bg-clip-text text-transparent">Frota Leve</span>
             </motion.h1>
             <motion.p 
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
-              className="text-sm text-slate-500 mt-3 max-w-2xl mx-auto font-medium"
+              className="text-xs text-slate-500 mt-1.5 max-w-2xl mx-auto font-medium"
             >
               Selecione uma das áreas operacionais abaixo para realizar vistorias, gerenciar reservas, acompanhar infrações ou rastrear veículos.
             </motion.p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
             {hasSubmoduleAccess(user?.permissions, "checklist") && (
               <SubModuleCard
                 title="Checklist Digital"
@@ -2392,7 +2392,7 @@ export default function Frota() {
                 icon={CheckSquare}
                 onClick={() => setActiveTab("checklist")}
                 theme="emerald"
-                delay={0.15}
+                delay={0.1}
               />
             )}
             {hasSubmoduleAccess(user?.permissions, "frota") && (
@@ -2402,7 +2402,7 @@ export default function Frota() {
                 icon={Truck}
                 onClick={() => setActiveTab("frota")}
                 theme="orange"
-                delay={0.2}
+                delay={0.15}
               />
             )}
             {hasSubmoduleAccess(user?.permissions, "multas") && (
@@ -2412,7 +2412,7 @@ export default function Frota() {
                 icon={ShieldAlert}
                 onClick={() => setActiveTab("multas")}
                 theme="rose"
-                delay={0.25}
+                delay={0.2}
               />
             )}
             {hasSubmoduleAccess(user?.permissions, "reservas") && (
@@ -2422,7 +2422,7 @@ export default function Frota() {
                 icon={Calendar}
                 onClick={() => setActiveTab("reservas")}
                 theme="blue"
-                delay={0.3}
+                delay={0.25}
               />
             )}
             {hasSubmoduleAccess(user?.permissions, "rastreamento") && (
@@ -2432,13 +2432,13 @@ export default function Frota() {
                 icon={Navigation}
                 onClick={() => setActiveTab("rastreamento")}
                 theme="violet"
-                delay={0.35}
+                delay={0.3}
               />
             )}
           </div>
 
-          <div className="text-center mt-12">
-            <Link to="/" className="inline-flex items-center gap-2 text-xs font-black uppercase text-slate-400 hover:text-orange-600 transition-colors">
+          <div className="text-center mt-6">
+            <Link to="/" className="inline-flex items-center gap-1.5 text-xs font-black uppercase text-slate-400 hover:text-orange-600 transition-colors">
               <ArrowLeft className="w-3.5 h-3.5" /> Voltar ao Painel Principal
             </Link>
           </div>

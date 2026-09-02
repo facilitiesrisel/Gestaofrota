@@ -116,7 +116,7 @@ const getIconForLabel = (label: string): string => {
     return '🔹'; 
 };
 
-// Gera o HTML para o e-mail com o novo design
+// Gera o HTML para o e-mail com layout institucional premium e logo da Risel
 export const generateEmailHtml = (
     title: string, 
     details: { label: string, value: string }[], 
@@ -124,49 +124,53 @@ export const generateEmailHtml = (
     actionLink?: string, // Link opcional para botão de ação
     introText?: string, // Texto introdutório
     footerText?: string, // Texto de rodapé/orientação extra
-    borderColor: string = '#eeeeee', // Cor da borda da tabela
+    borderColor: string = '#e2e8f0', // Cor da borda da tabela
     mapImageUrl?: string // URL da imagem estática do mapa (opcional)
 ) => {
     
     // Construção das linhas da tabela
-    const rows = details.map(d => {
+    const rows = details.map((d, index) => {
         const icon = getIconForLabel(d.label);
+        const isEven = index % 2 === 0;
         return `
-        <tr>
-            <td style="padding: 10px 12px; border-bottom: 1px solid ${borderColor}; color: #555555; font-weight: bold; width: 40%; font-size: 13px; vertical-align: middle; background-color: #fcfcfc;">
-                <span style="margin-right: 8px; font-size: 16px;">${icon}</span>${d.label}
+        <tr style="background-color: ${isEven ? '#f8fafc' : '#ffffff'};">
+            <td style="padding: 12px 16px; border-bottom: 1px solid ${borderColor}; color: #0d3829; font-weight: 700; width: 38%; font-size: 13px; vertical-align: middle;">
+                <span style="margin-right: 8px; font-size: 15px;">${icon}</span>${d.label}
             </td>
-            <td style="padding: 10px 12px; border-bottom: 1px solid ${borderColor}; color: #222222; font-size: 14px; vertical-align: middle;">${d.value}</td>
+            <td style="padding: 12px 16px; border-bottom: 1px solid ${borderColor}; color: #1e293b; font-size: 13px; vertical-align: middle; font-weight: 500;">
+                ${d.value}
+            </td>
         </tr>
     `}).join('');
 
-    // Botão com target_blank e fallback de texto simples para garantir acesso
+    // Botão com target_blank e fallback de link
     const buttonHtml = actionLink ? `
-        <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
-            <a href="${actionLink}" target="_blank" style="background-color: #00753f; color: #ffffff; padding: 14px 35px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 15px; display: inline-block; cursor: pointer; border-bottom: 3px solid #005a30;">
-                📥 Acessar Sistema
+        <div style="text-align: center; margin-top: 32px; margin-bottom: 24px;">
+            <a href="${actionLink}" target="_blank" style="background: linear-gradient(135deg, #0d3829 0%, #00753f 100%); color: #ffffff; padding: 14px 36px; text-decoration: none; border-radius: 8px; font-weight: 800; font-size: 14px; display: inline-block; box-shadow: 0 4px 12px rgba(0, 117, 63, 0.25); text-transform: uppercase; letter-spacing: 0.5px;">
+                🚀 Acessar Sistema Risel
             </a>
-            <div style="margin-top: 15px; font-size: 12px; color: #666; background-color: #f9f9f9; padding: 10px; border-radius: 4px; word-break: break-all;">
-                Se o botão acima não funcionar, copie e cole o link abaixo no seu navegador:<br/>
-                <a href="${actionLink}" style="color: #00753f; text-decoration: underline;">${actionLink}</a>
+            <div style="margin-top: 14px; font-size: 11px; color: #64748b; background-color: #f8fafc; padding: 10px 14px; border-radius: 6px; border: 1px dashed #cbd5e1; word-break: break-all;">
+                Se preferir, utilize o link direto: <a href="${actionLink}" style="color: #00753f; text-decoration: underline; font-weight: 600;">${actionLink}</a>
             </div>
         </div>
     ` : '';
 
     const mapHtml = mapImageUrl ? `
-        <div style="margin-top: 20px; text-align: center; border: 1px solid #ddd; padding: 5px; background: #fff; border-radius: 8px;">
-            <p style="margin: 0 0 10px 0; font-size: 12px; color: #666; font-weight: bold; text-transform: uppercase;">Registro de Deslocamento</p>
-            <img src="${mapImageUrl}" alt="Mapa do deslocamento" style="max-width: 100%; height: auto; border-radius: 4px; display: block; margin: 0 auto;" />
+        <div style="margin-top: 24px; text-align: center; border: 1px solid #e2e8f0; padding: 12px; background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <p style="margin: 0 0 10px 0; font-size: 12px; color: #0d3829; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📍 Registro de Localização e Rota</p>
+            <img src="${mapImageUrl}" alt="Mapa do deslocamento" style="max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0 auto;" />
         </div>
     ` : '';
 
     const introHtml = introText ? `
-        <p style="color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 20px;">${introText}</p>
+        <div style="background-color: #f8fafc; padding: 14px 18px; border-left: 4px solid #00753f; border-radius: 6px; margin-bottom: 22px;">
+            <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0;">${introText}</p>
+        </div>
     ` : '';
 
     const footerHtml = footerText ? `
-        <div style="background-color: #fff8e1; border-left: 4px solid #ffca28; color: #8d6e04; padding: 15px; border-radius: 4px; margin-top: 25px; font-size: 13px; line-height: 1.5;">
-            <strong style="display:block; margin-bottom:5px; font-size: 14px;">⚠️ Importante:</strong>
+        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; color: #92400e; padding: 14px 18px; border-radius: 6px; margin-top: 24px; font-size: 13px; line-height: 1.5;">
+            <strong style="display: block; margin-bottom: 4px; font-size: 13px; color: #b45309;">⚠️ Atenção & Recomendações:</strong>
             ${footerText}
         </div>
     ` : '';
@@ -178,50 +182,43 @@ export const generateEmailHtml = (
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
-            .email-wrapper { width: 100%; background-color: #f4f4f4; padding: 20px 0; }
-            .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-            
-            /* Header Atualizado: Fundo Verde, Texto Laranja, Borda Laranja */
-            .header { background-color: #00753f; padding: 20px 30px; border-bottom: 4px solid #ff9b00; display: flex; align-items: center; justify-content: space-between; }
-            .header-content { text-align: center; width: 100%; }
-            .header h1 { color: #ff9b00; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; text-transform: uppercase; }
-            .header p { color: #ff9b00; margin: 5px 0 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; opacity: 0.9; }
-
-            .content { padding: 30px; }
-            .info-table { width: 100%; border-collapse: collapse; border: 1px solid ${borderColor}; border-radius: 6px; overflow: hidden; }
-            
-            .footer-legal { background-color: #f9f9f9; padding: 20px; text-align: center; font-size: 11px; color: #999; border-top: 1px solid #eee; }
-            a { color: #00753f; text-decoration: none; }
+            body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; }
         </style>
     </head>
-    <body>
-        <div class="email-wrapper">
-            <div class="email-container">
-                <div class="header">
-                     <div class="header-content">
-                          <h1 style="color: #ff9b00;">Risel Combustíveis</h1>
-                          <p style="color: #ff9b00;">${title}</p>
-                     </div>
-                </div>
-               
-                <div class="content">
-                    ${introHtml}
-                     
-                    <table class="info-table">
-                        ${rows}
-                    </table>
+    <body style="background-color: #f1f5f9; padding: 24px 12px; margin: 0;">
+        <div style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+            
+            <!-- Header Corporativo com Logo -->
+            <div style="background: linear-gradient(135deg, #071a13 0%, #0d3829 100%); padding: 26px 30px; border-bottom: 4px solid #f47920;">
+                 <table style="width: 100%; border-collapse: collapse;">
+                     <tr>
+                         <td style="width: 54px; vertical-align: middle;">
+                             <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" style="width: 48px; height: 48px; border-radius: 10px; display: block; border: 2px solid rgba(255,255,255,0.25); object-fit: cover;" />
+                         </td>
+                         <td style="vertical-align: middle; padding-left: 14px;">
+                              <h1 style="color: #ffffff; margin: 0; font-size: 18px; font-weight: 900; letter-spacing: -0.3px; text-transform: uppercase;">Risel Combustíveis</h1>
+                              <p style="color: #6ee7b7; margin: 3px 0 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${title}</p>
+                         </td>
+                     </tr>
+                 </table>
+            </div>
+           
+            <div style="padding: 28px 30px;">
+                ${introHtml}
+                 
+                <table style="width: 100%; border-collapse: collapse; border: 1px solid ${borderColor}; border-radius: 10px; overflow: hidden;">
+                    ${rows}
+                </table>
 
-                    ${mapHtml}
-                    
-                    ${footerHtml}
-                    ${buttonHtml}
-                </div>
-               
-                <div class="footer-legal">
-                    <p style="margin: 3px 0;">&copy; ${new Date().getFullYear()} Risel Combustíveis - Frota Leve</p>
-                    <p style="margin: 3px 0;">Este é um e-mail automático. Por favor, não responda diretamente a menos que indicado.</p>
-                </div>
+                ${mapHtml}
+                
+                ${footerHtml}
+                ${buttonHtml}
+            </div>
+           
+            <div style="background-color: #f8fafc; padding: 18px 24px; text-align: center; border-top: 1px solid #e2e8f0;">
+                <p style="margin: 0; font-size: 11px; font-weight: 700; color: #64748b;">&copy; ${new Date().getFullYear()} Risel Combustíveis Ltda • Sistema de Gestão de Frotas</p>
+                <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3b8;">Este é um comunicado corporativo automatizado.</p>
             </div>
         </div>
     </body>

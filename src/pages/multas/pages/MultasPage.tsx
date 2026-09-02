@@ -199,11 +199,11 @@ const MapModal: React.FC<{
                 if (layer instanceof L.Marker || layer instanceof L.Polyline) map.removeLayer(layer); 
             });
 
-            const truckSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#022c22" stroke="#00d664" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.6));"><path d="M10 17h4V5H2v12h3" /><path d="M20 17h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5v8h1" /><circle cx="7.5" cy="17.5" r="2.5" fill="#00d664" /><circle cx="17.5" cy="17.5" r="2.5" fill="#00d664" /></svg>`;
+            const carSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#064e3b" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 3px 5px rgba(0,0,0,0.5)); width:100%; height:100%;"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9C2.1 11.1 2 11.5 2 12v4c0 .6.4 1 1 1h2" /><circle cx="7" cy="17" r="2" fill="#10b981" /><circle cx="17" cy="17" r="2" fill="#10b981" /><path d="M5 11h11" /><path d="M9 7l1.5 4" /></svg>`;
             const createIcon = (isExact: boolean) => L.divIcon({
-                className: 'custom-truck-icon',
-                html: `<div style="width: 40px; height: 40px; transform: scale(${isExact ? 1.2 : 0.9}); transition: all 0.3s;">${truckSvg}</div>`,
-                iconSize: [40, 40], iconAnchor: [20, 35], popupAnchor: [0, -40]
+                className: 'custom-car-icon',
+                html: `<div style="width: 38px; height: 38px; background: rgba(7, 17, 12, 0.88); border: 2px solid ${isExact ? '#10b981' : '#f59e0b'}; border-radius: 12px; padding: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; transform: scale(${isExact ? 1.05 : 0.95}); transition: all 0.25s;">${carSvg}</div>`,
+                iconSize: [38, 38], iconAnchor: [19, 19], popupAnchor: [0, -22]
             });
 
             const fmtMoney = (v: number) => v ? v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00';
@@ -1191,6 +1191,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const generateEmailHTML = (data: Partial<Multa>) => {
       const fmtMoney = (val?: number) => val ? val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : "R$ 0,00";
       const fmtDate = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') : "-";
+      const fmtDateTime = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') + ' às ' + new Date(val).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "-";
       
       const aitLinks = parseLinks(data.linkAit);
       let attachmentsSection = '';
@@ -1198,63 +1199,108 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       if (aitLinks.length > 0 || data.linkAuth) {
           const totalDocs = aitLinks.length + (data.linkAuth ? 1 : 0);
           attachmentsSection = `
-            <div style="background-color:#f0fdf4;padding:16px 20px;border-radius:10px;margin-top:25px;border:1px solid #bbf7d0;text-align:left;">
-                <p style="margin:0 0 8px 0;font-size:13px;color:#166534;font-weight:bold;">📎 Documentos Anexados (${totalDocs} arquivo(s)):</p>
-                <ul style="margin:0;padding-left:20px;font-size:12px;color:#334155;">
-                    ${aitLinks.map(l => `<li style="margin-bottom:4px;"><strong>Auto de Infração:</strong> ${l.name}</li>`).join('')}
-                    ${data.linkAuth ? `<li style="margin-bottom:4px;"><strong>Termo:</strong> Autorização de Desconto em Folha (PDF Timbrado Risel)</li>` : ''}
+            <div style="background-color: #f0fdf4; padding: 16px 20px; border-radius: 12px; margin-top: 24px; border: 1px solid #bbf7d0; text-align: left;">
+                <p style="margin: 0 0 8px 0; font-size: 13px; color: #166534; font-weight: 800; display: flex; align-items: center; gap: 6px;">
+                  <span>📎</span> Documentos e Comprovantes Anexados (${totalDocs} arquivo(s)):
+                </p>
+                <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #334155; line-height: 1.6;">
+                    ${aitLinks.map(l => `<li style="margin-bottom: 4px;"><strong>Auto de Infração:</strong> ${l.name}</li>`).join('')}
+                    ${data.linkAuth ? `<li style="margin-bottom: 4px;"><strong>Termo:</strong> Autorização de Desconto em Folha (PDF Oficial Risel)</li>` : ''}
                 </ul>
             </div>`;
       }
 
-      // Mercosul Plate Icon
-      const iconPlaca = `<span style="display:inline-block;width:24px;height:14px;background:#fff;border:1px solid #94a3b8;border-top:3px solid #1e3a8a;border-radius:2px;vertical-align:middle;margin-right:6px;box-shadow:0 1px 1px rgba(0,0,0,0.1);position:relative;"></span>`;
-      
-      // CNH Icon
-      const iconCNH = `<span style="display:inline-block;width:18px;height:12px;background:#fefce8;border:1px solid #d97706;border-radius:2px;vertical-align:middle;margin-right:6px;position:relative;"></span>`;
-
       return `
-        <div style="font-family:'Aptos', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;font-size:12pt;color:#334155;max-width:680px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background-color:#ffffff;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
-          <div style="background-color:#114D38;padding:25px;text-align:left;border-bottom:3px solid #00d664;">
-            <table style="width:100%;border-collapse:collapse;">
-              <tr>
-                <td style="vertical-align:middle;">
-                  <h1 style="color:#ffffff;margin:0;font-size:20px;font-weight:900;letter-spacing:-0.5px;">NOTIFICAÇÃO DE INFRAÇÃO DE TRÂNSITO</h1>
-                  <p style="color:#a7f3d0;margin:4px 0 0 0;font-size:12px;">Risel Combustíveis Ltda • Gestão Integrada de Frotas</p>
-                </td>
-              </tr>
-            </table>
-          </div>
-          <div style="padding:28px;">
-            <p style="margin:0 0 16px 0;font-size:14px;color:#1e293b;">Prezados(as),</p>
-            <p style="margin:0 0 16px 0;font-size:13px;line-height:1.6;color:#475569;">
-              Seguem as informações detalhadas da notificação de infração aplicada ao veículo da frota. 
-              <strong>Gentileza providenciar a cópia da CNH do condutor responsável e a assinatura no Termo de Autorização de Desconto idêntica à CNH.</strong>
-            </p>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; }
+          </style>
+        </head>
+        <body style="background-color: #f1f5f9; padding: 24px 12px; margin: 0;">
+          <div style="max-width: 650px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
             
-            <table style="width:100%;border-collapse:collapse;margin-top:15px;font-size:13px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
-              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;width:38%;">👤 Motorista / Condutor:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#0f172a;">${data.responsavelNome || '-'}</td></tr>
-              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">📄 Auto de Infração (AIT):</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-family:monospace;font-weight:bold;color:#0f172a;">${data.ait || '-'}</td></tr>
-              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">🚛 Frota / Identificação:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${data.frota || '-'}</td></tr>
-              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">${iconPlaca} Placa do Veículo:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-family:monospace;font-weight:900;color:#0f172a;">${data.placa || '-'}</td></tr>
-              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">🏢 Base / Filial:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${data.base || '-'}</td></tr>
-              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">📅 Data e Hora da Infração:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;">${fmtDate(data.dataHoraInfracao)}</td></tr>
-              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">⚠️ Infração Cometida:</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;color:#0f172a;">${data.descricaoInfracao || data.enquadramento || '-'}</td></tr>
-              <tr><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">💲 Valor com Desconto:</td><td style="padding:10px 14px;color:#16a34a;font-weight:900;border-bottom:1px solid #e2e8f0;">${fmtMoney(data.valorComDesconto)}</td></tr>
-              <tr style="background-color:#f8fafc;"><td style="padding:10px 14px;font-weight:bold;color:#114D38;border-bottom:1px solid #e2e8f0;">${iconCNH} Pontuação CNH:</td><td style="padding:10px 14px;color:#334155;font-weight:bold;border-bottom:1px solid #e2e8f0;">${data.pontosCnh || '0'} Pontos</td></tr>
-              <tr style="background-color:#fef2f2;"><td style="padding:10px 14px;font-weight:bold;color:#dc2626;">⏳ Prazo Limite para Indicação:</td><td style="padding:10px 14px;font-weight:900;color:#dc2626;">${fmtDate(data.prazoIndicacao)}</td></tr>
-            </table>
+            <!-- Header Corporativo Risel -->
+            <div style="background: linear-gradient(135deg, #071a13 0%, #114D38 100%); padding: 28px 32px; border-bottom: 4px solid #f47920; text-align: left;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="width: 60px; vertical-align: middle;">
+                    <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" style="width: 52px; height: 52px; border-radius: 12px; display: block; border: 2px solid rgba(255,255,255,0.2); object-fit: cover;" />
+                  </td>
+                  <td style="vertical-align: middle; padding-left: 16px;">
+                    <h1 style="color: #ffffff; margin: 0; font-size: 19px; font-weight: 900; letter-spacing: -0.3px; text-transform: uppercase;">Notificação de Infração de Trânsito</h1>
+                    <p style="color: #6ee7b7; margin: 4px 0 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;">Risel Combustíveis Ltda • Gestão de Frotas & Multas</p>
+                  </td>
+                </tr>
+              </table>
+            </div>
 
-            ${attachmentsSection}
+            <!-- Corpo da Notificação -->
+            <div style="padding: 32px 30px;">
+              <p style="margin: 0 0 14px 0; font-size: 15px; color: #1e293b; font-weight: 700;">Prezado(a) condutor(a) / Gestor,</p>
+              <p style="margin: 0 0 20px 0; font-size: 13px; line-height: 1.6; color: #475569;">
+                Informamos que foi registrada uma autuação de trânsito vinculada ao veículo sob sua condução/responsabilidade na data especificada abaixo.
+                <strong>Solicitamos providenciar com urgência a cópia da CNH e a assinatura no Termo de Desconto anexo.</strong>
+              </p>
+              
+              <!-- Tabela Estruturada de Informações -->
+              <table style="width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0; width: 40%;">👤 Motorista / Condutor:</td>
+                  <td style="padding: 11px 16px; border-bottom: 1px solid #e2e8f0; font-weight: 800; color: #0f172a;">${data.responsavelNome || '-'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0;">📄 Auto de Infração (AIT):</td>
+                  <td style="padding: 11px 16px; border-bottom: 1px solid #e2e8f0; font-family: monospace; font-weight: 800; color: #0f172a;">${data.ait || '-'}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0;">🚗 Placa do Veículo:</td>
+                  <td style="padding: 11px 16px; border-bottom: 1px solid #e2e8f0; font-family: monospace; font-weight: 900; color: #0f172a;">${data.placa || '-'} ${data.frota ? `<span style="font-size: 11px; color: #64748b; font-weight: normal;">(Frota ${data.frota})</span>` : ''}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0;">🏢 Base / Filial:</td>
+                  <td style="padding: 11px 16px; border-bottom: 1px solid #e2e8f0; color: #334155;">${data.base || '-'}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0;">📅 Data e Hora da Infração:</td>
+                  <td style="padding: 11px 16px; border-bottom: 1px solid #e2e8f0; color: #0f172a; font-weight: 600;">${fmtDateTime(data.dataHoraInfracao)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0;">⚠️ Infração Cometida:</td>
+                  <td style="padding: 11px 16px; border-bottom: 1px solid #e2e8f0; color: #0f172a; line-height: 1.4;">${data.descricaoInfracao || data.enquadramento || '-'}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0;">💲 Valor com Desconto:</td>
+                  <td style="padding: 11px 16px; color: #15803d; font-weight: 900; font-size: 14px; border-bottom: 1px solid #e2e8f0;">${fmtMoney(data.valorComDesconto)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 11px 16px; font-weight: 700; color: #114D38; border-bottom: 1px solid #e2e8f0;">🪪 Pontuação CNH:</td>
+                  <td style="padding: 11px 16px; color: #334155; font-weight: 700; border-bottom: 1px solid #e2e8f0;">${data.pontosCnh || '0'} Pontos</td>
+                </tr>
+                <tr style="background-color: #fff1f2;">
+                  <td style="padding: 11px 16px; font-weight: 800; color: #be123c;">⏳ Prazo Limite para Indicação:</td>
+                  <td style="padding: 11px 16px; font-weight: 900; color: #be123c;">${fmtDate(data.prazoIndicacao)}</td>
+                </tr>
+              </table>
 
-            <p style="margin:25px 0 0 0;font-size:12px;color:#64748b;line-height:1.5;">
-              Em caso de dúvidas ou necessidade de informações adicionais, favor responder a este e-mail ou contatar a equipe de Gestão de Frotas Risel.
-            </p>
+              ${attachmentsSection}
+
+              <div style="margin-top: 24px; padding: 14px 18px; background-color: #f8fafc; border-left: 4px solid #114D38; border-radius: 6px; font-size: 12px; color: #475569; line-height: 1.5;">
+                <strong>Orientação Operacional:</strong> Em caso de dúvidas sobre a infração ou processo de recurso de defesa prévia, favor responder a esta mensagem ou contatar o setor de Gestão de Frotas da Risel Combustíveis.
+              </div>
+            </div>
+
+            <!-- Rodapé Institucional -->
+            <div style="background-color: #f8fafc; padding: 18px 24px; text-align: center; border-top: 1px solid #e2e8f0;">
+               <p style="color: #64748b; font-size: 11px; margin: 0; font-weight: 700;">© ${new Date().getFullYear()} Risel Combustíveis Ltda • Módulo de Frota Leve</p>
+               <p style="color: #94a3b8; font-size: 10px; margin: 4px 0 0 0;">Mensagem corporativa gerada automaticamente pelo Sistema Risel ERP.</p>
+            </div>
           </div>
-          <div style="background-color:#f8fafc;padding:16px 20px;text-align:center;border-top:1px solid #e2e8f0;">
-             <p style="color:#94a3b8;font-size:11px;margin:0;font-weight:600;">© 2026 Risel Combustíveis Ltda • Sistema de Gestão de Frotas & Multas</p>
-          </div>
-        </div>`;
+        </body>
+        </html>`;
   };
 
   const handleOpenEmailModal = async () => {
@@ -1491,19 +1537,18 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   deleteDriveFiles(driveRemoteUrls).catch(e => console.warn(e));
               }
 
-              if (result.delivered) {
-                  alert(`Notificação enviada com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL} com ${driveUrls.length} anexo(s) incluído(s)!`);
+              if (result.delivered || result.success) {
+                  alert(`E-mail Enviado com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL}!`);
               } else {
-                  alert(result.message || `Notificação e ${driveUrls.length} anexo(s) registrados com sucesso!`);
+                  alert(result.message || "E-mail Enviado!");
               }
               setIsEmailModalOpen(false); 
           } else { 
               console.error(result); 
-              alert("Aviso no envio: " + (result.message || result.error || "Verifique o console")); 
-              setIsEmailModalOpen(false);
+              alert("Erro ao enviar e-mail: " + (result.message || result.error || "Verifique a conexão ou configurações de SMTP.")); 
           }
       } catch (error: any) { 
-          alert("Falha no envio de e-mail: " + error.message); 
+          alert("Erro ao enviar e-mail: " + (error.message || "Falha na comunicação com o servidor.")); 
       } finally { 
           setSendingEmail(false); 
       }

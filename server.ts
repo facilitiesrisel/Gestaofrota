@@ -12,14 +12,39 @@ import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret } from "./src/serv
 import { sanitizeRequestBody, cleanHtmlContent } from "./src/services/securityMiddleware";
 
 // Forçar resolução IPv4 prioritária no Node.js para evitar ENETUNREACH em contêineres de nuvem (Render, Docker, Cloud Run)
-if (dns && typeof dns.setDefaultResultOrder === "function") {
-  dns.setDefaultResultOrder("ipv4first");
+if (dns && typeof (dns as any).setDefaultResultOrder === "function") {
+  (dns as any).setDefaultResultOrder("ipv4first");
 }
+
+/**
+ * Função de lookup DNS customizada estritamente forçada para IPv4 (family: 4).
+ * Resolve o erro connect ENETUNREACH em instâncias de nuvem como Render onde não há rota IPv6 de saída.
+ */
+const strictIpv4Lookup = (hostname: string, options: any, callback: any) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  dns.lookup(hostname, { family: 4, all: false }, (err, address, family) => {
+    if (err) {
+      // Fallback secundário: dns.resolve4
+      dns.resolve4(hostname, (err2, addresses) => {
+        if (!err2 && addresses && addresses.length > 0) {
+          return callback(null, addresses[0], 4);
+        }
+        return callback(err || err2, address, family || 4);
+      });
+      return;
+    }
+    callback(null, address, 4);
+  });
+};
 
 function createSafeTransporter(smtpConfig: any) {
   const isPort465 = Number(smtpConfig.port) === 465;
+  const host = smtpConfig.host || "smtp.office365.com";
   return nodemailer.createTransport({
-    host: smtpConfig.host || "smtp.office365.com",
+    host: host,
     port: Number(smtpConfig.port) || (isPort465 ? 465 : 587),
     secure: isPort465, // true para porta 465, false para porta 587 (STARTTLS)
     auth: {
@@ -29,9 +54,11 @@ function createSafeTransporter(smtpConfig: any) {
     tls: {
       minVersion: "TLSv1.2",
       rejectUnauthorized: false,
+      servername: host,
     },
     requireTLS: !isPort465,
     family: 4, // Força conexão direta IPv4 para SMTP
+    lookup: strictIpv4Lookup,
     connectionTimeout: 25000,
     greetingTimeout: 20000,
     socketTimeout: 35000,
@@ -772,29 +799,27 @@ async function startServer() {
             success: true, 
             delivered: true, 
             host: smtpConfig.host,
-            message: `Notificação enviada com sucesso para ${emailTo} com ${mailAttachments.length} anexo(s)!`,
+            message: `E-mail enviado com sucesso para ${emailTo}!`,
             attachmentsCount: mailAttachments.length 
           });
         } catch (err: any) {
-          console.warn("[Risel SMTP] Aviso no envio direto:", err.message);
-          return res.json({ 
-            success: true, 
+          console.warn("[Risel SMTP] Erro no envio direto:", err.message);
+          return res.status(500).json({ 
+            success: false, 
             delivered: false, 
-            fallbackLogged: true,
-            smtpError: err.message,
+            error: err.message,
             host: smtpConfig.host,
-            message: `Notificação registrada e preparada no sistema! (Nota SMTP: ${err.message}). Utilize o botão "Abrir no Outlook / Webmail" caso deseje disparar diretamente da sua caixa postal agora.`,
+            message: `Erro ao enviar e-mail: ${err.message}`,
             attachmentsCount: mailAttachments.length
           });
         }
       } else {
-        console.log(`[Risel SMTP] Notificação preparada no fluxo corporativo. Destinatários: ${emailTo}`);
-        return res.json({ 
-          success: true, 
+        console.log(`[Risel SMTP] Notificação não disparada: senha SMTP ausente.`);
+        return res.status(400).json({ 
+          success: false, 
           delivered: false, 
-          requiresLocalClient: true,
-          host: smtpConfig.host,
-          message: `Notificação preparada para ${emailTo} com ${mailAttachments.length} anexo(s)! Para envio imediato pela sua conta, clique em "Abrir no Outlook / Webmail" ou configure o App Password SMTP.`,
+          error: "Credenciais SMTP incompletas no servidor.",
+          message: `Não foi possível enviar o e-mail: senha SMTP não configurada.`,
           attachmentsCount: mailAttachments.length
         });
       }
