@@ -13,12 +13,45 @@ import { sanitizeRequestBody, cleanHtmlContent } from "./src/services/securityMi
 
 // Forçar resolução IPv4 prioritária no Node.js para evitar ENETUNREACH em contêineres de nuvem (Render, Docker, Cloud Run)
 if (dns && typeof (dns as any).setDefaultResultOrder === "function") {
-  (dns as any).setDefaultResultOrder("ipv4first");
+  try {
+    (dns as any).setDefaultResultOrder("ipv4first");
+  } catch (e) {}
 }
 
 /**
- * Função de lookup DNS customizada estritamente forçada para IPv4 (family: 4).
- * Resolve o erro connect ENETUNREACH em instâncias de nuvem como Render onde não há rota IPv6 de saída.
+ * Função utilitária para resolver explicitamente o IP IPv4 de um hostname.
+ * Garante que em contêineres como Render (sem rota de saída IPv6), o Node.js
+ * conecte obrigatoriamente através de IPv4, eliminando o erro connect ENETUNREACH [2603:1036:...].
+ */
+async function resolveIpv4Address(hostname: string): Promise<string> {
+  if (!hostname) return "smtp.office365.com";
+  // Se já for um endereço IP IPv4 direto
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)) {
+    return hostname;
+  }
+  try {
+    const addresses = await dns.promises.resolve4(hostname);
+    if (addresses && addresses.length > 0) {
+      console.log(`[Risel SMTP DNS] Host '${hostname}' resolvido com sucesso para IPv4: ${addresses[0]}`);
+      return addresses[0];
+    }
+  } catch (err: any) {
+    console.warn(`[Risel SMTP DNS] Falha em resolve4('${hostname}'): ${err.message}. Tentando lookup...`);
+  }
+  try {
+    const lookupRes = await dns.promises.lookup(hostname, { family: 4 });
+    if (lookupRes && lookupRes.address) {
+      console.log(`[Risel SMTP DNS] Lookup IPv4 de '${hostname}' bem-sucedido: ${lookupRes.address}`);
+      return lookupRes.address;
+    }
+  } catch (e: any) {
+    console.warn(`[Risel SMTP DNS] Falha em lookup('${hostname}'): ${e.message}`);
+  }
+  return hostname;
+}
+
+/**
+ * Função de lookup DNS customizada forçada para IPv4 (family: 4).
  */
 const strictIpv4Lookup = (hostname: string, options: any, callback: any) => {
   if (typeof options === "function") {
@@ -27,7 +60,6 @@ const strictIpv4Lookup = (hostname: string, options: any, callback: any) => {
   }
   dns.lookup(hostname, { family: 4, all: false }, (err, address, family) => {
     if (err) {
-      // Fallback secundário: dns.resolve4
       dns.resolve4(hostname, (err2, addresses) => {
         if (!err2 && addresses && addresses.length > 0) {
           return callback(null, addresses[0], 4);
@@ -40,13 +72,18 @@ const strictIpv4Lookup = (hostname: string, options: any, callback: any) => {
   });
 };
 
-function createSafeTransporter(smtpConfig: any) {
+async function createSafeTransporter(smtpConfig: any) {
   const isPort465 = Number(smtpConfig.port) === 465;
-  const host = smtpConfig.host || "smtp.office365.com";
+  const originalHost = (smtpConfig.host || "smtp.office365.com").trim();
+  const targetPort = Number(smtpConfig.port) || (isPort465 ? 465 : 587);
+
+  // Resolução explícita de IP IPv4 para contêineres de nuvem (Render)
+  const resolvedHostIp = await resolveIpv4Address(originalHost);
+
   return nodemailer.createTransport({
-    host: host,
-    port: Number(smtpConfig.port) || (isPort465 ? 465 : 587),
-    secure: isPort465, // true para porta 465, false para porta 587 (STARTTLS)
+    host: resolvedHostIp,
+    port: targetPort,
+    secure: isPort465, // true para porta 465 (SSL direto), false para porta 587 (STARTTLS)
     auth: {
       user: smtpConfig.user,
       pass: smtpConfig.pass,
@@ -54,12 +91,12 @@ function createSafeTransporter(smtpConfig: any) {
     tls: {
       minVersion: "TLSv1.2",
       rejectUnauthorized: false,
-      servername: host,
+      servername: originalHost, // Fundamental para validação do certificado SSL com o host original (ex: smtp.office365.com)
     },
     requireTLS: !isPort465,
-    family: 4, // Força conexão direta IPv4 para SMTP
+    family: 4, // Força conexão IPv4 direta
     lookup: strictIpv4Lookup,
-    connectionTimeout: 25000,
+    connectionTimeout: 30000,
     greetingTimeout: 20000,
     socketTimeout: 35000,
   } as any);
@@ -781,7 +818,7 @@ async function startServer() {
 
       if (smtpConfig.pass && smtpConfig.pass.length > 0) {
         try {
-          const transporter = createSafeTransporter(smtpConfig);
+          const transporter = await createSafeTransporter(smtpConfig);
 
           const senderHeader = fromName ? `"${fromName}" <${smtpConfig.user}>` : `"Risel Combustíveis" <${smtpConfig.user}>`;
 
@@ -833,7 +870,7 @@ async function startServer() {
 
     try {
       console.log(`[Risel SMTP Vault] Conectando a ${smtpConfig.host}:${smtpConfig.port} com remetente ${smtpConfig.user}...`);
-      const transporter = createSafeTransporter(smtpConfig);
+      const transporter = await createSafeTransporter(smtpConfig);
 
       // Calcular valor acumulado
       const totalAcumulado = (lancamentosPendentes || []).reduce((acc: number, curr: any) => {
@@ -2281,7 +2318,7 @@ async function startServer() {
         // Envio automático do e-mail do Checklist usando o SMTP Vault Risel
         const checklistSmtp = getRiselSmtpConfig({ defaultSenderName: "Risel Frota" });
         if (checklistSmtp.pass && checklistSmtp.pass.length > 0) {
-          const transporter = createSafeTransporter(checklistSmtp);
+          const transporter = await createSafeTransporter(checklistSmtp);
           await transporter.sendMail({
             from: `"Risel Frota" <${checklistSmtp.user}>`,
             to: mailRecipient,

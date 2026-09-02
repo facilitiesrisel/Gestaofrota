@@ -280,10 +280,10 @@ export async function deleteLancamentoSupabase(id: number | string): Promise<boo
 export async function fetchUsuariosSupabase(): Promise<any[]> {
   try {
     const client = getSupabaseClient();
+    // Busca sem ordenação fixa em coluna específica para evitar erro caso a coluna se chame 'nome' ou não exista
     const { data, error } = await client
       .from('usuarios')
-      .select('*')
-      .order('name', { ascending: true });
+      .select('*');
 
     if (error) {
       console.warn("Aviso ao buscar usuários do Supabase:", error.message || error);
@@ -305,9 +305,11 @@ export async function fetchUsuariosSupabase(): Promise<any[]> {
                 ? perms.must_change_password 
                 : true));
 
+      const resolvedName = item.name || item.nome || item.full_name || item.username || (item.email ? item.email.split('@')[0] : "Usuário");
+
       return {
         email: item.email,
-        name: item.name,
+        name: resolvedName,
         role: item.role || (perms?.admin ? "admin" : "user"),
         permissions: perms,
         status: item.status || "Ativa",
@@ -328,6 +330,7 @@ export async function saveUsuarioSupabase(user: any): Promise<boolean> {
     const userEmail = (user.email || "").toLowerCase().trim();
     if (!userEmail) return false;
 
+    const resolvedName = user.name || user.nome || userEmail;
     const basePermissions = typeof user.permissions === 'object' && user.permissions !== null
       ? user.permissions
       : {};
@@ -339,9 +342,11 @@ export async function saveUsuarioSupabase(user: any): Promise<boolean> {
       must_change_password: mustChangeVal
     };
 
-    const dbRecord: any = {
+    // Objeto 1: Tenta com 'nome' e 'name'
+    const recordWithBoth: any = {
       email: userEmail,
-      name: user.name || userEmail,
+      nome: resolvedName,
+      name: resolvedName,
       role: user.role || "user",
       permissions: permissionsWithFallback,
       status: user.status || "Ativa",
@@ -351,19 +356,45 @@ export async function saveUsuarioSupabase(user: any): Promise<boolean> {
 
     let { error } = await client
       .from('usuarios')
-      .upsert(dbRecord, { onConflict: 'email' });
+      .upsert(recordWithBoth, { onConflict: 'email' });
 
-    // Se o banco ainda não possuir a coluna 'must_change_password', realiza fallback gravando sem essa coluna
-    if (error && (error.code === 'PGRST204' || error.message?.includes('must_change_password'))) {
-      const { must_change_password, ...safeRecord } = dbRecord;
-      const fallbackRes = await client
-        .from('usuarios')
-        .upsert(safeRecord, { onConflict: 'email' });
-      error = fallbackRes.error;
-    }
-
+    // Fallback 1: Se a coluna 'name' ou 'must_change_password' não existir no cache do Supabase
     if (error) {
-      console.error("Erro ao salvar usuário no Supabase:", error.message || error);
+      // Tentativa sem a coluna 'name' (usando apenas 'nome')
+      const recordWithNomeOnly: any = {
+        email: userEmail,
+        nome: resolvedName,
+        role: user.role || "user",
+        permissions: permissionsWithFallback,
+        status: user.status || "Ativa",
+        password: user.password || ""
+      };
+      const resNome = await client.from('usuarios').upsert(recordWithNomeOnly, { onConflict: 'email' });
+      if (!resNome.error) return true;
+
+      // Tentativa sem a coluna 'nome' (usando apenas 'name')
+      const recordWithNameOnly: any = {
+        email: userEmail,
+        name: resolvedName,
+        role: user.role || "user",
+        permissions: permissionsWithFallback,
+        status: user.status || "Ativa",
+        password: user.password || ""
+      };
+      const resName = await client.from('usuarios').upsert(recordWithNameOnly, { onConflict: 'email' });
+      if (!resName.error) return true;
+
+      // Tentativa minimalista estrita
+      const minimalRecord: any = {
+        email: userEmail,
+        role: user.role || "user",
+        permissions: permissionsWithFallback,
+        status: user.status || "Ativa"
+      };
+      const resMin = await client.from('usuarios').upsert(minimalRecord, { onConflict: 'email' });
+      if (!resMin.error) return true;
+
+      console.warn("Aviso ao salvar usuário no Supabase:", resMin.error?.message || error.message);
       return false;
     }
     return true;
@@ -863,20 +894,29 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       .upsert(dbRecord, { onConflict: 'placa' });
 
     // Fallback caso a tabela no Supabase não contenha colunas mais recentes
-    if (error && (error.code === 'PGRST204' || error.message?.includes('data_inativacao') || error.message?.includes('motivo_inativacao') || error.message?.includes('data_troca_condutor'))) {
-      const safeRecord: any = { ...dbRecord };
-      delete safeRecord.data_inativacao;
-      delete safeRecord.motivo_inativacao;
-      delete safeRecord.data_troca_condutor;
+    if (error) {
+      const standardRecord = {
+        placa: cleanPlaca,
+        modelo: item.modelo || "Veículo Frota",
+        marca: item.marca || "",
+        ano: Number(item.ano) || new Date().getFullYear(),
+        tipo: item.tipo || "Leve",
+        base: resolvedFilial,
+        condutor: item.condutor || "Disponível",
+        status: item.status || "Ativo",
+        km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
+        combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
+        observacoes: extraData
+      };
       const fallbackRes = await client
         .from('veiculos')
-        .upsert(safeRecord, { onConflict: 'placa' });
-      error = fallbackRes.error;
-    }
-
-    if (error) {
-      console.error("Erro ao gravar veículo no Supabase:", error.message || error);
-      return false;
+        .upsert(standardRecord, { onConflict: 'placa' });
+      
+      if (fallbackRes.error) {
+        console.warn("Aviso ao gravar veículo no Supabase (fallback padrão):", fallbackRes.error.message);
+        return false;
+      }
+      return true;
     }
     return true;
   } catch (err) {
@@ -946,19 +986,56 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
       .from('veiculos')
       .upsert(dbRecords, { onConflict: 'placa' });
 
-    // Fallback caso a tabela no Supabase não contenha colunas mais recentes
-    if (error && (error.code === 'PGRST204' || error.message?.includes('data_inativacao') || error.message?.includes('motivo_inativacao') || error.message?.includes('data_troca_condutor'))) {
-      const safeBatch = dbRecords.map(r => {
-        const copy: any = { ...r };
-        delete copy.data_inativacao;
-        delete copy.motivo_inativacao;
-        delete copy.data_troca_condutor;
-        return copy;
+    // Fallback caso a tabela no Supabase não contenha as novas colunas
+    if (error) {
+      const standardBatch = items.map(item => {
+        const cleanPlaca = (item.placa || "").toUpperCase().trim();
+        const realVeh = VEICULOS_REAIS.find(v => v.placa === cleanPlaca);
+        const resolvedFilial = (item.filial && item.filial !== "CAMPINEIRA" && item.filial !== "Campineira") 
+          ? item.filial 
+          : (realVeh ? realVeh.filial : (item.base || "CAMPINEIRA"));
+
+        const extraData = JSON.stringify({
+          vencContrato: item.vencContrato || "",
+          funcao: item.funcao || "",
+          contatoMotorista: item.contatoMotorista || "",
+          gestorResp: item.gestorResp || "",
+          email: item.email || "",
+          filial: resolvedFilial,
+          locadora: item.locadora || "",
+          contrato: item.contrato || "",
+          odometro: item.odometro || 0,
+          combustivel: item.combustivel || "Flex",
+          dataTrocaCondutor: item.dataTrocaCondutor || "",
+          dataInativacao: item.dataInativacao || "",
+          motivoInativacao: item.motivoInativacao || "",
+          observacoes: item.observacoes || ""
+        });
+
+        return {
+          placa: cleanPlaca,
+          modelo: item.modelo || "Veículo Frota",
+          marca: item.marca || "",
+          ano: Number(item.ano) || new Date().getFullYear(),
+          tipo: item.tipo || "Leve",
+          base: resolvedFilial,
+          condutor: item.condutor || "Disponível",
+          status: item.status || "Ativo",
+          km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
+          combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
+          observacoes: extraData
+        };
       });
+
       const fallbackRes = await client
         .from('veiculos')
-        .upsert(safeBatch, { onConflict: 'placa' });
-      error = fallbackRes.error;
+        .upsert(standardBatch, { onConflict: 'placa' });
+
+      if (fallbackRes.error) {
+        console.warn("Aviso ao gravar lote padrão de veículos no Supabase:", fallbackRes.error.message);
+        return { count: 0, success: false };
+      }
+      return { count: standardBatch.length, success: true };
     }
 
     if (error) {
@@ -1645,18 +1722,74 @@ ALTER TABLE public.manutencoes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Manutencoes" ON public.manutencoes;
 CREATE POLICY "Acesso Total Manutencoes" ON public.manutencoes FOR ALL USING (true) WITH CHECK (true);
 
--- 8. TABELA DE MULTAS (FROTA LEVE)
+-- 8. TABELA DE MULTAS (FROTA LEVE - DADOS COMPLETOS)
 CREATE TABLE IF NOT EXISTS public.multas (
     id TEXT PRIMARY KEY,
     placa VARCHAR(20) NOT NULL,
-    data_infracao DATE,
-    infracao TEXT,
-    motorista VARCHAR(255),
+    frota VARCHAR(100),
+    ait VARCHAR(100),
+    tipo VARCHAR(50) DEFAULT 'AUTO',
+    status VARCHAR(100) DEFAULT 'AGUARDANDO BOLETO',
     valor NUMERIC(10,2) DEFAULT 0,
-    pontos INT DEFAULT 0,
-    status VARCHAR(100) DEFAULT 'Pendente',
+    valor_com_desconto NUMERIC(10,2) DEFAULT 0,
+    desconto NUMERIC(10,2) DEFAULT 0,
+    data_infracao DATE,
+    data_recebimento DATE,
+    prazo_indicacao DATE,
+    enquadramento VARCHAR(100),
+    artigo_ctb VARCHAR(100),
+    descricao_infracao TEXT,
+    pontos_cnh INT DEFAULT 0,
+    base VARCHAR(100),
+    nome_motorista VARCHAR(255),
+    orgao_autuador VARCHAR(255),
+    endereco TEXT,
+    municipio VARCHAR(100),
+    uf VARCHAR(10),
+    rodovia_urbano VARCHAR(50) DEFAULT 'URBANO',
+    recebida_com_prazo VARCHAR(20) DEFAULT 'SIM',
+    retornou_com_prazo VARCHAR(20) DEFAULT 'SIM',
+    empresa_ou_condutor VARCHAR(50) DEFAULT 'CONDUTOR',
+    descontar_motorista VARCHAR(20) DEFAULT 'SIM',
+    pago_com_desconto VARCHAR(20) DEFAULT 'SIM',
+    enviado_rh VARCHAR(20) DEFAULT 'NÃO',
+    link_ait TEXT,
+    link_autorizacao TEXT,
+    obs TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Garantir adição de colunas em bancos existentes
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS frota VARCHAR(100);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS ait VARCHAR(100);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS tipo VARCHAR(50) DEFAULT 'AUTO';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS status VARCHAR(100) DEFAULT 'AGUARDANDO BOLETO';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS valor NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS valor_com_desconto NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS desconto NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS data_infracao DATE;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS data_recebimento DATE;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS prazo_indicacao DATE;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS enquadramento VARCHAR(100);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS artigo_ctb VARCHAR(100);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS descricao_infracao TEXT;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS pontos_cnh INT DEFAULT 0;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS base VARCHAR(100);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS nome_motorista VARCHAR(255);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS orgao_autuador VARCHAR(255);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS endereco TEXT;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS municipio VARCHAR(100);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS uf VARCHAR(10);
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS rodovia_urbano VARCHAR(50) DEFAULT 'URBANO';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS recebida_com_prazo VARCHAR(20) DEFAULT 'SIM';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS retornou_com_prazo VARCHAR(20) DEFAULT 'SIM';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS empresa_ou_condutor VARCHAR(50) DEFAULT 'CONDUTOR';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS descontar_motorista VARCHAR(20) DEFAULT 'SIM';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS pago_com_desconto VARCHAR(20) DEFAULT 'SIM';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS enviado_rh VARCHAR(20) DEFAULT 'NÃO';
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS link_ait TEXT;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS link_autorizacao TEXT;
+ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS obs TEXT;
 
 ALTER TABLE public.multas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Multas" ON public.multas;
@@ -1665,7 +1798,8 @@ CREATE POLICY "Acesso Total Multas" ON public.multas FOR ALL USING (true) WITH C
 -- 9. TABELA DE USUÁRIOS E ACESSOS
 CREATE TABLE IF NOT EXISTS public.usuarios (
     email VARCHAR(255) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
+    name VARCHAR(255),
+    nome VARCHAR(255),
     role VARCHAR(50) DEFAULT 'user',
     permissions JSONB,
     status VARCHAR(50) DEFAULT 'Ativa',
@@ -1673,6 +1807,10 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     must_change_password BOOLEAN DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS name VARCHAR(255);
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS nome VARCHAR(255);
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT true;
 
 ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Usuarios" ON public.usuarios;
