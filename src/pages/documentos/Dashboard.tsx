@@ -665,7 +665,6 @@ export default function Dashboard() {
           <div>
             <h2 className="text-2xl font-display font-black text-slate-800 flex items-center gap-2 text-left">
               <span>Dashboard Analítico</span>
-              <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">BI REAL-TIME</span>
             </h2>
             <p className="text-xs text-slate-500 font-medium text-left">Relatórios e indicadores dinâmicos atualizados na hora.</p>
           </div>

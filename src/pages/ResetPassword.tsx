@@ -107,9 +107,22 @@ export default function ResetPassword() {
 
   return (
     <div className="min-h-screen bg-[#060c09] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
+      {/* Background Image: Foto do Caminhão Tanque Risel discretamente ao fundo mantendo o tom */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden select-none">
+        <img 
+          src="https://i.ibb.co/JW1Ndd5Y/c-AMINH-O.jpg" 
+          alt="Frota Risel - Caminhão Tanque" 
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover object-center scale-105 opacity-35 filter contrast-120 brightness-90"
+        />
+        {/* Camada tonal suave mantendo a identidade esmeralda e petróleo nobre da Risel */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#060c09]/85 via-[#060c09]/65 to-[#040906]/90" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(6,12,9,0.35)_0%,rgba(6,12,9,0.88)_100%)]" />
+      </div>
+
       {/* Background bioluminescente refinado */}
-      <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.08),transparent_50%)] pointer-events-none" />
-      <div className="absolute bottom-0 right-0 w-full h-full bg-[radial-gradient(circle_at_bottom_left,rgba(5,150,105,0.05),transparent_50%)] pointer-events-none" />
+      <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.12),transparent_50%)] pointer-events-none z-1" />
+      <div className="absolute bottom-0 right-0 w-full h-full bg-[radial-gradient(circle_at_bottom_left,rgba(5,150,105,0.08),transparent_50%)] pointer-events-none z-1" />
 
       <motion.div
         initial={{ opacity: 0, y: 24 }}

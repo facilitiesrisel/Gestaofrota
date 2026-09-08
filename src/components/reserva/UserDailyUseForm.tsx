@@ -3,15 +3,18 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useReservations } from '../../context/ReservationContext';
 import { FuelLevel, ReservationStatus } from '../../types_reserva';
 import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
-import { ExclamationTriangleIcon, SteeringWheelIcon } from './icons';
-import { fetchDistanceWithGemini } from '../../services/geminiService';
+import { ExclamationTriangleIcon, SteeringWheelIcon, CheckIcon, CarIcon } from './icons';
+import { calculateDrivingDistance } from '../../services/distanceService';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import DailyUseGuideModal from './DailyUseGuideModal';
+import Modal from './Modal';
+import { normalizeCidade } from '../../utils/baseOperacional';
+import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 
-const FuelLevelInput: React.FC<{ name: string, value: FuelLevel, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void }> = ({ name, value, onChange }) => {
+const FuelLevelInput: React.FC<{ name: string, value: FuelLevel, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, label?: string }> = ({ name, value, onChange, label = "Nível do Tanque de Combustível" }) => {
   const levels = Object.values(FuelLevel);
   const widths: Record<FuelLevel, string> = {
-    [FuelLevel.Empty]: '0%',
+    [FuelLevel.Empty]: '5%',
     [FuelLevel.Quarter]: '25%',
     [FuelLevel.Half]: '50%',
     [FuelLevel.ThreeQuarters]: '75%',
@@ -19,26 +22,27 @@ const FuelLevelInput: React.FC<{ name: string, value: FuelLevel, onChange: (e: R
   };
   
   return (
-    <div className="mb-2">
-      <label className="block text-sm font-bold text-green-800 md:text-gray-700 mb-2">Nível do Tanque</label>
-      <div className="flex items-center justify-between gap-1 mb-3">
+    <div className="space-y-2">
+      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">{label}</label>
+      <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
         {levels.map((level) => (
-          <div key={level} className="flex-1">
-            <input type="radio" id={`${name}-${level}`} name={name} value={level} checked={value === level} onChange={onChange} className="sr-only peer" />
-            <label 
-                htmlFor={`${name}-${level}`} 
-                className={`cursor-pointer flex items-center justify-center h-10 md:h-8 rounded-md border text-xs font-bold transition-all duration-200 shadow-sm
-                ${value === level 
-                    ? 'bg-primary text-white border-primary ring-2 ring-primary ring-offset-1' 
-                    : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
-            >
-              {level}
-            </label>
-          </div>
+          <label 
+            key={level}
+            className={`cursor-pointer flex flex-col items-center justify-center py-2.5 px-1 rounded-xl border text-xs font-extrabold transition-all duration-200 shadow-sm text-center
+            ${value === level 
+                ? 'bg-[#114D38] text-white border-[#114D38] shadow-md ring-2 ring-emerald-500/30' 
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'}`}
+          >
+            <input type="radio" name={name} value={level} checked={value === level} onChange={onChange} className="sr-only" />
+            <span className="text-[11px] sm:text-xs">{level}</span>
+          </label>
         ))}
       </div>
-      <div className="w-full h-3 bg-gray-200 rounded-full mt-1 border border-gray-300 overflow-hidden">
-        <div className="h-full bg-gradient-to-r from-red-500 via-yellow-400 to-green-500 transition-all duration-500 ease-out" style={{ width: value ? widths[value] : '0%' }}></div>
+      <div className="w-full h-2.5 bg-slate-200 rounded-full mt-1.5 overflow-hidden border border-slate-300/50">
+        <div 
+          className="h-full bg-gradient-to-r from-amber-500 via-emerald-400 to-[#114D38] transition-all duration-500 ease-out" 
+          style={{ width: value ? widths[value] : '0%' }}
+        />
       </div>
     </div>
   );
@@ -68,6 +72,15 @@ const UserDailyUseForm: React.FC = () => {
     const [error, setError] = useState('');
     const [isGuideOpen, setIsGuideOpen] = useState(false);
     const [minDateTime, setMinDateTime] = useState('');
+    const [modalState, setModalState] = useState<{
+        isOpen: boolean;
+        title: string;
+        content: React.ReactNode;
+    }>({
+        isOpen: false,
+        title: '',
+        content: null,
+    });
 
     useEffect(() => {
         const updateMinTime = () => {
@@ -187,18 +200,21 @@ const UserDailyUseForm: React.FC = () => {
         try {
             const tripDate = new Date(); // Use current time as source of truth for server-side
             
+            const normCity = normalizeCidade(startFormData.destinationCity);
             let estimatedDistance = 0;
-            if (startFormData.destinationCity) {
+            if (normCity) {
                 try {
-                    const { distance } = await fetchDistanceWithGemini('Paulínia/SP', startFormData.destinationCity);
-                    if (distance) estimatedDistance = distance;
-                } catch (geminiError) {
-                    console.warn("Failed to calculate estimated distance for daily trip", geminiError);
+                    const result = await calculateDrivingDistance('Paulínia/SP', normCity);
+                    if (result && result.distance) estimatedDistance = result.distance;
+                } catch (distError) {
+                    console.debug("Silent distance estimation fallback (daily trip user)", distError);
                 }
             }
 
             const newTripId = await addDailyTrip({
                 ...startFormData,
+                department: normalizeNomeSetor(startFormData.department),
+                destinationCity: normCity,
                 requesterName: startFormData.driverName,
                 departureDateTime: tripDate,
                 initialKm: Number(startFormData.initialKm),
@@ -210,6 +226,7 @@ const UserDailyUseForm: React.FC = () => {
                 "Início de Uso Diário",
                 [
                     { label: "Motorista", value: startFormData.driverName },
+                    { label: "Setor", value: normalizeNomeSetor(startFormData.department) },
                     { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "N/A" },
                     { label: "Saída", value: tripDate.toLocaleString('pt-BR') },
                     { label: "Destino", value: `${startFormData.destinationCity} - ${startFormData.destination}` },
@@ -227,12 +244,54 @@ const UserDailyUseForm: React.FC = () => {
             setActiveTripId(newTripId);
             setStartFormData(initialStartFormData);
             
-            // Feedback de Confirmação com detalhe da distância
-            if (estimatedDistance > 0) {
-                alert(`Viagem iniciada com sucesso!\n\nEstimativa de distância (ida e volta): ${estimatedDistance} km.`);
-            } else {
-                alert("Viagem iniciada com sucesso!");
-            }
+            // Modal de Sucesso Rico
+            setModalState({
+                isOpen: true,
+                title: 'Viagem Iniciada com Sucesso!',
+                content: (
+                    <div className="space-y-4 text-left font-sans">
+                        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-full bg-[#114D38] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                                <CheckIcon className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <h4 className="font-extrabold text-sm uppercase tracking-wide text-emerald-950">
+                                    Saída Registrada!
+                                </h4>
+                                <p className="text-xs text-emerald-800 mt-1">
+                                    A viagem foi iniciada no sistema. Ao retornar, preencha o KM final para registrar a devolução.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-4 rounded-xl space-y-2.5 text-xs border border-slate-200">
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                                <span className="text-slate-500 font-bold uppercase">Veículo:</span>
+                                <span className="font-extrabold text-slate-800 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                                    {vehicle?.model} • {vehicle?.plate}
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                                <span className="text-slate-500 font-bold uppercase">KM Inicial:</span>
+                                <span className="font-extrabold text-slate-800">{formatNumber(startFormData.initialKm)} km</span>
+                            </div>
+                            {estimatedDistance > 0 && (
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-500 font-bold uppercase">Estimativa Ida/Volta:</span>
+                                    <span className="font-extrabold text-emerald-700">{estimatedDistance} km</span>
+                                </div>
+                            )}
+                        </div>
+
+                        <button
+                            onClick={() => setModalState({ ...modalState, isOpen: false })}
+                            className="w-full py-3.5 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-[#0d3b2b] hover:to-[#092b1f] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer"
+                        >
+                            Prosseguir para o Diário de Bordo
+                        </button>
+                    </div>
+                )
+            });
 
         } catch (err: any) {
             console.error(err);
@@ -297,7 +356,49 @@ const UserDailyUseForm: React.FC = () => {
             setEndFormData({ finalKm: '', finalFuelLevel: FuelLevel.Full });
             setStartFormData(initialStartFormData);
             
-            alert("Viagem finalizada com sucesso! Bom descanso.");
+            setModalState({
+                isOpen: true,
+                title: 'Viagem Finalizada com Sucesso!',
+                content: (
+                    <div className="space-y-4 text-left font-sans">
+                        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-full bg-[#114D38] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                                <CheckIcon className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <h4 className="font-extrabold text-sm uppercase tracking-wide text-emerald-950">
+                                    Devolução Concluída!
+                                </h4>
+                                <p className="text-xs text-emerald-800 mt-1">
+                                    O veículo foi liberado no sistema e está disponível para novas utilizações.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-4 rounded-xl space-y-2.5 text-xs border border-slate-200">
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                                <span className="text-slate-500 font-bold uppercase">Distância Total Percorrida:</span>
+                                <span className="font-extrabold text-emerald-700 text-sm">{distance} km</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                                <span className="text-slate-500 font-bold uppercase">KM de Devolução:</span>
+                                <span className="font-extrabold text-slate-800">{formatNumber(currentFinalKm)} km</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <span className="text-slate-500 font-bold uppercase">Tanque na Entrega:</span>
+                                <span className="font-extrabold text-slate-800">{endFormData.finalFuelLevel}</span>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={() => setModalState({ ...modalState, isOpen: false })}
+                            className="w-full py-3.5 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-[#0d3b2b] hover:to-[#092b1f] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer"
+                        >
+                            Concluir e Fechar
+                        </button>
+                    </div>
+                )
+            });
 
         } catch (err: any) {
             console.error("Erro ao finalizar viagem:", err);
@@ -310,93 +411,152 @@ const UserDailyUseForm: React.FC = () => {
     
     if (isContextLoading) {
         return (
-            <div className="flex justify-center items-center min-h-screen bg-white/90">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-primary"></div>
+            <div className="flex justify-center items-center min-h-[350px] bg-white">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#114D38]"></div>
             </div>
         );
     }
     
     return (
-        <div className="relative min-h-screen md:h-full bg-slate-50">
+        <div className="w-full bg-white md:rounded-[24px] shadow-sm border border-slate-200 overflow-hidden text-left font-sans">
             <DailyUseGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+            
+            <Modal 
+                isOpen={modalState.isOpen}
+                onClose={() => setModalState({ ...modalState, isOpen: false })}
+                title={modalState.title}
+            >
+                {modalState.content}
+            </Modal>
 
-            <div className="relative z-10 p-4 md:p-6 space-y-6 pb-20">
-                {error && (
-                    <div className="fixed top-16 left-0 right-0 z-50 p-4 mx-4 md:mx-auto md:max-w-2xl">
-                        <div ref={errorRef} className="bg-red-100 border-l-4 border-red-600 text-red-800 p-4 rounded shadow-2xl flex items-start gap-3 animate-bounce-short">
-                            <ExclamationTriangleIcon className="h-6 w-6 shrink-0 mt-0.5" />
-                            <div>
-                                <p className="font-bold text-lg">Erro!</p>
-                                <p className="text-sm font-medium">{error}</p>
-                            </div>
-                            <button onClick={() => setError('')} className="ml-auto text-red-800 hover:text-red-600 font-bold">✕</button>
+            {/* Header Institucional Risel */}
+            <div className="bg-gradient-to-r from-[#114D38] via-[#0d3b2b] to-[#114D38] p-5 sm:p-6 text-white border-b border-emerald-900">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                        <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[11px] font-bold text-emerald-200 uppercase tracking-wider mb-2">
+                            Frota Leve Risel
                         </div>
+                        <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                            Diário de Bordo • Uso Diário
+                        </h2>
+                    </div>
+
+                    <button 
+                        onClick={(e) => { e.preventDefault(); setIsGuideOpen(true); }} 
+                        className="self-start sm:self-center text-xs font-bold text-emerald-100 bg-white/10 hover:bg-white/20 border border-white/20 px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 transition-all backdrop-blur-sm cursor-pointer"
+                    >
+                        <span>Como funciona?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div className="p-5 sm:p-8 bg-slate-50/50 space-y-6">
+                {error && (
+                    <div ref={errorRef} className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-2xl flex items-start gap-3 shadow-sm">
+                        <ExclamationTriangleIcon className="h-5 w-5 shrink-0 text-red-600 mt-0.5" />
+                        <div className="flex-1 text-xs">
+                            <p className="font-extrabold text-red-900 uppercase">Atenção</p>
+                            <p className="mt-0.5 font-medium">{error}</p>
+                        </div>
+                        <button onClick={() => setError('')} className="text-red-700 hover:text-red-900 font-black text-sm">✕</button>
                     </div>
                 )}
 
+                {/* CARD DE VIAGEM EM ANDAMENTO */}
                 {activeTripId && (
-                    <section className="bg-blue-50 border-2 border-blue-200 rounded-xl shadow-md overflow-hidden relative z-10">
-                        <div className="bg-blue-600 px-4 py-3">
-                             <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                🚗 Viagem em Andamento
-                             </h3>
+                    <section className="bg-white border-2 border-emerald-600/60 rounded-2xl shadow-md overflow-hidden animate-fadeIn">
+                        <div className="bg-gradient-to-r from-[#114D38] to-[#0d3b2b] px-5 py-3.5 text-white flex items-center justify-between">
+                             <div className="flex items-center gap-2">
+                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                                <h3 className="text-sm font-black uppercase tracking-wider">
+                                    Viagem em Andamento
+                                </h3>
+                             </div>
+                             <span className="text-[11px] font-bold bg-white/20 px-2.5 py-0.5 rounded-full">
+                                Devolução Pendente
+                             </span>
                         </div>
-                        <div className="p-5">
+                        
+                        <div className="p-5 sm:p-6 space-y-6">
                             {!activeTrip ? (
-                                <div className="text-center py-4 text-blue-800">
-                                    <div className="animate-pulse font-bold mb-2">Carregando dados da viagem...</div>
-                                    <p className="text-sm">Se isso demorar, verifique sua conexão.</p>
+                                <div className="text-center py-6 text-slate-500">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#114D38] mx-auto mb-3"></div>
+                                    <p className="text-xs font-bold">Carregando dados da viagem ativa...</p>
                                 </div>
                             ) : (
                                 <>
-                                    <div className="mb-6 text-sm text-gray-700 bg-white p-4 rounded-lg border border-blue-100 shadow-sm">
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 border-b border-gray-100 pb-4">
-                                            <div>
-                                                <span className="font-bold text-gray-500 block text-xs uppercase tracking-wider">Veículo</span>
-                                                <span className="text-xl font-bold text-gray-900">{getVehicleById(activeTrip.vehicleId)?.model}</span>
-                                            </div>
-                                            <div>
-                                                <span className="font-bold text-gray-500 block text-xs uppercase tracking-wider">Placa</span>
-                                                <span className="text-xl font-mono font-bold text-gray-900 bg-gray-100 px-2 py-0.5 rounded inline-block border border-gray-300">
-                                                    {getVehicleById(activeTrip.vehicleId)?.plate}
-                                                </span>
-                                            </div>
+                                    <div className="bg-slate-50 p-4 sm:p-5 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div>
+                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Veículo</span>
+                                            <span className="text-sm font-extrabold text-slate-800">{getVehicleById(activeTrip.vehicleId)?.model}</span>
                                         </div>
-                                        
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                            <p>
-                                                <span className="font-bold text-gray-500 block text-xs uppercase">Motorista</span> 
-                                                <span className="font-medium text-gray-900">{activeTrip.driverName}</span>
-                                            </p>
-                                            <p>
-                                                <span className="font-bold text-gray-500 block text-xs uppercase">Saída</span> 
-                                                <span className="text-gray-900">{new Date(activeTrip.departureDateTime).toLocaleString('pt-BR')}</span>
-                                            </p>
-                                            <p>
-                                                <span className="font-bold text-gray-500 block text-xs uppercase">KM Inicial</span>
-                                                <span className="font-bold text-lg text-blue-700">{formatNumber(activeTrip.initialKm)} km</span>
-                                            </p>
+                                        <div>
+                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Placa</span>
+                                            <span className="text-sm font-mono font-extrabold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200 inline-block mt-0.5">
+                                                {getVehicleById(activeTrip.vehicleId)?.plate}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Motorista</span> 
+                                            <span className="text-sm font-bold text-slate-800 truncate block">{activeTrip.driverName}</span>
+                                        </div>
+                                        <div>
+                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">KM Inicial</span>
+                                            <span className="text-sm font-extrabold text-emerald-800">{formatNumber(activeTrip.initialKm)} km</span>
                                         </div>
                                     </div>
                                     
-                                    <form onSubmit={handleEndSubmit} className="space-y-5 bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-                                        <div>
-                                            <label htmlFor="finalKm" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">KM Final</label>
-                                            <input 
-                                                type="number" 
-                                                name="finalKm" 
-                                                value={endFormData.finalKm} 
-                                                onChange={handleEndChange} 
-                                                required 
-                                                className="block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary shadow-sm text-gray-900 bg-white font-mono text-lg" 
-                                                placeholder={`Mínimo: ${activeTrip.initialKm}`}
-                                            />
+                                    <form onSubmit={handleEndSubmit} className="space-y-5 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                        <div className="border-b border-slate-100 pb-3">
+                                            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Registrar Encerramento e Devolução</h4>
+                                            <p className="text-[11px] text-slate-500 font-medium">Informe a quilometragem atual do hodômetro e o combustível</p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label htmlFor="finalKm" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                                    KM Final no Retorno *
+                                                </label>
+                                                <input 
+                                                    type="number" 
+                                                    name="finalKm" 
+                                                    value={endFormData.finalKm} 
+                                                    onChange={handleEndChange} 
+                                                    required 
+                                                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all font-mono" 
+                                                    placeholder={`Mínimo: ${activeTrip.initialKm}`}
+                                                />
+                                            </div>
+                                            
+                                            <div>
+                                                <FuelLevelInput 
+                                                    name="finalFuelLevel" 
+                                                    value={endFormData.finalFuelLevel} 
+                                                    onChange={handleEndChange} 
+                                                    label="Nível do Tanque na Entrega *" 
+                                                />
+                                            </div>
                                         </div>
                                         
-                                        <FuelLevelInput name="finalFuelLevel" value={endFormData.finalFuelLevel} onChange={handleEndChange} />
-                                        
-                                        <button type="submit" disabled={isLoading} className="w-full bg-green-600 text-white font-bold py-4 px-6 rounded-lg hover:bg-green-700 disabled:bg-gray-400 shadow-md text-lg transition-colors mt-4">
-                                            {isLoading ? 'Finalizando...' : 'FINALIZAR VIAGEM'}
+                                        <button 
+                                            type="submit" 
+                                            disabled={isLoading} 
+                                            className="w-full py-4 bg-gradient-to-r from-emerald-600 to-[#114D38] hover:from-emerald-700 hover:to-[#0d3b2b] text-white font-extrabold text-sm uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-70"
+                                        >
+                                            {isLoading ? (
+                                                <>
+                                                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                    </svg>
+                                                    <span>Finalizando Viagem...</span>
+                                                </>
+                                            ) : (
+                                                <span>Finalizar Viagem e Devolver Veículo</span>
+                                            )}
                                         </button>
                                     </form>
                                 </>
@@ -405,99 +565,234 @@ const UserDailyUseForm: React.FC = () => {
                     </section>
                 )}
 
-                <section className={`${activeTripId ? 'opacity-40 pointer-events-none grayscale filter blur-[1px]' : ''} transition-all duration-500 relative z-10`}>
-                    <div className="bg-primary px-4 py-3 rounded-t-xl shadow-sm border-b border-green-700 flex justify-between items-center">
-                        <h3 className="text-lg font-extrabold text-accent flex items-center gap-2 uppercase tracking-wide">
-                            <SteeringWheelIcon className="h-6 w-6" />
-                            Nova Viagem
-                        </h3>
-                        <button 
-                            onClick={(e) => { e.preventDefault(); setIsGuideOpen(true); }} 
-                            className="text-xs font-bold text-white bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full flex items-center gap-1 transition-colors"
-                        >
-                            <span className="hidden xs:inline">Como funciona?</span>
-                            <span className="xs:hidden">Ajuda</span>
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
-                            </svg>
-                        </button>
-                    </div>
-                    
-                    <div className="bg-white rounded-b-xl shadow-md p-5 border border-gray-200">
-                        {availableVehicles.length > 0 ? (
-                            <form onSubmit={handleStartSubmit} className="space-y-5">
-                                <div className="space-y-4">
+                {/* FORMULÁRIO DE NOVA VIAGEM */}
+                <section className={`${activeTripId ? 'opacity-40 pointer-events-none grayscale filter blur-[0.5px]' : ''} transition-all duration-300`}>
+                    {availableVehicles.length > 0 ? (
+                        <form onSubmit={handleStartSubmit} className="space-y-6 sm:space-y-8">
+                            
+                            {/* SECTION 1: VEÍCULO & CONDUTOR */}
+                            <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+                                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                                    <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
+                                        01
+                                    </div>
                                     <div>
-                                        <label htmlFor="vehicleId" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">Veículo Disponível</label>
+                                        <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
+                                            Veículo e Condutor
+                                        </h3>
+                                        <p className="text-[11px] text-slate-500 font-medium">Selecione o veículo disponível e identifique o motorista</p>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                                    <div className="md:col-span-2">
+                                        <label htmlFor="vehicleId" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                            Veículo Disponível para Saída Imediata *
+                                        </label>
                                         <div className="relative">
-                                            <select name="vehicleId" value={startFormData.vehicleId} onChange={handleStartChange} required className="block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary shadow-sm appearance-none bg-white text-gray-900 text-base font-medium">
-                                                <option value="" className="text-gray-500">Selecione...</option>
-                                                {availableVehicles.map(v => <option key={v.id} value={v.id} className="text-gray-900">{v.model} - {v.plate}</option>)}
+                                            <select 
+                                                name="vehicleId" 
+                                                value={startFormData.vehicleId} 
+                                                onChange={handleStartChange} 
+                                                required 
+                                                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all appearance-none cursor-pointer"
+                                            >
+                                                <option value="" className="text-slate-400">Selecione o veículo na lista...</option>
+                                                {availableVehicles.map(v => (
+                                                    <option key={v.id} value={v.id} className="text-slate-900 font-semibold">
+                                                        {v.model} • Placa: {v.plate} (KM Atual: {formatNumber(v.currentKm)})
+                                                    </option>
+                                                ))}
                                             </select>
-                                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                                                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-500">
+                                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                </svg>
                                             </div>
                                         </div>
                                     </div>
+
                                     <div>
-                                        <label htmlFor="driverName" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">Nome do Motorista</label>
-                                        <input type="text" name="driverName" value={startFormData.driverName} onChange={handleStartChange} required className="block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary shadow-sm uppercase text-gray-900 bg-white" />
+                                        <label htmlFor="driverName" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                            Nome Completo do Motorista *
+                                        </label>
+                                        <input 
+                                            type="text" 
+                                            name="driverName" 
+                                            value={startFormData.driverName} 
+                                            onChange={handleStartChange} 
+                                            required 
+                                            placeholder="Nome do condutor"
+                                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase" 
+                                        />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label htmlFor="department" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">Setor</label>
-                                            <input type="text" name="department" value={startFormData.department} onChange={handleStartChange} required className="block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary shadow-sm uppercase text-gray-900 bg-white" />
-                                        </div>
-                                        <div>
-                                            <label htmlFor="initialKm" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">KM Inicial</label>
-                                            <input 
-                                                type="number" 
-                                                name="initialKm" 
-                                                value={startFormData.initialKm} 
-                                                onChange={handleStartChange} 
-                                                required 
-                                                className="block w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-900 font-mono" 
-                                                readOnly 
-                                            />
-                                        </div>
-                                    </div>
-                                    
+
                                     <div>
-                                        <label htmlFor="destinationCity" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">Cidade de Destino</label>
-                                        <input type="text" name="destinationCity" list="cities" value={startFormData.destinationCity} onChange={handleStartChange} required className="block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary shadow-sm uppercase text-gray-900 bg-white" placeholder="Digite a cidade" />
-                                        <datalist id="cities">{SP_CITIES.map(city => <option key={city} value={city} />)}</datalist>
-                                    </div>
-                                    <div>
-                                        <label htmlFor="destination" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">Local Específico</label>
-                                        <input type="text" name="destination" value={startFormData.destination} onChange={handleStartChange} required className="block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary shadow-sm uppercase text-gray-900 bg-white" placeholder="Ex: Usina, Escritório..." />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="purpose" className="block text-sm font-bold text-green-800 md:text-gray-700 mb-1">Motivo</label>
-                                        <input type="text" name="purpose" value={startFormData.purpose} onChange={handleStartChange} required className="block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary shadow-sm uppercase text-gray-900 bg-white" />
-                                    </div>
-                                    <div>
-                                        <FuelLevelInput name="initialFuelLevel" value={startFormData.initialFuelLevel} onChange={handleStartChange} />
+                                        <label htmlFor="department" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                            Setor / Departamento *
+                                        </label>
+                                        <input 
+                                            type="text" 
+                                            name="department" 
+                                            list="daily-setores-list"
+                                            value={startFormData.department} 
+                                            onChange={handleStartChange} 
+                                            required 
+                                            placeholder="Ex: Comercial, Operações"
+                                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all" 
+                                        />
+                                        <datalist id="daily-setores-list">
+                                            {SETORES_OFICIAIS.map(s => (
+                                                <option key={s} value={s} />
+                                            ))}
+                                        </datalist>
                                     </div>
                                 </div>
-                                
-                                <button type="submit" disabled={isLoading || !!activeTripId} className="w-full bg-primary text-white font-bold py-4 px-6 rounded-lg hover:bg-green-800 disabled:bg-gray-400 disabled:cursor-not-allowed shadow-md text-lg transition-all transform active:scale-95">
-                                    {isLoading ? 'Iniciando...' : 'INICIAR VIAGEM'}
+                            </div>
+
+                            {/* SECTION 2: HODÔMETRO & COMBUSTÍVEL */}
+                            <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+                                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                                    <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
+                                        02
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
+                                            Hodômetro & Combustível na Saída
+                                        </h3>
+                                        <p className="text-[11px] text-slate-500 font-medium">Verificação de quilometragem e tanque</p>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                                    <div>
+                                        <label htmlFor="initialKm" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                            KM Inicial do Veículo *
+                                        </label>
+                                        <input 
+                                            type="number" 
+                                            name="initialKm" 
+                                            value={startFormData.initialKm} 
+                                            onChange={handleStartChange} 
+                                            required 
+                                            className="w-full px-3 py-2.5 bg-slate-100 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 outline-none font-mono cursor-not-allowed" 
+                                            readOnly 
+                                        />
+                                        <p className="text-[11px] text-slate-400 mt-1">Carregado automaticamente pelo cadastro do veículo.</p>
+                                    </div>
+
+                                    <div>
+                                        <FuelLevelInput 
+                                            name="initialFuelLevel" 
+                                            value={startFormData.initialFuelLevel} 
+                                            onChange={handleStartChange} 
+                                            label="Nível do Tanque na Saída *"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* SECTION 3: DESTINO & MOTIVO */}
+                            <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+                                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                                    <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
+                                        03
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
+                                            Roteiro & Finalidade do Uso
+                                        </h3>
+                                        <p className="text-[11px] text-slate-500 font-medium">Destino e objetivo da saída</p>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                                    <div>
+                                        <label htmlFor="destinationCity" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                            Cidade de Destino *
+                                        </label>
+                                        <input 
+                                            type="text" 
+                                            name="destinationCity" 
+                                            list="cities" 
+                                            value={startFormData.destinationCity} 
+                                            onChange={handleStartChange} 
+                                            required 
+                                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase" 
+                                            placeholder="Digite ou selecione a cidade" 
+                                        />
+                                        <datalist id="cities">
+                                            {SP_CITIES.map(city => <option key={city} value={city} />)}
+                                        </datalist>
+                                    </div>
+
+                                    <div>
+                                        <label htmlFor="destination" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                            Local Específico *
+                                        </label>
+                                        <input 
+                                            type="text" 
+                                            name="destination" 
+                                            value={startFormData.destination} 
+                                            onChange={handleStartChange} 
+                                            required 
+                                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase" 
+                                            placeholder="Ex: Usina, Escritório, Posto..." 
+                                        />
+                                    </div>
+
+                                    <div className="md:col-span-2">
+                                        <label htmlFor="purpose" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                            Motivo / Finalidade *
+                                        </label>
+                                        <input 
+                                            type="text" 
+                                            name="purpose" 
+                                            value={startFormData.purpose} 
+                                            onChange={handleStartChange} 
+                                            required 
+                                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase" 
+                                            placeholder="Descreva a finalidade da utilização" 
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="pt-2">
+                                <button 
+                                    type="submit" 
+                                    disabled={isLoading || !!activeTripId} 
+                                    className="w-full py-4 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-[#0d3b2b] hover:to-[#092b1f] text-white font-extrabold rounded-xl text-sm uppercase tracking-wider shadow-md active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isLoading ? (
+                                        <>
+                                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            <span>Registrando Saída...</span>
+                                        </>
+                                    ) : (
+                                        <span>Iniciar Viagem no Diário de Bordo</span>
+                                    )}
                                 </button>
                                 
                                 {activeTripId && (
-                                    <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg shadow-sm text-center">
-                                        <p className="font-bold text-lg mb-1">⚠️ Ação Necessária</p>
-                                        <p>Finalize a viagem acima para liberar o uso de outro veículo.</p>
-                                    </div>
+                                    <p className="mt-2 text-center text-xs font-bold text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                                        ⚠️ Finalize a viagem em andamento acima antes de iniciar uma nova saída.
+                                    </p>
                                 )}
-                            </form>
-                        ) : (
-                            <div className="p-6 bg-gray-50 border border-gray-200 text-gray-600 rounded-lg text-center">
-                                <p className="font-bold text-lg">Nenhum Veículo Disponível</p>
-                                <p className="text-sm mt-1">Todos os veículos estão em uso ou reservados para hoje.</p>
                             </div>
-                        )}
-                    </div>
+                        </form>
+                    ) : (
+                        <div className="p-8 bg-white border border-slate-200 text-slate-600 rounded-2xl text-center space-y-2">
+                            <CarIcon className="w-10 h-10 text-slate-300 mx-auto" />
+                            <p className="font-extrabold text-sm uppercase text-slate-800">Nenhum Veículo Disponível no Momento</p>
+                            <p className="text-xs text-slate-500 max-w-md mx-auto">
+                                Todos os veículos da frota própria estão atualmente em uso ou possuem reserva agendada para hoje.
+                            </p>
+                        </div>
+                    )}
                 </section>
             </div>
         </div>

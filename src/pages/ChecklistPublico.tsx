@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ClipboardCheck, ShieldCheck, HelpCircle, ArrowLeft } from "lucide-react";
 import { ChecklistForm } from "../components/reserva/ChecklistForm";
+import { normalizeBaseOperacional } from "../utils/baseOperacional";
 
 interface Vehicle {
   id: string;
@@ -9,6 +10,7 @@ interface Vehicle {
   placa: string;
   base?: string;
   status?: string;
+  condutor?: string;
 }
 
 export default function ChecklistPublico() {
@@ -29,8 +31,9 @@ export default function ChecklistPublico() {
             id: v.id || `veh_${index}`,
             modelo: v.modelo || v.marcaModelo || "",
             placa: v.placa || "",
-            base: v.base || "",
-            status: v.status || "ATIVO"
+            base: normalizeBaseOperacional(v.base || v.filial || ""),
+            status: v.status || "ATIVO",
+            condutor: v.condutor || v.motorista || ""
           }));
           if (mapped.length > 0) {
             setVehicles(mapped);
@@ -42,22 +45,29 @@ export default function ChecklistPublico() {
         const cached = localStorage.getItem("risel_frota_veiculos");
         if (cached) {
           try {
-            setVehicles(JSON.parse(cached));
-            return;
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed)) {
+              setVehicles(parsed.map((item: any) => ({
+                ...item,
+                base: normalizeBaseOperacional(item.base || item.filial || ""),
+                condutor: item.condutor || item.motorista || ""
+              })));
+              return;
+            }
           } catch (e) {}
         }
 
         // Veículos de fallback emergencial para garantir preenchimento
         setVehicles([
-          { id: "v1", modelo: "MOBI", placa: "TZA6J27", base: "CAMPINEIRA" },
-          { id: "v2", modelo: "ONIX", placa: "RSL1A23", base: "PAULÍNIA" },
-          { id: "v3", modelo: "HB20", placa: "RSL2B45", base: "FROTA RISEL" }
+          { id: "v1", modelo: "MOBI", placa: "TZA6J27", base: "Campinas" },
+          { id: "v2", modelo: "ONIX", placa: "RSL1A23", base: "Paulínia" },
+          { id: "v3", modelo: "HB20", placa: "RSL2B45", base: "Paulínia" }
         ]);
       } catch (err: any) {
         console.warn("Aviso ao carregar veículos do backend, usando fallback:", err);
         setVehicles([
-          { id: "v1", modelo: "MOBI", placa: "TZA6J27", base: "CAMPINEIRA" },
-          { id: "v2", modelo: "ONIX", placa: "RSL1A23", base: "PAULÍNIA" }
+          { id: "v1", modelo: "MOBI", placa: "TZA6J27", base: "Campinas" },
+          { id: "v2", modelo: "ONIX", placa: "RSL1A23", base: "Paulínia" }
         ]);
       } finally {
         setIsLoading(false);

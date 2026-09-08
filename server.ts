@@ -9,7 +9,7 @@ import cron from "node-cron";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret } from "./src/services/smtpSecurity";
-import { sanitizeRequestBody, cleanHtmlContent } from "./src/services/securityMiddleware";
+import { sanitizeRequestBody, cleanHtmlContent, validateAppsScriptUrl, validateOneDriveUrl, isValidSafeHttpsUrl } from "./src/services/securityMiddleware";
 
 // Forçar resolução IPv4 prioritária no Node.js para evitar ENETUNREACH em contêineres de nuvem (Render, Docker, Cloud Run)
 if (dns && typeof (dns as any).setDefaultResultOrder === "function") {
@@ -284,9 +284,20 @@ async function startServer() {
     message: { error: "Limite de requisições à Inteligência Artificial atingido. Aguarde 1 minuto." }
   });
 
+  const syncRateLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 20, // máximo de 20 operações de sincronização por minuto por IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    message: { error: "Limite de sincronizações atingido temporariamente. Aguarde 1 minuto." }
+  });
+
   app.use("/api/", generalApiLimiter);
   app.use("/api/send-email", emailRateLimiter);
   app.use("/api/gemini-assistant", aiRateLimiter);
+  app.use("/api/onedrive/sync-now", syncRateLimiter);
+  app.use("/api/sheets/append", syncRateLimiter);
 
   // 3. Body parsers com limite estrito de payload
   app.use(express.json({ limit: "25mb" }));
@@ -303,6 +314,13 @@ async function startServer() {
   async function executeOneDriveSyncProcess() {
     const config = loadOneDriveConfig();
     const folderUrl = config.folderUrl || DEFAULT_ONEDRIVE_FOLDER_URL;
+
+    // Validação estrita contra SSRF: permite exclusivamente links oficiais Microsoft / SharePoint
+    if (!validateOneDriveUrl(folderUrl)) {
+      console.warn(`[Segurança Risel] URL do OneDrive/SharePoint rejeitada por violação de segurança: ${folderUrl}`);
+      return { success: false, error: "URL da pasta OneDrive/SharePoint inválida ou não autorizada. Apenas links oficiais da Microsoft são permitidos." };
+    }
+
     console.log(`Risel Backend OneDrive Sync: Iniciando sincronização da pasta ${folderUrl}...`);
 
     let fileContent = "";
@@ -332,7 +350,7 @@ async function startServer() {
           fileName = targetFile.name;
           const downloadUrl = targetFile["@microsoft.graph.downloadUrl"];
 
-          if (downloadUrl) {
+          if (downloadUrl && isValidSafeHttpsUrl(downloadUrl)) {
             console.log(`Risel Backend OneDrive: Baixando arquivo '${fileName}' via Graph API...`);
             const fileRes = await fetch(downloadUrl);
             if (fileRes.ok) {
@@ -345,7 +363,7 @@ async function startServer() {
       }
 
       // Fallback para download direto da URL
-      if (!fileContent && (folderUrl.includes(".csv") || folderUrl.includes("download=1"))) {
+      if (!fileContent && (folderUrl.includes(".csv") || folderUrl.includes("download=1")) && validateOneDriveUrl(folderUrl)) {
         console.log("Risel Backend OneDrive: Tentando download direto da URL informada...");
         const directRes = await fetch(folderUrl);
         if (directRes.ok) {
@@ -811,10 +829,16 @@ async function startServer() {
             const parsed = parseBase64Attachment(att.content, fname, att.type || att.contentType);
             if (parsed) mailAttachments.push(parsed);
           } else if (att.url && typeof att.url === 'string') {
-            mailAttachments.push({
-              filename: fname,
-              path: att.url
-            });
+            // Prevenção estrita contra LFI (Local File Inclusion) e SSRF:
+            // Anexos remotos por URL devem ser exclusivamente HTTPS externos e válidos (nunca caminhos de arquivos locais)
+            if (isValidSafeHttpsUrl(att.url)) {
+              mailAttachments.push({
+                filename: fname,
+                path: att.url
+              });
+            } else {
+              console.warn(`[Segurança Risel SMTP] Anexo remoto bloqueado por segurança: ${att.url}`);
+            }
           }
         }
       }
@@ -829,11 +853,13 @@ async function startServer() {
           if (item.url.startsWith('data:')) {
             const parsed = parseBase64Attachment(item.url, fname, 'application/pdf');
             if (parsed) mailAttachments.push(parsed);
-          } else if (item.url.startsWith('http://') || item.url.startsWith('https://')) {
+          } else if (typeof item.url === 'string' && isValidSafeHttpsUrl(item.url)) {
             mailAttachments.push({
               filename: fname,
               path: item.url
             });
+          } else {
+            console.warn(`[Segurança Risel SMTP] URL de anexo bloqueada por segurança: ${item.url}`);
           }
         }
       }
@@ -1391,6 +1417,12 @@ async function startServer() {
       return { success: false, error: "URL do Apps Script não configurada." };
     }
 
+    // Validação estrita de segurança contra SSRF
+    if (!validateAppsScriptUrl(targetUrl)) {
+      console.warn(`[Segurança Risel] Chamada ao Apps Script bloqueada por URL não autorizada: ${targetUrl}`);
+      return { success: false, error: "URL do Google Apps Script não autorizada. Apenas https://script.google.com é permitido." };
+    }
+
     let headersToSend = rawHeaders;
     let rowsToSend = rawRows;
 
@@ -1555,28 +1587,32 @@ async function startServer() {
       const payloadRows = (Array.isArray(rawRows) && rawRows.length > 0) ? rawRows : rows;
 
       if (targetAppsScriptUrl && Array.isArray(payloadRows) && payloadRows.length > 0) {
-        try {
-          console.log(`Risel Backend: Disparando ${payloadRows.length} linhas para o Apps Script Web App...`);
-          const gsRes = await fetch(targetAppsScriptUrl, {
-            method: "POST",
-            headers: { "Content-Type": "text/plain" },
-            body: JSON.stringify({
-              headers: rawHeaders,
-              rows: payloadRows,
-              spreadsheetId: targetSpreadsheetId,
-              sheetTitle: targetSheetTitle
-            })
-          });
+        if (!validateAppsScriptUrl(targetAppsScriptUrl)) {
+          console.warn(`[Segurança Risel] Tentativa de SSRF em /api/sheets/append rejeitada: ${targetAppsScriptUrl}`);
+        } else {
+          try {
+            console.log(`Risel Backend: Disparando ${payloadRows.length} linhas para o Apps Script Web App...`);
+            const gsRes = await fetch(targetAppsScriptUrl, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain" },
+              body: JSON.stringify({
+                headers: rawHeaders,
+                rows: payloadRows,
+                spreadsheetId: targetSpreadsheetId,
+                sheetTitle: targetSheetTitle
+              })
+            });
 
-          if (gsRes.ok) {
-            console.log(`Risel Backend: ${payloadRows.length} linhas gravadas com sucesso via Apps Script Web App!`);
-            return res.json({ success: true, savedInSheets: true, savedInBackend: true, count: payloadRows.length, mode: "apps_script" });
-          } else {
-            const errBody = await gsRes.text();
-            console.warn("Aviso de erro no Apps Script Web App:", errBody);
+            if (gsRes.ok) {
+              console.log(`Risel Backend: ${payloadRows.length} linhas gravadas com sucesso via Apps Script Web App!`);
+              return res.json({ success: true, savedInSheets: true, savedInBackend: true, count: payloadRows.length, mode: "apps_script" });
+            } else {
+              const errBody = await gsRes.text();
+              console.warn("Aviso de erro no Apps Script Web App:", errBody);
+            }
+          } catch (gsErr: any) {
+            console.warn("Erro ao comunicar com Google Apps Script Web App:", gsErr.message);
           }
-        } catch (gsErr: any) {
-          console.warn("Erro ao comunicar com Google Apps Script Web App:", gsErr.message);
         }
       }
 
@@ -1663,13 +1699,17 @@ async function startServer() {
     try {
       const { appsScriptUrl } = req.body;
       if (typeof appsScriptUrl === "string") {
-        storedAppsScriptUrl = appsScriptUrl.trim();
+        const trimmed = appsScriptUrl.trim();
+        if (trimmed && !validateAppsScriptUrl(trimmed)) {
+          return res.status(400).json({ error: "URL inválida. Apenas links oficiais 'https://script.google.com' são permitidos por segurança." });
+        }
+        storedAppsScriptUrl = trimmed;
         fs.writeFileSync(APPS_SCRIPT_FILE, storedAppsScriptUrl, "utf-8");
         console.log("Risel Backend: URL do Apps Script Web App configurada com sucesso:", storedAppsScriptUrl);
       }
       res.json({ success: true, appsScriptUrl: storedAppsScriptUrl });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: "Falha ao salvar configuração do Apps Script." });
     }
   });
 
@@ -1690,12 +1730,18 @@ async function startServer() {
     try {
       const { folderUrl, enabled } = req.body;
       const current = loadOneDriveConfig();
-      if (typeof folderUrl === "string") current.folderUrl = folderUrl.trim();
+      if (typeof folderUrl === "string") {
+        const trimmed = folderUrl.trim();
+        if (trimmed && !validateOneDriveUrl(trimmed)) {
+          return res.status(400).json({ error: "URL inválida. Apenas links 'https://' oficiais do SharePoint/OneDrive são permitidos por segurança." });
+        }
+        current.folderUrl = trimmed;
+      }
       if (typeof enabled === "boolean") current.enabled = enabled;
       saveOneDriveConfig(current);
       res.json({ success: true, config: current });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: "Falha ao salvar configuração do OneDrive." });
     }
   });
 
@@ -1858,7 +1904,7 @@ async function startServer() {
 
   app.get("/api/checklist/data", async (req, res) => {
     const now = Date.now();
-    if (checklistCache && (now - checklistCacheTime < CACHE_DURATION)) {
+    if (!req.query.refresh && checklistCache && (now - checklistCacheTime < CACHE_DURATION)) {
       console.log("Risel Backend: Retornando checklists de auditoria (Google Sheets) via Cache...");
       return res.json(checklistCache);
     }
@@ -1986,9 +2032,10 @@ async function startServer() {
         }
 
         // Sintetizar objeto do checklist em formato compatível
-        const formattedDate = parseDateString(rawData || rawTimestamp);
+        // Priorizar rawTimestamp (carimbo oficial gerado pelo envio) pois rawData (data digitada manual) sofre com erros de digitação
+        const formattedDate = parseDateString(rawTimestamp || rawData);
         const parsedOdom = parseKm(rawKm);
-        const condutor = entreguePor || recebidoPor || rawEmail.split("@")[0] || "Condutor";
+        const condutor = recebidoPor || entreguePor || rawEmail.split("@")[0] || "Condutor";
 
         const mappedChecklist = {
           id: `sheet_${r}_${rawPlaca}_${formattedDate.replace(/-/g, "")}`,
@@ -2072,14 +2119,33 @@ async function startServer() {
 
   function parseDateString(dStr: string) {
     if (!dStr) return "";
-    const parts = dStr.split(" ")[0].split("/");
-    if (parts.length === 3) {
-      const day = parts[0].padStart(2, '0');
-      const month = parts[1].padStart(2, '0');
-      const year = parts[2];
-      return `${year}-${month}-${day}`;
+    const clean = String(dStr).trim();
+    const datePart = clean.split(" ")[0].split("T")[0];
+    if (datePart.includes("/")) {
+      const parts = datePart.split("/");
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        }
+        const day = parts[0].padStart(2, '0');
+        const month = parts[1].padStart(2, '0');
+        const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+        return `${year}-${month}-${day}`;
+      }
     }
-    return dStr;
+    if (datePart.includes("-")) {
+      const parts = datePart.split("-");
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        }
+        const day = parts[0].padStart(2, '0');
+        const month = parts[1].padStart(2, '0');
+        const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+        return `${year}-${month}-${day}`;
+      }
+    }
+    return clean;
   }
 
   function parseKm(kmStr: string) {
@@ -2091,7 +2157,10 @@ async function startServer() {
   // Função para mapear dinamicamente os campos do Google Forms para x-www-form-urlencoded
   async function getGoogleFormFields(formId: string): Promise<Record<string, string>> {
     try {
-      const url = `https://docs.google.com/forms/d/${formId}/viewform`;
+      if (!formId || !/^[a-zA-Z0-9_-]+$/.test(formId)) {
+        throw new Error("ID de formulário inválido");
+      }
+      const url = `https://docs.google.com/forms/d/${encodeURIComponent(formId)}/viewform`;
       const res = await fetch(url);
       if (!res.ok) {
         throw new Error(`Erro ao baixar formulário: ${res.status}`);

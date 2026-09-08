@@ -1,11 +1,13 @@
 import { QRCodeSVG } from "qrcode.react";
 import { AbastecimentoTableView, AbastecimentoDashboardView } from "../components/reserva/AbastecimentoViews";
+import { ManutencaoTableView, ManutencaoDashboardView } from "../components/reserva/ManutencaoViews";
 import { useState, useMemo, useEffect, ReactNode, FormEvent } from "react";
 import React, { useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { toTitleCase } from "../lib/utils";
+import { normalizeBaseOperacional, normalizeCidade, isSameCityOrBase } from "../utils/baseOperacional";
 import { 
-  Truck, Award, Crown, Trophy, Calendar, CheckSquare, ShieldAlert, 
+  Car, Award, Crown, Trophy, Calendar, CheckSquare, ShieldAlert, 
   Navigation, Plus, Search, Filter, Fuel, Wrench, AlertTriangle, 
   ChevronRight, Check, X, Eye, Phone, Mail, FileText, ArrowLeft, 
   Clock, MapPin, Gauge, Star, BarChart3, TrendingUp, DollarSign,
@@ -32,6 +34,10 @@ import {
   saveAbastecimentoSupabase, 
   saveBatchAbastecimentosSupabase, 
   deleteAbastecimentoSupabase,
+  fetchManutencoesSupabase,
+  saveManutencaoSupabase,
+  saveBatchManutencoesSupabase,
+  deleteManutencaoSupabase,
   fetchVeiculosSupabase,
   saveVeiculoSupabase,
   saveBatchVeiculosSupabase,
@@ -63,43 +69,8 @@ import { UserProfileBadge } from "../components/UserProfileBadge";
 // BENCHMARK DATE FOR CONTRACT EXPIRY COMPARISONS
 const HOJE_REF = "2026-07-03";
 
-// Componente de Placa Padrão Mercosul (igual a Gestão de Reservas)
-export const MercosulPlateBadge: React.FC<{ plate: string; isInactive?: boolean }> = ({ plate, isInactive }) => {
-    const formattedPlate = (plate || 'ABC1D23').toUpperCase().trim();
-    
-    return (
-        <div className={`inline-flex flex-col items-center justify-center border rounded-lg overflow-hidden shadow-2xs select-none transition-all duration-200 ${
-            isInactive 
-                ? 'border-slate-300 bg-slate-100 opacity-60' 
-                : 'border-slate-300 bg-white hover:border-slate-400 hover:shadow-xs'
-        }`} style={{ width: '92px', minWidth: '92px' }}>
-            {/* Faixa Azul Mercosul */}
-            <div className={`w-full py-0.5 px-1.5 flex items-center justify-between ${isInactive ? 'bg-slate-500' : 'bg-[#003399]'}`}>
-                {/* Estrelas / Logo Mercosul */}
-                <div className="flex items-center gap-0.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-300 opacity-90"></div>
-                    <div className="w-1 h-1 rounded-full bg-yellow-200 opacity-70"></div>
-                </div>
-                {/* Texto BRASIL */}
-                <span className="text-[7.5px] font-black text-white tracking-widest leading-none font-sans uppercase">
-                    BRASIL
-                </span>
-                {/* Mini Bandeira do Brasil */}
-                <div className="w-2.5 h-1.5 bg-emerald-500 rounded-[1px] relative flex items-center justify-center overflow-hidden">
-                    <div className="w-1.5 h-1 bg-yellow-400 rotate-45 transform"></div>
-                    <div className="w-0.5 h-0.5 rounded-full bg-blue-700 absolute"></div>
-                </div>
-            </div>
-
-            {/* Corpo da Placa com Código e Fonte Monospace */}
-            <div className="w-full bg-white py-0.5 px-1 text-center flex items-center justify-center">
-                <span className={`text-[12px] font-mono font-black tracking-wider leading-tight ${isInactive ? 'text-slate-500' : 'text-slate-900'}`}>
-                    {formattedPlate}
-                </span>
-            </div>
-        </div>
-    );
-};
+import { MercosulPlateBadge } from "../components/MercosulPlateBadge";
+export { MercosulPlateBadge };
 
 // HELPER FOR SHORTENING LONG CORPORATE NAMES (inspired by user request)
 const formatarTextoLongo = (texto: string, maxLength: number = 18): string => {
@@ -269,7 +240,7 @@ export interface Abastecimento {
   observacoes?: string;
 }
 
-interface Manutencao {
+export interface Manutencao {
   id: string;
   placa: string;
   tipo: "Preventiva" | "Corretiva";
@@ -278,6 +249,13 @@ interface Manutencao {
   odometro: number;
   custo: number;
   oficina: string;
+  condutor?: string;
+  base?: string;
+  modelo?: string;
+  nf_os?: string;
+  status?: "Concluída" | "Em Andamento" | "Agendada";
+  observacoes?: string;
+  created_at?: string;
 }
 
 const THEMES = {
@@ -423,7 +401,7 @@ function SubSystemLayout({
 const SUB_MODULE_INFO = {
   frota: { 
     label: "Controle de Frota Leve", 
-    icon: Truck, 
+    icon: Car, 
     theme: "orange", 
     colorClass: "text-orange-600 border-orange-200/50 bg-orange-500", 
     highlightText: "from-orange-600 to-amber-500" 
@@ -636,6 +614,38 @@ export default function Frota() {
       setSearchParams({ tab });
     }
   };
+
+  // Lista de submódulos operacionais e quais o usuário logado tem permissão real
+  const allowedSubmodules = useMemo(() => {
+    const list: Array<"frota" | "checklist" | "reservas" | "multas" | "rastreamento"> = [];
+    if (hasSubmoduleAccess(user?.permissions, "frota")) list.push("frota");
+    if (hasSubmoduleAccess(user?.permissions, "checklist")) list.push("checklist");
+    if (hasSubmoduleAccess(user?.permissions, "reservas")) list.push("reservas");
+    if (hasSubmoduleAccess(user?.permissions, "multas")) list.push("multas");
+    if (hasSubmoduleAccess(user?.permissions, "rastreamento")) list.push("rastreamento");
+    return list;
+  }, [user?.permissions]);
+
+  // Se o usuário só tem 1 submódulo liberado, ou se a tab atual for "portal" e ele só tem 1 acesso,
+  // ou se ele estiver tentando acessar uma aba não permitida, redireciona estritamente para o submódulo liberado
+  useEffect(() => {
+    if (!user) return;
+
+    // Se o usuário possui apenas 1 submódulo liberado e está no "portal", vai direto para seu submódulo
+    if (activeTab === "portal" && allowedSubmodules.length === 1) {
+      setActiveTab(allowedSubmodules[0]);
+      return;
+    }
+
+    // Se a aba ativa não for permitida para o usuário
+    if (activeTab !== "portal" && !hasSubmoduleAccess(user?.permissions, activeTab)) {
+      if (allowedSubmodules.length > 0) {
+        setActiveTab(allowedSubmodules[0]);
+      } else {
+        setActiveTab("portal");
+      }
+    }
+  }, [activeTab, allowedSubmodules, user]);
 
   // Estado de Autenticação para cada um dos Submódulos
   const [authenticatedTabs, setAuthenticatedTabs] = useState<Record<string, boolean>>(() => {
@@ -934,6 +944,40 @@ export default function Frota() {
     }
   };
 
+  const handleUpdateManutencao = async (updatedItem: Manutencao) => {
+    const exists = manutencoes.some(m => String(m.id) === String(updatedItem.id));
+    const updatedList = exists
+      ? manutencoes.map(m => String(m.id) === String(updatedItem.id) ? updatedItem : m)
+      : [updatedItem, ...manutencoes];
+    
+    setManutencoes(updatedList);
+    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(updatedList));
+
+    saveManutencaoSupabase(updatedItem)
+      .then(() => {
+        showToast("success", "Manutenção Salva!", "Registro de manutenção gravado com sucesso no Supabase.");
+      })
+      .catch((e) => {
+        console.warn("Aviso ao salvar manutenção no Supabase:", e);
+        showToast("info", "Manutenção Salva!", "Registro salvo localmente.");
+      });
+  };
+
+  const handleDeleteManutencao = async (id: string) => {
+    const updatedList = manutencoes.filter(m => String(m.id) !== String(id));
+    setManutencoes(updatedList);
+    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(updatedList));
+
+    deleteManutencaoSupabase(id)
+      .then(() => {
+        showToast("success", "Manutenção Excluída!", "Ordem de serviço removida com sucesso do sistema e do banco.");
+      })
+      .catch((e) => {
+        console.warn("Aviso ao excluir manutenção do Supabase:", e);
+        showToast("info", "Manutenção Removida!", "Registro excluído localmente.");
+      });
+  };
+
   const handleSyncGoogleSheetsNow = async () => {
     setIsSyncingWithSheets(true);
     try {
@@ -956,6 +1000,7 @@ export default function Frota() {
 
   const [pedagios, setPedagios] = useState<Pedagio[]>([]);
   const [activeAbastecimentoTab, setActiveAbastecimentoTab] = useState<"tabela" | "dashboard">("tabela");
+  const [activeManutencaoTab, setActiveManutencaoTab] = useState<"tabela" | "dashboard">("tabela");
   
   // Column visibility
   const [visColAbast, setVisColAbast] = useState({ veiculo: true, base: true, data: true, odometro: true, litros: true, valor: true });
@@ -1221,7 +1266,8 @@ export default function Frota() {
                 ]));
                 const combustivel = getRowVal(row, ['Mercadoria', 'Tipo Mercadoria', 'Combustivel', 'Combustível', 'Tipo de Combustível', 'Produto', 'COMBUSTIVEL', 'Tipo Combustivel']) || "Gasolina";
                 const posto = getRowVal(row, ['Nome EC', 'Nome do Posto', 'Posto', 'posto', 'Estabelecimento', 'Razao Social', 'Razão Social', 'POSTO', 'Nome Estabelecimento', 'Credenciado']);
-                const cidade = getRowVal(row, ['Cidade EC', 'Cidade', 'cidade', 'Município', 'Municipio', 'CIDADE']);
+                const cidadeRaw = getRowVal(row, ['Cidade EC', 'Cidade', 'cidade', 'Município', 'Municipio', 'CIDADE']);
+                const cidade = cidadeRaw ? normalizeCidade(cidadeRaw) : undefined;
                 const uf = getRowVal(row, ['UF EC', 'UF', 'uf', 'Estado', 'ESTADO', 'UF Estabelecimento', 'Estado EC']);
                 const valorLitroRaw = parseFloatBr(getRowVal(row, ['Preço Unitário', 'Preco Unitario', 'Valor Litro', 'Valor por Litro', 'Valor/L', 'Preço/L', 'Preco/L', 'Valor Unitario', 'Preço', 'Preco']));
                 const valorLitro = valorLitroRaw > 0 ? valorLitroRaw : (valorTotal && litros ? Number((valorTotal / litros).toFixed(2)) : undefined);
@@ -1234,13 +1280,14 @@ export default function Frota() {
                 const observacoes = getRowVal(row, ['Observação', 'Observacao', 'Observações', 'Observacoes', 'Obs', 'OBS', 'Comentário', 'Comentario']) || undefined;
 
                 const matchedVeic = veiculos.find(v => v.placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === placaClean);
-                const base = getRowVal(row, ['Base', 'base', 'Nome Filial', 'Filial', 'filial', 'BASE', 'FILIAL', 'Unidade', 'Centro de Custo']) || (matchedVeic ? matchedVeic.filial : "CAMPINEIRA");
+                const rawBase = getRowVal(row, ['Base', 'base', 'Nome Filial', 'Filial', 'filial', 'BASE', 'FILIAL', 'Unidade', 'Centro de Custo']) || (matchedVeic ? matchedVeic.filial : "Campinas");
+                const base = normalizeBaseOperacional(rawBase);
                 const condutor = getRowVal(row, ['Nome motorista', 'Motorista', 'Condutor', 'condutor', 'MOTORISTA', 'Nome do Motorista', 'Motorista/Condutor']) || (matchedVeic ? matchedVeic.condutor : "Sem Motorista Associado");
 
                 return {
                   id: "csv-" + Math.random().toString(36).substring(7) + "-" + idx,
                   placa: placaClean,
-                  base: base.trim().toUpperCase(),
+                  base,
                   condutor: condutor.trim(),
                   data: parsedData,
                   litros,
@@ -1407,6 +1454,8 @@ export default function Frota() {
   const [filterBase, setFilterBase] = useState("");
   const [filterCondutor, setFilterCondutor] = useState("");
   const [filterMesAno, setFilterMesAno] = useState("");
+  const [filterTipoManutencao, setFilterTipoManutencao] = useState("Todos");
+  const [filterOficinaManutencao, setFilterOficinaManutencao] = useState("");
 
   const handleMesAnoChange = (mesAno: string) => {
     setFilterMesAno(mesAno);
@@ -1424,7 +1473,7 @@ export default function Frota() {
   };
 
   // Subsystem inner navigation states derived from URL search params
-  const subSectionFrota = (searchParams.get("sub") as "veiculos" | "vencidos" | "custos") || "veiculos";
+  const subSectionFrota = (searchParams.get("sub") as "veiculos" | "vencidos" | "custos" | "manutencao") || "veiculos";
   const setSubSectionFrota = (sub: string) => setSearchParams({ tab: activeTab, sub });
 
   const subSectionChecklist = (searchParams.get("sub") as "dashboard" | "realizados" | "alertas" | "formulario") || "dashboard";
@@ -1578,23 +1627,41 @@ export default function Frota() {
       localStorage.setItem("risel_frota_abastecimentos", "[]");
     });
 
-    // 6. Manutenções
-    const savedMaint = localStorage.getItem("risel_frota_manutencoes");
-    let parsedMaint: Manutencao[] = [];
-    if (savedMaint) {
-      try { parsedMaint = JSON.parse(savedMaint); } catch (e) {}
-    }
-    const hasInvalidMaint = parsedMaint.length === 0 || parsedMaint.some(m => !isAllowedPlate(m.placa));
-    if (hasInvalidMaint) {
-      const initialMaint: Manutencao[] = [
-        { id: "mn1", placa: "SYL0A69", tipo: "Corretiva", descricao: "Substituição de pastilhas de freio dianteiras e traseiras", data: "2026-06-29", odometro: 92390, custo: 850.00, oficina: "Oficina Multimarcas Macaé" },
-        { id: "mn2", placa: "SYL0A67", tipo: "Preventiva", descricao: "Revisão periódica de 40.000km (óleo, filtros, suspensão)", data: "2026-05-10", odometro: 40100, custo: 620.00, oficina: "Concessionária Fiat Paulínia" },
-      ];
-      setManutencoes(initialMaint);
-      localStorage.setItem("risel_frota_manutencoes", JSON.stringify(initialMaint));
-    } else {
+    // 6. Manutenções (Sincronizado com Supabase Real e cache local - Apenas Dados Reais)
+    fetchManutencoesSupabase().then(supabaseMaint => {
+      const realList = (supabaseMaint || []).filter(m => !["mn1", "mn2", "mn3"].includes(String(m.id)));
+      if (realList.length > 0) {
+        setManutencoes(realList as Manutencao[]);
+        localStorage.setItem("risel_frota_manutencoes", JSON.stringify(realList));
+      } else {
+        const savedMaint = localStorage.getItem("risel_frota_manutencoes");
+        let parsedMaint: Manutencao[] = [];
+        if (savedMaint) {
+          try {
+            const parsed = JSON.parse(savedMaint);
+            if (Array.isArray(parsed)) {
+              parsedMaint = parsed.filter((m: any) => !["mn1", "mn2", "mn3"].includes(String(m.id)));
+            }
+          } catch (e) {}
+        }
+        setManutencoes(parsedMaint);
+        localStorage.setItem("risel_frota_manutencoes", JSON.stringify(parsedMaint));
+      }
+    }).catch(err => {
+      console.warn("Aviso ao buscar manutenções do Supabase:", err);
+      const savedMaint = localStorage.getItem("risel_frota_manutencoes");
+      let parsedMaint: Manutencao[] = [];
+      if (savedMaint) {
+        try {
+          const parsed = JSON.parse(savedMaint);
+          if (Array.isArray(parsed)) {
+            parsedMaint = parsed.filter((m: any) => !["mn1", "mn2", "mn3"].includes(String(m.id)));
+          }
+        } catch (e) {}
+      }
       setManutencoes(parsedMaint);
-    }
+      localStorage.setItem("risel_frota_manutencoes", JSON.stringify(parsedMaint));
+    });
 
     // 7. Pedagios
     const savedTolls = localStorage.getItem("risel_frota_pedagios");
@@ -1910,8 +1977,10 @@ export default function Frota() {
   };
 
   const saveManutencoes = (data: Manutencao[]) => {
-    setManutencoes(data);
-    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(data));
+    const realData = data.filter(m => !["mn1", "mn2", "mn3"].includes(String(m.id)));
+    setManutencoes(realData);
+    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(realData));
+    saveBatchManutencoesSupabase(realData).catch(e => console.warn("Aviso ao salvar manutenções no Supabase:", e));
   };
 
   // Dynamic calculations
@@ -1999,7 +2068,13 @@ export default function Frota() {
 
   // Filter lists
   const filiaisList = useMemo(() => {
-    return ["Todos", ...Array.from(new Set(veiculos.map(v => v.filial)))];
+    const set = new Set<string>();
+    veiculos.forEach(v => {
+      if (v.filial) {
+        set.add(normalizeBaseOperacional(v.filial));
+      }
+    });
+    return ["Todos", ...Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"))];
   }, [veiculos]);
 
   const filteredVeiculos = useMemo(() => {
@@ -2009,7 +2084,7 @@ export default function Frota() {
         v.modelo.toLowerCase().includes(searchQuery.toLowerCase()) ||
         v.condutor.toLowerCase().includes(searchQuery.toLowerCase());
       
-      const matchesFilial = filterFilial === "Todos" || v.filial === filterFilial;
+      const matchesFilial = filterFilial === "Todos" || isSameCityOrBase(v.filial, filterFilial);
       const matchesStatus = filterStatus === "Todos" || v.status === filterStatus;
 
       return matchesSearch && matchesFilial && matchesStatus;
@@ -2113,7 +2188,7 @@ export default function Frota() {
       contatoMotorista: cleanUpper(formData.get("contatoMotorista")),
       gestorResp: cleanUpper(formData.get("gestorResp")),
       email: cleanEmail(formData.get("email")),
-      filial: cleanUpper(formData.get("filial")),
+      filial: normalizeBaseOperacional((formData.get("filial") as string) || ""),
       locadora: locadoraFinal,
       contrato: cleanUpper(formData.get("contrato")),
       odometro: odometroFinal,
@@ -2364,7 +2439,7 @@ export default function Frota() {
               animate={{ opacity: 1, scale: 1 }}
               className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-md shadow-orange-500/20 mx-auto mb-3"
             >
-              <Truck className="w-6 h-6" />
+              <Car className="w-6 h-6" />
             </motion.div>
             
             <motion.h1 
@@ -2399,7 +2474,7 @@ export default function Frota() {
               <SubModuleCard
                 title="Controle de Frota"
                 description="Gestão completa de veículos leves, quilometragem, condutores cadastrados e vencimentos de contratos."
-                icon={Truck}
+                icon={Car}
                 onClick={() => setActiveTab("frota")}
                 theme="orange"
                 delay={0.15}
@@ -2483,7 +2558,7 @@ export default function Frota() {
           {/* Lado Esquerdo: Identidade Visual e Breadcrumbs */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-sm shadow-orange-500/20 shrink-0">
-              <Truck className="w-5 h-5" />
+              <Car className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-1.5 leading-none">
@@ -2513,39 +2588,71 @@ export default function Frota() {
           </div>
         </div>
 
-        {/* Barra de Menus / Abas da Frota Logo Embaixo */}
+        {/* Barra de Menus / Abas da Frota Logo Embaixo (Filtrada estritamente pelas permissões do usuário) */}
         <div className="flex items-center overflow-x-auto gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/80 shrink-0">
           {[
-            { id: "portal", label: "Menu da Frota", icon: LayoutGrid },
-            { id: "frota", label: "Controle de Frota Leve", icon: Truck },
-            { id: "checklist", label: "Checklist", icon: CheckSquare },
-            { id: "reservas", label: "Gestão de Reservas", icon: Calendar },
-            { id: "multas", label: "Multas", icon: ShieldAlert },
-            { id: "rastreamento", label: "Rastreamento", icon: Navigation }
-          ].map(tab => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActiveTab(tab.id as any);
-                  setSearchQuery("");
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 cursor-pointer ${
-                  isActive 
-                    ? "bg-white text-orange-600 shadow-2xs border border-orange-200/60 font-black" 
-                    : "text-slate-500 hover:text-slate-800 hover:bg-white/60"
-                }`}
-              >
-                <tab.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-orange-600" : "text-slate-400"}`} />
-                <span className="whitespace-nowrap">{tab.label}</span>
-              </button>
-            );
-          })}
+            { 
+              id: "portal", 
+              label: "Menu da Frota", 
+              icon: LayoutGrid, 
+              visible: allowedSubmodules.length > 1 || user?.role === "admin" 
+            },
+            { 
+              id: "frota", 
+              label: "Controle de Frota Leve", 
+              icon: Car, 
+              visible: hasSubmoduleAccess(user?.permissions, "frota") 
+            },
+            { 
+              id: "checklist", 
+              label: "Checklist", 
+              icon: CheckSquare, 
+              visible: hasSubmoduleAccess(user?.permissions, "checklist") 
+            },
+            { 
+              id: "reservas", 
+              label: "Gestão de Reservas", 
+              icon: Calendar, 
+              visible: hasSubmoduleAccess(user?.permissions, "reservas") 
+            },
+            { 
+              id: "multas", 
+              label: "Multas", 
+              icon: ShieldAlert, 
+              visible: hasSubmoduleAccess(user?.permissions, "multas") 
+            },
+            { 
+              id: "rastreamento", 
+              label: "Rastreamento", 
+              icon: Navigation, 
+              visible: hasSubmoduleAccess(user?.permissions, "rastreamento") 
+            }
+          ]
+            .filter(tab => tab.visible)
+            .map(tab => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id as any);
+                    setSearchQuery("");
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 cursor-pointer ${
+                    isActive 
+                      ? "bg-white text-orange-600 shadow-2xs border border-orange-200/60 font-black" 
+                      : "text-slate-500 hover:text-slate-800 hover:bg-white/60"
+                  }`}
+                >
+                  <tab.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-orange-600" : "text-slate-400"}`} />
+                  <span className="whitespace-nowrap">{tab.label}</span>
+                </button>
+              );
+            })}
         </div>
 
         {/* Top Counters Summary Row - 4 Principal Indicators with Rectangular Style & Spring Transitions */}
-        {activeTab !== "reservas" && activeTab !== "rastreamento" && activeTab !== "checklist" && activeTab !== "multas" && subSectionFrota !== "custos" && (
+        {activeTab !== "reservas" && activeTab !== "rastreamento" && activeTab !== "checklist" && activeTab !== "multas" && subSectionFrota !== "custos" && subSectionFrota !== "manutencao" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {[
               { 
@@ -2553,7 +2660,7 @@ export default function Frota() {
                 value: stats.total, 
                 sub: "Veículos cadastrados", 
                 gradient: "from-orange-500 to-amber-500", 
-                icon: Truck, 
+                icon: Car, 
                 textColor: "text-orange-600",
                 bgLight: "bg-orange-50/70",
                 gradientBg: "from-white via-orange-50/15 to-orange-500/[0.04]",
@@ -2636,9 +2743,10 @@ export default function Frota() {
           <SubSystemLayout
             activeTab="Controle de Frota Leve"
             menuItems={[
-              { id: "veiculos", label: "Todos os Veículos", icon: Truck },
+              { id: "veiculos", label: "Todos os Veículos", icon: Car },
               { id: "vencidos", label: "Contratos Próximos", icon: Clock },
-              { id: "custos", label: "Abastecimento", icon: DollarSign }
+              { id: "custos", label: "Abastecimento", icon: DollarSign },
+              { id: "manutencao", label: "Manutenção", icon: Wrench }
             ]}
             activeSubSection={subSectionFrota}
             setActiveSubSection={setSubSectionFrota}
@@ -2646,7 +2754,6 @@ export default function Frota() {
           >
             {subSectionFrota === "custos" ? (
               <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 overflow-hidden">
-
         {/* Hidden File Input for CSV */}
         <input 
           type="file" 
@@ -2783,7 +2890,7 @@ export default function Frota() {
                               className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-semibold bg-white text-slate-700"
                             >
                               <option value="">Todas as Bases</option>
-                              {Array.from(new Set(veiculos.map(v => v.filial).filter(Boolean))).map(base => (
+                              {filiaisList.filter(f => f !== "Todos").map(base => (
                                 <option key={base} value={base}>{base}</option>
                               ))}
                             </select>
@@ -2850,6 +2957,185 @@ export default function Frota() {
                   />
                 )}
               </div>
+            ) : subSectionFrota === "manutencao" ? (
+              <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 overflow-hidden">
+                {/* Barra de Ações Superior da Manutenção e Filtros */}
+                <div className="shrink-0 bg-slate-50 pt-1 pb-2 shadow-sm border-b border-slate-200/60 flex flex-col gap-2">
+                  <div className="bg-white p-3.5 rounded-[22px] border border-slate-150 shadow-sm text-left flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-600 uppercase tracking-wider px-2 py-1 bg-slate-100 rounded-lg flex items-center gap-1.5">
+                        <Wrench className="w-3.5 h-3.5 text-[#114D38]" />
+                        Controle de Manutenção
+                      </span>
+                    </div>
+
+                    {/* Tab Selector & Action Buttons */}
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <div className="bg-slate-100 p-1 rounded-xl flex gap-1">
+                        <button
+                          onClick={() => setActiveManutencaoTab("tabela")}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-extrabold transition-all cursor-pointer ${
+                            activeManutencaoTab === "tabela"
+                              ? "bg-[#114D38] text-white shadow-sm"
+                              : "text-slate-600 hover:text-slate-800 hover:bg-slate-200/50"
+                          }`}
+                        >
+                          Tabela Geral
+                        </button>
+                        <button
+                          onClick={() => setActiveManutencaoTab("dashboard")}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-extrabold transition-all cursor-pointer ${
+                            activeManutencaoTab === "dashboard"
+                              ? "bg-[#114D38] text-white shadow-sm"
+                              : "text-slate-600 hover:text-slate-800 hover:bg-slate-200/50"
+                          }`}
+                        >
+                          BI Dashboard
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-extrabold transition-all cursor-pointer ${
+                          isFiltersOpen
+                            ? "bg-emerald-50 border-emerald-200 text-[#114D38]"
+                            : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        <Filter className="w-3.5 h-3.5" />
+                        {isFiltersOpen ? "Ocultar Filtros" : "Filtrar"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Painel Retrátil de Filtros */}
+                  <AnimatePresence>
+                    {isFiltersOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="bg-white p-5 rounded-[24px] border border-slate-150 shadow-sm grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-4 text-left">
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Placa</label>
+                            <input
+                              type="text"
+                              placeholder="Buscar placa..."
+                              value={filterPlaca}
+                              onChange={(e) => setFilterPlaca(e.target.value.toUpperCase())}
+                              className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-semibold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Escolher Mês/Ano</label>
+                            <input
+                              type="month"
+                              value={filterMesAno}
+                              onChange={(e) => handleMesAnoChange(e.target.value)}
+                              className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-semibold text-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período De</label>
+                            <input
+                              type="date"
+                              value={filterPeriodoInicio}
+                              onChange={(e) => setFilterPeriodoInicio(e.target.value)}
+                              className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-semibold text-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período Até</label>
+                            <input
+                              type="date"
+                              value={filterPeriodoFim}
+                              onChange={(e) => setFilterPeriodoFim(e.target.value)}
+                              className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-semibold text-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Base / Filial</label>
+                            <select
+                              value={filterBase}
+                              onChange={(e) => setFilterBase(e.target.value)}
+                              className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-semibold bg-white text-slate-700"
+                            >
+                              <option value="">Todas as Bases</option>
+                              {filiaisList.filter(f => f !== "Todos").map(base => (
+                                <option key={base} value={base}>{base}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tipo de Manutenção</label>
+                            <select
+                              value={filterTipoManutencao}
+                              onChange={(e) => setFilterTipoManutencao(e.target.value)}
+                              className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-semibold bg-white text-slate-700"
+                            >
+                              <option value="Todos">Todas as Manutenções</option>
+                              <option value="Preventiva">Apenas Preventiva</option>
+                              <option value="Corretiva">Apenas Corretiva</option>
+                            </select>
+                          </div>
+                          <div className="sm:col-span-2 md:col-span-6 flex justify-end gap-2 mt-1">
+                            <button
+                              onClick={() => {
+                                setFilterPlaca("");
+                                setFilterPeriodoInicio("");
+                                setFilterPeriodoFim("");
+                                setFilterBase("");
+                                setFilterCondutor("");
+                                setFilterMesAno("");
+                                setFilterTipoManutencao("Todos");
+                                setFilterOficinaManutencao("");
+                              }}
+                              className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 font-extrabold rounded-lg text-[10px] uppercase tracking-wider cursor-pointer"
+                            >
+                              Limpar Filtros
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* Tab content: Tabela Geral ou Dashboard */}
+                {activeManutencaoTab === "tabela" ? (
+                  <ManutencaoTableView
+                    manutencoes={manutencoes}
+                    veiculos={veiculos}
+                    filterPlaca={filterPlaca}
+                    filterBase={filterBase}
+                    filterCondutor={filterCondutor}
+                    filterPeriodoInicio={filterPeriodoInicio}
+                    filterPeriodoFim={filterPeriodoFim}
+                    filterTipo={filterTipoManutencao}
+                    filterOficina={filterOficinaManutencao}
+                    filterMesAno={filterMesAno}
+                    onMesAnoChange={handleMesAnoChange}
+                    onUpdateManutencao={handleUpdateManutencao}
+                    onDeleteManutencao={handleDeleteManutencao}
+                  />
+                ) : (
+                  <ManutencaoDashboardView
+                    manutencoes={manutencoes}
+                    veiculos={veiculos}
+                    filterPlaca={filterPlaca}
+                    filterBase={filterBase}
+                    filterCondutor={filterCondutor}
+                    filterPeriodoInicio={filterPeriodoInicio}
+                    filterPeriodoFim={filterPeriodoFim}
+                    filterTipo={filterTipoManutencao}
+                    filterOficina={filterOficinaManutencao}
+                    filterMesAno={filterMesAno}
+                    onMesAnoChange={handleMesAnoChange}
+                  />
+                )}
+              </div>
             ) : (
               <div className="flex-1 min-h-0 flex flex-col space-y-3 overflow-hidden">
                 {/* Sub-section Switcher & Filter Bar */}
@@ -2861,59 +3147,12 @@ export default function Frota() {
                     }
                   }}
                 >
-                  {/* Sub-menu Tabs for Frota Leve */}
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-xl border border-slate-200/80">
-                      <button
-                        onClick={() => setSubSectionFrota("veiculos")}
-                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          subSectionFrota === "veiculos"
-                            ? "bg-white text-orange-600 shadow-2xs font-black border border-orange-200/60"
-                            : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                        }`}
-                      >
-                        <Truck className={`w-3.5 h-3.5 ${subSectionFrota === "veiculos" ? "text-orange-600" : "text-slate-400"}`} />
-                        <span>Todos os Veículos</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-black ml-0.5 ${
-                          subSectionFrota === "veiculos" ? "bg-orange-100 text-orange-700" : "bg-slate-200 text-slate-600"
-                        }`}>
-                          {stats.total}
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={() => setSubSectionFrota("vencidos")}
-                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          subSectionFrota === "vencidos"
-                            ? "bg-white text-rose-600 shadow-2xs font-black border border-rose-200/60"
-                            : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                        }`}
-                      >
-                        <Clock className={`w-3.5 h-3.5 ${subSectionFrota === "vencidos" ? "text-rose-600" : "text-slate-400"}`} />
-                        <span>Contratos Próximos</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-black ml-0.5 ${
-                          subSectionFrota === "vencidos" ? "bg-rose-100 text-rose-700" : "bg-rose-50 text-rose-600 border border-rose-200"
-                        }`}>
-                          {stats.contratosProximos90}
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={() => setSubSectionFrota("custos")}
-                        className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer text-slate-600 hover:text-slate-900 hover:bg-white/50"
-                      >
-                        <DollarSign className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Abastecimento</span>
-                      </button>
+                  {subSectionFrota === "vencidos" && (
+                    <div className="flex items-center gap-2 px-3 py-1 bg-rose-50 border border-rose-200/80 rounded-xl text-[11px] font-bold text-rose-700 shadow-2xs w-fit">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 animate-pulse" />
+                      <span>Contratos vencendo em ≤ 90 dias ou vencidos ({displayedFrotaVeiculos.length} veículos)</span>
                     </div>
-
-                    {subSectionFrota === "vencidos" && (
-                      <div className="flex items-center gap-2 px-3 py-1 bg-rose-50 border border-rose-200/80 rounded-xl text-[11px] font-bold text-rose-700 shadow-2xs">
-                        <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 animate-pulse" />
-                        <span>Contratos vencendo em ≤ 90 dias ou vencidos ({displayedFrotaVeiculos.length} veículos)</span>
-                      </div>
-                    )}
-                  </div>
+                  )}
 
                   {/* Filter and Actions Bar */}
                   <div className="bg-white p-3 rounded-2xl border border-slate-150 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm">
@@ -3064,7 +3303,7 @@ export default function Frota() {
                                   <div className="text-[10px] font-semibold text-slate-400 mt-0.5">{toTitleCase(v.funcao)}</div>
                                 </td>
                                 <td className="py-4 px-4 text-left">
-                                  <div className="font-bold text-slate-750">{toTitleCase(v.filial)}</div>
+                                  <div className="font-bold text-slate-750">{normalizeBaseOperacional(v.filial)}</div>
                                   <div className="text-[10px] font-semibold text-slate-400 mt-0.5">{v.contrato}</div>
                                 </td>
                                 <td className="py-4 px-4 font-bold text-slate-500 uppercase text-[11px] text-left" title={v.locadora}>
@@ -3204,6 +3443,7 @@ export default function Frota() {
                 {subSectionChecklist === "realizados" && (
                   <ChecklistRealizados 
                     checklists={checklists} 
+                    vehicles={veiculos}
                     onDeleteChecklist={handleDeleteChecklist}
                   />
                 )}
@@ -3418,7 +3658,7 @@ export default function Frota() {
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[9px] text-slate-400 font-bold uppercase block tracking-wider">Filial / Alocação</span>
-                    <span className="font-bold text-slate-800 block mt-1">{selectedVeiculo.filial}</span>
+                    <span className="font-bold text-slate-800 block mt-1">{normalizeBaseOperacional(selectedVeiculo.filial)}</span>
                     <span className="text-[10px] text-slate-400 block mt-0.5">{selectedVeiculo.contrato}</span>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { motion } from "motion/react";
 import { useNavigate } from "react-router-dom";
-import { FileText, Truck, ArrowRight, ShieldCheck, LogOut, UserCheck, Lock, Sparkles, LogIn } from "lucide-react";
+import { FileText, Car, ArrowRight, ShieldCheck, LogOut, UserCheck, Lock, Sparkles, LogIn } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAuth, hasModuleAccess } from "../context/AuthContext";
 import { Login } from "../components/Login";
@@ -18,10 +18,18 @@ export default function Home() {
     targetModule: "",
     targetPath: ""
   });
+  const [deniedModalMessage, setDeniedModalMessage] = useState<string | null>(null);
 
-  const handleCardClick = (moduleName: string, path: string) => {
+  const docsAllowed = user ? hasModuleAccess(user.permissions, "documentos", user.email) : false;
+  const frotaAllowed = user ? hasModuleAccess(user.permissions, "frota", user.email) : false;
+
+  const handleCardClick = (moduleKey: "documentos" | "frota", moduleName: string, path: string) => {
     if (user) {
-      // Usuário já está logado na sessão atual: acessa tudo livremente sem pedir senha
+      const allowed = moduleKey === "documentos" ? docsAllowed : frotaAllowed;
+      if (!allowed) {
+        setDeniedModalMessage(`Seu usuário (${user.email}) não possui permissão ativa para acessar o módulo ${moduleName}. Solicite a liberação no Menu de Usuários.`);
+        return;
+      }
       navigate(path);
     } else {
       // Primeira vez / Usuário não logado: exige login para o módulo selecionado
@@ -141,20 +149,46 @@ export default function Home() {
             theme="emerald"
             delay={0.15}
             isLoggedIn={Boolean(user)}
-            onClick={() => handleCardClick("Lançamento de Documentos", "/documentos/dashboard")}
+            hasAccess={docsAllowed}
+            onClick={() => handleCardClick("documentos", "Lançamento de Documentos", "/documentos/dashboard")}
           />
 
           {/* Card 2: Controle de Frota Leve */}
           <ModuleCard
             title="Controle de Frota Leve"
             description="Gestão operacional de veículos, telemetria ao vivo, vistorias de checklist, manutenções e reservas."
-            icon={Truck}
+            icon={Car}
             theme="orange"
             delay={0.25}
             isLoggedIn={Boolean(user)}
-            onClick={() => handleCardClick("Controle de Frota Leve", "/frota")}
+            hasAccess={frotaAllowed}
+            onClick={() => handleCardClick("frota", "Controle de Frota Leve", "/frota")}
           />
         </div>
+
+        {/* Modal de Acesso Negado */}
+        {deniedModalMessage && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 text-center space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
+                <Lock className="w-7 h-7" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Acesso Restrito ao Módulo</h3>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                {deniedModalMessage}
+              </p>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeniedModalMessage(null)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-xs"
+                >
+                  Entendido
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Links Públicos Diretos para Colaboradores (Sem exigência de senha/módulos restritos) */}
         <div className="mt-8 max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -195,6 +229,7 @@ interface ModuleCardProps {
   theme: "emerald" | "orange";
   delay: number;
   isLoggedIn: boolean;
+  hasAccess?: boolean;
   onClick: () => void;
 }
 
@@ -205,6 +240,7 @@ function ModuleCard({
   theme,
   delay,
   isLoggedIn,
+  hasAccess = true,
   onClick
 }: ModuleCardProps) {
   const isEmerald = theme === "emerald";
@@ -239,10 +275,17 @@ function ModuleCard({
             {/* Badge de Requisito de Login ou Acesso Liberado */}
             <div className="relative z-10">
               {isLoggedIn ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10.5px] font-bold">
-                  <UserCheck className="w-3 h-3 text-emerald-600" />
-                  Liberado
-                </span>
+                hasAccess ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10.5px] font-bold">
+                    <UserCheck className="w-3 h-3 text-emerald-600" />
+                    Liberado
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10.5px] font-bold">
+                    <Lock className="w-3 h-3 text-rose-600" />
+                    Acesso Restrito
+                  </span>
+                )
               ) : (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-[10.5px] font-bold group-hover:border-emerald-300 group-hover:bg-emerald-50 group-hover:text-emerald-700 transition-colors">
                   <Lock className="w-3 h-3" />

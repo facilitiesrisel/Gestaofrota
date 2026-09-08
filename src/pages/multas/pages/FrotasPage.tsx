@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchAllData, saveVeiculo, deleteVeiculo, cleanString, formatInputText } from '../services/storage';
 import { Veiculo, Multa } from '../types';
-import { Plus, Search, Car, RefreshCw, Edit, Trash2, ArrowUpDown, X, Truck, Hash, Settings, FileText, DollarSign, Filter, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
+import { Plus, Search, Car, RefreshCw, Edit, Trash2, ArrowUpDown, X, Hash, Settings, FileText, DollarSign, Filter, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import Loading from '../components/Loading';
+import { MercosulPlateBadge } from '../../../components/MercosulPlateBadge';
 
 const FrotasPage: React.FC = () => {
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
@@ -316,7 +317,9 @@ const FrotasPage: React.FC = () => {
                                     </td>
                                     <td className="px-4 py-2 border-r border-gray-100"><span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase border ${isActive ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>{veiculo.status || 'ATIVO'}</span></td>
                                     <td className="px-4 py-2 border-r border-gray-100 text-xs font-black text-gray-700">{veiculo.id}</td>
-                                    <td className="px-4 py-2 border-r border-gray-100 text-xs font-bold text-gray-600">{veiculo.placa}</td>
+                                    <td className="px-4 py-2 border-r border-gray-100 whitespace-nowrap align-middle">
+                                        <MercosulPlateBadge plate={veiculo.placa} size="sm" />
+                                    </td>
                                     <td className="px-4 py-2 border-r border-gray-100 text-xs text-gray-500">{veiculo.marca}</td>
                                     <td className="px-4 py-2 border-r border-gray-100 text-xs text-gray-500">{veiculo.modelo}</td>
                                     <td className="px-4 py-2 border-r border-gray-100 text-xs text-gray-500">{veiculo.ano}</td>
@@ -341,7 +344,7 @@ const FrotasPage: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-3xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh] custom-scrollbar uppercase">
-            <h3 className="text-xl font-bold mb-6 text-gray-800 border-b pb-2 flex items-center"><Truck className="mr-2 text-risel-green"/> {currentVeiculo.id ? 'EDITAR VEÍCULO' : 'NOVO VEÍCULO'}</h3>
+            <h3 className="text-xl font-bold mb-6 text-gray-800 border-b pb-2 flex items-center"><Car className="mr-2 text-risel-green"/> {currentVeiculo.id ? 'EDITAR VEÍCULO' : 'NOVO VEÍCULO'}</h3>
             <div className="space-y-6">
                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                    <h4 className="text-xs font-black text-gray-400 uppercase mb-3 flex items-center"><Hash size={12} className="mr-1"/> Identificação & Status</h4>

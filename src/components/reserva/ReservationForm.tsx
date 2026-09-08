@@ -5,9 +5,18 @@ import { ReservationStatus, Vehicle, Reservation, FuelLevel } from '../../types_
 import { SP_CITIES, LEADERSHIP_ROLES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import { fetchDistanceWithGemini } from '../../services/geminiService';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
+import { 
+  filterVehiclesForSaoPauloRodizio, 
+  isDestinationSaoPaulo, 
+  checkVehicleRodizio, 
+  getRestrictedDigitsForTrip, 
+  getPlateFinalDigit 
+} from '../../services/rodizioService';
 import { useAuth } from '../../context/ReservationAuthContext';
 import Modal from './Modal';
 import { CarIcon, MapPinIcon, CalendarIcon, DocumentTextIcon, CheckIcon, ExclamationTriangleIcon } from './icons';
+import { normalizeCidade } from '../../utils/baseOperacional';
+import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 
 // User Icon (Not in standard set, creating local)
 const UserIcon = ({ className }: { className?: string }) => (
@@ -174,16 +183,31 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
       return;
     }
 
+    // --- VERIFICAÇÃO INTELIGENTE DE RODÍZIO MUNICIPAL EM SÃO PAULO CAPITAL ---
+    const isSPTrip = isDestinationSaoPaulo(formData.destinationCity, formData.destination);
+    const rodizioFilter = filterVehiclesForSaoPauloRodizio(
+      availableVehicles,
+      reqStartDate,
+      reqEndDate,
+      formData.destinationCity,
+      formData.destination
+    );
+
+    // Se o destino for São Paulo, a lista de veículos elegíveis exclui os com final de placa restrito no período
+    const eligibleVehicles = isSPTrip && rodizioFilter.allowedVehicles.length > 0
+      ? rodizioFilter.allowedVehicles
+      : availableVehicles;
+
     // --- LOGIC FOR HB20 CONFLICT / DOWNGRADE CHECK ---
     // Determine effective role: If driver is different, use driver's role for hierarchy logic
     const effectiveRole = isDriverSameAsRequester ? formData.role : formData.driverRole;
     
     const isLeadership = LEADERSHIP_ROLES.some(r => effectiveRole.toLowerCase().includes(r));
     const anyHb20Exists = vehicles.some(v => v.model.toLowerCase().includes('hb20'));
-    const availableHb20 = availableVehicles.some(v => v.model.toLowerCase().includes('hb20'));
+    const availableHb20 = eligibleVehicles.some(v => v.model.toLowerCase().includes('hb20'));
 
-    // Se for Gestão, existir HB20 na frota, MAS nenhum disponível agora, e houver outros carros (Downgrade possível):
-    if (!initialVehicleId && isLeadership && anyHb20Exists && !availableHb20 && availableVehicles.length > 0) {
+    // Se for Gestão, existir HB20 na frota, MAS nenhum disponível agora (ou nenhum liberado de rodízio), e houver outros carros (Downgrade possível):
+    if (!initialVehicleId && isLeadership && anyHb20Exists && !availableHb20 && eligibleVehicles.length > 0) {
         setModalState({
             isOpen: true,
             title: 'Veículo Preferencial Indisponível',
@@ -195,18 +219,22 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                         </div>
                         <div>
                             <p className="text-sm font-bold text-amber-800">Modelo HB20 Indisponível</p>
-                            <p className="text-xs text-amber-700">Conflito de agenda nas datas selecionadas.</p>
+                            <p className="text-xs text-amber-700">
+                                {isSPTrip 
+                                  ? 'Nenhum modelo HB20 liberado de rodízio em SP para as datas selecionadas.'
+                                  : 'Conflito de agenda nas datas selecionadas.'}
+                            </p>
                         </div>
                     </div>
                     
                     <p className="text-gray-600 text-sm mb-6 leading-relaxed">
-                        No momento, todos os veículos do modelo HB20 estão reservados para o período de <strong>{new Date(formData.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</strong> a <strong>{parseDateTime(formData.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</strong>.
+                        No momento, todos os veículos do modelo HB20 {isSPTrip ? 'estão reservados ou restritos pelo rodízio municipal' : 'estão reservados'} para o período de <strong>{new Date(formData.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</strong> a <strong>{parseDateTime(formData.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</strong>.
                     </p>
                     
                     <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
                         <p className="text-gray-900 font-bold text-sm mb-2">Opção de Downgrade:</p>
                         <p className="text-xs text-gray-600">
-                            Você pode prosseguir com a reserva utilizando um veículo básico disponível (Gol/Saveiro).
+                            Você pode prosseguir com a reserva utilizando um veículo básico disponível {isSPTrip && '(garantindo placa liberada de rodízio em SP)'}.
                         </p>
                     </div>
 
@@ -220,8 +248,8 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                         <button 
                             onClick={async () => { 
                                 setModalState({ ...modalState, isOpen: false }); 
-                                // Force select non-HB20 (pass invalid role to skip HB20 preference logic)
-                                const fallbackVehicle = selectVehicleByRole(availableVehicles, 'force_basic'); 
+                                // Force select non-HB20 from eligible list
+                                const fallbackVehicle = selectVehicleByRole(eligibleVehicles, 'force_basic'); 
                                 await proceedWithReservation(fallbackVehicle); 
                             }} 
                             className="bg-primary text-white font-bold py-2 px-4 rounded-lg hover:bg-green-800 transition-colors text-sm shadow-md"
@@ -240,6 +268,52 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     if (initialVehicleId) {
         const specificVehicle = availableVehicles.find(v => v.id === initialVehicleId);
         if (specificVehicle) {
+            // Se o destino for São Paulo e o veículo pré-selecionado estiver com restrição de rodízio:
+            if (isSPTrip && rodizioFilter.restrictedVehicles.some(rv => rv.id === specificVehicle.id)) {
+                const finalDigit = getPlateFinalDigit(specificVehicle.plate);
+                const { restrictedDays } = checkVehicleRodizio(specificVehicle.plate, reqStartDate, reqEndDate);
+                setModalState({
+                    isOpen: true,
+                    title: 'Alerta Inteligente de Rodízio em SP',
+                    content: (
+                        <div className="space-y-4 text-left">
+                            <div className="flex items-start gap-3 bg-amber-50 p-4 rounded-xl border border-amber-200 text-amber-900">
+                                <div className="bg-amber-100 p-2 rounded-full shrink-0 text-amber-700 mt-0.5">
+                                    <ExclamationTriangleIcon className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-sm text-amber-950">Veículo com Restrição de Rodízio</h4>
+                                    <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                                        O veículo selecionado <strong>{specificVehicle.model} ({specificVehicle.plate})</strong> possui final de placa <strong>{finalDigit}</strong>, que está em rodízio no Centro Expandido de São Paulo na(s) <strong>{restrictedDays.join(', ')}</strong>.
+                                    </p>
+                                </div>
+                            </div>
+                            <p className="text-xs text-slate-600">
+                                Para sua segurança e evitar multas de trânsito da CET, o sistema pode selecionar automaticamente outro veículo com final de placa liberado para circulação.
+                            </p>
+                            <div className="flex justify-end gap-2 pt-2">
+                                <button 
+                                    onClick={() => { setModalState({ ...modalState, isOpen: false }); setIsSubmitting(false); }} 
+                                    className="bg-slate-200 text-slate-700 font-bold py-2 px-3.5 rounded-lg text-xs hover:bg-slate-300 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button 
+                                    onClick={async () => {
+                                        setModalState({ ...modalState, isOpen: false });
+                                        const liberatedVehicle = selectVehicleByRole(rodizioFilter.allowedVehicles, effectiveRole);
+                                        await proceedWithReservation(liberatedVehicle);
+                                    }} 
+                                    className="bg-primary text-white font-bold py-2 px-3.5 rounded-lg text-xs hover:bg-green-800 transition-colors shadow"
+                                >
+                                    Selecionar Veículo Liberado
+                                </button>
+                            </div>
+                        </div>
+                    )
+                });
+                return;
+            }
             vehicleToReserve = specificVehicle;
         } else {
              setModalState({
@@ -255,7 +329,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                             </button>
                             <button onClick={async () => { 
                                 setModalState({ ...modalState, isOpen: false }); 
-                                const fallbackVehicle = selectVehicleByRole(availableVehicles, effectiveRole);
+                                const fallbackVehicle = selectVehicleByRole(eligibleVehicles, effectiveRole);
                                 await proceedWithReservation(fallbackVehicle); 
                             }} className="bg-primary text-white font-bold py-2 px-4 rounded hover:bg-green-800">
                                 Sim, selecionar outro
@@ -267,7 +341,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
             return;
         }
     } else {
-        vehicleToReserve = selectVehicleByRole(availableVehicles, effectiveRole);
+        vehicleToReserve = selectVehicleByRole(eligibleVehicles, effectiveRole);
     }
 
     if (vehicleToReserve) {
@@ -335,8 +409,8 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
   };
   
   const proceedWithReservation = async (vehicleToReserve: Vehicle) => {
-    const city = formData.destinationCity;
-    const { distance, error: distanceError } = await fetchDistanceWithGemini('Paulínia/SP', city);
+    const city = normalizeCidade(formData.destinationCity);
+    const { distance } = await fetchDistanceWithGemini('Paulínia/SP', city);
 
     // Determina o nome do condutor
     const finalDriverName = isDriverSameAsRequester ? formData.requesterName : formData.driverName;
@@ -344,9 +418,14 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     // Parse proposed return date and time using local timezone utility
     const returnDateFixed = parseDateTime(formData.returnDate);
 
+    // Checagem de rodízio para São Paulo Capital
+    const isSP = isDestinationSaoPaulo(city, formData.destination);
+    const plateFinal = getPlateFinalDigit(vehicleToReserve.plate);
+    const rodizioInfo = checkVehicleRodizio(vehicleToReserve.plate, formData.departureDateTime, formData.returnDate);
+
     const reservationData: Omit<Reservation, 'id' | 'status' | 'actualReturnDateTime' | 'finalKm' | 'requestTimestamp'> = {
       requesterName: formData.requesterName,
-      department: formData.department,
+      department: normalizeNomeSetor(formData.department),
       role: formData.role,
       email: formData.email,
       departureDateTime: new Date(formData.departureDateTime),
@@ -364,55 +443,91 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
 
     await addReservation(reservationData);
     
+    // Preparar lista de detalhes para o e-mail
+    const emailDetails = [
+        { label: "Solicitante", value: formData.requesterName },
+        { label: "Condutor", value: finalDriverName },
+        { label: "Departamento", value: normalizeNomeSetor(formData.department) },
+        { label: "Veículo Sugerido", value: `${vehicleToReserve.model} - ${vehicleToReserve.plate}` },
+        { label: "Data de Saída", value: new Date(formData.departureDateTime).toLocaleString('pt-BR') },
+        { label: "Retorno Previsto", value: returnDateFixed.toLocaleString('pt-BR') },
+        { label: "Destino", value: `${city} - ${formData.destination}` },
+        { label: "Distância Estimada", value: distance ? `${distance.toLocaleString('pt-BR')} km` : 'N/A' },
+        { label: "Motivo", value: formData.purpose }
+    ];
+
+    if (isSP) {
+        emailDetails.push({
+            label: "Rodízio SP Capital",
+            value: rodizioInfo.isRestricted 
+                ? `Atenção: Restrição na(s) ${rodizioInfo.restrictedDays.join(', ')}` 
+                : `Liberado (Final ${plateFinal})`
+        });
+    }
+
     // Enviar e-mail para o administrador
     const emailHtml = generateEmailHtml(
         "Detalhes da Solicitação",
-        [
-            { label: "Solicitante", value: formData.requesterName },
-            { label: "Condutor", value: finalDriverName }, // Inclui condutor no email
-            { label: "Departamento", value: formData.department },
-            { label: "Veículo Sugerido", value: `${vehicleToReserve.model} - ${vehicleToReserve.plate}` },
-            { label: "Data de Saída", value: new Date(formData.departureDateTime).toLocaleString('pt-BR') },
-            { label: "Retorno Previsto", value: returnDateFixed.toLocaleString('pt-BR') },
-            { label: "Destino", value: `${city} - ${formData.destination}` },
-            { label: "Distância Estimada", value: distance ? `${distance.toLocaleString('pt-BR')} km` : 'N/A' },
-            { label: "Motivo", value: formData.purpose }
-        ],
+        emailDetails,
         '#ff9b00', // Laranja
         window.location.origin // Action Link para o sistema
     );
 
     await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Nova Solicitação de Reserva realizada por: ${formData.requesterName}`, emailHtml);
 
-    if (distanceError) {
-        console.warn("Distance calculation API failed but reservation succeeded:", distanceError);
-    }
-    
     setModalState({
         isOpen: true,
-        title: 'Solicitação Enviada!',
+        title: 'Solicitação Enviada com Sucesso!',
         content: (
-          <div>
-            <div className="p-4 mb-4 bg-green-100 text-green-800 rounded-lg">
-                <h4 className="font-bold flex items-center gap-2"><CheckIcon className="h-6 w-6"/> Reserva enviada com sucesso!</h4>
-                <p className="text-sm mt-2">
-                    Sua solicitação foi registrada. 
-                </p>
-                <p className="text-sm mt-2 font-bold">
-                    A resposta da análise (aprovação ou recusa) será enviada para o e-mail <strong>{formData.email}</strong>.
-                </p>
-            </div>
-            
-            {distanceError && (
-                <div className="mb-4 p-3 bg-yellow-100 border-l-4 border-yellow-400 text-yellow-800 text-sm rounded-md" role="alert">
-                    <p className="font-bold">Aviso sobre o cálculo de distância</p>
-                    <p className="mt-1">{distanceError}</p>
+          <div className="space-y-4 text-left">
+            <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-[#114D38] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                    <CheckIcon className="h-5 w-5"/>
                 </div>
-            )}
+                <div>
+                    <h4 className="font-extrabold text-sm uppercase tracking-wide text-emerald-950">
+                        Reserva registrada com sucesso!
+                    </h4>
+                    <p className="text-xs text-emerald-800 mt-1">
+                        Sua solicitação de veículo próprio foi cadastrada no sistema.
+                    </p>
+                    <p className="text-xs text-emerald-900 font-bold mt-1.5 bg-emerald-100/70 p-2 rounded-lg border border-emerald-200">
+                        A análise e confirmação serão enviadas para: <span className="underline">{formData.email}</span>
+                    </p>
+                </div>
+            </div>
 
-            <div className="bg-gray-50 p-3 rounded-md text-left space-y-2 text-sm border border-gray-200">
-                <p><strong>Veículo pré-reservado:</strong> {vehicleToReserve.model} ({vehicleToReserve.plate})</p>
-                {distance && <p><strong>Distância estimada (ida e volta):</strong> {distance.toLocaleString('pt-BR')} km</p>}
+            <div className="bg-slate-50 p-4 rounded-xl text-left space-y-2.5 text-xs border border-slate-200">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-slate-500 font-bold uppercase">Veículo Sugerido:</span>
+                    <span className="font-extrabold text-slate-800 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                        {vehicleToReserve.model} • {vehicleToReserve.plate}
+                    </span>
+                </div>
+                {isSP && (
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                        <span className="text-slate-500 font-bold uppercase">Rodízio SP Capital:</span>
+                        <span className={`font-extrabold px-2 py-0.5 rounded text-[11px] border ${
+                            rodizioInfo.isRestricted 
+                                ? 'bg-amber-100 text-amber-900 border-amber-300' 
+                                : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        }`}>
+                            {rodizioInfo.isRestricted 
+                                ? `Atenção: Restrito na(s) ${rodizioInfo.restrictedDays.join(', ')}` 
+                                : `✅ Liberado (Final ${plateFinal})`}
+                        </span>
+                    </div>
+                )}
+                {distance && (
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                        <span className="text-slate-500 font-bold uppercase">Distância Estimada (Ida/Volta):</span>
+                        <span className="font-extrabold text-emerald-700">{distance.toLocaleString('pt-BR')} km</span>
+                    </div>
+                )}
+                <div className="flex items-center justify-between">
+                    <span className="text-slate-500 font-bold uppercase">Destino:</span>
+                    <span className="font-semibold text-slate-700">{city} - {formData.destination}</span>
+                </div>
             </div>
 
             <button
@@ -426,9 +541,9 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                     setIsDriverSameAsRequester(true);
                     onSuccess?.();
                 }}
-                className="mt-6 w-full bg-primary text-white font-bold py-2 px-4 rounded hover:bg-green-800"
+                className="w-full py-3.5 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-[#0d3b2b] hover:to-[#092b1f] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer"
             >
-              Fechar
+              Concluir e Fechar
             </button>
           </div>
         ),
@@ -437,7 +552,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
   }
 
   return (
-    <div className="h-full max-w-4xl mx-auto pb-10">
+    <div className="w-full bg-white md:rounded-[24px] shadow-sm border border-slate-200 overflow-hidden text-left font-sans">
       <Modal 
         isOpen={modalState.isOpen}
         onClose={() => setModalState({ ...modalState, isOpen: false })}
@@ -446,209 +561,353 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         {modalState.content}
       </Modal>
 
-      {preSelectedVehicle && (
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3 text-blue-800 animate-pulse">
-              <CarIcon className="h-6 w-6" />
-              <div>
-                  <p className="font-bold">Veículo Selecionado: {preSelectedVehicle.model}</p>
-                  <p className="text-sm">Placa: {preSelectedVehicle.plate}</p>
+      {/* Header Institucional Risel */}
+      <div className="bg-gradient-to-r from-[#114D38] via-[#0d3b2b] to-[#114D38] p-5 sm:p-6 text-white border-b border-emerald-900">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[11px] font-bold text-emerald-200 uppercase tracking-wider mb-2">
+              Frota Leve Risel
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+              Solicitação de Veículo Próprio
+            </h2>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-5 sm:p-8 bg-slate-50/50 space-y-6">
+        {preSelectedVehicle && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3 text-emerald-900 shadow-sm">
+                <div className="p-2.5 bg-[#114D38] text-white rounded-xl shadow-sm">
+                    <CarIcon className="h-5 w-5" />
+                </div>
+                <div>
+                    <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Veículo Pré-Selecionado</p>
+                    <p className="text-base font-black text-emerald-950">{preSelectedVehicle.model} <span className="text-sm font-mono font-bold bg-white px-2 py-0.5 rounded border border-emerald-200 ml-1">{preSelectedVehicle.plate}</span></p>
+                </div>
+            </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-6 sm:space-y-8">
+          
+          {/* SECTION 1: IDENTIFICAÇÃO */}
+          <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
+                      01
+                  </div>
+                  <div>
+                      <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
+                          Identificação do Solicitante e Condutor
+                      </h3>
+                      <p className="text-[11px] text-slate-500 font-medium">Dados corporativos de quem está requisitando o veículo</p>
+                  </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                  <div>
+                      <label htmlFor="requesterName" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Nome Completo (Solicitante) *
+                      </label>
+                      <input 
+                          type="text" 
+                          name="requesterName" 
+                          placeholder="Digite seu nome completo" 
+                          value={formData.requesterName} 
+                          onChange={handleChange} 
+                          required 
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase" 
+                      />
+                  </div>
+                  <div>
+                      <label htmlFor="email" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          E-mail Corporativo *
+                      </label>
+                      <input 
+                          type="email" 
+                          name="email" 
+                          placeholder="seu.email@risel.com.br" 
+                          value={formData.email} 
+                          onChange={handleChange} 
+                          required 
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all" 
+                      />
+                  </div>
+                  <div>
+                      <label htmlFor="department" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Setor / Departamento *
+                      </label>
+                      <input 
+                          type="text" 
+                          name="department" 
+                          list="setores-oficiais-list"
+                          placeholder="Ex: Comercial, Logística, Manutenção" 
+                          value={formData.department} 
+                          onChange={handleChange} 
+                          required 
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all" 
+                      />
+                      <datalist id="setores-oficiais-list">
+                          {SETORES_OFICIAIS.map(s => (
+                              <option key={s} value={s} />
+                          ))}
+                      </datalist>
+                  </div>
+                  <div>
+                      <label htmlFor="role" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Cargo / Função (Solicitante) *
+                      </label>
+                      <input 
+                          type="text" 
+                          name="role" 
+                          placeholder="Ex: Analista, Coordenador, Gerente" 
+                          value={formData.role} 
+                          onChange={handleChange} 
+                          required 
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase" 
+                      />
+                  </div>
+
+                  {/* --- LÓGICA DO CONDUTOR --- */}
+                  <div className="md:col-span-2 bg-slate-50/80 p-4 sm:p-5 rounded-xl border border-slate-200">
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+                          O Condutor é o mesmo da Reserva?
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <button
+                              type="button"
+                              onClick={() => setIsDriverSameAsRequester(true)}
+                              className={`flex items-center gap-3 p-3 rounded-xl border text-xs sm:text-sm font-bold transition-all text-left ${
+                                  isDriverSameAsRequester
+                                      ? 'bg-emerald-50/80 border-[#114D38] text-[#114D38] shadow-sm ring-1 ring-[#114D38]'
+                                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                              }`}
+                          >
+                              <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isDriverSameAsRequester ? 'border-[#114D38]' : 'border-slate-300'}`}>
+                                  {isDriverSameAsRequester && <span className="w-2 h-2 rounded-full bg-[#114D38]" />}
+                              </span>
+                              Sim, sou o condutor do veículo
+                          </button>
+                          <button
+                              type="button"
+                              onClick={() => setIsDriverSameAsRequester(false)}
+                              className={`flex items-center gap-3 p-3 rounded-xl border text-xs sm:text-sm font-bold transition-all text-left ${
+                                  !isDriverSameAsRequester
+                                      ? 'bg-emerald-50/80 border-[#114D38] text-[#114D38] shadow-sm ring-1 ring-[#114D38]'
+                                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                              }`}
+                          >
+                              <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${!isDriverSameAsRequester ? 'border-[#114D38]' : 'border-slate-300'}`}>
+                                  {!isDriverSameAsRequester && <span className="w-2 h-2 rounded-full bg-[#114D38]" />}
+                              </span>
+                              Não, o condutor será outro colaborador
+                          </button>
+                      </div>
+
+                      {!isDriverSameAsRequester && (
+                          <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                  <label htmlFor="driverName" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                      Nome do Condutor *
+                                  </label>
+                                  <input 
+                                      type="text" 
+                                      name="driverName" 
+                                      placeholder="Nome completo do motorista" 
+                                      value={formData.driverName} 
+                                      onChange={handleChange} 
+                                      required={!isDriverSameAsRequester}
+                                      className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] transition-all uppercase" 
+                                  />
+                              </div>
+                              <div>
+                                  <label htmlFor="driverRole" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                      Cargo / Função do Condutor *
+                                  </label>
+                                  <input 
+                                      type="text" 
+                                      name="driverRole" 
+                                      placeholder="Ex: Supervisor, Operador" 
+                                      value={formData.driverRole} 
+                                      onChange={handleChange} 
+                                      required={!isDriverSameAsRequester}
+                                      className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] transition-all uppercase" 
+                                  />
+                                  <p className="text-[11px] text-slate-500 mt-1">Utilizado para determinar a categoria de veículo adequada.</p>
+                              </div>
+                          </div>
+                      )}
+                  </div>
               </div>
           </div>
-      )}
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        
-        {/* SECTION 1: IDENTIFICAÇÃO */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center gap-3">
-                <div className="p-2 bg-white rounded-full shadow-sm text-slate-500">
-                    <UserIcon className="h-5 w-5" />
-                </div>
-                <h3 className="font-bold text-slate-700 text-lg">Identificação</h3>
-            </div>
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="relative">
-                    <label htmlFor="requesterName" className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome Completo (Solicitante)</label>
-                    <input type="text" name="requesterName" placeholder="Digite seu nome" value={formData.requesterName} onChange={handleChange} required className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase" />
-                </div>
-                <div className="relative">
-                    <label htmlFor="email" className="block text-xs font-bold text-slate-500 uppercase mb-1">E-mail Corporativo</label>
-                    <input type="email" name="email" placeholder="seu.email@risel.com.br" value={formData.email} onChange={handleChange} required className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all" />
-                </div>
-                <div className="relative">
-                    <label htmlFor="department" className="block text-xs font-bold text-slate-500 uppercase mb-1">Setor / Departamento</label>
-                    <input type="text" name="department" placeholder="Ex: Comercial, Logística" value={formData.department} onChange={handleChange} required className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase" />
-                </div>
-                <div className="relative">
-                    <label htmlFor="role" className="block text-xs font-bold text-slate-500 uppercase mb-1">Cargo / Função (Solicitante)</label>
-                    <input type="text" name="role" placeholder="Ex: Analista, Gerente" value={formData.role} onChange={handleChange} required className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase" />
-                </div>
+          {/* SECTION 2: DADOS DA VIAGEM */}
+          <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
+                      02
+                  </div>
+                  <div>
+                      <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
+                          Roteiro & Período da Viagem
+                      </h3>
+                      <p className="text-[11px] text-slate-500 font-medium">Horários de saída e retorno previstos e local de destino</p>
+                  </div>
+              </div>
 
-                {/* --- LÓGICA DO CONDUTOR --- */}
-                <div className="relative md:col-span-2 bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-3">O Condutor é o mesmo da Reserva?</label>
-                    <div className="flex items-center gap-6">
-                        <label className="flex items-center gap-2 cursor-pointer group">
-                            <input 
-                                type="radio" 
-                                checked={isDriverSameAsRequester} 
-                                onChange={() => setIsDriverSameAsRequester(true)} 
-                                className="w-4 h-4 text-primary focus:ring-primary border-gray-300"
-                            />
-                            <span className="text-sm font-medium text-slate-700 group-hover:text-primary transition-colors">Sim</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer group">
-                            <input 
-                                type="radio" 
-                                checked={!isDriverSameAsRequester} 
-                                onChange={() => setIsDriverSameAsRequester(false)} 
-                                className="w-4 h-4 text-primary focus:ring-primary border-gray-300"
-                            />
-                            <span className="text-sm font-medium text-slate-700 group-hover:text-primary transition-colors">Não</span>
-                        </label>
-                    </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                  <div>
+                      <label htmlFor="departureDateTime" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Data e Hora de Saída *
+                      </label>
+                      <div className="relative">
+                          <input 
+                              type="datetime-local" 
+                              name="departureDateTime" 
+                              value={formData.departureDateTime} 
+                              onChange={handleChange} 
+                              required 
+                              min={minDateTime} 
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all" 
+                          />
+                      </div>
+                  </div>
+                  <div>
+                      <label htmlFor="returnDate" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Data e Horário de Retorno Previsto *
+                      </label>
+                      <div className="relative">
+                          <input 
+                              type="datetime-local" 
+                              name="returnDate" 
+                              value={formData.returnDate} 
+                              onChange={handleChange} 
+                              required 
+                              min={minReturnDate} 
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all" 
+                          />
+                      </div>
+                  </div>
+                  <div>
+                      <label htmlFor="destinationCity" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Cidade de Destino *
+                      </label>
+                      <div className="relative">
+                          <input
+                              type="text"
+                              id="destinationCity"
+                              name="destinationCity"
+                              value={formData.destinationCity}
+                              onChange={handleChange}
+                              list="cities"
+                              required
+                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase"
+                              placeholder="Digite ou selecione a cidade"
+                          />
+                      </div>
+                      <datalist id="cities">
+                          {SP_CITIES.map(city => <option key={city} value={city} />)}
+                      </datalist>
+                  </div>
+                  <div>
+                      <label htmlFor="destination" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Local Específico de Destino *
+                      </label>
+                      <input 
+                          type="text" 
+                          name="destination" 
+                          value={formData.destination} 
+                          onChange={handleChange} 
+                          required 
+                          placeholder="Ex: Usina, Escritório Cliente, Posto..." 
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase" 
+                      />
+                  </div>
 
-                    {!isDriverSameAsRequester && (
-                        <div className="mt-4 animate-fadeIn grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label htmlFor="driverName" className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome do Condutor</label>
-                                <input 
-                                    type="text" 
-                                    name="driverName" 
-                                    placeholder="Nome completo do motorista" 
-                                    value={formData.driverName} 
-                                    onChange={handleChange} 
-                                    required={!isDriverSameAsRequester}
-                                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase" 
-                                />
-                            </div>
-                            <div>
-                                <label htmlFor="driverRole" className="block text-xs font-bold text-slate-500 uppercase mb-1">Cargo / Função do Condutor</label>
-                                <input 
-                                    type="text" 
-                                    name="driverRole" 
-                                    placeholder="Ex: Supervisor, Coordenador" 
-                                    value={formData.driverRole} 
-                                    onChange={handleChange} 
-                                    required={!isDriverSameAsRequester}
-                                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase" 
-                                />
-                                <p className="text-[10px] text-gray-500 mt-1">Utilizado para determinar a categoria do veículo (Executivo/Básico).</p>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
+                  {/* Alerta Inteligente de Rodízio em São Paulo Capital */}
+                  {isDestinationSaoPaulo(formData.destinationCity, formData.destination) && (
+                      <div className="md:col-span-2 p-3.5 bg-sky-50 border border-sky-200 rounded-xl flex items-start gap-3 text-xs text-sky-900 shadow-sm animate-fadeIn">
+                          <div className="w-8 h-8 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center shrink-0 mt-0.5 text-base font-bold shadow-xs">
+                              🛡️
+                          </div>
+                          <div className="space-y-1 text-left">
+                              <div className="flex items-center gap-2">
+                                  <p className="font-extrabold text-sky-950 uppercase tracking-wider text-[11px]">
+                                      Alerta Inteligente: Rodízio SP Capital
+                                  </p>
+                                  <span className="bg-sky-200/80 text-sky-900 text-[10px] font-black px-1.5 py-0.5 rounded">
+                                      Ativo
+                                  </span>
+                              </div>
+                              <p className="text-sky-800 leading-relaxed text-xs">
+                                  Destino em <strong>São Paulo Capital</strong> detectado. O sistema selecionará automaticamente um veículo da frota com <strong>final de placa liberado</strong> nos dias da viagem, garantindo conformidade com o rodízio municipal da CET.
+                              </p>
+                              {formData.departureDateTime && (
+                                  <p className="text-[11px] text-sky-900 font-semibold bg-sky-100/70 p-2 rounded-lg border border-sky-200/60 mt-1">
+                                      {(() => {
+                                          const { digits, dayNames } = getRestrictedDigitsForTrip(formData.departureDateTime, formData.returnDate);
+                                          if (dayNames.length > 0) {
+                                              return `Dias úteis da viagem: ${dayNames.join(', ')} — Placas restritas com final ${digits.join(', ')} serão excluídas automaticamente da escolha.`;
+                                          }
+                                          return 'Viagem em final de semana — Circulação livre sem restrição de rodízio.';
+                                      })()}
+                                  </p>
+                              )}
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
 
-        {/* SECTION 2: DADOS DA VIAGEM */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center gap-3">
-                <div className="p-2 bg-white rounded-full shadow-sm text-green-600">
-                    <MapPinIcon className="h-5 w-5" />
-                </div>
-                <h3 className="font-bold text-slate-700 text-lg">Dados da Viagem</h3>
-            </div>
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label htmlFor="departureDateTime" className="block text-xs font-bold text-slate-500 uppercase mb-1">Data e Hora de Saída</label>
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                            <CalendarIcon className="h-5 w-5" />
-                        </div>
-                        <input 
-                            type="datetime-local" 
-                            name="departureDateTime" 
-                            value={formData.departureDateTime} 
-                            onChange={handleChange} 
-                            required 
-                            min={minDateTime} 
-                            className="w-full pl-10 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all" 
-                        />
-                    </div>
-                </div>
-                <div>
-                    <label htmlFor="returnDate" className="block text-xs font-bold text-slate-500 uppercase mb-1">Data e Horário de Retorno Previsto</label>
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                            <CalendarIcon className="h-5 w-5" />
-                        </div>
-                        <input 
-                            type="datetime-local" 
-                            name="returnDate" 
-                            value={formData.returnDate} 
-                            onChange={handleChange} 
-                            required 
-                            min={minReturnDate} 
-                            className="w-full pl-10 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all" 
-                        />
-                    </div>
-                </div>
-                <div>
-                    <label htmlFor="destinationCity" className="block text-xs font-bold text-slate-500 uppercase mb-1">Cidade de Destino</label>
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                            <BuildingIcon className="h-5 w-5" />
-                        </div>
-                        <input
-                            type="text"
-                            id="destinationCity"
-                            name="destinationCity"
-                            value={formData.destinationCity}
-                            onChange={handleChange}
-                            list="cities"
-                            required
-                            className="w-full pl-10 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase"
-                            placeholder="Selecione a cidade"
-                        />
-                    </div>
-                    <datalist id="cities">
-                        {SP_CITIES.map(city => <option key={city} value={city} />)}
-                    </datalist>
-                </div>
-                <div>
-                    <label htmlFor="destination" className="block text-xs font-bold text-slate-500 uppercase mb-1">Local Específico</label>
-                    <input type="text" name="destination" value={formData.destination} onChange={handleChange} required placeholder="Ex: Escritório Cliente, Usina..." className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase" />
-                </div>
-            </div>
-        </div>
+          {/* SECTION 3: MOTIVO */}
+          <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
+                      03
+                  </div>
+                  <div>
+                      <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
+                          Motivo & Justificativa da Viagem
+                      </h3>
+                      <p className="text-[11px] text-slate-500 font-medium">Finalidade operacional da utilização do veículo</p>
+                  </div>
+              </div>
 
-        {/* SECTION 3: MOTIVO */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center gap-3">
-                <div className="p-2 bg-white rounded-full shadow-sm text-orange-500">
-                    <DocumentTextIcon className="h-5 w-5" />
-                </div>
-                <h3 className="font-bold text-slate-700 text-lg">Motivo da Solicitação</h3>
-            </div>
-            <div className="p-6">
-                <textarea 
-                    name="purpose" 
-                    rows={3}
-                    value={formData.purpose} 
-                    onChange={handleChange as any} 
-                    required 
-                    placeholder="Descreva brevemente a finalidade da viagem..."
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all uppercase resize-none" 
-                />
-                <p className="text-xs text-gray-400 mt-2 text-right">Campos obrigatórios *</p>
-            </div>
-        </div>
+              <div>
+                  <textarea 
+                      name="purpose" 
+                      rows={3}
+                      value={formData.purpose} 
+                      onChange={handleChange as any} 
+                      required 
+                      placeholder="Descreva detalhadamente a finalidade e objetivo da viagem..."
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase resize-none" 
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1 text-right">Campos marcados com * são obrigatórios</p>
+              </div>
+          </div>
 
-        <div className="pt-4">
-          <button type="submit" disabled={isSubmitting} className="w-full flex justify-center items-center gap-2 py-4 px-6 border border-transparent rounded-xl shadow-lg text-lg font-bold text-white bg-gradient-to-r from-primary to-primary-dark hover:from-green-700 hover:to-green-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-70 disabled:cursor-not-allowed transition-all transform active:scale-[0.99]">
-            {isSubmitting ? (
-                <>
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Enviando...
-                </>
-            ) : 'ENVIAR SOLICITAÇÃO'}
-          </button>
-        </div>
-      </form>
+          <div className="pt-2">
+            <button 
+              type="submit" 
+              disabled={isSubmitting} 
+              className="w-full py-4 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-[#0d3b2b] hover:to-[#092b1f] text-white font-extrabold rounded-xl text-sm uppercase tracking-wider shadow-md active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? (
+                  <>
+                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Processando Solicitação...</span>
+                  </>
+              ) : (
+                  <span>Enviar Solicitação de Veículo</span>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 };

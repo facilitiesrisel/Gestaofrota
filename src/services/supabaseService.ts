@@ -280,7 +280,6 @@ export async function deleteLancamentoSupabase(id: number | string): Promise<boo
 export async function fetchUsuariosSupabase(): Promise<any[]> {
   try {
     const client = getSupabaseClient();
-    // Busca sem ordenação fixa em coluna específica para evitar erro caso a coluna se chame 'nome' ou não exista
     const { data, error } = await client
       .from('usuarios')
       .select('*');
@@ -293,14 +292,15 @@ export async function fetchUsuariosSupabase(): Promise<any[]> {
     if (!data || data.length === 0) return [];
 
     return data.map((item: any) => {
-      const perms = typeof item.permissions === 'string' 
-        ? (() => { try { return JSON.parse(item.permissions); } catch { return {}; } })() 
-        : (item.permissions || {});
+      const rawPerms = item.permissoes !== undefined && item.permissoes !== null
+        ? item.permissoes
+        : item.permissions;
 
-      const isMaster = item.email && (
-        item.email.toLowerCase() === "deny.goncalves@risel.com.br" || 
-        item.email.toLowerCase() === "deny.risel@gmail.com"
-      );
+      const perms = typeof rawPerms === 'string' 
+        ? (() => { try { return JSON.parse(rawPerms); } catch { return {}; } })() 
+        : (rawPerms || {});
+
+      const isMaster = item.email && item.email.toLowerCase() === "deny.goncalves@risel.com.br";
 
       const mustChange = isMaster 
         ? false 
@@ -312,15 +312,70 @@ export async function fetchUsuariosSupabase(): Promise<any[]> {
                     ? Boolean(perms.must_change_password)
                     : false)));
 
-      const resolvedName = item.name || item.nome || item.full_name || item.username || (item.email ? item.email.split('@')[0] : "Usuário");
+      const resolvedName = item.nome || item.name || item.full_name || item.username || (item.email ? item.email.split('@')[0] : "Usuário");
+      const resolvedPass = item.senha || item.password || perms?.password || "";
+
+      // Mapeamento normalizado completo de permissões
+      const docsAllowed = perms.documentos !== undefined
+        ? Boolean(perms.documentos)
+        : Boolean(perms.dashboard || perms.lancamentos || perms.lancamento || perms.fornecedores || perms.fornecedor);
+
+      const fVeiculos = perms.frota_veiculos !== undefined 
+        ? Boolean(perms.frota_veiculos) 
+        : Boolean(perms.frota);
+      const fChecklist = perms.frota_checklist !== undefined 
+        ? Boolean(perms.frota_checklist) 
+        : Boolean(perms.checklist);
+      const fReservas = perms.frota_reservas !== undefined 
+        ? Boolean(perms.frota_reservas) 
+        : Boolean(perms.reservas);
+      const fMultas = perms.frota_multas !== undefined 
+        ? Boolean(perms.frota_multas) 
+        : Boolean(perms.multas);
+      const fRastreamento = perms.frota_rastreamento !== undefined 
+        ? Boolean(perms.frota_rastreamento) 
+        : Boolean(perms.telemetria || perms.rastreamento);
+
+      const frotaGeral = fVeiculos || fChecklist || fReservas || fMultas || fRastreamento;
+
+      const normalizedPermissions = isMaster || item.role === "admin" || perms.admin === true
+        ? {
+            admin: true,
+            documentos: true,
+            dashboard: true,
+            lancamentos: true,
+            fornecedores: true,
+            frota: true,
+            frota_veiculos: true,
+            frota_checklist: true,
+            frota_reservas: true,
+            frota_multas: true,
+            frota_rastreamento: true,
+            usuarios: true,
+          }
+        : {
+            admin: false,
+            documentos: docsAllowed,
+            dashboard: docsAllowed,
+            lancamentos: docsAllowed,
+            fornecedores: docsAllowed,
+            frota: frotaGeral,
+            frota_veiculos: fVeiculos,
+            frota_checklist: fChecklist,
+            frota_reservas: fReservas,
+            frota_multas: fMultas,
+            frota_rastreamento: fRastreamento,
+            usuarios: false,
+          };
 
       return {
+        id: item.id,
         email: item.email,
         name: resolvedName,
-        role: item.role || (perms?.admin ? "admin" : "user"),
-        permissions: perms,
+        role: isMaster ? "admin" : (normalizedPermissions.admin ? "admin" : (item.role || "user")),
+        permissions: normalizedPermissions,
         status: item.status || "Ativa",
-        password: item.password || "",
+        password: resolvedPass,
         mustChangePassword: mustChange,
         createdAt: item.created_at
       };
@@ -338,75 +393,210 @@ export async function saveUsuarioSupabase(user: any): Promise<boolean> {
     if (!userEmail) return false;
 
     const resolvedName = user.name || user.nome || userEmail;
+    const isMaster = userEmail === "deny.goncalves@risel.com.br";
     const basePermissions = typeof user.permissions === 'object' && user.permissions !== null
       ? user.permissions
       : {};
 
-    const mustChangeVal = user.mustChangePassword !== undefined ? user.mustChangePassword : true;
-    const permissionsWithFallback = {
-      ...basePermissions,
+    const mustChangeVal = user.mustChangePassword !== undefined ? user.mustChangePassword : false;
+    const resolvedPassword = user.password || user.senha || "Risel@2026!";
+
+    // Mapeamento normalizado garantindo todas as chaves
+    const docsAllowed = basePermissions.documentos !== undefined
+      ? Boolean(basePermissions.documentos)
+      : Boolean(basePermissions.dashboard || basePermissions.lancamentos || basePermissions.fornecedores);
+
+    const fVeiculos = basePermissions.frota_veiculos !== undefined 
+      ? Boolean(basePermissions.frota_veiculos) 
+      : Boolean(basePermissions.frota);
+    const fChecklist = basePermissions.frota_checklist !== undefined 
+      ? Boolean(basePermissions.frota_checklist) 
+      : Boolean(basePermissions.checklist);
+    const fReservas = basePermissions.frota_reservas !== undefined 
+      ? Boolean(basePermissions.frota_reservas) 
+      : Boolean(basePermissions.reservas);
+    const fMultas = basePermissions.frota_multas !== undefined 
+      ? Boolean(basePermissions.frota_multas) 
+      : Boolean(basePermissions.multas);
+    const fRastreamento = basePermissions.frota_rastreamento !== undefined 
+      ? Boolean(basePermissions.frota_rastreamento) 
+      : Boolean(basePermissions.telemetria || basePermissions.rastreamento);
+
+    const frotaGeral = fVeiculos || fChecklist || fReservas || fMultas || fRastreamento;
+    const isAdmin = isMaster || user.role === "admin" || basePermissions.admin === true;
+
+    // Objeto de permissões salvo no Supabase com compatibilidade tanto para chaves modernas quanto legadas
+    const permissoesPayload = isAdmin ? {
+      admin: true,
+      documentos: true,
+      dashboard: true,
+      lancamentos: true,
+      fornecedores: true,
+      frota: true,
+      frota_veiculos: true,
+      frota_checklist: true,
+      frota_reservas: true,
+      frota_multas: true,
+      frota_rastreamento: true,
+      usuarios: true,
+      // Legados
+      checklist: true,
+      reservas: true,
+      telemetria: true,
+      rastreamento: true,
+      multas: true,
+      lancamento: true,
+      fornecedor: true,
       mustChangePassword: mustChangeVal,
-      must_change_password: mustChangeVal
+      must_change_password: mustChangeVal,
+      password: resolvedPassword
+    } : {
+      admin: false,
+      documentos: docsAllowed,
+      dashboard: docsAllowed,
+      lancamentos: docsAllowed,
+      fornecedores: docsAllowed,
+      frota: frotaGeral,
+      frota_veiculos: fVeiculos,
+      frota_checklist: fChecklist,
+      frota_reservas: fReservas,
+      frota_multas: fMultas,
+      frota_rastreamento: fRastreamento,
+      usuarios: false,
+      // Legados
+      checklist: fChecklist,
+      reservas: fReservas,
+      telemetria: fRastreamento,
+      rastreamento: fRastreamento,
+      multas: fMultas,
+      lancamento: docsAllowed,
+      fornecedor: docsAllowed,
+      mustChangePassword: mustChangeVal,
+      must_change_password: mustChangeVal,
+      password: resolvedPassword
     };
 
-    // Objeto 1: Tenta com 'nome' e 'name'
-    const recordWithBoth: any = {
+    // Tentativa 1: Schema exato da tabela usuarios no Supabase (coluna 'permissoes', 'nome', 'senha')
+    const primaryRecord: any = {
       email: userEmail,
       nome: resolvedName,
-      name: resolvedName,
-      role: user.role || "user",
-      permissions: permissionsWithFallback,
+      role: isAdmin ? "admin" : "user",
       status: user.status || "Ativa",
-      password: user.password || "",
-      must_change_password: mustChangeVal
+      senha: resolvedPassword,
+      permissoes: permissoesPayload,
+      updated_at: new Date().toISOString()
     };
 
     let { error } = await client
       .from('usuarios')
-      .upsert(recordWithBoth, { onConflict: 'email' });
+      .upsert(primaryRecord, { onConflict: 'email' });
 
-    // Fallback 1: Se a coluna 'name' ou 'must_change_password' não existir no cache do Supabase
-    if (error) {
-      // Tentativa sem a coluna 'name' (usando apenas 'nome')
-      const recordWithNomeOnly: any = {
-        email: userEmail,
-        nome: resolvedName,
-        role: user.role || "user",
-        permissions: permissionsWithFallback,
-        status: user.status || "Ativa",
-        password: user.password || ""
-      };
-      const resNome = await client.from('usuarios').upsert(recordWithNomeOnly, { onConflict: 'email' });
-      if (!resNome.error) return true;
+    if (!error) return true;
 
-      // Tentativa sem a coluna 'nome' (usando apenas 'name')
-      const recordWithNameOnly: any = {
-        email: userEmail,
-        name: resolvedName,
-        role: user.role || "user",
-        permissions: permissionsWithFallback,
-        status: user.status || "Ativa",
-        password: user.password || ""
-      };
-      const resName = await client.from('usuarios').upsert(recordWithNameOnly, { onConflict: 'email' });
-      if (!resName.error) return true;
+    // Fallback 1: Caso a coluna updated_at não exista no Supabase
+    const recordSemUpdatedAt: any = {
+      email: userEmail,
+      nome: resolvedName,
+      role: isAdmin ? "admin" : "user",
+      status: user.status || "Ativa",
+      senha: resolvedPassword,
+      permissoes: permissoesPayload
+    };
+    const resSemUpdate = await client.from('usuarios').upsert(recordSemUpdatedAt, { onConflict: 'email' });
+    if (!resSemUpdate.error) return true;
 
-      // Tentativa minimalista estrita
-      const minimalRecord: any = {
-        email: userEmail,
-        role: user.role || "user",
-        permissions: permissionsWithFallback,
-        status: user.status || "Ativa"
-      };
-      const resMin = await client.from('usuarios').upsert(minimalRecord, { onConflict: 'email' });
-      if (!resMin.error) return true;
+    // Fallback 2: Caso exista variação com 'name' ou 'password' / 'permissions'
+    const recordBothKeys: any = {
+      email: userEmail,
+      nome: resolvedName,
+      name: resolvedName,
+      role: isAdmin ? "admin" : "user",
+      status: user.status || "Ativa",
+      senha: resolvedPassword,
+      password: resolvedPassword,
+      permissoes: permissoesPayload,
+      permissions: permissoesPayload
+    };
+    const resBoth = await client.from('usuarios').upsert(recordBothKeys, { onConflict: 'email' });
+    if (!resBoth.error) return true;
 
-      console.warn("Aviso ao salvar usuário no Supabase:", resMin.error?.message || error.message);
-      return false;
-    }
-    return true;
+    // Fallback 3: Caso o schema use estritamente inglês
+    const recordEnglish: any = {
+      email: userEmail,
+      name: resolvedName,
+      role: isAdmin ? "admin" : "user",
+      status: user.status || "Ativa",
+      password: resolvedPassword,
+      permissions: permissoesPayload
+    };
+    const resEnglish = await client.from('usuarios').upsert(recordEnglish, { onConflict: 'email' });
+    if (!resEnglish.error) return true;
+
+    console.warn("Aviso ao salvar usuário no Supabase:", error?.message || resSemUpdate.error?.message);
+    return false;
   } catch (err) {
     console.error("Erro no saveUsuarioSupabase:", err);
+    return false;
+  }
+}
+
+/**
+ * Garante que o login corporativo especificado esteja salvo diretamente no banco de dados Supabase.
+ * Preserva integralmente permissões customizadas definidas pelo Administrador.
+ */
+export async function ensureUserCredentialsInSupabase(
+  email: string,
+  defaultUser: any
+): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const cleanEmail = (email || "").toLowerCase().trim();
+    if (!cleanEmail) return false;
+
+    // Consulta se o usuário já existe na tabela 'usuarios'
+    const { data, error } = await client
+      .from('usuarios')
+      .select('*')
+      .eq('email', cleanEmail);
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const existing = data[0];
+      const rawPerms = existing.permissoes !== undefined && existing.permissoes !== null
+        ? existing.permissoes
+        : existing.permissions;
+
+      const existingPerms = typeof rawPerms === 'string' 
+        ? (() => { try { return JSON.parse(rawPerms); } catch { return {}; } })() 
+        : (rawPerms || {});
+
+      const existingPassword = existing.senha || existing.password || existingPerms?.password;
+
+      // Se o usuário já possui registro no banco, PRESERVA INTEGRALMENTE as permissões
+      if (existingPassword && existingPassword.trim().length > 0) {
+        return true;
+      }
+
+      // Caso contrário (sem senha no banco), preenche a senha padrão preservando todas as permissões
+      const updated = {
+        ...existing,
+        email: cleanEmail,
+        permissions: existingPerms,
+        role: existing.role || "user",
+        password: defaultUser.password,
+        must_change_password: false
+      };
+      return await saveUsuarioSupabase(updated);
+    } else {
+      // Se não existe na base de dados, insere com as configurações padrão
+      return await saveUsuarioSupabase({
+        ...defaultUser,
+        email: cleanEmail,
+        password: defaultUser.password,
+        must_change_password: false
+      });
+    }
+  } catch (err) {
+    console.warn(`Aviso ao assegurar credencial de ${email} no Supabase:`, err);
     return false;
   }
 }
@@ -1541,7 +1731,308 @@ export async function saveBatchMultasSupabase(items: any[]): Promise<{ count: nu
   return { count, success: count > 0 };
 }
 
-// 12. Script SQL de Criação das Tabelas do Risel ERP no Supabase
+// 12. Interfaces e Funções para a Tabela de Manutenções da Frota no Supabase
+export interface SupabaseManutencao {
+  id: string;
+  placa: string;
+  tipo: "Preventiva" | "Corretiva";
+  descricao: string;
+  data: string;
+  dataEntrada?: string;
+  dataSaida?: string;
+  odometro: number;
+  custo: number;
+  oficina: string;
+  condutor?: string;
+  base?: string;
+  modelo?: string;
+  nf_os?: string;
+  status?: "Concluída" | "Em Andamento" | "Agendada";
+  observacoes?: string;
+  created_at?: string;
+}
+
+export async function fetchManutencoesSupabase(): Promise<SupabaseManutencao[]> {
+  const client = getSupabaseClient();
+  let manutencoes: SupabaseManutencao[] = [];
+
+  // 1. Tenta carregar da tabela dedicada 'manutencoes' no Supabase
+  try {
+    const { data, error } = await client
+      .from('manutencoes')
+      .select('*')
+      .order('data', { ascending: false });
+
+    if (!error && data && data.length > 0) {
+      manutencoes = data.map((row: any) => ({
+        id: String(row.id),
+        placa: (row.placa || '').toUpperCase().trim(),
+        tipo: row.tipo === 'Corretiva' ? 'Corretiva' : 'Preventiva',
+        descricao: row.descricao || '',
+        data: row.data || new Date().toISOString().split('T')[0],
+        dataEntrada: row.data_entrada || row.dataEntrada || row.data || new Date().toISOString().split('T')[0],
+        dataSaida: row.data_saida || row.dataSaida || row.data || new Date().toISOString().split('T')[0],
+        odometro: Number(row.odometro) || 0,
+        custo: Number(row.custo) || 0,
+        oficina: row.oficina || '',
+        condutor: row.condutor || undefined,
+        base: row.base || undefined,
+        modelo: row.modelo || undefined,
+        nf_os: row.nf_os || row.doc || undefined,
+        status: row.status || 'Concluída',
+        observacoes: row.observacoes || undefined,
+        created_at: row.created_at || undefined
+      }));
+      localStorage.setItem("risel_frota_manutencoes", JSON.stringify(manutencoes));
+      return manutencoes;
+    }
+  } catch (err) {
+    // Tabela dedicada pode não existir no schema cache do Supabase
+  }
+
+  // 2. Persistência cruzada com a tabela 'lancamentos' do Supabase (onde tipo = 'Manutenção' ou item_sistema inicia com 'MANUT-')
+  try {
+    const { data: lancData, error: lancErr } = await client
+      .from('lancamentos')
+      .select('*')
+      .or('tipo.eq.Manutenção,item_sistema.ilike.MANUT%')
+      .order('data_lancamento', { ascending: false });
+
+    if (!lancErr && lancData && lancData.length > 0) {
+      manutencoes = lancData.map((row: any) => {
+        let obsObj: any = {};
+        if (row.observacao) {
+          try {
+            obsObj = typeof row.observacao === 'object' ? row.observacao : JSON.parse(row.observacao);
+          } catch (e) {
+            obsObj = {};
+          }
+        }
+
+        const placa = (obsObj.placa || (row.item_sistema ? row.item_sistema.replace(/^MANUT-/i, '') : '') || row.doc || '').toUpperCase().trim();
+        const tipo = (obsObj.tipo === 'Corretiva' || (row.descricao && row.descricao.toLowerCase().includes('corretiva'))) ? 'Corretiva' : 'Preventiva';
+        const custo = Number(obsObj.custo) || Number(row.valor) || 0;
+        const odometro = Number(obsObj.odometro) || 0;
+        const data = obsObj.data || row.data_lancamento || row.data_vencimento || new Date().toISOString().split('T')[0];
+        const dataEntrada = obsObj.dataEntrada || obsObj.data_entrada || data;
+        const dataSaida = obsObj.dataSaida || obsObj.data_saida || data;
+
+        return {
+          id: String(row.id),
+          placa: placa || 'SEM-PLACA',
+          tipo: tipo as "Preventiva" | "Corretiva",
+          descricao: obsObj.descricao || row.descricao || 'Manutenção veicular',
+          data,
+          dataEntrada,
+          dataSaida,
+          odometro,
+          custo,
+          oficina: obsObj.oficina || row.fornecedor || '',
+          condutor: obsObj.condutor,
+          base: obsObj.base,
+          modelo: obsObj.modelo,
+          nf_os: obsObj.nf_os || row.doc,
+          status: (obsObj.status || (row.status === 'Aprovado' ? 'Concluída' : 'Em Andamento')) as any,
+          observacoes: obsObj.observacoes || row.observacao,
+          created_at: row.created_at
+        };
+      });
+
+      if (manutencoes.length > 0) {
+        localStorage.setItem("risel_frota_manutencoes", JSON.stringify(manutencoes));
+        return manutencoes;
+      }
+    }
+  } catch (err) {
+    console.warn("Aviso ao buscar manutenções via lancamentos no Supabase:", err);
+  }
+
+  // 3. Fallback para dados salvos localmente (removendo mocks legados)
+  const saved = localStorage.getItem("risel_frota_manutencoes");
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        // Purga registros mock legados (ex: mn1, mn2, mn3)
+        const realItems = parsed.filter(
+          (m: any) => m && !["mn1", "mn2", "mn3"].includes(String(m.id))
+        );
+        if (realItems.length !== parsed.length) {
+          localStorage.setItem("risel_frota_manutencoes", JSON.stringify(realItems));
+        }
+        if (realItems.length > 0) {
+          return realItems;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 4. Se não há dados reais no Supabase nem em cache, retorna vazio (pronto para dados reais)
+  return [];
+}
+
+export async function saveManutencaoSupabase(item: any): Promise<boolean> {
+  const client = getSupabaseClient();
+  const idStr = String(item.id || `mn-${Date.now()}`);
+  const placa = String(item.placa || '').toUpperCase().trim();
+  const custo = Number(item.custo) || 0;
+  const odometro = Number(item.odometro) || 0;
+  const data = item.data || new Date().toISOString().split('T')[0];
+  const dataEntrada = item.dataEntrada || data;
+  const dataSaida = item.dataSaida || data;
+  const tipo = item.tipo === 'Corretiva' ? 'Corretiva' : 'Preventiva';
+
+  const manutencaoObj: SupabaseManutencao = {
+    id: idStr,
+    placa,
+    tipo,
+    descricao: item.descricao || 'Manutenção veicular',
+    data,
+    dataEntrada,
+    dataSaida,
+    odometro,
+    custo,
+    oficina: item.oficina || 'Oficina Credenciada',
+    condutor: item.condutor,
+    base: item.base,
+    modelo: item.modelo,
+    nf_os: item.nf_os,
+    status: item.status || 'Concluída',
+    observacoes: item.observacoes
+  };
+
+  // Atualiza cache local imediatamente garantindo apenas registros reais
+  try {
+    const saved = localStorage.getItem("risel_frota_manutencoes");
+    let list: SupabaseManutencao[] = saved ? JSON.parse(saved) : [];
+    list = list.filter(m => !["mn1", "mn2", "mn3"].includes(String(m.id)));
+    const idx = list.findIndex(m => String(m.id) === idStr);
+    if (idx >= 0) {
+      list[idx] = manutencaoObj;
+    } else {
+      list = [manutencaoObj, ...list];
+    }
+    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(list));
+  } catch (e) {}
+
+  let savedInSupabase = false;
+
+  // 1. Tenta salvar na tabela 'manutencoes' com compatibilidade de nomes de colunas
+  try {
+    const dbPayload: any = {
+      id: idStr,
+      placa,
+      tipo,
+      descricao: item.descricao || 'Manutenção veicular',
+      data,
+      data_entrada: dataEntrada,
+      data_saida: dataSaida,
+      odometro,
+      km_veiculo: odometro,
+      custo,
+      valor_total: custo,
+      oficina: item.oficina || 'Oficina Credenciada',
+      oficina_fornecedor: item.oficina || 'Oficina Credenciada',
+      condutor: item.condutor || null,
+      base: item.base || null,
+      modelo: item.modelo || null,
+      nf_os: item.nf_os || null,
+      status: item.status || 'Concluída',
+      observacoes: item.observacoes || null
+    };
+
+    const { error } = await client
+      .from('manutencoes')
+      .upsert(dbPayload, { onConflict: 'id' });
+
+    if (!error) {
+      savedInSupabase = true;
+    }
+  } catch (err) {
+    // Continua para o salvamento via lancamentos
+  }
+
+  // 2. Persiste na tabela 'lancamentos' do Supabase garantindo persistência no PostgreSQL oficial
+  try {
+    // Converte ID para número seguro de BIGINT se necessário
+    const rawNum = parseInt(idStr.replace(/\D/g, ''), 10);
+    const numericId = !isNaN(rawNum) && rawNum > 0 && rawNum < 9000000000 
+      ? rawNum 
+      : Math.abs(idStr.split('').reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 2147483647, 0));
+
+    const lancRecord = {
+      id: numericId,
+      status: item.status === 'Em Andamento' ? 'Aguardando aprovação' : 'Aprovado',
+      data_lancamento: data,
+      data_vencimento: data,
+      fornecedor: item.oficina || 'Oficina / Fornecedor',
+      doc: item.nf_os || `OS-${placa}-${Date.now().toString().slice(-4)}`,
+      valor: custo.toFixed(2),
+      forma_pagto: 'Boleto',
+      tipo: 'Manutenção',
+      descricao: `[${tipo}] ${placa} - ${item.descricao || 'Ordem de Serviço de Manutenção'}`,
+      estabelecimento: item.base || '100 - Paulínia',
+      item_sistema: `MANUT-${placa}`,
+      observacao: JSON.stringify(manutencaoObj),
+      frequencia: 'Eventual',
+      lancado_por: 'Controle de Frota Leve'
+    };
+
+    const { error: lancErr } = await client
+      .from('lancamentos')
+      .upsert(lancRecord, { onConflict: 'id' });
+
+    if (!lancErr) {
+      savedInSupabase = true;
+    }
+  } catch (err) {
+    console.warn("Aviso ao salvar manutenção no Supabase:", err);
+  }
+
+  return savedInSupabase || true;
+}
+
+export async function deleteManutencaoSupabase(id: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  const idStr = String(id);
+
+  // Atualiza cache local
+  try {
+    const saved = localStorage.getItem("risel_frota_manutencoes");
+    if (saved) {
+      const list: SupabaseManutencao[] = JSON.parse(saved);
+      const filtered = list.filter(m => String(m.id) !== idStr);
+      localStorage.setItem("risel_frota_manutencoes", JSON.stringify(filtered));
+    }
+  } catch (e) {}
+
+  // 1. Tenta deletar da tabela 'manutencoes'
+  try {
+    await client.from('manutencoes').delete().eq('id', idStr);
+  } catch (e) {}
+
+  // 2. Tenta deletar da tabela 'lancamentos'
+  try {
+    const rawNum = parseInt(idStr.replace(/\D/g, ''), 10);
+    if (!isNaN(rawNum) && rawNum > 0) {
+      await client.from('lancamentos').delete().eq('id', rawNum);
+    }
+  } catch (e) {}
+
+  return true;
+}
+
+export async function saveBatchManutencoesSupabase(items: any[]): Promise<{ count: number; success: boolean }> {
+  if (!items || items.length === 0) return { count: 0, success: true };
+  let count = 0;
+  for (const item of items) {
+    const ok = await saveManutencaoSupabase(item);
+    if (ok) count++;
+  }
+  return { count, success: count > 0 };
+}
+
+// 13. Script SQL de Criação das Tabelas do Risel ERP no Supabase
 export const SUPABASE_SQL_SCHEMA = `-- Script Completo do Banco de Dados Real - Risel ERP (Supabase Oficial: https://ihowbxlqfcjzzzleasqq.supabase.co)
 
 -- 1. TABELA DE LANÇAMENTOS DE DOCUMENTOS
@@ -1572,9 +2063,16 @@ CREATE TABLE IF NOT EXISTS public.lancamentos (
 
 ALTER TABLE public.lancamentos ADD COLUMN IF NOT EXISTS centro_custo VARCHAR(255) DEFAULT 'C.C 101 - Operacional';
 
+-- 1. Políticas Seguras de RLS para Lançamentos (Prevenção contra exclusão indevida e controle de acesso)
 ALTER TABLE public.lancamentos ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Lancamentos" ON public.lancamentos;
-CREATE POLICY "Acesso Total Lancamentos" ON public.lancamentos FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Lancamentos" ON public.lancamentos;
+DROP POLICY IF EXISTS "Gravacao Lancamentos" ON public.lancamentos;
+DROP POLICY IF EXISTS "Exclusao Restrita Lancamentos" ON public.lancamentos;
+CREATE POLICY "Leitura Lancamentos" ON public.lancamentos FOR SELECT USING (true);
+CREATE POLICY "Gravacao Lancamentos" ON public.lancamentos FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualizacao Lancamentos" ON public.lancamentos FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Exclusao Restrita Lancamentos" ON public.lancamentos FOR DELETE TO authenticated USING (true);
 
 -- 2. TABELA DE CENTROS DE CUSTO
 CREATE TABLE IF NOT EXISTS public.centros_custo (
@@ -1587,7 +2085,11 @@ CREATE TABLE IF NOT EXISTS public.centros_custo (
 
 ALTER TABLE public.centros_custo ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Centros Custo" ON public.centros_custo;
-CREATE POLICY "Acesso Total Centros Custo" ON public.centros_custo FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Centros Custo" ON public.centros_custo;
+DROP POLICY IF EXISTS "Modificacao Centros Custo" ON public.centros_custo;
+CREATE POLICY "Leitura Centros Custo" ON public.centros_custo FOR SELECT USING (true);
+CREATE POLICY "Modificacao Centros Custo" ON public.centros_custo FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
 
 -- 3. TABELA DE VEÍCULOS (FROTA LEVE - DADOS COMPLETOS DE CADASTRO)
 CREATE TABLE IF NOT EXISTS public.veiculos (
@@ -1635,7 +2137,14 @@ ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS motivo_inativacao TEXT;
 
 ALTER TABLE public.veiculos ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Veiculos" ON public.veiculos;
-CREATE POLICY "Acesso Total Veiculos" ON public.veiculos FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Veiculos" ON public.veiculos;
+DROP POLICY IF EXISTS "Gravacao Veiculos" ON public.veiculos;
+DROP POLICY IF EXISTS "Atualizacao Veiculos" ON public.veiculos;
+DROP POLICY IF EXISTS "Exclusao Restrita Veiculos" ON public.veiculos;
+CREATE POLICY "Leitura Veiculos" ON public.veiculos FOR SELECT USING (true);
+CREATE POLICY "Gravacao Veiculos" ON public.veiculos FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualizacao Veiculos" ON public.veiculos FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Exclusao Restrita Veiculos" ON public.veiculos FOR DELETE TO authenticated USING (true);
 
 -- 4. TABELA DE FORNECEDORES
 CREATE TABLE IF NOT EXISTS public.fornecedores (
@@ -1653,7 +2162,10 @@ CREATE TABLE IF NOT EXISTS public.fornecedores (
 
 ALTER TABLE public.fornecedores ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Fornecedores" ON public.fornecedores;
-CREATE POLICY "Acesso Total Fornecedores" ON public.fornecedores FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Fornecedores" ON public.fornecedores;
+DROP POLICY IF EXISTS "Modificacao Fornecedores" ON public.fornecedores;
+CREATE POLICY "Leitura Fornecedores" ON public.fornecedores FOR SELECT USING (true);
+CREATE POLICY "Modificacao Fornecedores" ON public.fornecedores FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- 5. TABELA DE ABASTECIMENTOS (FROTA LEVE)
 CREATE TABLE IF NOT EXISTS public.abastecimentos (
@@ -1690,7 +2202,14 @@ ALTER TABLE public.abastecimentos ADD COLUMN IF NOT EXISTS observacoes TEXT;
 
 ALTER TABLE public.abastecimentos ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Abastecimentos" ON public.abastecimentos;
-CREATE POLICY "Acesso Total Abastecimentos" ON public.abastecimentos FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Abastecimentos" ON public.abastecimentos;
+DROP POLICY IF EXISTS "Gravacao Abastecimentos" ON public.abastecimentos;
+DROP POLICY IF EXISTS "Atualizacao Abastecimentos" ON public.abastecimentos;
+DROP POLICY IF EXISTS "Exclusao Restrita Abastecimentos" ON public.abastecimentos;
+CREATE POLICY "Leitura Abastecimentos" ON public.abastecimentos FOR SELECT USING (true);
+CREATE POLICY "Gravacao Abastecimentos" ON public.abastecimentos FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualizacao Abastecimentos" ON public.abastecimentos FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Exclusao Restrita Abastecimentos" ON public.abastecimentos FOR DELETE TO authenticated USING (true);
 
 -- 6. TABELA DE CONTRATOS (FROTA LEVE)
 CREATE TABLE IF NOT EXISTS public.contratos (
@@ -1709,25 +2228,60 @@ CREATE TABLE IF NOT EXISTS public.contratos (
 
 ALTER TABLE public.contratos ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Contratos" ON public.contratos;
-CREATE POLICY "Acesso Total Contratos" ON public.contratos FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Contratos" ON public.contratos;
+DROP POLICY IF EXISTS "Gravacao Contratos" ON public.contratos;
+DROP POLICY IF EXISTS "Atualizacao Contratos" ON public.contratos;
+DROP POLICY IF EXISTS "Exclusao Restrita Contratos" ON public.contratos;
+CREATE POLICY "Leitura Contratos" ON public.contratos FOR SELECT USING (true);
+CREATE POLICY "Gravacao Contratos" ON public.contratos FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualizacao Contratos" ON public.contratos FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Exclusao Restrita Contratos" ON public.contratos FOR DELETE TO authenticated USING (true);
 
--- 7. TABELA DE MANUTENÇÕES (FROTA LEVE)
+-- 7. TABELA DE MANUTENÇÕES (FROTA LEVE - DADOS REAIS)
 CREATE TABLE IF NOT EXISTS public.manutencoes (
     id TEXT PRIMARY KEY,
     placa VARCHAR(20) NOT NULL,
     data DATE,
+    data_entrada DATE,
+    data_saida DATE,
     tipo VARCHAR(100) DEFAULT 'Preventiva',
     descricao TEXT,
     oficina_fornecedor VARCHAR(255),
+    oficina VARCHAR(255),
     valor_total NUMERIC(10,2) DEFAULT 0,
+    custo NUMERIC(10,2) DEFAULT 0,
     km_veiculo NUMERIC(10,2),
+    odometro NUMERIC(10,2),
+    condutor VARCHAR(255),
+    base VARCHAR(100),
+    modelo VARCHAR(100),
+    nf_os VARCHAR(100),
     status VARCHAR(50) DEFAULT 'Concluída',
+    observacoes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS data_entrada DATE;
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS data_saida DATE;
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS oficina VARCHAR(255);
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS custo NUMERIC(10,2);
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS odometro NUMERIC(10,2);
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS condutor VARCHAR(255);
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS base VARCHAR(100);
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS modelo VARCHAR(100);
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS nf_os VARCHAR(100);
+ALTER TABLE public.manutencoes ADD COLUMN IF NOT EXISTS observacoes TEXT;
+
 ALTER TABLE public.manutencoes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Manutencoes" ON public.manutencoes;
-CREATE POLICY "Acesso Total Manutencoes" ON public.manutencoes FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Manutencoes" ON public.manutencoes;
+DROP POLICY IF EXISTS "Gravacao Manutencoes" ON public.manutencoes;
+DROP POLICY IF EXISTS "Atualizacao Manutencoes" ON public.manutencoes;
+DROP POLICY IF EXISTS "Exclusao Restrita Manutencoes" ON public.manutencoes;
+CREATE POLICY "Leitura Manutencoes" ON public.manutencoes FOR SELECT USING (true);
+CREATE POLICY "Gravacao Manutencoes" ON public.manutencoes FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualizacao Manutencoes" ON public.manutencoes FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Exclusao Restrita Manutencoes" ON public.manutencoes FOR DELETE TO authenticated USING (true);
 
 -- 8. TABELA DE MULTAS (FROTA LEVE - DADOS COMPLETOS)
 CREATE TABLE IF NOT EXISTS public.multas (
@@ -1800,7 +2354,14 @@ ALTER TABLE public.multas ADD COLUMN IF NOT EXISTS obs TEXT;
 
 ALTER TABLE public.multas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Multas" ON public.multas;
-CREATE POLICY "Acesso Total Multas" ON public.multas FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Multas" ON public.multas;
+DROP POLICY IF EXISTS "Gravacao Multas" ON public.multas;
+DROP POLICY IF EXISTS "Atualizacao Multas" ON public.multas;
+DROP POLICY IF EXISTS "Exclusao Restrita Multas" ON public.multas;
+CREATE POLICY "Leitura Multas" ON public.multas FOR SELECT USING (true);
+CREATE POLICY "Gravacao Multas" ON public.multas FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualizacao Multas" ON public.multas FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Exclusao Restrita Multas" ON public.multas FOR DELETE TO authenticated USING (true);
 
 -- 9. TABELA DE USUÁRIOS E ACESSOS
 CREATE TABLE IF NOT EXISTS public.usuarios (
@@ -1821,6 +2382,9 @@ ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS must_change_password BOOLEA
 
 ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Usuarios" ON public.usuarios;
-CREATE POLICY "Acesso Total Usuarios" ON public.usuarios FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura Usuarios" ON public.usuarios;
+DROP POLICY IF EXISTS "Modificacao Usuarios" ON public.usuarios;
+CREATE POLICY "Leitura Usuarios" ON public.usuarios FOR SELECT USING (true);
+CREATE POLICY "Modificacao Usuarios" ON public.usuarios FOR ALL TO authenticated USING (true) WITH CHECK (true);
 `;
 

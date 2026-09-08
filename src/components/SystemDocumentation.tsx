@@ -7,7 +7,7 @@ import {
   Lock, 
   FileCode2, 
   CheckCircle2, 
-  Truck, 
+  Car, 
   FileText, 
   Copy, 
   Check, 
@@ -57,7 +57,7 @@ export function SystemDocumentation() {
             { id: "visaoGeral", label: "Visão Geral & Módulos", icon: Layers },
             { id: "banco", label: "Arquitetura Supabase (SQL)", icon: Database },
             { id: "permissoes", label: "Controle de Acesso & RBAC", icon: ShieldCheck },
-            { id: "regras", label: "Regras de Negócio & Frota", icon: Truck },
+            { id: "regras", label: "Regras de Negócio & Frota", icon: Car },
             { id: "deploy", label: "Guia de Deploy Zero Custo", icon: Globe },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -189,7 +189,7 @@ export function SystemDocumentation() {
       {activeDocTab === "regras" && (
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
           <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-            <Truck className="w-4 h-4 text-orange-600" /> Regras de Negócio de Frota & Vencimentos
+            <Car className="w-4 h-4 text-orange-600" /> Regras de Negócio de Frota & Vencimentos
           </h3>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">

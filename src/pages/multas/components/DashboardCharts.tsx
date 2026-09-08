@@ -7,7 +7,7 @@ import {
   RadialBarChart, RadialBar, ComposedChart, ScatterChart, Scatter, ZAxis, LabelList
 } from 'recharts';
 import { Multa } from '../types';
-import { GripVertical, X, Settings2, RefreshCw, ChevronDown, Cloud, Palette, Trophy, Crown, AlertTriangle, Truck, User, Medal, Sun, Moon, Calendar, Clock, BarChart3, Building2, SignpostBig, Map } from 'lucide-react';
+import { GripVertical, X, Settings2, RefreshCw, ChevronDown, Cloud, Palette, Trophy, Crown, AlertTriangle, Car, User, Medal, Sun, Moon, Calendar, Clock, BarChart3, Building2, SignpostBig, Map } from 'lucide-react';
 import { fetchDashboardConfig, saveDashboardConfigApi } from '../services/storage';
 import { parseLocalDate } from '../services/dateUtils';
 
@@ -54,7 +54,7 @@ const CHART_TYPES = [
   { id: '2', label: 'Barras Horizontais', group: 'Barras' },
   { id: '3', label: 'Barras Empilhadas', group: 'Barras' },
   { id: '4', label: 'Barras Coloridas (Heatmap)', group: 'Barras' },
-  { id: '5', label: 'Linha Suave (Curve)', group: 'Linhas' },
+  { id: '5', label: 'Linha Curva Suave (Gradiente)', group: 'Linhas' },
   { id: '6', label: 'Linha Reta (Linear)', group: 'Linhas' },
   { id: '7', label: 'Linha Step (Degraus)', group: 'Linhas' },
   { id: '8', label: 'Linha Tracejada', group: 'Linhas' },
@@ -73,15 +73,15 @@ const CHART_TYPES = [
   { id: '21', label: 'Bolhas (Bubble Like)', group: 'Outros' },
 ];
 
-// Configuração Padrão Inicial
+// Configuração Padrão Inicial: Evolução Temporal no topo, linha inteira, Linha Curva Suave com gradiente
 const DEFAULT_CONFIG: ChartWidgetConfig[] = [
+  { id: 'evolucao_mensal', title: 'Evolução Temporal', type: '5', colorTheme: 'midnight', visible: true },
   { id: 'periodo_dia_noite', title: 'Infrações: Dia vs Noite', type: '24', visible: true, colorTheme: 'default' },
   { id: 'dia_semana_visual', title: 'Ocorrências por Dia da Semana', type: '25', visible: true, colorTheme: 'ocean' },
   { id: 'top_motoristas', title: 'Top 5 Motoristas (Ranking)', type: '22', visible: true, colorTheme: 'fire' },
   { id: 'top_veiculos', title: 'Top 5 Veículos (Ranking)', type: '22', visible: true, colorTheme: 'fire' },
   { id: 'enquadramento_detalhado', title: 'Infrações por Enquadramento', type: '23', visible: true, colorTheme: 'ocean' },
   { id: 'trecho', title: 'Rodovia vs Urbano', type: '26', colorTheme: 'default', visible: true },
-  { id: 'evolucao_mensal', title: 'Evolução Temporal', type: '9', colorTheme: 'midnight', visible: true },
   { id: 'frota', title: 'Multas por Placa', type: '1', colorTheme: 'default', visible: true },
   { id: 'base', title: 'Multas por Base', type: '12', colorTheme: 'ocean', visible: true },
   { id: 'status', title: 'Multas por Status', type: '12', colorTheme: 'sunset', visible: true },
@@ -351,7 +351,7 @@ const PodiumChart = ({ data, entityType }: { data: any[], entityType: 'driver' |
         { height: '15%', color: 'from-yellow-100 to-yellow-300', shadow: 'shadow-yellow-400/20', rank: 5 }
     ];
 
-    const EntityIcon = entityType === 'driver' ? User : Truck;
+    const EntityIcon = entityType === 'driver' ? User : Car;
 
     const getMedal = (type?: string) => {
         if (type === 'gold') return <div className="w-8 h-8 rounded-full bg-gradient-to-b from-yellow-300 to-yellow-600 flex items-center justify-center shadow-lg border-2 border-yellow-200 mb-2 animate-bounce"><Trophy size={16} className="text-white drop-shadow-sm"/></div>;
@@ -396,8 +396,20 @@ const PodiumChart = ({ data, entityType }: { data: any[], entityType: 'driver' |
     );
 };
 
-// --- CUSTOM SVG LINE/AREA CHART (Flawless resize-independent rendering) ---
-const CustomSVGLineAreaChart = ({ data, colorTheme, type }: { data: any[], colorTheme: string, type: 'line' | 'area' }) => {
+// --- CUSTOM SVG LINE/AREA CHART (Flawless resize-independent rendering with smooth bezier curve and gradients) ---
+const CustomSVGLineAreaChart = ({ 
+  data, 
+  colorTheme, 
+  type,
+  isFullWidth = false,
+  isEvolucao = false
+}: { 
+  data: any[]; 
+  colorTheme: string; 
+  type: 'line' | 'area';
+  isFullWidth?: boolean;
+  isEvolucao?: boolean;
+}) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   
   if (!data || data.length === 0) {
@@ -414,25 +426,30 @@ const CustomSVGLineAreaChart = ({ data, colorTheme, type }: { data: any[], color
     );
   }
 
-  const width = 500;
-  const height = 180;
-  const paddingLeft = 40;
-  const paddingRight = 15;
-  const paddingTop = 20;
-  const paddingBottom = 25;
+  // Estatísticas analíticas de apoio executivo (BI)
+  const totalMultas = data.reduce((acc, d) => acc + (Number(d.value) || 0), 0);
+  const maxItem = data.reduce((prev, curr) => (curr.value > prev.value ? curr : prev), data[0]);
+  const mediaPeriodo = data.length > 0 ? (totalMultas / data.length).toFixed(1) : '0';
+
+  const width = isFullWidth ? 850 : 500;
+  const height = isFullWidth ? 195 : 180;
+  const paddingLeft = isFullWidth ? 45 : 40;
+  const paddingRight = isFullWidth ? 25 : 15;
+  const paddingTop = isFullWidth ? 22 : 20;
+  const paddingBottom = isFullWidth ? 28 : 25;
 
   const chartWidth = width - paddingLeft - paddingRight;
   const chartHeight = height - paddingTop - paddingBottom;
 
-  const maxVal = Math.max(...data.map(d => d.value), 1);
+  const maxVal = Math.max(...data.map(d => Number(d.value) || 0), 1);
 
   const points = data.map((d, i) => {
     const x = paddingLeft + (i / Math.max(data.length - 1, 1)) * chartWidth;
-    const y = paddingTop + chartHeight - (d.value / maxVal) * chartHeight;
-    return { x, y, name: d.name, value: d.value };
+    const y = paddingTop + chartHeight - ((Number(d.value) || 0) / maxVal) * chartHeight;
+    return { x, y, name: d.name, value: Number(d.value) || 0 };
   });
 
-  // Função para desenhar curva de Bezier suave que passa pelos pontos de forma elegante
+  // Função para desenhar curva de Bezier cúbica suave e contínua
   const getBezierCurvePath = (pts: { x: number; y: number }[]) => {
     if (pts.length === 0) return '';
     if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
@@ -458,168 +475,231 @@ const CustomSVGLineAreaChart = ({ data, colorTheme, type }: { data: any[], color
 
   const activeColors = COLOR_THEMES[colorTheme] || COLOR_THEMES['default'];
   const primaryColor = activeColors[0];
+  const secondaryColor = activeColors[1] || primaryColor;
 
-  // Grid lines
+  // Linhas do grid horizontal
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map(ratio => {
     const y = paddingTop + chartHeight * ratio;
     const val = Math.round(maxVal * (1 - ratio));
     return { y, val };
   });
 
+  // Gráfico de evolução sempre exibe preenchimento gradiente suave + curva suave destacada
+  const showAreaGradient = type === 'area' || isEvolucao;
+
   return (
-    <div className="relative w-full h-full select-none" onMouseLeave={() => setHoveredIndex(null)}>
-      <svg 
-        viewBox={`0 0 ${width} ${height}`} 
-        className="w-full h-full overflow-visible"
-        onMouseMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const mouseX = ((e.clientX - rect.left) / rect.width) * width;
-          let closestIdx = 0;
-          let minDiff = Infinity;
-          points.forEach((p, idx) => {
-            const diff = Math.abs(p.x - mouseX);
-            if (diff < minDiff) {
-              minDiff = diff;
-              closestIdx = idx;
-            }
-          });
-          setHoveredIndex(closestIdx);
-        }}
-      >
-        <defs>
-          <linearGradient id={`svgGrad-${colorTheme}-${type}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={primaryColor} stopOpacity="0.35" />
-            <stop offset="100%" stopColor={primaryColor} stopOpacity="0.0" />
-          </linearGradient>
-        </defs>
-
-        {/* Grid lines */}
-        {gridLines.map((line, i) => (
-          <g key={i}>
-            <line 
-              x1={paddingLeft} 
-              y1={line.y} 
-              x2={width - paddingRight} 
-              y2={line.y} 
-              stroke="#e2e8f0" 
-              strokeDasharray="4 4" 
-              strokeOpacity="0.6"
-            />
-            <text 
-              x={paddingLeft - 8} 
-              y={line.y + 3} 
-              fill="#94a3b8" 
-              fontSize="9" 
-              textAnchor="end"
-              className="font-bold font-sans"
-            >
-              {line.val}
-            </text>
-          </g>
-        ))}
-
-        {/* Area segment */}
-        {type === 'area' && areaPath && (
-          <path 
-            d={areaPath} 
-            fill={`url(#svgGrad-${colorTheme}-${type})`} 
-            className="transition-all duration-500 ease-out"
-          />
-        )}
-
-        {/* Spark line */}
-        <path 
-          d={linePath} 
-          fill="none" 
-          stroke={primaryColor} 
-          strokeWidth="3.5" 
-          strokeLinecap="round" 
-          strokeLinejoin="round"
-          className="transition-all duration-500 ease-out"
-        />
-
-        {/* Active Line indicator */}
-        {hoveredIndex !== null && (
-          <line 
-            x1={points[hoveredIndex].x} 
-            y1={paddingTop} 
-            x2={points[hoveredIndex].x} 
-            y2={paddingTop + chartHeight} 
-            stroke={primaryColor} 
-            strokeWidth="1.5" 
-            strokeDasharray="2 2"
-          />
-        )}
-
-        {/* Circle bullets */}
-        {points.map((p, i) => (
-          <circle 
-            key={i} 
-            cx={p.x} 
-            cy={p.y} 
-            r={hoveredIndex === i ? 6 : 4} 
-            fill={hoveredIndex === i ? primaryColor : '#ffffff'} 
-            stroke={primaryColor} 
-            strokeWidth={hoveredIndex === i ? 3 : 2}
-            className="transition-all duration-200 cursor-pointer"
-          />
-        ))}
-
-        {/* Labels */}
-        {points.filter((_, i) => {
-          if (points.length <= 10) return true;
-          return i % Math.ceil(points.length / 8) === 0 || i === points.length - 1;
-        }).map((p, i) => (
-          <text 
-            key={i} 
-            x={p.x} 
-            y={height - 5} 
-            fill="#94a3b8" 
-            fontSize="9" 
-            textAnchor="middle" 
-            className="font-bold uppercase tracking-wider font-sans"
-          >
-            {p.name}
-          </text>
-        ))}
-      </svg>
-
-      {/* Floating HTML tooltip */}
-      {hoveredIndex !== null && (() => {
-        const xPercent = (points[hoveredIndex].x / width) * 100;
-        const yPercent = (points[hoveredIndex].y / height) * 100;
-        
-        let translateX = '-50%';
-        if (xPercent < 22) {
-          translateX = '-5%';
-        } else if (xPercent > 78) {
-          translateX = '-95%';
-        }
-        
-        let topStyle = `${yPercent - 10}%`;
-        let translateY = '-100%';
-        if (yPercent < 30) {
-          // Posiciona o tooltip um pouco abaixo do ponto para não cortar no topo
-          topStyle = `${yPercent + 10}%`;
-          translateY = '0%';
-        }
-
-        return (
-          <div 
-            className="absolute z-30 pointer-events-none bg-slate-900/95 text-white rounded-xl px-3 py-2 shadow-2xl border border-slate-800 text-[11px] font-sans flex flex-col gap-0.5 transition-all duration-150 backdrop-blur-sm"
-            style={{ 
-              left: `${xPercent}%`, 
-              top: topStyle,
-              transform: `translate(${translateX}, ${translateY})` 
-            }}
-          >
-            <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px]">{points[hoveredIndex].name}</span>
-            <span className="font-black text-xs text-risel-green flex items-center gap-1">
-              {points[hoveredIndex].value} <span className="text-[10px] text-slate-300 font-medium">multas</span>
+    <div className="relative w-full h-full flex flex-col select-none" onMouseLeave={() => setHoveredIndex(null)}>
+      {/* Mini-painel de KPIs Executivos quando em Destaque de Linha Inteira */}
+      {isFullWidth && (
+        <div className="flex items-center gap-3 sm:gap-6 mb-2 px-1 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: primaryColor }}></span>
+            <span className="text-slate-400 font-bold uppercase text-[10px]">Total no Período:</span>
+            <span className="font-black text-slate-800 text-xs">{totalMultas} multas</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 font-bold uppercase text-[10px]">Pico:</span>
+            <span className="font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 text-[11px]">
+              {maxItem?.value || 0} ({maxItem?.name || '-'})
             </span>
           </div>
-        );
-      })()}
+          <div className="hidden sm:flex items-center gap-1.5">
+            <span className="text-slate-400 font-bold uppercase text-[10px]">Média por Intervalo:</span>
+            <span className="font-black text-slate-600 text-xs">{mediaPeriodo}/período</span>
+          </div>
+        </div>
+      )}
+
+      <div className="relative flex-1 w-full min-h-0">
+        <svg 
+          viewBox={`0 0 ${width} ${height}`} 
+          className="w-full h-full overflow-visible"
+          onMouseMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const mouseX = ((e.clientX - rect.left) / rect.width) * width;
+            let closestIdx = 0;
+            let minDiff = Infinity;
+            points.forEach((p, idx) => {
+              const diff = Math.abs(p.x - mouseX);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestIdx = idx;
+              }
+            });
+            setHoveredIndex(closestIdx);
+          }}
+        >
+          <defs>
+            {/* Gradiente de preenchimento da área sob a curva suave */}
+            <linearGradient id={`svgGrad-${colorTheme}-${type}-${isEvolucao ? 'evo' : 'norm'}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={primaryColor} stopOpacity="0.42" />
+              <stop offset="60%" stopColor={primaryColor} stopOpacity="0.12" />
+              <stop offset="100%" stopColor={primaryColor} stopOpacity="0.00" />
+            </linearGradient>
+
+            {/* Gradiente da própria linha suave */}
+            <linearGradient id={`strokeGrad-${colorTheme}-${type}`} x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={secondaryColor} />
+              <stop offset="50%" stopColor={primaryColor} />
+              <stop offset="100%" stopColor={secondaryColor} />
+            </linearGradient>
+
+            {/* Sombra suave luminosa */}
+            <filter id="softGlow" x="-10%" y="-10%" width="120%" height="120%">
+              <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor={primaryColor} floodOpacity="0.25" />
+            </filter>
+          </defs>
+
+          {/* Linhas do Grid */}
+          {gridLines.map((line, i) => (
+            <g key={i}>
+              <line 
+                x1={paddingLeft} 
+                y1={line.y} 
+                x2={width - paddingRight} 
+                y2={line.y} 
+                stroke="#e2e8f0" 
+                strokeDasharray="4 4" 
+                strokeOpacity="0.75"
+              />
+              <text 
+                x={paddingLeft - 8} 
+                y={line.y + 3.5} 
+                fill="#94a3b8" 
+                fontSize="9" 
+                textAnchor="end" 
+                className="font-bold font-sans"
+              >
+                {line.val}
+              </text>
+            </g>
+          ))}
+
+          {/* Área com cor gradiente suave sob a curva */}
+          {showAreaGradient && areaPath && (
+            <path 
+              d={areaPath} 
+              fill={`url(#svgGrad-${colorTheme}-${type}-${isEvolucao ? 'evo' : 'norm'})`} 
+              className="transition-all duration-500 ease-out"
+            />
+          )}
+
+          {/* Linha Curva Suave Principal com Gradiente e Brilho */}
+          <path 
+            d={linePath} 
+            fill="none" 
+            stroke={`url(#strokeGrad-${colorTheme}-${type})`} 
+            strokeWidth={isFullWidth ? "4" : "3.5"} 
+            strokeLinecap="round" 
+            strokeLinejoin="round"
+            filter="url(#softGlow)"
+            className="transition-all duration-500 ease-out"
+          />
+
+          {/* Marcador vertical do ponto ativo sob o mouse */}
+          {hoveredIndex !== null && (
+            <g>
+              <line 
+                x1={points[hoveredIndex].x} 
+                y1={paddingTop} 
+                x2={points[hoveredIndex].x} 
+                y2={paddingTop + chartHeight} 
+                stroke={primaryColor} 
+                strokeWidth="1.5" 
+                strokeDasharray="3 3"
+              />
+              {/* Halo pulsante no ponto ativo */}
+              <circle
+                cx={points[hoveredIndex].x}
+                cy={points[hoveredIndex].y}
+                r="10"
+                fill={primaryColor}
+                opacity="0.22"
+                className="animate-ping"
+              />
+            </g>
+          )}
+
+          {/* Pontos de dados na curva */}
+          {points.map((p, i) => (
+            <circle 
+              key={i} 
+              cx={p.x} 
+              cy={p.y} 
+              r={hoveredIndex === i ? (isFullWidth ? 7 : 6) : (isFullWidth ? 4.5 : 4)} 
+              fill={hoveredIndex === i ? primaryColor : '#ffffff'} 
+              stroke={primaryColor} 
+              strokeWidth={hoveredIndex === i ? 3 : 2}
+              className="transition-all duration-200 cursor-pointer shadow-sm"
+            />
+          ))}
+
+          {/* Rótulos de texto do eixo X com distribuição equilibrada */}
+          {points.filter((_, i) => {
+            const step = isFullWidth 
+              ? (points.length <= 16 ? 1 : Math.ceil(points.length / 12))
+              : (points.length <= 10 ? 1 : Math.ceil(points.length / 8));
+            return i % step === 0 || i === points.length - 1;
+          }).map((p, i) => (
+            <text 
+              key={i} 
+              x={p.x} 
+              y={height - 6} 
+              fill="#64748b" 
+              fontSize={isFullWidth ? "10" : "9"} 
+              textAnchor="middle" 
+              className="font-bold uppercase tracking-wider font-sans"
+            >
+              {p.name}
+            </text>
+          ))}
+        </svg>
+
+        {/* Tooltip Executivo Flutuante */}
+        {hoveredIndex !== null && (() => {
+          const xPercent = (points[hoveredIndex].x / width) * 100;
+          const yPercent = (points[hoveredIndex].y / height) * 100;
+          
+          let translateX = '-50%';
+          if (xPercent < 20) {
+            translateX = '-5%';
+          } else if (xPercent > 80) {
+            translateX = '-95%';
+          }
+          
+          let topStyle = `${yPercent - 12}%`;
+          let translateY = '-100%';
+          if (yPercent < 28) {
+            topStyle = `${yPercent + 12}%`;
+            translateY = '0%';
+          }
+
+          const pctOfTotal = totalMultas > 0 
+            ? ((points[hoveredIndex].value / totalMultas) * 100).toFixed(1) 
+            : '0';
+
+          return (
+            <div 
+              className="absolute z-30 pointer-events-none bg-slate-900/95 text-white rounded-xl px-3 py-2 shadow-2xl border border-slate-700/80 text-[11px] font-sans flex flex-col gap-0.5 transition-all duration-150 backdrop-blur-md"
+              style={{ 
+                left: `${xPercent}%`, 
+                top: topStyle,
+                transform: `translate(${translateX}, ${translateY})` 
+              }}
+            >
+              <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px]">
+                {points[hoveredIndex].name}
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-black text-sm text-risel-green">
+                  {points[hoveredIndex].value}
+                </span>
+                <span className="text-[10px] text-slate-300 font-medium">multas ({pctOfTotal}%)</span>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
     </div>
   );
 };
@@ -1113,20 +1193,53 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
 
   const isFirstLoad = useRef(true);
 
+  // Garantir que a Evolução Temporal fique sempre no topo ocupando a linha inteira em destaque, com Linha Curva Suave
+  const ensureEvolucaoFirst = (list: ChartWidgetConfig[]) => {
+    const evolucaoIdx = list.findIndex(c => c.id === 'evolucao_mensal');
+    let item: ChartWidgetConfig;
+    if (evolucaoIdx >= 0) {
+      item = {
+        ...list[evolucaoIdx],
+        visible: true,
+        // Se estava com tipo antigo '9' (área), migra para '5' (Linha Curva Suave com gradiente)
+        type: list[evolucaoIdx].type === '9' ? '5' : (list[evolucaoIdx].type || '5')
+      };
+    } else {
+      item = {
+        id: 'evolucao_mensal',
+        title: 'Evolução Temporal',
+        type: '5',
+        colorTheme: 'midnight',
+        visible: true
+      };
+    }
+    const without = list.filter(c => c.id !== 'evolucao_mensal');
+    return [item, ...without];
+  };
+
   // Carregar configurações da Nuvem (e fallback local)
   useEffect(() => {
     const timer = setTimeout(() => {
       setMounted(true);
     }, 250);
     const init = async () => {
-        const savedLocal = localStorage.getItem('risel_dashboard_config_v6'); // v6 for updated visual Road/Urban chart
+        let currentConfigs = DEFAULT_CONFIG;
+        const savedLocal = localStorage.getItem('risel_dashboard_config_v8') || localStorage.getItem('risel_dashboard_config_v7') || localStorage.getItem('risel_dashboard_config_v6');
         if (savedLocal) {
-             try { setConfigs(JSON.parse(savedLocal)); } catch(e) {}
+             try { 
+               const parsed = JSON.parse(savedLocal); 
+               if (Array.isArray(parsed) && parsed.length > 0) {
+                 currentConfigs = ensureEvolucaoFirst(parsed);
+               }
+             } catch(e) {}
         }
+        setConfigs(currentConfigs);
+
         const cloudConfig = await fetchDashboardConfig();
-        if (cloudConfig && Array.isArray(cloudConfig)) {
-             setConfigs(cloudConfig);
-             localStorage.setItem('risel_dashboard_config_v6', JSON.stringify(cloudConfig));
+        if (cloudConfig && Array.isArray(cloudConfig) && cloudConfig.length > 0) {
+             const ordered = ensureEvolucaoFirst(cloudConfig);
+             setConfigs(ordered);
+             localStorage.setItem('risel_dashboard_config_v8', JSON.stringify(ordered));
         }
         isFirstLoad.current = false;
     };
@@ -1137,7 +1250,7 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
   // Salvar configurações
   useEffect(() => {
     if (isFirstLoad.current) return;
-    localStorage.setItem('risel_dashboard_config_v6', JSON.stringify(configs));
+    localStorage.setItem('risel_dashboard_config_v8', JSON.stringify(configs));
     setIsCloudSaving(true);
     const timer = setTimeout(async () => {
         try { await saveDashboardConfigApi(configs); } catch (e) {} finally { setIsCloudSaving(false); }
@@ -1311,12 +1424,12 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
       case '6':
       case '7':
       case '8':
-        return <CustomSVGLineAreaChart data={data} colorTheme={colorTheme} type="line" />;
+        return <CustomSVGLineAreaChart data={data} colorTheme={colorTheme} type="line" isFullWidth={chartId === 'evolucao_mensal'} isEvolucao={chartId === 'evolucao_mensal'} />;
       case '9':
       case '10':
       case '11':
       case '19':
-        return <CustomSVGLineAreaChart data={data} colorTheme={colorTheme} type="area" />;
+        return <CustomSVGLineAreaChart data={data} colorTheme={colorTheme} type="area" isFullWidth={chartId === 'evolucao_mensal'} isEvolucao={chartId === 'evolucao_mensal'} />;
 
       // --- Vertical & Horizontal Bars ---
       case '1':
@@ -1378,6 +1491,7 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {configs.filter(c => c.visible).map((config, index) => {
           const chartData = dataMap[config.id as keyof typeof dataMap] || [];
+          const isFullWidth = config.id === 'evolucao_mensal';
 
           return (
             <div
@@ -1386,12 +1500,19 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
               onDragStart={() => handleDragStart(index)}
               onDragOver={(e) => handleDragOver(e, index)}
               onDragEnd={handleDragEnd}
-              className={`bg-white rounded-2xl p-5 relative group transition-all duration-300 border border-slate-200 shadow-sm ${draggedItemIndex === index ? 'opacity-50 scale-95 border-risel-green border-dashed' : 'opacity-100 hover:shadow-md'}`}
+              className={`bg-white rounded-2xl p-5 relative group transition-all duration-300 border border-slate-200 shadow-sm ${
+                isFullWidth ? 'col-span-1 lg:col-span-2 shadow-md ring-1 ring-slate-200/80 bg-gradient-to-b from-white to-slate-50/30' : ''
+              } ${draggedItemIndex === index ? 'opacity-50 scale-95 border-risel-green border-dashed' : 'opacity-100 hover:shadow-md'}`}
             >
-              <div className="flex justify-between items-center mb-4">
+              <div className="flex justify-between items-center mb-3">
                 <div className="flex items-center gap-2 cursor-move">
                     <GripVertical size={16} className="text-slate-400 hover:text-slate-600 transition-colors" />
-                    <h4 className="font-bold text-slate-700 text-sm uppercase tracking-wider">{config.title}</h4>
+                    <h4 className="font-bold text-slate-800 text-sm uppercase tracking-wider">{config.title}</h4>
+                    {isFullWidth && (
+                      <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Destaque · Visão Geral
+                      </span>
+                    )}
                 </div>
                 
                 {/* Evolution Chart Granularity Controls */}
@@ -1401,9 +1522,9 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
                             <button 
                                 key={g}
                                 onClick={() => setEvolutionGranularity(g)}
-                                className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all ${evolutionGranularity === g ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                className={`px-2.5 py-0.5 text-[10px] font-bold rounded-md transition-all ${evolutionGranularity === g ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                             >
-                                {g === 'day' ? 'Dia' : (g === 'week' ? 'Sem' : (g === 'month' ? 'Mês' : 'Tri'))}
+                                {g === 'day' ? 'Dia' : (g === 'week' ? 'Semana' : (g === 'month' ? 'Mês' : 'Trimestre'))}
                             </button>
                         ))}
                     </div>
@@ -1442,7 +1563,7 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
                 </div>
               </div>
 
-              <div className="h-[260px] min-h-[260px] w-full min-w-0 overflow-hidden">
+              <div className={`${isFullWidth ? 'h-[285px] min-h-[285px]' : 'h-[260px] min-h-[260px]'} w-full min-w-0 overflow-hidden`}>
                    {renderChart(config.type, chartData, config.colorTheme, config.id)}
               </div>
             </div>

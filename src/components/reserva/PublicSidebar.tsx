@@ -14,7 +14,7 @@ interface PublicSidebarProps {
 const PublicSidebar: React.FC<PublicSidebarProps> = ({ currentView, onNavigate, isSidebarOpen, setIsSidebarOpen, onOpenHelp }) => {
   const navItems = [
     { id: 'request', label: 'Solicitar Reserva', icon: DocumentTextIcon, desc: 'Veículo próprio da frota' },
-    { id: 'racRequest', label: 'Solicitar Locação RAC', icon: CarIcon, desc: 'Veículo terceirizado/locadora' },
+    { id: 'racRequest', label: 'Solicitar Veículo Locado', icon: CarIcon, desc: 'Veículo terceirizado/locadora' },
     { id: 'dailyUse', label: 'Uso Diário', icon: ClipboardListIcon, desc: 'Registre saída/retorno' },
     { id: 'fleetStatus', label: 'Status da Frota', icon: MapPinIcon, desc: 'Consulte disponibilidade' },
   ];

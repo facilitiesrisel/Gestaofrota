@@ -1,11 +1,13 @@
 import React, { useState, useMemo } from "react";
 import { 
-  AlertTriangle, CheckCircle2, Clock, Truck, Search, Filter, 
+  AlertTriangle, CheckCircle2, Clock, Car, Search, Filter, 
   Calendar, Phone, Mail, MessageSquare, Download, Copy, Check,
   ChevronRight, RefreshCw, AlertCircle, ArrowUpDown, ShieldAlert,
   Building2, UserX, ExternalLink, Sparkles
 } from "lucide-react";
 import { cn, toTitleCase } from "../../lib/utils";
+import { normalizeNomeCondutor } from "../../utils/condutorOperacional";
+import { MercosulPlateBadge } from "../MercosulPlateBadge";
 
 interface Checklist {
   id: string;
@@ -360,8 +362,9 @@ Agradecemos pela colaboração!
 
     filteredPendentes.forEach((item, idx) => {
       const v = item.vehicle;
+      const condutorNorm = normalizeNomeCondutor(v.condutor, v.placa, vehicles);
       const ultimo = item.lastChecklist?.data ? item.lastChecklist.data.substring(0, 10) : "Nunca";
-      text += `${idx + 1}. *${v.placa}* - ${v.modelo} | Condutor: ${v.condutor || "N/I"} | Base: ${v.filial || "Matriz"} | Último: ${ultimo}\n`;
+      text += `${idx + 1}. *${v.placa}* - ${v.modelo} | Condutor: ${condutorNorm !== "Não Informado" ? condutorNorm : "N/I"} | Base: ${v.filial || "Matriz"} | Último: ${ultimo}\n`;
     });
 
     text += `\n🔗 *Link para preenchimento pelos motoristas:* ${window.location.origin}/c`;
@@ -515,7 +518,7 @@ Agradecemos pela colaboração!
             </div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">
-            <Truck className="w-5 h-5" />
+            <Car className="w-5 h-5" />
           </div>
         </div>
 
@@ -618,11 +621,9 @@ Agradecemos pela colaboração!
                     <tr key={v.id || v.placa} className="hover:bg-amber-50/30 transition-colors">
                       
                       {/* Veículo / Placa */}
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <span className="font-mono bg-slate-100 border border-slate-200/80 px-2 py-0.5 rounded-md font-black text-slate-800 text-[11.5px]">
-                            {v.placa}
-                          </span>
+                      <td className="py-2.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <MercosulPlateBadge plate={v.placa} size="sm" />
                           <div>
                             <span className="font-extrabold text-slate-800 block text-xs truncate max-w-[160px]">
                               {v.modelo}
@@ -638,7 +639,10 @@ Agradecemos pela colaboração!
                       <td className="py-3 px-4">
                         <div className="space-y-0.5">
                           <span className="font-bold text-slate-800 block">
-                            {v.condutor || <span className="text-slate-400 italic">Não alocado</span>}
+                            {(() => {
+                              const norm = normalizeNomeCondutor(v.condutor, v.placa, vehicles);
+                              return norm !== "Não Informado" ? norm : <span className="text-slate-400 italic">Não alocado</span>;
+                            })()}
                           </span>
                           <span className="text-[10px] text-slate-500 block">
                             {v.funcao || "Motorista Operacional"}

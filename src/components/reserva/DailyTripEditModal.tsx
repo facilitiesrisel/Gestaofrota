@@ -6,6 +6,7 @@ import { DailyTrip } from '../../types_reserva';
 import { useReservations } from '../../context/ReservationContext';
 import Modal from './Modal';
 import { SP_CITIES } from '../../constants_reserva';
+import { normalizeCidade } from '../../utils/baseOperacional';
 
 interface DailyTripEditModalProps {
   isOpen: boolean;
@@ -59,7 +60,7 @@ const DailyTripEditModal: React.FC<DailyTripEditModalProps> = ({ isOpen, onClose
     const dataToSave: { [key: string]: any } = {
         driverName,
         vehicleId,
-        destinationCity,
+        destinationCity: normalizeCidade(destinationCity),
         destination,
         purpose,
         departureDateTime: departureDateTime ? new Date(departureDateTime as any) : undefined,

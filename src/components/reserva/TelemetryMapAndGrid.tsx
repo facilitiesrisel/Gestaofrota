@@ -9,8 +9,10 @@ import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { ALLOWED_PLATES } from '../../constants_reserva';
 import { getProcessedFleetWithReservations, ProcessedTelemetryVehicle } from '../../utils/telemetryFleetHelper';
+import { normalizeBaseOperacional, isSameCityOrBase } from '../../utils/baseOperacional';
 import { mapQuotaService } from '../../services/mapQuotaService';
 import { MapQuotaIndicator } from './MapQuotaIndicator';
+import { MercosulPlateBadge } from '../MercosulPlateBadge';
 
 export interface TelemetryMapAndGridProps {
   geoPositions: any[];
@@ -399,17 +401,17 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
     const baseSet = new Set<string>();
     processedFleet.forEach(v => {
       if (v.base) {
-        const clean = v.base.replace(/^Base\s+/i, '').trim();
+        const clean = normalizeBaseOperacional(v.base);
         if (clean) baseSet.add(clean);
       }
     });
     if (baseSet.size === 0) {
-      ['Paulínia', 'Betim', 'Rio de Janeiro', 'São Bernardo do Campo', 'Santos', 'Macaé'].forEach(b => baseSet.add(b));
+      ['Paulínia', 'Betim', 'Rio de Janeiro', 'São Bernardo', 'Santos', 'Macaé'].forEach(b => baseSet.add(b));
     }
     return Array.from(baseSet).sort((a, b) => {
       if (a === 'Paulínia') return -1;
       if (b === 'Paulínia') return 1;
-      return a.localeCompare(b);
+      return a.localeCompare(b, 'pt-BR');
     });
   }, [processedFleet]);
 
@@ -434,7 +436,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
 
     // Filtro Avançado: Base Operacional
     if (filtroBase !== 'Todas') {
-      list = list.filter(v => v.base === filtroBase);
+      list = list.filter(v => isSameCityOrBase(v.base, filtroBase));
     }
 
     // Busca rápida textual
@@ -674,7 +676,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
               >
                 <option value="Todas">Todas as Bases ({processedFleet.length} veíc.)</option>
                 {availableBases.map((baseName) => {
-                  const countInBase = processedFleet.filter(v => v.base === baseName).length;
+                  const countInBase = processedFleet.filter(v => isSameCityOrBase(v.base, baseName)).length;
                   return (
                     <option key={baseName} value={baseName}>
                       {baseName} ({countInBase} veíc.)
@@ -761,9 +763,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                         <div className="p-1 font-sans text-xs text-white">
                           <div className="flex justify-between items-center gap-2 mb-2 border-b border-slate-700/60 pb-1.5">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-mono bg-violet-600 text-white px-2 py-0.5 rounded font-black text-[10.5px] tracking-wider border border-violet-400">
-                                {v.plate}
-                              </span>
+                              <MercosulPlateBadge plate={v.plate} size="sm" />
                               {v.isReservationInUse && (
                                 <span className="bg-amber-500/25 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase">
                                   Em Reserva
@@ -1141,9 +1141,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                 >
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <span className="font-mono bg-violet-600 text-white px-2.5 py-0.5 rounded text-xs font-black tracking-wider border border-violet-400">
-                        {activeVehicleOnMap.plate}
-                      </span>
+                      <MercosulPlateBadge plate={activeVehicleOnMap.plate} size="md" />
                       <h5 className="font-bold text-slate-100 mt-2 text-sm">{activeVehicleOnMap.model}</h5>
                     </div>
                     <button 
@@ -1366,10 +1364,8 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                       ) : (
                         sortedFleet.map((v) => (
                           <tr key={v.plate} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="py-3 px-4">
-                              <span className="font-mono font-black bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-slate-800 text-[11px] shadow-sm">
-                                {v.plate}
-                              </span>
+                            <td className="py-2.5 px-4 whitespace-nowrap align-middle">
+                              <MercosulPlateBadge plate={v.plate} size="sm" />
                             </td>
                             <td className="py-3 px-4 font-bold text-slate-700">{v.model}</td>
                             <td className="py-3 px-4">
@@ -1568,9 +1564,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                         {/* Header: Plate & Status */}
                         <div className="flex justify-between items-start">
                           <div>
-                            <span className="font-mono bg-slate-100 border border-slate-200 px-2.5 py-1 rounded text-xs font-black tracking-wider text-slate-800 shadow-inner">
-                              {v.plate}
-                            </span>
+                            <MercosulPlateBadge plate={v.plate} size="sm" />
                             <h4 className="font-bold text-slate-800 mt-2 text-sm">{v.model}</h4>
                           </div>
 

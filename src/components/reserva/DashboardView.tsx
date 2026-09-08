@@ -10,6 +10,7 @@ import { firebaseConfig } from '../../firebaseConfig';
 import { sendEmail } from '../../services/firebaseService';
 import { UserPlus, RefreshCw, ArrowUp, ArrowDown, MapPin, Trophy, GripVertical } from 'lucide-react';
 import DestinationMap from './DestinationMap';
+import { normalizeCidade } from '../../utils/baseOperacional';
 
 type ChartType = ChartConfig['chartType'];
 
@@ -1224,7 +1225,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
                 case 'vehicle': key = normalizeVehicleModel(getVehicleById(trip.vehicleId)?.model); break;
                 case 'department': key = trip.department; break;
                 case 'driverName': key = trip.driverName; break;
-                case 'destinationCity': key = trip.destinationCity; break;
+                case 'destinationCity': key = normalizeCidade(trip.destinationCity, 'Não Informado'); break;
                 case 'purpose': key = trip.purpose || 'Nao especificado'; break;
                 case 'month':
                     const date = new Date(trip.departureDateTime);
@@ -1338,7 +1339,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
                 key = weekdays[wd.getDay()];
                 break;
             case 'year': key = new Date(res.departureDateTime).getFullYear(); break;
-            case 'destinationCity': key = res.destinationCity; break;
+            case 'destinationCity': key = normalizeCidade(res.destinationCity, 'Não Informado'); break;
             case 'purpose': key = res.purpose || 'Não Especificado'; break;
             case 'requesterName': key = res.requesterName; break;
             case 'leadTime': {

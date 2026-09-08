@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { useAuth, UserPermissions } from "../../context/AuthContext";
-import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap, Bot, BookOpen, Layers } from "lucide-react";
+import { useAuth, UserPermissions, normalizePermissions } from "../../context/AuthContext";
+import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap, Bot, BookOpen, Layers, Car, Navigation, Siren } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "../../lib/utils";
 import { AdminAiAssistant } from "../../components/AdminAiAssistant";
@@ -18,18 +18,21 @@ import {
 } from "../../services/supabaseService";
 
 export default function Usuarios() {
-  const { user: currentUser, usersList, createUser, updateUser, deleteUser } = useAuth();
+  const { user: currentUser, usersList, createUser, updateUser, deleteUser, refreshUsersFromSupabase } = useAuth();
   
-  // Bloqueio de Segurança: Apenas deny.goncalves@risel.com.br tem acesso a este menu
-  if (currentUser?.email?.toLowerCase() !== "deny.goncalves@risel.com.br") {
+  // Bloqueio de Segurança Rigoroso: Apenas o Administrador Master Deny Gonçalves possui autorização para gerenciar logins e permissões
+  const isMasterUser = 
+    currentUser?.email?.toLowerCase() === "deny.goncalves@risel.com.br";
+
+  if (!isMasterUser) {
     return (
       <div className="bg-white rounded-[24px] border border-slate-200/80 shadow-sm p-8 text-center max-w-xl mx-auto mt-12 space-y-4">
         <div className="w-16 h-16 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
           <Lock className="w-8 h-8" />
         </div>
-        <h2 className="text-xl font-bold text-slate-800">Acesso Restrito ao Menu Usuários</h2>
+        <h2 className="text-xl font-bold text-slate-800">Acesso Restrito ao Menu de Usuários</h2>
         <p className="text-slate-500 text-sm leading-relaxed">
-          Somente o usuário master <strong className="text-slate-800">deny.goncalves@risel.com.br</strong> possui autorização para gerenciar logins, senhas e liberações de submódulos no sistema ERP Risel.
+          Somente o Diretor Master Deny Gonçalves (<span className="font-semibold text-slate-700">deny.goncalves@risel.com.br</span>) possui permissão para conceder, alterar ou revogar acessos aos módulos do ERP Risel.
         </p>
         <div className="pt-2">
           <a
@@ -282,14 +285,21 @@ export default function Usuarios() {
   const [isRedefiningPassword, setIsRedefiningPassword] = useState(false);
   const [createdAccessDetails, setCreatedAccessDetails] = useState<{ name: string; email: string; password: string } | null>(null);
   const [copiedAccessDetails, setCopiedAccessDetails] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [permissions, setPermissions] = useState<UserPermissions>({
     admin: false,
+    documentos: true,
     dashboard: true,
     lancamentos: true,
     fornecedores: true,
-    frota: true,
+    frota: false,
+    frota_veiculos: false,
+    frota_checklist: false,
+    frota_reservas: false,
+    frota_multas: false,
+    frota_rastreamento: false,
     usuarios: false,
   });
   const [status, setStatus] = useState<"Ativa" | "Inativa">("Ativa");
@@ -309,11 +319,35 @@ export default function Usuarios() {
     setProvisoryPassword(pass);
   };
 
-  const handleTogglePermission = (key: keyof UserPermissions) => {
+  // Alterna o Módulo Lançamento de Documentos como ITEM ÚNICO (libera Dashboard, Lançamento e Fornecedores)
+  const handleToggleDocumentos = () => {
+    const nextVal = !Boolean(permissions.documentos);
+    setPermissions(prev => ({
+      ...prev,
+      documentos: nextVal,
+      dashboard: nextVal,
+      lancamentos: nextVal,
+      fornecedores: nextVal,
+    }));
+    if (!nextVal) {
+      setIsAdmin(false);
+    }
+  };
+
+  // Alterna cada submódulo individual da Frota Leve
+  const handleToggleFrotaSubmodule = (key: "frota_veiculos" | "frota_checklist" | "frota_reservas" | "frota_multas" | "frota_rastreamento") => {
     setPermissions(prev => {
-      const updated = { ...prev, [key]: !prev[key] };
-      // Se qualquer menu for desmarcado (ficando false), ele não pode ser administrador completo!
-      if (!updated[key]) {
+      const nextVal = !prev[key];
+      const updated: UserPermissions = { ...prev, [key]: nextVal };
+      // O módulo frota fica ativo se houver ao menos um submódulo marcado
+      updated.frota = Boolean(
+        updated.frota_veiculos || 
+        updated.frota_checklist || 
+        updated.frota_reservas || 
+        updated.frota_multas || 
+        updated.frota_rastreamento
+      );
+      if (!nextVal) {
         setIsAdmin(false);
       }
       return updated;
@@ -324,6 +358,7 @@ export default function Usuarios() {
     setIsAdmin(true);
     setPermissions({
       admin: true,
+      documentos: true,
       dashboard: true,
       lancamentos: true,
       fornecedores: true,
@@ -333,7 +368,7 @@ export default function Usuarios() {
       frota_reservas: true,
       frota_multas: true,
       frota_rastreamento: true,
-      usuarios: true,
+      usuarios: false, // Gestão de Usuários permanece restrita ao Diretor Master Deny Gonçalves
     });
   };
 
@@ -341,6 +376,7 @@ export default function Usuarios() {
     setIsAdmin(false);
     setPermissions({
       admin: false,
+      documentos: true,
       dashboard: true,
       lancamentos: true,
       fornecedores: true,
@@ -362,7 +398,8 @@ export default function Usuarios() {
     setEmail(usr.email);
     setIsAdmin(usr.role === "admin");
     setStatus(usr.status || "Ativa");
-    setPermissions(usr.permissions);
+    // Normaliza garantindo que todos os campos booleanos estejam definidos
+    setPermissions(normalizePermissions(usr.permissions, usr.role === "admin"));
     setProvisoryPassword(usr.password || "Risel@2026!");
     setMustChangePasswordCheck(usr.mustChangePassword !== undefined ? usr.mustChangePassword : true);
     setIsRedefiningPassword(false);
@@ -376,10 +413,16 @@ export default function Usuarios() {
     setStatus("Ativa");
     setPermissions({
       admin: false,
+      documentos: true,
       dashboard: true,
       lancamentos: true,
       fornecedores: true,
-      frota: true,
+      frota: false,
+      frota_veiculos: false,
+      frota_checklist: false,
+      frota_reservas: false,
+      frota_multas: false,
+      frota_rastreamento: false,
       usuarios: false,
     });
     setProvisoryPassword("Risel@2026!");
@@ -396,7 +439,7 @@ export default function Usuarios() {
     setTimeout(() => setCopiedAccessDetails(false), 4000);
   };
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccess("");
@@ -406,56 +449,75 @@ export default function Usuarios() {
       return;
     }
 
-    if (editingEmail) {
-      // Editar colaborador existente
-      updateUser(editingEmail, {
-        name: name.trim(),
-        role: isAdmin ? "admin" : "user",
-        permissions: {
+    setIsSavingUser(true);
+    try {
+      if (editingEmail) {
+        // Se for o master Deny Gonçalves, preserva permissão completa
+        const isMaster = editingEmail.toLowerCase() === "deny.goncalves@risel.com.br";
+        const finalAdmin = isMaster ? true : isAdmin;
+        const normalizedPerms = normalizePermissions({
           ...permissions,
-          admin: isAdmin,
-          usuarios: isAdmin ? true : permissions.usuarios
-        },
-        status: status,
-        password: isRedefiningPassword ? provisoryPassword.trim() : undefined,
-        mustChangePassword: isRedefiningPassword ? mustChangePasswordCheck : undefined
-      });
-      
-      setSuccess("Dados do colaborador e acessos atualizados no sistema e no banco Supabase com sucesso!");
-      if (isRedefiningPassword) {
-        setCreatedAccessDetails({
-          name: name.trim(),
-          email: editingEmail,
-          password: provisoryPassword.trim()
-        });
-      }
-      handleCancelEdit();
-    } else {
-      // Criar novo login
-      const finalPassword = provisoryPassword.trim() || "Risel@2026!";
-      const created = createUser(
-        name.trim(), 
-        email.trim(), 
-        {
-          ...permissions,
-          admin: isAdmin,
-          usuarios: isAdmin ? true : permissions.usuarios,
-        },
-        finalPassword,
-        mustChangePasswordCheck
-      );
+          admin: finalAdmin,
+          usuarios: isMaster,
+        }, finalAdmin);
 
-      if (created) {
-        setSuccess("Novo usuário cadastrado e gravado no Banco de Dados Supabase com sucesso!");
-        setCreatedAccessDetails({
+        const ok = await updateUser(editingEmail, {
           name: name.trim(),
-          email: email.trim().toLowerCase(),
-          password: finalPassword
+          role: finalAdmin ? "admin" : "user",
+          permissions: normalizedPerms,
+          status: status,
+          password: isRedefiningPassword ? provisoryPassword.trim() : undefined,
+          mustChangePassword: isRedefiningPassword ? mustChangePasswordCheck : undefined
         });
-        handleCancelEdit();
+
+        if (ok) {
+          setSuccess("Acessos e permissões do colaborador salvos diretamente no Banco de Dados com sucesso!");
+          if (isRedefiningPassword) {
+            setCreatedAccessDetails({
+              name: name.trim(),
+              email: editingEmail,
+              password: provisoryPassword.trim()
+            });
+          }
+          handleCancelEdit();
+          await refreshUsersFromSupabase();
+        } else {
+          setError("Erro ao persistir permissões no Banco de Dados. Tente novamente.");
+        }
       } else {
-        setError("Este e-mail já está cadastrado no sistema.");
+        // Criar novo login
+        const finalPassword = provisoryPassword.trim() || "Risel@2026!";
+        const normalizedPerms = normalizePermissions({
+          ...permissions,
+          admin: isAdmin,
+          usuarios: false,
+        }, isAdmin);
+
+        const created = await createUser(
+          name.trim(), 
+          email.trim(), 
+          normalizedPerms,
+          finalPassword,
+          mustChangePasswordCheck
+        );
+
+        if (created) {
+          setSuccess("Novo usuário cadastrado e salvo diretamente no Banco de Dados com sucesso!");
+          setCreatedAccessDetails({
+            name: name.trim(),
+            email: email.trim().toLowerCase(),
+            password: finalPassword
+          });
+          handleCancelEdit();
+          await refreshUsersFromSupabase();
+        } else {
+          setError("Este e-mail já está cadastrado no sistema.");
+        }
       }
+    } catch (err: any) {
+      setError(`Erro ao salvar no banco de dados: ${err.message || err}`);
+    } finally {
+      setIsSavingUser(false);
     }
   };
 
@@ -466,9 +528,6 @@ export default function Usuarios() {
           <h2 className="text-3xl font-display font-bold text-slate-800 flex items-center gap-2">
             <Users className="w-8 h-8 text-[#114D38]" /> Painel de Gestão Master & Usuários
           </h2>
-          <p className="text-slate-500 mt-1">
-            Controle de acessos, Assistente de IA Executivo, documentação de engenharia e parametrização do banco.
-          </p>
         </div>
 
         <button
@@ -804,142 +863,143 @@ export default function Usuarios() {
               </p>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block border-b border-slate-100 pb-1">
-                Acessos Individuais (Módulos/Menus)
+                Acessos aos Módulos do Sistema
               </label>
 
-              <div className="space-y-2">
-                <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
-                  📁 Módulo Documentos ERP
-                </span>
+              <div className="space-y-2.5">
+                {/* Módulo Lançamento de Documentos - Item Único Conforme Solicitação */}
+                <div className="p-3 rounded-xl border border-emerald-200/80 bg-emerald-50/40 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-emerald-700" />
+                      Módulo Lançamento de Documentos
+                    </span>
+                    <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                      Item Único
+                    </span>
+                  </div>
 
-                {/* Dashboard */}
-                <button
-                  type="button"
-                  onClick={() => handleTogglePermission("dashboard")}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    permissions.dashboard 
-                      ? "bg-emerald-50/50 border-emerald-100 text-[#114D38]" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">📊 Dashboard Geral</span>
-                  {permissions.dashboard ? <CheckSquare className="w-4 h-4 text-[#114D38]" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleDocumentos}
+                    className={cn(
+                      "w-full flex items-center justify-between p-2.5 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
+                      Boolean(permissions.documentos)
+                        ? "bg-white border-emerald-500 text-emerald-900 shadow-2xs font-bold" 
+                        : "bg-white/80 border-slate-200 text-slate-500 hover:bg-white"
+                    )}
+                  >
+                    <div className="space-y-0.5">
+                      <span className="flex items-center gap-2 font-bold text-slate-800">
+                        📁 Acesso Completo a Documentos ERP
+                      </span>
+                      <p className="text-[10px] text-slate-500 font-normal">
+                        Libera conjuntamente: Dashboard Geral, Lançamento de Documentos e Cadastro de Fornecedores.
+                      </p>
+                    </div>
+                    {Boolean(permissions.documentos) ? (
+                      <CheckSquare className="w-5 h-5 text-emerald-700 shrink-0" />
+                    ) : (
+                      <Square className="w-5 h-5 text-slate-300 shrink-0" />
+                    )}
+                  </button>
+                </div>
 
-                {/* Lancamentos */}
-                <button
-                  type="button"
-                  onClick={() => handleTogglePermission("lancamentos")}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    permissions.lancamentos 
-                      ? "bg-emerald-50/50 border-emerald-100 text-[#114D38]" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">📝 Lançamento de Documentos</span>
-                  {permissions.lancamentos ? <CheckSquare className="w-4 h-4 text-[#114D38]" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
+                {/* Submódulos da Frota Leve - Individuais e Independentes */}
+                <div className="p-3 rounded-xl border border-orange-200/80 bg-orange-50/40 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-orange-950 uppercase tracking-wider flex items-center gap-1.5">
+                      <Car className="w-3.5 h-3.5 text-orange-600" />
+                      Módulo Controle de Frota Leve
+                    </span>
+                    <span className="text-[9px] font-extrabold bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded border border-orange-200">
+                      Acessos Individuais
+                    </span>
+                  </div>
 
-                {/* Fornecedores */}
-                <button
-                  type="button"
-                  onClick={() => handleTogglePermission("fornecedores")}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    permissions.fornecedores 
-                      ? "bg-emerald-50/50 border-emerald-100 text-[#114D38]" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">🤝 Cadastro de Fornecedores</span>
-                  {permissions.fornecedores ? <CheckSquare className="w-4 h-4 text-[#114D38]" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
+                  <p className="text-[10px] text-slate-500">
+                    Marque apenas os submódulos que este usuário terá permissão de visualizar e operar:
+                  </p>
 
-                <span className="text-[10px] font-bold text-orange-800 uppercase tracking-wider block bg-orange-50 px-2 py-1 rounded mt-3">
-                  🚚 Submódulos de Frota Leve
-                </span>
+                  <div className="space-y-1.5 pt-1">
+                    {/* Frota: Veículos / Abastecimentos / RAC */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFrotaSubmodule("frota_veiculos")}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
+                        permissions.frota_veiculos 
+                          ? "bg-white border-orange-400 text-orange-950 shadow-2xs font-bold" 
+                          : "bg-white/80 border-slate-200 text-slate-500 hover:bg-white"
+                      )}
+                    >
+                      <span className="flex items-center gap-2">🚗 Veículos / Abastecimentos / RAC</span>
+                      {permissions.frota_veiculos ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
+                    </button>
 
-                {/* Frota Veículos */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleTogglePermission("frota");
-                    handleTogglePermission("frota_veiculos");
-                  }}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    (permissions.frota || permissions.frota_veiculos) 
-                      ? "bg-orange-50/60 border-orange-200 text-orange-900" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">🚗 Veículos / Abastecimentos / RAC</span>
-                  {(permissions.frota || permissions.frota_veiculos) ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
+                    {/* Frota: Checklist Digital */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFrotaSubmodule("frota_checklist")}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
+                        permissions.frota_checklist 
+                          ? "bg-white border-orange-400 text-orange-950 shadow-2xs font-bold" 
+                          : "bg-white/80 border-slate-200 text-slate-500 hover:bg-white"
+                      )}
+                    >
+                      <span className="flex items-center gap-2">📋 Checklist Digital de Veículos</span>
+                      {permissions.frota_checklist ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
+                    </button>
 
-                {/* Frota Checklist */}
-                <button
-                  type="button"
-                  onClick={() => handleTogglePermission("frota_checklist")}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    permissions.frota_checklist 
-                      ? "bg-orange-50/60 border-orange-200 text-orange-900" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">📋 Checklist Digital de Veículos</span>
-                  {permissions.frota_checklist ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
+                    {/* Frota: Gestão de Reservas */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFrotaSubmodule("frota_reservas")}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
+                        permissions.frota_reservas 
+                          ? "bg-white border-orange-400 text-orange-950 shadow-2xs font-bold" 
+                          : "bg-white/80 border-slate-200 text-slate-500 hover:bg-white"
+                      )}
+                    >
+                      <span className="flex items-center gap-2">📅 Gestão de Reservas / Calendário</span>
+                      {permissions.frota_reservas ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
+                    </button>
 
-                {/* Frota Reservas */}
-                <button
-                  type="button"
-                  onClick={() => handleTogglePermission("frota_reservas")}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    permissions.frota_reservas 
-                      ? "bg-orange-50/60 border-orange-200 text-orange-900" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">📅 Gestão de Reservas / Calendário</span>
-                  {permissions.frota_reservas ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
+                    {/* Frota: Multas e Infrações */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFrotaSubmodule("frota_multas")}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
+                        permissions.frota_multas 
+                          ? "bg-white border-orange-400 text-orange-950 shadow-2xs font-bold" 
+                          : "bg-white/80 border-slate-200 text-slate-500 hover:bg-white"
+                      )}
+                    >
+                      <span className="flex items-center gap-2">📑 Controle de Multas / Infrações</span>
+                      {permissions.frota_multas ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
+                    </button>
 
-                {/* Frota Multas */}
-                <button
-                  type="button"
-                  onClick={() => handleTogglePermission("frota_multas")}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    permissions.frota_multas 
-                      ? "bg-orange-50/60 border-orange-200 text-orange-900" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">📑 Controle de Multas / Infrações</span>
-                  {permissions.frota_multas ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
-
-                {/* Frota Rastreamento */}
-                <button
-                  type="button"
-                  onClick={() => handleTogglePermission("frota_rastreamento")}
-                  className={cn(
-                    "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
-                    permissions.frota_rastreamento 
-                      ? "bg-orange-50/60 border-orange-200 text-orange-900" 
-                      : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <span className="flex items-center gap-2">📡 Rastreamento GeoFrotas / GPS</span>
-                  {permissions.frota_rastreamento ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
-                </button>
+                    {/* Frota: Rastreamento GeoFrotas / GPS */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFrotaSubmodule("frota_rastreamento")}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer",
+                        permissions.frota_rastreamento 
+                          ? "bg-white border-orange-400 text-orange-950 shadow-2xs font-bold" 
+                          : "bg-white/80 border-slate-200 text-slate-500 hover:bg-white"
+                      )}
+                    >
+                      <span className="flex items-center gap-2">📡 Rastreamento GeoFrotas / GPS</span>
+                      {permissions.frota_rastreamento ? <CheckSquare className="w-4 h-4 text-orange-600" /> : <Square className="w-4 h-4 text-slate-300" />}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -947,18 +1007,29 @@ export default function Usuarios() {
               {editingEmail && (
                 <button
                   type="button"
+                  disabled={isSavingUser}
                   onClick={handleCancelEdit}
-                  className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all text-center"
+                  className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all text-center cursor-pointer disabled:opacity-50"
                 >
                   Cancelar
                 </button>
               )}
               <button
                 type="submit"
-                className="flex-1 py-2 px-3 bg-[#114D38] hover:bg-[#0d3b2b] text-white rounded-xl text-xs font-bold shadow-lg shadow-[#114D38]/10 transition-all flex items-center justify-center gap-1.5"
+                disabled={isSavingUser}
+                className="flex-1 py-2.5 px-3 bg-[#114D38] hover:bg-[#0d3b2b] text-white rounded-xl text-xs font-bold shadow-lg shadow-[#114D38]/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
               >
-                <Save className="w-3.5 h-3.5" />
-                <span>{editingEmail ? "Salvar Alterações" : "Salvar Novo Login"}</span>
+                {isSavingUser ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Salvando no Banco...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{editingEmail ? "Salvar Permissões no Banco" : "Cadastrar e Salvar no Banco"}</span>
+                  </>
+                )}
               </button>
             </div>
           </form>
@@ -1042,18 +1113,36 @@ export default function Usuarios() {
                         {usr.email}
                       </td>
                       <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1 max-w-[280px]">
-                          {usr.permissions.dashboard && (
-                            <span className="bg-emerald-50 text-[#114D38] border border-emerald-100 px-2 py-0.5 rounded text-[10px] font-bold">📊 Dash</span>
+                        <div className="flex flex-wrap gap-1 max-w-[300px]">
+                          {(usr.permissions.documentos || usr.permissions.lancamentos || usr.permissions.dashboard) && (
+                            <span className="bg-emerald-50 text-[#114D38] border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1">
+                              📁 Doc ERP
+                            </span>
                           )}
-                          {usr.permissions.lancamentos && (
-                            <span className="bg-emerald-50 text-[#114D38] border border-emerald-100 px-2 py-0.5 rounded text-[10px] font-bold">📝 Lanc</span>
+                          {(usr.permissions.frota_veiculos ?? usr.permissions.frota) && (
+                            <span className="bg-orange-50 text-orange-800 border border-orange-200 px-2 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1">
+                              🚗 Veículos
+                            </span>
                           )}
-                          {usr.permissions.fornecedores && (
-                            <span className="bg-emerald-50 text-[#114D38] border border-emerald-100 px-2 py-0.5 rounded text-[10px] font-bold">🤝 Forn</span>
+                          {usr.permissions.frota_checklist && (
+                            <span className="bg-orange-50 text-orange-800 border border-orange-200 px-2 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1">
+                              📋 Checklist
+                            </span>
                           )}
-                          {usr.permissions.frota && (
-                            <span className="bg-emerald-50 text-[#114D38] border border-emerald-100 px-2 py-0.5 rounded text-[10px] font-bold">🚚 Frot</span>
+                          {usr.permissions.frota_reservas && (
+                            <span className="bg-orange-50 text-orange-800 border border-orange-200 px-2 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1">
+                              📅 Reservas
+                            </span>
+                          )}
+                          {usr.permissions.frota_multas && (
+                            <span className="bg-orange-50 text-orange-800 border border-orange-200 px-2 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1">
+                              📑 Multas
+                            </span>
+                          )}
+                          {usr.permissions.frota_rastreamento && (
+                            <span className="bg-orange-50 text-orange-800 border border-orange-200 px-2 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1">
+                              📡 Rastreio
+                            </span>
                           )}
                         </div>
                       </td>
@@ -1068,13 +1157,14 @@ export default function Usuarios() {
                           </button>
                           {usr.email !== "deny.goncalves@risel.com.br" && (
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 if (usr.email === currentUser?.email) {
                                   alert("Você não pode excluir o próprio usuário logado por segurança.");
                                   return;
                                 }
-                                if (confirm(`Deseja revogar o acesso de ${usr.name}?`)) {
-                                  deleteUser(usr.email);
+                                if (confirm(`Deseja revogar e excluir permanentemente o acesso de ${usr.name}?`)) {
+                                  await deleteUser(usr.email);
+                                  await refreshUsersFromSupabase();
                                 }
                               }}
                               className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-colors cursor-pointer"

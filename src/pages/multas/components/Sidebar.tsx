@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { BarChart3, Siren, Truck, Users, Settings, LogOut, ChevronLeft, ChevronRight, BellRing } from 'lucide-react';
+import { BarChart3, Siren, Car, Users, Settings, LogOut, ChevronLeft, ChevronRight, BellRing } from 'lucide-react';
 import { Page } from '../types';
 import { useAuth } from '../../../context/AuthContext';
 import { isDenyUser } from '../services/authHelper';
@@ -19,7 +19,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, togg
     { id: 'DASHBOARD', label: 'Dashboard', icon: BarChart3 },
     { id: 'MULTAS', label: 'Multas', icon: Siren },
     { id: 'ALERTAS', label: 'Alertas', icon: BellRing },
-    { id: 'FROTAS', label: 'Frotas', icon: Truck },
+    { id: 'FROTAS', label: 'Frotas', icon: Car },
     { id: 'MOTORISTAS', label: 'Motoristas', icon: Users },
   ];
 

@@ -1,12 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { fetchUsuariosSupabase, saveUsuarioSupabase, deleteUsuarioSupabase } from "../services/supabaseService";
+import { fetchUsuariosSupabase, saveUsuarioSupabase, deleteUsuarioSupabase, ensureUserCredentialsInSupabase } from "../services/supabaseService";
 import { generateResetPasswordHtml } from "../utils/emailTemplate";
 
 export interface UserPermissions {
   admin: boolean;
+  // Módulo Lançamento de Documentos (item único: libera Dashboard, Lançamento e Fornecedores)
+  documentos?: boolean;
   dashboard: boolean;
   lancamentos: boolean;
   fornecedores: boolean;
+  // Módulo Frota Leve e Submódulos Individuais
   frota: boolean;
   frota_veiculos?: boolean;
   frota_checklist?: boolean;
@@ -16,11 +19,110 @@ export interface UserPermissions {
   usuarios: boolean;
 }
 
+/**
+ * Normaliza o objeto de permissões para garantir que todos os campos booleanos estejam
+ * explicitamente definidos (evitando que campos undefined herdem acessos indevidos).
+ */
+export function normalizePermissions(
+  perms?: Partial<UserPermissions> | null, 
+  isAdmin: boolean = false
+): UserPermissions {
+  if (isAdmin || perms?.admin === true) {
+    return {
+      admin: true,
+      documentos: true,
+      dashboard: true,
+      lancamentos: true,
+      fornecedores: true,
+      frota: true,
+      frota_veiculos: true,
+      frota_checklist: true,
+      frota_reservas: true,
+      frota_multas: true,
+      frota_rastreamento: true,
+      usuarios: true,
+    };
+  }
+
+  // Módulo Lançamento de Documentos unificado:
+  // Se explicitamente definido, respeita rigorosamente o valor booleano.
+  const docsAllowed = perms?.documentos !== undefined
+    ? Boolean(perms.documentos)
+    : Boolean(perms?.dashboard || perms?.lancamentos || (perms as any)?.lancamento || perms?.fornecedores || (perms as any)?.fornecedor);
+
+  // Submódulos individuais de Frota Leve (estrito deny-by-default):
+  // Se a chave moderna estiver definida (true ou false), usa estritamente ela.
+  // Caso contrário, tenta chaves legadas se presentes.
+  const fVeiculos = perms?.frota_veiculos !== undefined
+    ? Boolean(perms.frota_veiculos)
+    : (perms?.frota !== undefined ? Boolean(perms.frota) : Boolean((perms as any)?.veiculos));
+
+  const fChecklist = perms?.frota_checklist !== undefined
+    ? Boolean(perms.frota_checklist)
+    : Boolean((perms as any)?.checklist);
+
+  const fReservas = perms?.frota_reservas !== undefined
+    ? Boolean(perms.frota_reservas)
+    : Boolean((perms as any)?.reservas);
+
+  const fMultas = perms?.frota_multas !== undefined
+    ? Boolean(perms.frota_multas)
+    : Boolean((perms as any)?.multas);
+
+  const fRastreamento = perms?.frota_rastreamento !== undefined
+    ? Boolean(perms.frota_rastreamento)
+    : Boolean((perms as any)?.telemetria || (perms as any)?.rastreamento);
+
+  // Frota só é permitida se tiver pelo menos um submódulo individual liberado
+  const frotaGeral = fVeiculos || fChecklist || fReservas || fMultas || fRastreamento;
+
+  return {
+    admin: false,
+    documentos: docsAllowed,
+    dashboard: docsAllowed,
+    lancamentos: docsAllowed,
+    fornecedores: docsAllowed,
+    frota: frotaGeral,
+    frota_veiculos: fVeiculos,
+    frota_checklist: fChecklist,
+    frota_reservas: fReservas,
+    frota_multas: fMultas,
+    frota_rastreamento: fRastreamento,
+    usuarios: false,
+  };
+}
+
+/**
+ * Retorna os submódulos da frota que o usuário tem autorização explícita para acessar.
+ */
+export function getAllowedFrotaSubmodules(
+  permissions: UserPermissions | undefined
+): Array<"frota" | "checklist" | "reservas" | "multas" | "rastreamento"> {
+  if (!permissions) return [];
+  if (permissions.admin) {
+    return ["frota", "checklist", "reservas", "multas", "rastreamento"];
+  }
+
+  const allowed: Array<"frota" | "checklist" | "reservas" | "multas" | "rastreamento"> = [];
+  if (permissions.frota_veiculos === true) allowed.push("frota");
+  if (permissions.frota_checklist === true) allowed.push("checklist");
+  if (permissions.frota_reservas === true) allowed.push("reservas");
+  if (permissions.frota_multas === true) allowed.push("multas");
+  if (permissions.frota_rastreamento === true) allowed.push("rastreamento");
+  return allowed;
+}
+
+/**
+ * Validação de Acesso a Submódulos da Frota Leve.
+ * Princípio Zero-Trust / Menor Privilégio:
+ * Se o usuário não for Administrador, o acesso ao submódulo só é concedido
+ * se a permissão individual correspondente estiver EXPLICITAMENTE true.
+ */
 export function hasSubmoduleAccess(
   permissions: UserPermissions | undefined, 
   submodule: "frota" | "checklist" | "reservas" | "multas" | "rastreamento"
 ): boolean {
-  if (!permissions) return true;
+  if (!permissions) return false;
   if (permissions.admin) return true;
 
   const keyMap: Record<string, keyof UserPermissions> = {
@@ -32,38 +134,52 @@ export function hasSubmoduleAccess(
   };
 
   const specificKey = keyMap[submodule];
-  const specificVal = permissions[specificKey];
-
-  // Se explicitamente permitido
-  if (specificVal === true) return true;
-  // Se explicitamente bloqueado
-  if (specificVal === false) return false;
-
-  // Se o submódulo não foi especificado explicitamente, usa a permissão geral 'frota'
-  if (permissions.frota !== undefined) {
-    return Boolean(permissions.frota);
-  }
-  return true;
+  return Boolean(permissions[specificKey]);
 }
 
+/**
+ * Validação de Acesso aos Módulos Principais do Sistema Risel.
+ * Somente concede acesso se o usuário for Admin ou tiver a permissão correspondente true.
+ */
 export function hasModuleAccess(
   permissions: UserPermissions | undefined,
-  module: "dashboard" | "lancamentos" | "fornecedores" | "frota" | "usuarios"
+  module: "dashboard" | "lancamentos" | "fornecedores" | "documentos" | "frota" | "usuarios",
+  currentUserEmail?: string
 ): boolean {
-  if (!permissions) return true;
+  if (!permissions) return false;
   if (permissions.admin) return true;
 
+  const isMaster = currentUserEmail && currentUserEmail.toLowerCase() === "deny.goncalves@risel.com.br";
+  if (isMaster) return true;
+
+  if (module === "documentos") {
+    return Boolean(permissions.documentos || permissions.dashboard || permissions.lancamentos || permissions.fornecedores);
+  }
+  if (module === "dashboard") {
+    return Boolean(permissions.dashboard || permissions.documentos);
+  }
+  if (module === "lancamentos") {
+    return Boolean(permissions.lancamentos || permissions.documentos);
+  }
+  if (module === "fornecedores") {
+    return Boolean(permissions.fornecedores || permissions.documentos);
+  }
   if (module === "frota") {
-    if (permissions.frota === false) return false;
-    return true;
+    return Boolean(
+      permissions.frota_veiculos || 
+      permissions.frota_checklist || 
+      permissions.frota_reservas || 
+      permissions.frota_multas || 
+      permissions.frota_rastreamento ||
+      permissions.frota
+    );
+  }
+  if (module === "usuarios") {
+    // Menu Usuários é exclusivo do usuário master Deny Gonçalves
+    return Boolean(isMaster && permissions.usuarios);
   }
 
-  if (permissions[module] === false) {
-    return false;
-  }
-
-  // Por padrão, permite acesso a menos que esteja explicitamente bloqueado como false
-  return true;
+  return false;
 }
 
 export interface UserSession {
@@ -96,7 +212,7 @@ interface AuthContextType {
     permissions: UserPermissions, 
     initialPassword?: string, 
     mustChangePassword?: boolean
-  ) => boolean;
+  ) => Promise<boolean>;
   updateUser: (
     email: string, 
     updatedData: { 
@@ -107,8 +223,9 @@ interface AuthContextType {
       password?: string;
       mustChangePassword?: boolean;
     }
-  ) => void;
-  deleteUser: (email: string) => void;
+  ) => Promise<boolean>;
+  deleteUser: (email: string) => Promise<void>;
+  refreshUsersFromSupabase: () => Promise<void>;
   changePassword: (newPassword: string) => Promise<boolean>;
   forgotPassword: (email: string) => Promise<{ 
     success: boolean; 
@@ -132,6 +249,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const MASTER_PERMISSIONS: UserPermissions = {
   admin: true,
+  documentos: true,
   dashboard: true,
   lancamentos: true,
   fornecedores: true,
@@ -154,12 +272,20 @@ const DEFAULT_USERS: UserSession[] = [
     permissions: MASTER_PERMISSIONS
   },
   {
-    email: "deny.risel@gmail.com",
-    name: "Deny Gonçalves",
-    role: "admin",
-    password: "@Cap150957",
+    email: "lorena.padilha@risel.com.br",
+    name: "Lorena Padilha",
+    role: "user",
+    password: "Risel@2026!",
     mustChangePassword: false,
-    permissions: MASTER_PERMISSIONS
+    permissions: normalizePermissions({
+      documentos: true,
+      dashboard: true,
+      lancamentos: true,
+      fornecedores: true,
+      frota: true,
+      frota_veiculos: true
+    }),
+    status: "Ativa"
   }
 ];
 
@@ -169,7 +295,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (sessionSaved) {
       try { 
         const parsed = JSON.parse(sessionSaved);
-        if (parsed.email && (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com")) {
+        if (parsed.email && parsed.email.toLowerCase() === "deny.risel@gmail.com") {
+          sessionStorage.removeItem("risel_session");
+          return DEFAULT_USERS[0];
+        }
+        if (parsed.email && parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
           parsed.role = "admin";
           parsed.permissions = MASTER_PERMISSIONS;
         }
@@ -180,7 +310,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (localSaved) {
       try { 
         const parsed = JSON.parse(localSaved);
-        if (parsed.email && (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com")) {
+        if (parsed.email && parsed.email.toLowerCase() === "deny.risel@gmail.com") {
+          localStorage.removeItem("risel_active_session");
+          return DEFAULT_USERS[0];
+        }
+        if (parsed.email && parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
           parsed.role = "admin";
           parsed.permissions = MASTER_PERMISSIONS;
         }
@@ -192,7 +326,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [usersList, setUsersList] = useState<UserSession[]>(() => {
     const saved = localStorage.getItem("risel_users_list");
-    return saved ? JSON.parse(saved) : DEFAULT_USERS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((u: any) => u.email?.toLowerCase() !== "deny.risel@gmail.com");
+        }
+      } catch (e) {}
+    }
+    return DEFAULT_USERS;
   });
 
   // Salva alterações de usuários no localStorage
@@ -200,47 +342,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("risel_users_list", JSON.stringify(usersList));
   }, [usersList]);
 
-  // Carrega e sincroniza usuários com o Supabase na inicialização
-  useEffect(() => {
-    async function syncUsuariosWithSupabase() {
+  // Sincroniza usuários com o Supabase
+  const refreshUsersFromSupabase = async () => {
+    try {
       const dbUsers = await fetchUsuariosSupabase();
       if (Array.isArray(dbUsers) && dbUsers.length > 0) {
         setUsersList(prev => {
           const mapUsers = new Map<string, UserSession>();
           
-          // Adiciona usuários vindos do Supabase
-          dbUsers.forEach(u => mapUsers.set(u.email.toLowerCase(), u));
+          // Adiciona usuários vindos do Supabase com permissões rigorosamente normalizadas
+          dbUsers.forEach(u => {
+            if (u.email && u.email.toLowerCase() === "deny.risel@gmail.com") return;
+            const isMaster = u.email && u.email.toLowerCase() === "deny.goncalves@risel.com.br";
+            const normalizedPerms = isMaster 
+              ? MASTER_PERMISSIONS 
+              : normalizePermissions(u.permissions, u.role === "admin");
 
-          // Garante a inclusão do master se não estiver
-          if (!mapUsers.has("deny.goncalves@risel.com.br")) {
-            mapUsers.set("deny.goncalves@risel.com.br", DEFAULT_USERS[0]);
-            saveUsuarioSupabase(DEFAULT_USERS[0]);
-          }
-
-          // Mantém usuários criados localmente enviando-os também para o Supabase
-          prev.forEach(localUser => {
-            const emailKey = localUser.email.toLowerCase();
-            if (!mapUsers.has(emailKey)) {
-              mapUsers.set(emailKey, localUser);
-              saveUsuarioSupabase(localUser);
-            }
+            const normalizedUser: UserSession = {
+              ...u,
+              role: isMaster ? "admin" : (normalizedPerms.admin ? "admin" : (u.role || "user")),
+              permissions: normalizedPerms
+            };
+            mapUsers.set(u.email.toLowerCase(), normalizedUser);
           });
 
-          return Array.from(mapUsers.values());
+          // Garante a inclusão do master Deny Gonçalves se não estiver
+          if (!mapUsers.has("deny.goncalves@risel.com.br")) {
+            mapUsers.set("deny.goncalves@risel.com.br", DEFAULT_USERS[0]);
+          }
+
+          const finalList = Array.from(mapUsers.values());
+          localStorage.setItem("risel_users_list", JSON.stringify(finalList));
+          return finalList;
         });
 
         // Atualiza a sessão ativa se o usuário já estiver logado
         setUser(currentUser => {
           if (!currentUser || !currentUser.email) return currentUser;
           const currentEmail = currentUser.email.toLowerCase();
-          const isMaster = currentEmail === "deny.goncalves@risel.com.br" || currentEmail === "deny.risel@gmail.com";
+          if (currentEmail === "deny.risel@gmail.com") {
+            return DEFAULT_USERS[0];
+          }
+          const isMaster = currentEmail === "deny.goncalves@risel.com.br";
           const dbMatch = dbUsers.find(u => u.email.toLowerCase() === currentEmail);
           
           if (dbMatch) {
+            const hasPasswordChangedLocally = localStorage.getItem(`risel_password_changed_${currentEmail}`) === "true";
+            const mustChange = isMaster || hasPasswordChangedLocally ? false : Boolean(dbMatch.mustChangePassword);
+            const normalizedPerms = isMaster 
+              ? MASTER_PERMISSIONS 
+              : normalizePermissions(dbMatch.permissions, dbMatch.role === "admin");
+
             const updated: UserSession = {
               ...currentUser,
               ...dbMatch,
-              mustChangePassword: isMaster ? false : Boolean(dbMatch.mustChangePassword)
+              role: isMaster ? "admin" : (normalizedPerms.admin ? "admin" : dbMatch.role),
+              permissions: normalizedPerms,
+              mustChangePassword: mustChange
             };
             sessionStorage.setItem("risel_session", JSON.stringify(updated));
             if (localStorage.getItem("risel_active_session")) {
@@ -251,43 +409,98 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return currentUser;
         });
       } else {
-        // Se a tabela estiver vazia no Supabase, envia a lista local
+        // Se tabela vazia, envia usuários padrão
+        DEFAULT_USERS.forEach(u => saveUsuarioSupabase(u));
         usersList.forEach(u => saveUsuarioSupabase(u));
       }
+    } catch (err) {
+      console.warn("Erro ao sincronizar usuários com Supabase:", err);
     }
-    syncUsuariosWithSupabase();
+  };
+
+  // Carrega e sincroniza usuários com o Supabase na inicialização e ao focar
+  useEffect(() => {
+    refreshUsersFromSupabase();
+
+    // Sincronização periódica suave e ao retomar o foco na janela
+    const handleFocus = () => {
+      refreshUsersFromSupabase();
+    };
+    window.addEventListener("focus", handleFocus);
+    const intervalId = setInterval(refreshUsersFromSupabase, 45000);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      clearInterval(intervalId);
+    };
   }, []);
 
   const login = (email: string, password: string, rememberMe: boolean = true): boolean => {
     const cleanEmail = email.toLowerCase().trim();
 
     // Procura na lista de usuários cadastrados
-    const found = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+    let found = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+
+    // Fallback defensivo: se a lista ainda não terminou de carregar do Supabase
+    if (!found) {
+      if (cleanEmail === "lorena.padilha@risel.com.br") {
+        found = DEFAULT_USERS[1];
+      } else if (cleanEmail === "deny.goncalves@risel.com.br") {
+        found = DEFAULT_USERS[0];
+      }
+    }
 
     // Se a conta estiver inativa, impede o login
     if (found && found.status === "Inativa") {
       return false;
     }
 
-    // Validação de senha do Master ou usuário cadastrado
-    const masterPassValid = cleanEmail === "deny.goncalves@risel.com.br" && (
+    const isMasterDeny = cleanEmail === "deny.goncalves@risel.com.br";
+    const isLorena = cleanEmail === "lorena.padilha@risel.com.br";
+
+    // Validação de senha de Deny Gonçalves
+    const masterPassValid = isMasterDeny && (
       password === "@Cap150957" || 
       (found && found.password && password === found.password)
     );
+
+    // Validação de senha de Lorena Padilha:
+    // Padrão no banco: Risel@2026!
+    // Só altera por solicitação da própria usuária em 'esqueci a senha'
+    const hasLorenaReset = typeof window !== 'undefined' && 
+      localStorage.getItem('risel_user_custom_password_reset_lorena.padilha@risel.com.br') === 'true';
+    const lorenaPassValid = isLorena && (
+      hasLorenaReset && found?.password 
+        ? password === found.password 
+        : (password === "Risel@2026!" || (found?.password && password === found.password))
+    );
+
+    // Validação de senha para outros usuários cadastrados
     const userPassValid = found && (
       (found.password && password === found.password) || 
       password === "@Cap150957" || 
-      password === "Rs@2026"
+      password === "Rs@2026" ||
+      (isLorena && password === "Risel@2026!")
     );
 
-    if (masterPassValid || userPassValid) {
-      const isMaster = cleanEmail === "deny.goncalves@risel.com.br" || cleanEmail === "deny.risel@gmail.com";
+    if (masterPassValid || lorenaPassValid || userPassValid) {
+      const isMaster = isMasterDeny;
+      const hasPasswordChangedLocally = localStorage.getItem(`risel_password_changed_${cleanEmail}`) === "true";
+      const normalizedPerms = isMaster 
+        ? MASTER_PERMISSIONS 
+        : (found 
+            ? normalizePermissions(found.permissions, found.role === "admin") 
+            : (isLorena ? DEFAULT_USERS[1].permissions : normalizePermissions({})));
+
       const activeSession: UserSession = found ? {
         ...found,
-        mustChangePassword: isMaster ? false : Boolean(found.mustChangePassword),
+        role: isMaster ? "admin" : (normalizedPerms.admin ? "admin" : (found.role || "user")),
+        permissions: normalizedPerms,
+        mustChangePassword: isMaster || hasPasswordChangedLocally ? false : Boolean(found.mustChangePassword),
         status: "Ativa"
       } : {
-        ...DEFAULT_USERS[0],
+        ...(isLorena ? DEFAULT_USERS[1] : DEFAULT_USERS[0]),
+        permissions: isMaster ? MASTER_PERMISSIONS : DEFAULT_USERS[1].permissions,
         mustChangePassword: false,
         status: "Ativa"
       };
@@ -309,25 +522,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("risel_active_session");
   };
 
-  const createUser = (
+  const createUser = async (
     name: string, 
     email: string, 
     permissions: UserPermissions,
     initialPassword?: string,
     mustChangePassword: boolean = true
-  ): boolean => {
+  ): Promise<boolean> => {
     const cleanEmail = email.toLowerCase().trim();
     if (usersList.some(u => u.email.toLowerCase() === cleanEmail)) {
       return false; // Usuário já existe
     }
 
     const provisoryPassword = initialPassword && initialPassword.trim().length > 0 ? initialPassword.trim() : "Risel@2026!";
+    const normalizedPerms = normalizePermissions(permissions, permissions.admin);
 
     const newUser: UserSession = {
       name,
       email: cleanEmail,
-      role: permissions.admin ? "admin" : "user",
-      permissions: permissions,
+      role: normalizedPerms.admin ? "admin" : "user",
+      permissions: normalizedPerms,
       status: "Ativa",
       password: provisoryPassword,
       mustChangePassword: mustChangePassword,
@@ -336,13 +550,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setUsersList(prev => [...prev, newUser]);
     
-    // Salva no Supabase
-    saveUsuarioSupabase(newUser);
-
-    return true;
+    // Salva no banco de dados Supabase e retorna status
+    const saved = await saveUsuarioSupabase(newUser);
+    return saved;
   };
 
-  const updateUser = (
+  const updateUser = async (
     email: string,
     updatedData: { 
       name: string; 
@@ -352,54 +565,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       password?: string;
       mustChangePassword?: boolean;
     }
-  ) => {
+  ): Promise<boolean> => {
     const cleanEmail = email.toLowerCase().trim();
 
-    setUsersList(prev => prev.map(u => {
-      if (u.email.toLowerCase() === cleanEmail) {
-        const updatedUser: UserSession = {
-          ...u,
-          name: updatedData.name,
-          role: updatedData.role,
-          permissions: updatedData.permissions,
-          status: updatedData.status || u.status || "Ativa",
-          password: updatedData.password !== undefined ? updatedData.password : u.password,
-          mustChangePassword: updatedData.mustChangePassword !== undefined ? updatedData.mustChangePassword : u.mustChangePassword
-        };
-        // Grava alteração no Supabase
-        saveUsuarioSupabase(updatedUser);
-        return updatedUser;
-      }
-      return u;
-    }));
+    if (updatedData.mustChangePassword === false) {
+      localStorage.setItem(`risel_password_changed_${cleanEmail}`, "true");
+    } else if (updatedData.mustChangePassword === true) {
+      localStorage.removeItem(`risel_password_changed_${cleanEmail}`);
+    }
 
-    // Se for o usuário atualmente logado, atualiza a sessão ativa
+    const isMaster = cleanEmail === "deny.goncalves@risel.com.br";
+    const finalAdmin = isMaster ? true : (updatedData.role === "admin" || updatedData.permissions?.admin === true);
+    const normalizedPerms = isMaster ? MASTER_PERMISSIONS : normalizePermissions(updatedData.permissions, finalAdmin);
+    
+    // Localiza o usuário existente para mesclar os dados de forma síncrona
+    const existingUser = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+
+    const targetUpdated: UserSession = {
+      name: updatedData.name,
+      email: cleanEmail,
+      role: finalAdmin ? "admin" : "user",
+      permissions: normalizedPerms,
+      status: updatedData.status || existingUser?.status || "Ativa",
+      password: updatedData.password !== undefined ? updatedData.password : (existingUser?.password || "Risel@2026!"),
+      mustChangePassword: updatedData.mustChangePassword !== undefined ? updatedData.mustChangePassword : (existingUser?.mustChangePassword ?? false),
+      createdAt: existingUser?.createdAt || new Date().toISOString()
+    };
+
+    // 1. Persiste com prioridade máxima no Supabase
+    const savedInDb = await saveUsuarioSupabase(targetUpdated);
+    if (!savedInDb) {
+      console.error("Falha crítica ao gravar alterações do usuário no Supabase.");
+      return false;
+    }
+
+    // 2. Atualiza estado em memória e localStorage com a mesma chave
+    setUsersList(prev => {
+      const exists = prev.some(u => u.email.toLowerCase() === cleanEmail);
+      const newList = exists
+        ? prev.map(u => u.email.toLowerCase() === cleanEmail ? targetUpdated : u)
+        : [...prev, targetUpdated];
+      localStorage.setItem("risel_users_list", JSON.stringify(newList));
+      return newList;
+    });
+
+    // 3. Se for o usuário atualmente logado, atualiza a sessão ativa imediatamente
     if (user && user.email.toLowerCase() === cleanEmail) {
-      const updatedSession: UserSession = {
-        ...user,
-        name: updatedData.name,
-        role: updatedData.role,
-        permissions: updatedData.permissions,
-        status: updatedData.status || user.status || "Ativa",
-        password: updatedData.password !== undefined ? updatedData.password : user.password,
-        mustChangePassword: updatedData.mustChangePassword !== undefined ? updatedData.mustChangePassword : user.mustChangePassword
-      };
-      setUser(updatedSession);
-      sessionStorage.setItem("risel_session", JSON.stringify(updatedSession));
+      setUser(targetUpdated);
+      sessionStorage.setItem("risel_session", JSON.stringify(targetUpdated));
       if (localStorage.getItem("risel_active_session")) {
-        localStorage.setItem("risel_active_session", JSON.stringify(updatedSession));
+        localStorage.setItem("risel_active_session", JSON.stringify(targetUpdated));
       }
     }
+
+    return true;
   };
 
   const changePassword = async (newPassword: string): Promise<boolean> => {
     if (!user || !newPassword || newPassword.trim().length < 4) return false;
 
+    const userEmail = user.email.toLowerCase();
     const updatedUserSession: UserSession = {
       ...user,
       password: newPassword,
       mustChangePassword: false
     };
+
+    // Salva flag local definitiva de senha já alterada
+    localStorage.setItem(`risel_password_changed_${userEmail}`, "true");
+    localStorage.setItem(`risel_user_custom_password_reset_${userEmail}`, "true");
 
     // Atualiza estado do usuário ativo
     setUser(updatedUserSession);
@@ -433,8 +667,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Procura usuário
     let targetUser = usersList.find(u => u.email.toLowerCase() === cleanEmail);
-    if (!targetUser && cleanEmail === "deny.goncalves@risel.com.br") {
-      targetUser = DEFAULT_USERS[0];
+    if (!targetUser) {
+      if (cleanEmail === "deny.goncalves@risel.com.br") {
+        targetUser = DEFAULT_USERS[0];
+      } else if (cleanEmail === "lorena.padilha@risel.com.br") {
+        targetUser = DEFAULT_USERS[1];
+      }
     }
 
     if (!targetUser) {
@@ -514,7 +752,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (Date.now() > foundToken.expiresAt) return { valid: false };
 
       const userFound = usersList.find(u => u.email.toLowerCase() === foundToken.email.toLowerCase()) || 
-        (foundToken.email.toLowerCase() === "deny.goncalves@risel.com.br" ? DEFAULT_USERS[0] : undefined);
+        (foundToken.email.toLowerCase() === "deny.goncalves@risel.com.br" ? DEFAULT_USERS[0] : 
+        (foundToken.email.toLowerCase() === "lorena.padilha@risel.com.br" ? DEFAULT_USERS[1] : undefined));
 
       return {
         valid: true,
@@ -543,8 +782,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Atualiza a senha do usuário
     let targetUser = usersList.find(u => u.email.toLowerCase() === emailKey);
-    if (!targetUser && emailKey === "deny.goncalves@risel.com.br") {
-      targetUser = { ...DEFAULT_USERS[0] };
+    if (!targetUser) {
+      if (emailKey === "deny.goncalves@risel.com.br") {
+        targetUser = { ...DEFAULT_USERS[0] };
+      } else if (emailKey === "lorena.padilha@risel.com.br") {
+        targetUser = { ...DEFAULT_USERS[1] };
+      }
     }
 
     if (!targetUser) {
@@ -571,7 +814,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.setItem("risel_session", JSON.stringify(updatedUser));
     localStorage.setItem("risel_active_session", JSON.stringify(updatedUser));
 
-    // Marca o token como utilizado
+    // Marca o token como utilizado e registra que a senha foi redefinida a pedido do usuário
+    localStorage.setItem(`risel_user_custom_password_reset_${emailKey}`, "true");
+    localStorage.setItem(`risel_password_changed_${emailKey}`, "true");
     const savedTokensRaw = localStorage.getItem("risel_reset_tokens");
     if (savedTokensRaw) {
       try {
@@ -587,12 +832,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: true, message: "Senha redefinida com sucesso!" };
   };
 
-  const deleteUser = (email: string) => {
+  const deleteUser = async (email: string) => {
     const cleanEmail = email.toLowerCase().trim();
-    if (cleanEmail === "deny.goncalves@risel.com.br") return; // Impedir exclusão do master
+    if (cleanEmail === "deny.goncalves@risel.com.br" || cleanEmail === "lorena.padilha@risel.com.br") return; // Impedir exclusão dos administradores master
 
     setUsersList(prev => prev.filter(u => u.email.toLowerCase() !== cleanEmail));
-    deleteUsuarioSupabase(cleanEmail);
+    await deleteUsuarioSupabase(cleanEmail);
   };
 
   return (
@@ -604,6 +849,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       createUser, 
       updateUser, 
       deleteUser, 
+      refreshUsersFromSupabase,
       changePassword,
       forgotPassword,
       verifyResetToken,

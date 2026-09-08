@@ -95,19 +95,19 @@ const PublicLayout: React.FC = () => {
                     <div className="w-full flex flex-col items-center bg-slate-50 min-h-full">
                         {/* Mobile Header for RAC */}
                         <div className="md:hidden w-full px-4 pt-3 pb-1">
-                            <div className="bg-gradient-to-br from-[#114D38] via-[#0d3f2e] to-[#07241a] rounded-2xl p-4 shadow-md border border-emerald-800/40 text-center relative overflow-hidden flex flex-col items-center">
-                                <div className="w-8 h-8 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center mb-1.5 border border-amber-400/30">
+                            <div className="bg-gradient-to-r from-[#00361C] via-[#005C30] to-[#00361C] rounded-2xl p-4 shadow-xl border-2 border-amber-500/40 text-center relative overflow-hidden flex flex-col items-center">
+                                <div className="w-9 h-9 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center mb-1.5 border border-amber-400/40 shadow-inner">
                                     <CarIcon className="w-5 h-5 text-amber-300" />
                                 </div>
                                 <h1 className="text-base font-black text-white uppercase tracking-wider font-display">
-                                    Locação de Veículo RAC
+                                    Solicitar Veículo Locado
                                 </h1>
-                                <p className="text-xs text-emerald-100 font-medium mt-0.5">
+                                <p className="text-xs text-emerald-100 font-semibold mt-0.5">
                                     Veículos terceirizados (Localiza, Movida, Unidas)
                                 </p>
-                                <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-amber-500/30 text-[10px] font-bold text-amber-300">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-                                    Locação Terceirizada
+                                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/80 border border-amber-500/40 text-[10px] font-black text-amber-300 shadow-xs">
+                                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                                    Veículo Locado
                                 </div>
                             </div>
                         </div>
@@ -122,14 +122,14 @@ const PublicLayout: React.FC = () => {
                     <div className="w-full flex flex-col items-center bg-slate-50 min-h-full">
                         {/* Mobile Header for Daily Use */}
                         <div className="md:hidden w-full px-4 pt-3 pb-1">
-                            <div className="bg-gradient-to-br from-[#114D38] via-[#0d3f2e] to-[#07241a] rounded-2xl p-4 shadow-md border border-emerald-800/40 text-center relative overflow-hidden flex flex-col items-center">
-                                <div className="w-8 h-8 rounded-xl bg-white/15 text-emerald-200 flex items-center justify-center mb-1.5 border border-white/20">
+                            <div className="bg-gradient-to-r from-[#00361C] via-[#005C30] to-[#00361C] rounded-2xl p-4 shadow-xl border-2 border-emerald-500/40 text-center relative overflow-hidden flex flex-col items-center">
+                                <div className="w-9 h-9 rounded-xl bg-white/20 text-emerald-200 flex items-center justify-center mb-1.5 border border-white/30 shadow-inner">
                                     <ClipboardListIcon className="w-5 h-5 text-emerald-300" />
                                 </div>
                                 <h1 className="text-base font-black text-white uppercase tracking-wider font-display">
                                     Diário de Bordo &bull; Uso Diário
                                 </h1>
-                                <p className="text-xs text-emerald-100 font-medium mt-0.5">
+                                <p className="text-xs text-emerald-100 font-semibold mt-0.5">
                                     Início e encerramento de viagens da frota
                                 </p>
                             </div>
@@ -143,29 +143,45 @@ const PublicLayout: React.FC = () => {
             case 'fleetStatus':
                 return (
                     <div className="p-4 md:p-8 h-full">
-                        <FleetStatusView onRequestReservation={handleRequestReservationFromFleet} />
+                        <FleetStatusView onRequestReservation={handleRequestReservationFromFleet} isAdmin={false} />
                     </div>
                 );
             case 'login':
-                return <div className="bg-white rounded-[24px] shadow-sm p-8 max-w-md mx-auto mt-8 md:mt-12 border border-slate-200"><Login /></div>;
+                return (
+                    <div className="relative min-h-[480px] flex items-center justify-center p-4 my-6 rounded-[24px] overflow-hidden bg-[#060c09]">
+                        <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden select-none">
+                            <img 
+                                src="https://i.ibb.co/JW1Ndd5Y/c-AMINH-O.jpg" 
+                                alt="Frota Risel - Caminhão Tanque" 
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-cover object-center scale-105 opacity-35 filter contrast-120 brightness-90"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-b from-[#060c09]/85 via-[#060c09]/65 to-[#040906]/90" />
+                            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(6,12,9,0.35)_0%,rgba(6,12,9,0.88)_100%)]" />
+                        </div>
+                        <div className="bg-white/95 backdrop-blur-md rounded-[24px] shadow-2xl p-8 max-w-md w-full relative z-10 border border-emerald-900/30">
+                            <Login />
+                        </div>
+                    </div>
+                );
             case 'request':
             default:
                  return (
                      <div className="w-full flex flex-col items-center bg-slate-50 min-h-full">
                         {/* Mobile Header for Request - Elegante Verde Escuro com Alta Legibilidade */}
                         <div className="md:hidden w-full px-4 pt-3 pb-1">
-                            <div className="bg-gradient-to-br from-[#114D38] via-[#0d3f2e] to-[#07241a] rounded-2xl p-4 shadow-md border border-emerald-800/40 text-center relative overflow-hidden flex flex-col items-center">
-                                <div className="w-8 h-8 rounded-xl bg-white/15 text-emerald-200 flex items-center justify-center mb-1.5 border border-white/20">
+                            <div className="bg-gradient-to-r from-[#00361C] via-[#005C30] to-[#00361C] rounded-2xl p-4 shadow-xl border-2 border-emerald-500/40 text-center relative overflow-hidden flex flex-col items-center">
+                                <div className="w-9 h-9 rounded-xl bg-white/20 text-emerald-200 flex items-center justify-center mb-1.5 border border-white/30 shadow-inner">
                                     <DocumentTextIcon className="w-5 h-5 text-emerald-300" />
                                 </div>
                                 <h1 className="text-base font-black text-white uppercase tracking-wider font-display">
                                     Nova Solicitação
                                 </h1>
-                                <p className="text-xs text-emerald-100 font-medium mt-0.5">
+                                <p className="text-xs text-emerald-100 font-semibold mt-0.5">
                                     Preencha os dados para agendar seu veículo
                                 </p>
-                                <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/30 text-[10px] font-bold text-emerald-200">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-400/40 text-[10px] font-black text-emerald-300 shadow-xs">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                                     Frota Leve Própria
                                 </div>
                             </div>
@@ -175,7 +191,6 @@ const PublicLayout: React.FC = () => {
                         <div className="hidden md:flex w-full max-w-5xl mx-auto mb-6 items-center justify-between py-4 px-2">
                             <div>
                                 <h1 className="text-2xl font-extrabold text-slate-800 tracking-tight">Solicitação de Veículo Próprio</h1>
-                                <p className="text-sm text-slate-500">Agende sua viagem com a frota leve da Risel.</p>
                             </div>
                             <div className="bg-white px-4 py-2 rounded-full border border-slate-200 shadow-sm text-xs font-semibold text-slate-600">
                                 Frota Leve &bull; Risel Combustíveis
@@ -211,42 +226,40 @@ const PublicLayout: React.FC = () => {
                 </main>
             </div>
 
-            {/* Menu de Navegação Inferior para Celular (Estilo Aplicativo Mobile) */}
-            <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] px-1 py-1.5 flex items-center justify-around">
+            {/* Menu de Navegação Inferior para Celular (Estilo Aplicativo Mobile - Risel Premium) */}
+            <nav 
+                className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#002613]/95 backdrop-blur-xl border-t-2 border-[#F47920] shadow-[0_-10px_35px_rgba(0,0,0,0.55)] px-1.5 pt-2 pb-2.5 flex items-center justify-around"
+                style={{ paddingBottom: 'max(0.65rem, env(safe-area-inset-bottom))' }}
+            >
                 {[
                     { 
                         id: 'request', 
                         label: 'Reserva', 
                         icon: DocumentTextIcon, 
-                        badge: null,
                         isActive: publicView === 'request'
                     },
                     { 
                         id: 'racRequest', 
-                        label: 'Locação RAC', 
+                        label: 'Locado', 
                         icon: CarIcon, 
-                        badge: 'RAC',
                         isActive: publicView === 'racRequest' || publicView === 'rac' || publicView === 'rac_request'
                     },
                     { 
                         id: 'dailyUse', 
                         label: 'Uso Diário', 
                         icon: ClipboardListIcon, 
-                        badge: null,
                         isActive: publicView === 'dailyUse'
                     },
                     { 
                         id: 'fleetStatus', 
                         label: 'Status', 
                         icon: MapPinIcon, 
-                        badge: null,
                         isActive: publicView === 'fleetStatus'
                     },
                     { 
                         id: 'login', 
                         label: 'Admin', 
                         icon: LogoutIcon, 
-                        badge: null,
                         isActive: publicView === 'login'
                     },
                 ].map(item => (
@@ -254,28 +267,31 @@ const PublicLayout: React.FC = () => {
                         key={item.id}
                         type="button"
                         onClick={() => handleNavigate(item.id)}
-                        className={`flex-1 flex flex-col items-center justify-center relative py-1 px-1 transition-all duration-200 cursor-pointer min-h-[48px] ${
+                        className={`flex-1 flex flex-col items-center justify-center relative py-1 px-0.5 transition-all duration-200 cursor-pointer min-h-[56px] active:scale-95 ${
                             item.isActive 
-                                ? 'text-[#114D38] font-black' 
-                                : 'text-slate-500 hover:text-slate-800 font-semibold'
+                                ? 'text-white' 
+                                : 'text-emerald-100/70 hover:text-white'
                         }`}
                     >
-                        {item.isActive && (
-                            <span className="absolute top-0 w-8 h-1 bg-[#114D38] rounded-b-full shadow-xs" />
-                        )}
-                        
-                        <div className={`relative p-1 rounded-xl transition-all ${item.isActive ? 'bg-emerald-50 scale-105' : ''}`}>
-                            <item.icon className={`w-5 h-5 ${item.isActive ? 'text-[#114D38]' : item.id === 'racRequest' ? 'text-amber-500' : 'text-slate-400'}`} />
-                            {item.badge && (
-                                <span className="absolute -top-1 -right-2 px-1 py-0.2 bg-amber-500 text-white text-[8px] font-black rounded-full leading-none">
-                                    {item.badge}
-                                </span>
-                            )}
+                        <div className={`flex items-center justify-center w-12 h-7.5 rounded-xl transition-all duration-200 ${
+                            item.isActive 
+                                ? 'bg-gradient-to-r from-[#F47920] to-[#df6410] text-white shadow-lg shadow-orange-950/40 ring-2 ring-white/30' 
+                                : 'bg-white/10 text-emerald-200 hover:bg-white/15'
+                        }`}>
+                            <item.icon className="w-5 h-5 shrink-0" />
                         </div>
                         
-                        <span className="text-[10px] tracking-tight truncate w-full text-center leading-none mt-0.5">
+                        <span className={`text-[10px] tracking-tight leading-tight mt-1 text-center transition-colors px-0.5 whitespace-nowrap ${
+                            item.isActive 
+                                ? 'text-white font-black drop-shadow-md' 
+                                : 'text-emerald-200/80 font-bold'
+                        }`}>
                             {item.label}
                         </span>
+
+                        {item.isActive && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#F47920] mt-0.5 shadow-xs" />
+                        )}
                     </button>
                 ))}
             </nav>

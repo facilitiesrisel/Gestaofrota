@@ -7,7 +7,8 @@ import { CarIcon, PencilIcon, TrashIcon, CameraIcon, ExclamationTriangleIcon, St
 import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import DailyTripEditModal from './DailyTripEditModal';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
-import { fetchDistanceWithGemini } from '../../services/geminiService';
+import { calculateDrivingDistance } from '../../services/distanceService';
+import { normalizeCidade } from '../../utils/baseOperacional';
 
 const FuelLevelInput: React.FC<{ name: string, value: FuelLevel | undefined, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, label?: string }> = ({ name, value, onChange, label = "Nível do Tanque" }) => {
   const levels = Object.values(FuelLevel);
@@ -233,18 +234,20 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
             const tripDate = new Date(addFormData.departureDateTime);
             
             // Calculate estimated distance
+            const normCity = normalizeCidade(addFormData.destinationCity);
             let estimatedDistance = 0;
-            if (addFormData.destinationCity) {
+            if (normCity) {
                 try {
-                  const { distance } = await fetchDistanceWithGemini('Paulínia/SP', addFormData.destinationCity);
-                  if (distance) estimatedDistance = distance;
-                } catch (geminiError) {
-                  console.warn("Failed to calculate estimate distance for daily trip (admin)", geminiError);
+                  const result = await calculateDrivingDistance('Paulínia/SP', normCity);
+                  if (result && result.distance) estimatedDistance = result.distance;
+                } catch (distError) {
+                  console.debug("Silent distance estimation fallback (daily trip admin)", distError);
                 }
             }
 
             await addDailyTrip({
                 ...restOfData,
+                destinationCity: normCity,
                 requesterName: 'Admin', // Admin is the requester from this view
                 initialKm: Number(initialKm),
                 initialFuelLevel: addFormData.initialFuelLevel,
@@ -642,7 +645,7 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-mono">{formatNum(trip.initialKm)} km</td>
                                             <td className="px-6 py-4 max-w-xs truncate">
                                                 <div className="text-sm text-gray-900 font-medium" title={trip.destination}>{trip.destination}</div>
-                                                <div className="text-xs text-gray-500">{trip.destinationCity}</div>
+                                                <div className="text-xs text-gray-500">{normalizeCidade(trip.destinationCity)}</div>
                                             </td>
                                             <td className="px-6 py-4 max-w-xs truncate">
                                                 <div className="text-sm text-gray-500 italic" title={trip.purpose || ''}>"{trip.purpose || 'Não especificado'}"</div>
@@ -693,7 +696,7 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                                     <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">Motorista:</span> {trip.driverName}</p>
                                     <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">Saída:</span> {new Date(trip.departureDateTime).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</p>
                                     <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">KM Inicial:</span> {formatNum(trip.initialKm)} km</p>
-                                    <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">Destino:</span> {trip.destinationCity}</p>
+                                    <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">Destino:</span> {normalizeCidade(trip.destinationCity)}</p>
                                 </div>
                             </div>
                             ))
@@ -749,7 +752,7 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                                                     </td>
                                                     <td className="px-6 py-4 max-w-xs truncate">
                                                         <div className="text-sm text-gray-900 font-medium" title={trip.destination}>{trip.destination}</div>
-                                                        <div className="text-xs text-gray-500">{trip.destinationCity}</div>
+                                                        <div className="text-xs text-gray-500">{normalizeCidade(trip.destinationCity)}</div>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                                                         <div className={`font-bold ${isHighKm ? 'text-red-600' : 'text-gray-800'}`}>

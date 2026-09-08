@@ -75,14 +75,14 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
           </div>
         </div>
 
-        {/* Abas de Navegação em Telas Grandes (Desktop) */}
-        <div className="hidden md:block max-w-6xl mx-auto mt-3 pt-2.5 border-t border-emerald-800/60">
-          <div className="flex items-center gap-1 overflow-x-auto">
+        {/* Abas de Navegação Responsivas (Mobile & Desktop) com fundo e destaque elegante */}
+        <div className="max-w-6xl mx-auto mt-2.5 pt-2 border-t border-emerald-800/70 overflow-x-auto scrollbar-none">
+          <div className="flex items-center gap-2 pb-0.5 min-w-max">
             {[
-              { id: 'request', label: 'Solicitar Reserva (Frota Leve)', icon: FileText },
-              { id: 'racRequest', label: 'Solicitar Locação RAC (Terceirizado)', icon: Car },
-              { id: 'dailyUse', label: 'Uso Diário (Diário de Bordo)', icon: ClipboardList },
-              { id: 'fleetStatus', label: 'Status da Frota', icon: MapPin },
+              { id: 'request', label: 'Frota Leve', fullLabel: 'Solicitar Reserva (Frota Leve)', icon: FileText },
+              { id: 'racRequest', label: 'Veículo Locado', fullLabel: 'Solicitar Veículo Locado', icon: Car },
+              { id: 'dailyUse', label: 'Uso Diário', fullLabel: 'Uso Diário (Diário de Bordo)', icon: ClipboardList },
+              { id: 'fleetStatus', label: 'Status Frota', fullLabel: 'Status da Frota', icon: MapPin },
             ].map(tab => {
               const isActive = activeSub === tab.id || (tab.id === 'racRequest' && (activeSub === 'rac' || activeSub === 'rac_request'));
               const Icon = tab.icon;
@@ -90,14 +90,15 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
                 <button
                   key={tab.id}
                   onClick={() => handleSwitchTab(tab.id)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-2 ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 select-none active:scale-95 ${
                     isActive
-                      ? 'bg-white text-[#114D38] shadow-sm'
-                      : 'text-emerald-100/90 hover:bg-white/10 hover:text-white'
+                      ? 'bg-white text-[#005C30] shadow-md ring-2 ring-[#F47920]'
+                      : 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-100 border border-emerald-700/50'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#114D38]' : tab.id === 'racRequest' ? 'text-amber-300' : 'text-emerald-300'}`} />
-                  <span>{tab.label}</span>
+                  <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-[#005C30]' : tab.id === 'racRequest' ? 'text-amber-300' : 'text-emerald-300'}`} />
+                  <span className="hidden sm:inline">{tab.fullLabel}</span>
+                  <span className="sm:hidden">{tab.label}</span>
                 </button>
               );
             })}

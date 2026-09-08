@@ -24,44 +24,7 @@ import {
 import { fetchAbastecimentosSupabase } from '../../services/supabaseService';
 import { toTitleCase } from '../../lib/utils';
 import { VEICULOS_REAIS } from '../../data/veiculos_reais';
-
-// Componente de Placa Mercosul Estilizada e de Alto Contraste
-const MercosulPlateBadge: React.FC<{ plate: string; isInactive?: boolean }> = ({ plate, isInactive }) => {
-    const formattedPlate = (plate || 'ABC1D23').toUpperCase().trim();
-    
-    return (
-        <div className={`inline-flex flex-col items-center justify-center border rounded-lg overflow-hidden shadow-xs select-none transition-all duration-200 ${
-            isInactive 
-                ? 'border-slate-300 bg-slate-100 opacity-60' 
-                : 'border-slate-300 bg-white hover:border-slate-400 hover:shadow-sm'
-        }`} style={{ width: '92px', minWidth: '92px' }}>
-            {/* Faixa Azul Mercosul */}
-            <div className={`w-full py-0.5 px-1.5 flex items-center justify-between ${isInactive ? 'bg-slate-500' : 'bg-[#003399]'}`}>
-                {/* Estrelas / Logo Mercosul */}
-                <div className="flex items-center gap-0.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-300 opacity-90"></div>
-                    <div className="w-1 h-1 rounded-full bg-yellow-200 opacity-70"></div>
-                </div>
-                {/* Texto BRASIL */}
-                <span className="text-[7.5px] font-black text-white tracking-widest leading-none font-sans uppercase">
-                    BRASIL
-                </span>
-                {/* Mini Bandeira do Brasil */}
-                <div className="w-2.5 h-1.5 bg-emerald-500 rounded-[1px] relative flex items-center justify-center overflow-hidden">
-                    <div className="w-1.5 h-1 bg-yellow-400 rotate-45 transform"></div>
-                    <div className="w-0.5 h-0.5 rounded-full bg-blue-700 absolute"></div>
-                </div>
-            </div>
-
-            {/* Corpo da Placa com Código e Fonte Monospace */}
-            <div className="w-full bg-white py-0.5 px-1 text-center flex items-center justify-center">
-                <span className={`text-[12px] font-mono font-black tracking-wider leading-tight ${isInactive ? 'text-slate-500' : 'text-slate-900'}`}>
-                    {formattedPlate}
-                </span>
-            </div>
-        </div>
-    );
-};
+import { MercosulPlateBadge } from '../MercosulPlateBadge';
 
 // Interfaces locais para o estado da view
 interface ExtendedVehicle extends Vehicle {
@@ -326,7 +289,7 @@ const VehiclesView: React.FC = () => {
   const [maintenanceFilter, setMaintenanceFilter] = useState<'all' | 'revision_needed' | 'wash_needed'>('all');
 
   // --- CONTROLE DE ACESSO ---
-  const canViewFuelData = user?.email === 'deny.goncalves@risel.com.br' || user?.email === 'deny.risel@gmail.com';
+  const canViewFuelData = user?.email === 'deny.goncalves@risel.com.br';
 
   // --- ABASTECIMENTO / FILTER STATES ---
   const [filterMode, setFilterMode] = useState<'month' | 'custom'>('month');
@@ -860,7 +823,7 @@ const VehiclesView: React.FC = () => {
                 <th scope="col" className="py-4 px-5 text-left">Higienização</th>
                 
                 {/* Coluna Tipo */}
-                {(user?.email === 'deny.goncalves@risel.com.br' || user?.email === 'deny.risel@gmail.com' || user?.email === 'lorena.padilha@risel.com.br') && (
+                {(user?.email === 'deny.goncalves@risel.com.br' || user?.email === 'lorena.padilha@risel.com.br') && (
                   <th scope="col" className="py-4 px-5 text-left">Alocação</th>
                 )}
 
@@ -988,7 +951,7 @@ const VehiclesView: React.FC = () => {
                       </td>
                       
                       {/* Coluna Tipo de Alocação */}
-                      {(user?.email === 'deny.goncalves@risel.com.br' || user?.email === 'deny.risel@gmail.com' || user?.email === 'lorena.padilha@risel.com.br') && (
+                      {(user?.email === 'deny.goncalves@risel.com.br' || user?.email === 'lorena.padilha@risel.com.br') && (
                           <td className="px-5 py-4 whitespace-nowrap">
                               <span className={`px-2.5 py-1 rounded-xl text-xs font-black border ${
                                   vehicle.type === 'Gestão' 
@@ -1156,7 +1119,7 @@ const VehiclesView: React.FC = () => {
             vehicle={selectedVehicle}
             onSave={handleSaveVehicle}
             onCancel={handleCloseModal}
-            canEditType={user?.email === 'deny.goncalves@risel.com.br' || user?.email === 'deny.risel@gmail.com' || user?.email === 'lorena.padilha@risel.com.br'}
+            canEditType={user?.email === 'deny.goncalves@risel.com.br' || user?.email === 'lorena.padilha@risel.com.br'}
         />
       </Modal>
 

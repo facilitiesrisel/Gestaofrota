@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Search, Building2, MapPin, MoreHorizontal, Mail, Phone, Edit2, Trash2, X, Plus, Save, SlidersHorizontal, Check, ArrowUpDown, Users } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { normalizeCidade } from "../../utils/baseOperacional";
 import { fetchFornecedoresSupabase, saveFornecedorSupabase, deleteFornecedorSupabase } from "../../services/supabaseService";
 
 const DEFAULT_FORNECE_LIST: any[] = [];
@@ -355,6 +356,7 @@ export default function Fornecedores() {
 
     const payload = {
       ...formData,
+      cidade: formData.cidade ? normalizeCidade(formData.cidade.trim()) : "",
       cnpj: cleanDoc,
       avatar: finalAvatar,
       avatarUrl: finalAvatar
@@ -479,8 +481,8 @@ export default function Fornecedores() {
         </div>
 
         <div className="overflow-x-auto overflow-y-auto max-h-[520px] flex-1">
-          <table className="w-full text-[10px] font-aptos text-left border-collapse border border-slate-200/70">
-            <thead className="text-white text-[10px] font-black uppercase tracking-wider sticky top-0 z-20 bg-[#114D38]">
+          <table className="w-full text-[11px] font-aptos text-left border-collapse border border-slate-200/70">
+            <thead className="text-white text-[11px] font-extrabold uppercase tracking-wider sticky top-0 z-20 bg-[#114D38]">
               <tr>
                 <th className="px-3.5 py-3 w-20 text-center sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">AÇÕES</th>
                 {visibleCols.status && <th onClick={() => handleSort("status")} className="px-3.5 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">STATUS {getSortIcon("status")}</th>}
@@ -493,9 +495,9 @@ export default function Fornecedores() {
                 {visibleCols.uf && <th onClick={() => handleSort("uf")} className="px-3.5 py-3 text-right cursor-pointer hover:bg-[#00b263] transition-colors sticky top-0 bg-[#00CA71] z-20 border-b border-slate-200/20">UF {getSortIcon("uf")}</th>}
               </tr>
             </thead>
-            <tbody className="font-semibold text-slate-700 text-[10px]">
+            <tbody className="font-semibold text-slate-700 text-[11px]">
               {sortedFornecedores.map((item) => (
-                <tr key={item.id} className="hover:bg-slate-100/50 transition-colors odd:bg-slate-50/15 even:bg-white border-b border-slate-200/50 last:border-b-0 group">
+                <tr key={item.id} className="hover:bg-slate-100/60 transition-colors odd:bg-slate-50/20 even:bg-white border-b border-slate-200/50 last:border-b-0 group">
                   <td className="px-3.5 py-3 text-center border-r border-slate-200/50">
                     <div className="flex items-center justify-center gap-3 text-slate-400">
                       <button 
@@ -517,14 +519,16 @@ export default function Fornecedores() {
                   {visibleCols.status && (
                     <td className="px-3.5 py-3 border-r border-slate-200/50">
                       <span className={cn(
-                        "px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider border rounded shadow-inner flex items-center gap-1 w-fit",
-                        item.status === 'Ativo' ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-slate-55 border-slate-200 text-slate-500"
+                        "px-2.5 py-0.5 text-[11px] font-bold rounded-md border flex items-center gap-1.5 w-fit shadow-2xs",
+                        item.status === 'Ativo' 
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-700" 
+                          : "bg-slate-100 border-slate-200 text-slate-600"
                       )}>
                         <span className={cn(
-                          "w-1 h-1 rounded-full",
+                          "w-1.5 h-1.5 rounded-full",
                           item.status === 'Ativo' ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
                         )}/>
-                        {(item.status || "").toUpperCase()}
+                        {item.status || "Ativo"}
                       </span>
                     </td>
                   )}
@@ -532,45 +536,45 @@ export default function Fornecedores() {
                     <td className="px-3.5 py-3 border-r border-slate-200/50">
                       <div className="flex items-center gap-2">
                         <SupplierLogo name={item.nome} avatarUrl={item.avatar} />
-                        <div className="font-extrabold text-slate-800 leading-snug max-w-[320px] truncate uppercase" title={item.nome}>
+                        <div className="font-bold text-slate-800 leading-snug max-w-[320px] truncate uppercase" title={item.nome}>
                           {(item.nome || "").toUpperCase()}
                         </div>
                       </div>
                     </td>
                   )}
                   {visibleCols.cnpj && (
-                    <td className="px-3.5 py-3 font-mono text-slate-850 font-extrabold whitespace-nowrap border-r border-slate-200/50">
+                    <td className="px-3.5 py-3 font-mono text-slate-800 font-bold whitespace-nowrap border-r border-slate-200/50">
                       {formatCPFCNPJ(item.cnpj)}
                     </td>
                   )}
                   {visibleCols.codigo && (
-                    <td className="px-3.5 py-3 text-slate-900 font-mono font-black border-r border-slate-200/50 whitespace-nowrap">
-                      <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-slate-700 font-bold uppercase whitespace-nowrap">
+                    <td className="px-3.5 py-3 text-slate-900 font-mono font-bold border-r border-slate-200/50 whitespace-nowrap">
+                      <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-slate-700 font-bold uppercase whitespace-nowrap text-[10px]">
                         {(item.codigoItem || "---").toUpperCase()}
                       </span>
                     </td>
                   )}
                   {visibleCols.telefone && (
                     <td className="px-3.5 py-3 border-r border-slate-200/50 whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        <Phone className="w-3 h-3 text-slate-400 shrink-0" /> 
-                        <span className="font-bold text-slate-750">{(item.telefone || "---").toUpperCase()}</span>
+                      <div className="flex items-center gap-1.5">
+                        <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" /> 
+                        <span className="font-bold text-slate-700">{(item.telefone || "---").toUpperCase()}</span>
                       </div>
                     </td>
                   )}
                   {visibleCols.email && (
                     <td className="px-3.5 py-3 border-r border-slate-200/50 truncate max-w-[200px]">
-                      <div className="flex items-center gap-1">
-                        <Mail className="w-3 h-3 text-slate-400 shrink-0" /> 
+                      <div className="flex items-center gap-1.5">
+                        <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" /> 
                         <span className="font-bold text-slate-600 truncate" title={item.email}>{item.email || "---"}</span>
                       </div>
                     </td>
                   )}
                   {visibleCols.cidade && (
                     <td className="px-3.5 py-3 border-r border-slate-200/50">
-                      <div className="flex items-center gap-1 font-bold text-slate-800">
-                        <MapPin className="w-3 h-3 text-[#114D38] flex-none" />
-                        <span>{(item.cidade || "---").toUpperCase()}</span>
+                      <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                        <MapPin className="w-3.5 h-3.5 text-[#114D38] flex-none" />
+                        <span>{item.cidade ? normalizeCidade(item.cidade) : "---"}</span>
                       </div>
                     </td>
                   )}

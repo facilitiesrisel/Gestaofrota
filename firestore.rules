@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Coleções operacionais da Frota Risel: Leitura permitida para exibição no dashboard;
+    // Modificações (criação, edição e exclusão) restritas a usuários autenticados.
+    match /veiculos/{veiculoId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /abastecimentos/{abastecimentoId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /contratos/{contratoId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /manutencoes/{manutencaoId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /multas/{multaId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /checklists/{checklistId} {
+      allow read: if true;
+      allow create: if true; // Permite envio de vistoria pelo condutor em campo
+      allow update, delete: if request.auth != null;
+    }
+
+    match /lancamentos/{lancamentoId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /fornecedores/{fornecedorId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Coleções do Módulo de Reservas & Locações RAC
+    match /reservas/{reservaId} {
+      allow read, create: if true;
+      allow update, delete: if request.auth != null;
+    }
+
+    match /racRentals/{rentalId} {
+      allow read, create: if true;
+      allow update, delete: if request.auth != null;
+    }
+
+    match /cnhRecords/{cnhId} {
+      allow read, create: if true;
+      allow update, delete: if request.auth != null;
+    }
+
+    match /user_settings/{settingId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Coleção de usuários: dados protegidos; leitura e alteração requerem usuário autenticado
+    match /usuarios/{userEmail} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Regra padrão de segurança para quaisquer outras coleções não mapeadas
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

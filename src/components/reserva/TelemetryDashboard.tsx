@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Activity, Gauge, ShieldAlert, Award, TrendingUp, AlertTriangle, 
   Clock, CheckCircle, Flame, Battery, Compass, Star, ArrowUpRight,
-  Truck, MapPin, Calendar, Layers, Search, SlidersHorizontal, ChevronDown, ChevronUp, RefreshCw, User,
+  Car, MapPin, Calendar, Layers, Search, SlidersHorizontal, ChevronDown, ChevronUp, RefreshCw, User,
   ArrowLeft, ArrowRight, LayoutGrid, RotateCcw, BarChart3
 } from 'lucide-react';
 import { 
@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { ALLOWED_PLATES } from '../../constants_reserva';
 import { getProcessedFleetWithReservations } from '../../utils/telemetryFleetHelper';
+import { normalizeBaseOperacional, isSameCityOrBase } from '../../utils/baseOperacional';
 
 export type TelemetryChartId = 'bases' | 'kmMes' | 'kmDia' | 'kmHorario';
 
@@ -193,7 +194,7 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
         originalDriver: v.originalDriver,
         isReservationInUse: v.isReservationInUse,
         reservationDetails: v.reservationDetails,
-        base: v.base ? v.base.replace(/^Base\s+/i, '') : 'Paulínia',
+        base: v.base ? normalizeBaseOperacional(v.base) : 'Paulínia',
         locadora: v.locadora || 'Locadora',
         score,
         kmToday,
@@ -212,18 +213,18 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
     const baseSet = new Set<string>();
     processedFleet.forEach(v => {
       if (v.base) {
-        const clean = v.base.replace(/^Base\s+/i, '').trim();
+        const clean = normalizeBaseOperacional(v.base);
         if (clean) baseSet.add(clean);
       }
     });
     // Fallback de bases operacionais reais da empresa caso a lista esteja inicializando
     if (baseSet.size === 0) {
-      ['Paulínia', 'Betim', 'Rio de Janeiro', 'São Bernardo do Campo', 'Santos', 'Macaé'].forEach(b => baseSet.add(b));
+      ['Paulínia', 'Betim', 'Rio de Janeiro', 'São Bernardo', 'Santos', 'Macaé'].forEach(b => baseSet.add(b));
     }
     return Array.from(baseSet).sort((a, b) => {
       if (a === 'Paulínia') return -1;
       if (b === 'Paulínia') return 1;
-      return a.localeCompare(b);
+      return a.localeCompare(b, 'pt-BR');
     });
   }, [processedFleet]);
 
@@ -240,7 +241,7 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
       }
       
       // Filtro de Base Real
-      if (selectedBase !== 'Todas' && v.base !== selectedBase) {
+      if (selectedBase !== 'Todas' && !isSameCityOrBase(v.base, selectedBase)) {
         return false;
       }
       
@@ -618,7 +619,7 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
               >
                 <option value="Todas">Todas as Bases ({processedFleet.length} veíc.)</option>
                 {availableBases.map((baseName) => {
-                  const countInBase = processedFleet.filter(v => v.base === baseName).length;
+                  const countInBase = processedFleet.filter(v => isSameCityOrBase(v.base, baseName)).length;
                   return (
                     <option key={baseName} value={baseName}>
                       {baseName} ({countInBase} veíc.)

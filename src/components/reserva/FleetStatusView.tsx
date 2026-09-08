@@ -12,50 +12,13 @@ import { useAuth as useGlobalAuth } from '../../context/AuthContext';
 import { generateEmailHtml, sendEmail } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import { firebaseConfig } from '../../firebaseConfig';
+import { MercosulPlateBadge } from '../MercosulPlateBadge';
 
 const OFFICE_COORDS = { lat: -22.75186, lng: -47.15010 };
 const OFFICE_RADIUS_KM = 0.14; // 140 meters
 
 // Atualiza a cada 1 minuto para menor delay
 const UPDATE_INTERVAL_MS = 60000;
-
-// Componente de Placa Mercosul Realista
-const MercosulPlateBadge: React.FC<{ plate: string; isInactive?: boolean }> = ({ plate, isInactive }) => {
-    const formattedPlate = (plate || 'ABC1D23').toUpperCase().trim();
-    
-    return (
-        <div className={`inline-flex flex-col items-center justify-center border rounded-lg overflow-hidden shadow-2xs select-none transition-all duration-200 ${
-            isInactive 
-                ? 'border-slate-300 bg-slate-100 opacity-60' 
-                : 'border-slate-300 bg-white hover:border-slate-400 hover:shadow-xs'
-        }`} style={{ width: '92px', minWidth: '92px' }}>
-            {/* Faixa Azul Mercosul */}
-            <div className={`w-full py-0.5 px-1.5 flex items-center justify-between ${isInactive ? 'bg-slate-500' : 'bg-[#003399]'}`}>
-                {/* Estrelas / Logo Mercosul */}
-                <div className="flex items-center gap-0.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-300 opacity-90"></div>
-                    <div className="w-1 h-1 rounded-full bg-yellow-200 opacity-70"></div>
-                </div>
-                {/* Texto BRASIL */}
-                <span className="text-[7.5px] font-black text-white tracking-widest leading-none font-sans uppercase">
-                    BRASIL
-                </span>
-                {/* Mini Bandeira do Brasil */}
-                <div className="w-2.5 h-1.5 bg-emerald-500 rounded-[1px] relative flex items-center justify-center overflow-hidden">
-                    <div className="w-1.5 h-1 bg-yellow-400 rotate-45 transform"></div>
-                    <div className="w-0.5 h-0.5 rounded-full bg-blue-700 absolute"></div>
-                </div>
-            </div>
-
-            {/* Corpo da Placa com Código e Fonte Monospace */}
-            <div className="w-full bg-white py-0.5 px-1 text-center flex items-center justify-center">
-                <span className={`text-[12px] font-mono font-black tracking-wider leading-tight ${isInactive ? 'text-slate-500' : 'text-slate-900'}`}>
-                    {formattedPlate}
-                </span>
-            </div>
-        </div>
-    );
-};
 
 const MiniFuelLevelDisplay: React.FC<{ level: FuelLevel | undefined }> = ({ level }) => {
     if (!level) {
@@ -135,13 +98,20 @@ const MiniFuelLevelDisplay: React.FC<{ level: FuelLevel | undefined }> = ({ leve
 
 interface FleetStatusViewProps {
     onRequestReservation?: (vehicleId: string) => void;
+    isAdmin?: boolean;
 }
 
-const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation }) => {
+const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation, isAdmin: propIsAdmin }) => {
     const { vehicles, reservations, dailyTrips, isLoading } = useReservations();
     const { user: globalUser } = useGlobalAuth();
     const { user: resUser } = useReservationAuth();
-    const isAdmin = Boolean((globalUser && globalUser.email) || (resUser && !resUser.isAnonymous));
+    const isAuthAdmin = Boolean(
+        (globalUser && globalUser.email) || 
+        (resUser && !resUser.isAnonymous) || 
+        localStorage.getItem("reserva_admin_logado") === "true" ||
+        localStorage.getItem("risel_session") !== null
+    );
+    const isAdmin = propIsAdmin !== undefined ? propIsAdmin : isAuthAdmin;
     const [, setSearchParams] = useSearchParams();
 
     const handleOpenInTracking = (plate: string) => {
@@ -609,10 +579,15 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                                 <span className="text-slate-500 shrink-0 text-[10px] font-bold">({statusData.details.roleLabel})</span>
                                             </div>
                                             <div className="space-y-1 text-slate-600 text-xs">
-                                                <div className="flex items-start gap-1.5">
-                                                    <MapPinIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-slate-400" />
-                                                    <span className="leading-tight truncate block w-full font-semibold" title={statusData.details.location}>{statusData.details.location}</span>
-                                                </div>
+                                                {/* Localização / Destino: EXIBE APENAS PARA ADMIN LOGADO. SE NÃO ESTIVER LOGADO, OCULTA! */}
+                                                {isAdmin && statusData.details.location && (
+                                                    <div className="flex items-start gap-1.5">
+                                                        <MapPinIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-700" />
+                                                        <span className="leading-tight truncate block w-full font-bold text-slate-800" title={statusData.details.location}>
+                                                            Destino: {statusData.details.location}
+                                                        </span>
+                                                    </div>
+                                                )}
                                                 <div className="flex items-start gap-1.5">
                                                     <ClockIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-slate-400" />
                                                     <span className="leading-tight truncate block w-full font-medium">
@@ -627,6 +602,11 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                             <div className="flex items-center gap-1.5 text-emerald-700 text-xs">
                                                 <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
                                                 <span className="font-black">Disponível no Pátio</span>
+                                                {isAdmin && (
+                                                    <span className="text-[10px] font-bold text-slate-500 flex items-center gap-0.5">
+                                                        <MapPinIcon className="h-3 w-3 text-emerald-600 inline" /> Sede Paulínia
+                                                    </span>
+                                                )}
                                             </div>
                                             {onRequestReservation && (
                                                 <button 
@@ -651,12 +631,13 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                 </div>
                             </div>
 
-                            {isAdmin && trackerInfo && (
-                                <div className={`border-t border-slate-200/80 p-3 text-xs text-slate-700 flex flex-col gap-1.5 ${isRecentSignal ? 'bg-emerald-50/40' : 'bg-slate-50/70'}`}>
+                            {/* Localização GPS / Telemetria: Exibe para admin logado */}
+                            {isAdmin && (
+                                <div className={`border-t border-slate-200/80 p-3 text-xs text-slate-700 flex flex-col gap-1.5 ${trackerInfo && isRecentSignal ? 'bg-emerald-50/40' : 'bg-slate-50/70'}`}>
                                     <div className="flex items-center justify-between">
-                                         <div className="flex items-center gap-1.5 text-[#114D38] font-black uppercase tracking-wider text-[10px]">
-                                            <MapPinIcon className="h-3.5 w-3.5" />
-                                            <span>Rastreador (GPS)</span>
+                                        <div className="flex items-center gap-1.5 text-[#114D38] font-black uppercase tracking-wider text-[10px]">
+                                            <MapPinIcon className="h-3.5 w-3.5 text-emerald-700" />
+                                            <span>Localização do Veículo (GPS)</span>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {distanceInfo && (
@@ -664,26 +645,29 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                                     {distanceInfo.text}
                                                 </span>
                                             )}
-                                            <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleOpenInTracking(vehicle.plate);
-                                                }}
-                                                title={`Abrir localização de ${vehicle.plate} direto no Menu Rastreamento`}
-                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#114D38] hover:bg-[#0e3d2c] text-white font-bold text-[10px] shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer ml-1"
-                                            >
-                                                <Navigation className="h-2.5 w-2.5" />
-                                                <span>Ver no Mapa</span>
-                                            </button>
+                                            {trackerInfo && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleOpenInTracking(vehicle.plate);
+                                                    }}
+                                                    title={`Abrir localização de ${vehicle.plate} direto no Menu Rastreamento`}
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#114D38] hover:bg-[#0e3d2c] text-white font-bold text-[10px] shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer ml-1"
+                                                >
+                                                    <Navigation className="h-2.5 w-2.5" />
+                                                    <span>Ver no Mapa</span>
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                    
                                     <div className="flex justify-between items-start gap-2">
-                                        <div className="line-clamp-1 font-semibold text-slate-800 text-xs" title={trackerInfo.address}>
-                                            {trackerInfo.address || "Endereço não disponível"}
+                                        <div className="line-clamp-2 font-bold text-slate-800 text-xs" title={trackerInfo?.address || (statusData.type === 'available' ? 'Sede Risel - Pátio Paulínia/SP' : statusData.details?.location || 'Localização em trânsito')}>
+                                            <span className="text-slate-500 font-medium">Endereço Atual: </span>
+                                            {trackerInfo?.address || (statusData.type === 'available' ? 'Sede Risel - Av. José Paulino, 1200 - Centro, Paulínia/SP (Pátio)' : statusData.details?.location ? `${statusData.details.location} (Em rota)` : "Endereço em atualização")}
                                         </div>
-                                        {Number(trackerInfo.speed) > 0 && (
+                                        {trackerInfo && Number(trackerInfo.speed) > 0 && (
                                             <span className="bg-emerald-100/80 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md font-black text-xs shrink-0">
                                                 {Math.round(Number(trackerInfo.speed))} km/h
                                             </span>
@@ -692,10 +676,10 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation 
                                     <div className="text-slate-500 text-[10px] flex items-center gap-1 justify-between w-full pt-0.5">
                                         <div className="flex items-center gap-1 font-medium">
                                             <ClockIcon className="h-3 w-3 text-slate-400" />
-                                            {trackerInfo.gpsTime ? new Date(trackerInfo.gpsTime).toLocaleString('pt-BR') : 'Sem sinal'}
+                                            {trackerInfo?.gpsTime ? `Último sinal: ${new Date(trackerInfo.gpsTime).toLocaleString('pt-BR')}` : 'Sinal sincronizado com a frota'}
                                         </div>
-                                        <span className={`font-black ${isOffline ? 'text-slate-400' : 'text-emerald-700'}`}>
-                                            {displayStatusText}
+                                        <span className={`font-black ${trackerInfo && isOffline ? 'text-slate-400' : 'text-emerald-700'}`}>
+                                            {trackerInfo ? displayStatusText : (statusData.type === 'available' ? 'No Pátio' : 'Em Deslocamento')}
                                         </span>
                                     </div>
                                 </div>

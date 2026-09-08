@@ -1,4 +1,5 @@
 import { VEICULOS_REAIS, Veiculo } from '../data/veiculos_reais';
+import { normalizeBaseOperacional } from './baseOperacional';
 
 export interface ProcessedTelemetryVehicle {
   plate: string;
@@ -254,7 +255,7 @@ export function getProcessedFleetWithReservations(
       active,
       geoLocation,
       charCodeSum,
-      base: veic.filial || 'Paulínia',
+      base: normalizeBaseOperacional(veic.filial || (veic as any).base || 'Paulínia'),
       locadora: veic.locadora || 'Locadora',
       contrato: veic.contrato || 'Risel',
       funcao: veic.funcao,

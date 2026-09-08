@@ -61,13 +61,26 @@ export function Login({
 
   return (
     <div className="min-h-screen bg-[#060c09] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
-      {/* Background decorativo premium de alta tecnologia com efeito bioluminescente */}
-      <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.08),transparent_50%)] pointer-events-none" />
-      <div className="absolute bottom-0 right-0 w-full h-full bg-[radial-gradient(circle_at_bottom_left,rgba(5,150,105,0.05),transparent_50%)] pointer-events-none" />
+      {/* Background Image: Foto do Caminhão Tanque Risel discretamente de fundo mantendo o tom elegante */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden select-none">
+        <img 
+          src="https://i.ibb.co/JW1Ndd5Y/c-AMINH-O.jpg" 
+          alt="Frota Risel - Caminhão Tanque" 
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover object-center scale-105 opacity-35 filter contrast-120 brightness-90"
+        />
+        {/* Camada tonal suave mantendo a identidade esmeralda e petróleo nobre da Risel */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#060c09]/85 via-[#060c09]/65 to-[#040906]/90" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(6,12,9,0.35)_0%,rgba(6,12,9,0.88)_100%)]" />
+      </div>
+
+      {/* Background decorativo premium com efeito bioluminescente preservado */}
+      <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.12),transparent_50%)] pointer-events-none z-1" />
+      <div className="absolute bottom-0 right-0 w-full h-full bg-[radial-gradient(circle_at_bottom_left,rgba(5,150,105,0.08),transparent_50%)] pointer-events-none z-1" />
       
       {/* Círculos decorativos flutuantes */}
-      <div className="absolute top-1/4 left-1/10 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/10 w-96 h-96 bg-teal-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/4 left-1/10 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none z-1" />
+      <div className="absolute bottom-1/4 right-1/10 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none z-1" />
 
       <motion.div 
         initial={{ opacity: 0, y: 30 }}
@@ -86,9 +99,6 @@ export function Login({
                 className="w-full h-full object-cover"
               />
             </div>
-            <span className="absolute -bottom-1 -right-1 bg-emerald-500 text-white p-1 rounded-full text-[9px] font-bold uppercase border-2 border-zinc-950 flex items-center gap-0.5">
-              <Sparkles className="w-2.5 h-2.5" /> ERP
-            </span>
           </div>
 
           <h2 className="text-2xl font-bold font-display tracking-tight bg-gradient-to-r from-white via-slate-200 to-emerald-400 bg-clip-text text-transparent">
@@ -104,7 +114,7 @@ export function Login({
             </div>
           ) : (
             <p className="text-xs text-slate-400 mt-1.5 font-medium max-w-[280px]">
-              Insira suas credenciais para autenticar seu acesso ao Sistema Risel ERP
+              Insira suas credenciais para autenticar seu acesso ao Sistema Risel
             </p>
           )}
         </div>
@@ -123,7 +133,7 @@ export function Login({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-[10.5px] font-bold text-emerald-400 uppercase tracking-wider block">
-              E-mail funcional
+              E-mail
             </label>
             <div className="relative">
               <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />

@@ -5,6 +5,8 @@ import {
   Car, Paintbrush, Gauge, Fuel, Calendar, Layers, MapPin, UserCheck, Mail
 } from "lucide-react";
 import { addFirebaseChecklist, ChecklistData } from "../../services/firebaseService";
+import { normalizeBaseOperacional } from "../../utils/baseOperacional";
+import { normalizeNomeCondutor, isInvalidDriverName } from "../../utils/condutorOperacional";
 
 interface Vehicle {
   id: string;
@@ -12,6 +14,7 @@ interface Vehicle {
   placa: string;
   base?: string;
   status?: string;
+  condutor?: string;
 }
 
 interface ChecklistFormProps {
@@ -30,14 +33,14 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
   const [formData, setFormData] = useState({
     data: new Date().toISOString().split("T")[0],
     tipo: "MENSAL",
-    base: "PAULÍNIA",
+    base: "Paulínia",
     placa: "",
     modelo: "",
     cor: "",
     kmAtual: "",
     nivelTanque: "CHEIO",
     itens: [] as string[],
-    email: "deny.risel@gmail.com",
+    email: "deny.goncalves@risel.com.br",
     
     pneuDianteiroDireito: "BOM",
     pneuDianteiroEsquerdo: "BOM",
@@ -65,24 +68,54 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
     fotoFaroisDianteiros: "" as string
   });
 
-  const availableBases = ["PAULÍNIA", "OURINHOS", "JALES", "CAPÃO BONITO", "CUBATÃO", "SÃO BERNARDO", "AGUAÍ", "ASSTAM"];
+  const availableBases = [
+    "Paulínia",
+    "Ourinhos",
+    "Jales",
+    "Capão Bonito",
+    "Cubatão",
+    "São Bernardo",
+    "Aguaí",
+    "Campinas",
+    "São Paulo",
+    "Betim",
+    "Belo Horizonte",
+    "Rio de Janeiro",
+    "Asstam"
+  ];
   const availableTypes = ["MENSAL", "ENTREGA", "DEVOLUÇÃO", "FÉRIAS", "ADMISSÃO", "RETORNO DE FÉRIAS", "DESLIGAMENTO", "TROCA DE CONDUTOR", "OUTROS"];
   const availableTires = ["BOM", "NOVO", "REGULAR", "RUIM"];
   const availableTanks = ["CHEIO", "3/4", "1/2", "1/4", "VAZIO"];
   
   const checklistItemsOptions = [
-    "CRLV", "TAG PEDÁGIOS", "CARTÃO ABASTECIMENTO", "CHAVE RESERVA", 
-    "SOM", "MANUAL", "TAPETE", "TRIÂNGULO", "MACACO", "CHAVE DE RODA", "EXTINTOR"
+    "CRLV",
+    "TAG PEDÁGIOS",
+    "CARTÃO ABASTECIMENTO",
+    "CHAVE RESERVA",
+    "PLANO DE MANUTENÇÃO EM DIA",
+    "ADESIVO",
+    "SOM",
+    "MANUAL",
+    "MACACO",
+    "CHAVE DE RODA",
+    "ANTENA",
+    "TAPETE",
+    "TRIÂNGULO"
   ];
 
-  // Autofill vehicle details when plate is selected
+  // Autofill vehicle details and driver when plate is selected
   const handlePlateChange = (plate: string) => {
     const v = vehicles.find(veh => veh.placa.toUpperCase() === plate.toUpperCase());
+    const assignedDriver = v && v.condutor && !isInvalidDriverName(v.condutor)
+      ? normalizeNomeCondutor(v.condutor, plate, vehicles)
+      : "";
+
     setFormData(prev => ({
       ...prev,
       placa: plate,
       modelo: v ? v.modelo : prev.modelo,
-      base: v && v.base ? v.base.toUpperCase() : prev.base
+      base: v && (v.base || (v as any).filial) ? normalizeBaseOperacional(v.base || (v as any).filial) : prev.base,
+      recebidoPor: prev.recebidoPor ? prev.recebidoPor : assignedDriver
     }));
   };
 
@@ -190,9 +223,14 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
       // Format checklist data for Firestore / local memory (Standardized to UPPERCASE)
       const cleanU = (v: string) => v ? String(v).toUpperCase().trim() : "";
       
+      const cleanPlate = formData.placa.toUpperCase().replace(/[^A-Z0-9]/g, "").trim();
+      const normRecebido = formData.recebidoPor ? normalizeNomeCondutor(formData.recebidoPor, cleanPlate, vehicles) : "";
+      const normEntregue = formData.entreguePor ? normalizeNomeCondutor(formData.entreguePor, cleanPlate, vehicles) : "";
+      const normCondutor = normRecebido || normEntregue || (cleanPlate ? normalizeNomeCondutor("", cleanPlate, vehicles) : "CONDUTOR");
+
       const checklistPayload: any = {
-        placa: formData.placa.toUpperCase().replace(/[^A-Z0-9]/g, "").trim(),
-        condutor: cleanU(formData.entreguePor) || "CONDUTOR",
+        placa: cleanPlate,
+        condutor: normCondutor,
         data: formData.data,
         odometro: parseInt(formData.kmAtual, 10) || 0,
         itens: {
@@ -210,7 +248,7 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
         timestamp: new Date().toLocaleString("pt-BR"),
         email: String(formData.email || "").toLowerCase().trim(),
         tipo: cleanU(formData.tipo) || "MENSAL",
-        base: cleanU(formData.base) || "PAULÍNIA",
+        base: normalizeBaseOperacional(formData.base) || "Paulínia",
         marcaModelo: cleanU(formData.modelo),
         cor: cleanU(formData.cor),
         nivelTanque: cleanU(formData.nivelTanque) || "CHEIO",
@@ -228,8 +266,8 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
         fotoPassageiro: formData.fotoPassageiro,
         obsTraseira: cleanU(formData.obsTraseira),
         fotoTraseira: formData.fotoTraseira,
-        entreguePor: cleanU(formData.entreguePor),
-        recebidoPor: cleanU(formData.recebidoPor),
+        entreguePor: normEntregue,
+        recebidoPor: normRecebido,
         fotosInterior: formData.fotosInterior,
         fotoRetrovisorMotorista: formData.fotoRetrovisorMotorista,
         fotoRetrovisorPassageiro: formData.fotoRetrovisorPassageiro,
@@ -305,7 +343,7 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
       kmAtual: "",
       nivelTanque: "CHEIO",
       itens: [],
-      email: "deny.risel@gmail.com",
+      email: "deny.goncalves@risel.com.br",
       pneuDianteiroDireito: "BOM",
       pneuDianteiroEsquerdo: "BOM",
       pneuTraseiroDireito: "BOM",
@@ -622,7 +660,7 @@ export function ChecklistForm({ vehicles, onFormSubmitSuccess }: ChecklistFormPr
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">E-mail</label>
                   <input
                     type="email"
-                    placeholder="Ex: deny.risel@gmail.com"
+                    placeholder="Ex: deny.goncalves@risel.com.br"
                     value={formData.email}
                     onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                     className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 shadow-sm"

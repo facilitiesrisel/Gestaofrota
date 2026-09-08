@@ -6,7 +6,7 @@ import ConfigPage from './pages/ConfigPage';
 import Loading from './components/Loading';
 import DashboardCharts from './components/DashboardCharts';
 import { Page } from './types';
-import { Truck, Siren, AlertOctagon, TrendingUp, Calendar, CheckCircle, XCircle, FileText, ArrowUpRight, ArrowDownRight, Car, DollarSign, CheckCircle2, BarChart3, RefreshCw } from 'lucide-react';
+import { Siren, AlertOctagon, TrendingUp, Calendar, CheckCircle, XCircle, FileText, ArrowUpRight, ArrowDownRight, Car, DollarSign, CheckCircle2, BarChart3, RefreshCw } from 'lucide-react';
 import { fetchAllData, clearCache } from './services/storage';
 import { parseLocalDate } from './services/dateUtils';
 import { useAuth } from '../../context/AuthContext';
@@ -245,7 +245,7 @@ const MultasDashboard: React.FC<MultasDashboardProps> = ({ activePage }) => {
                     <div className="absolute -right-6 -top-6 w-24 h-24 bg-white/10 rounded-full blur-xl group-hover:bg-white/20 transition-all"></div>
                     <div className="relative z-10">
                         <div className="flex justify-between items-start mb-3">
-                            <div className="p-2 bg-white/20 rounded-lg text-white border border-white/20"><Truck size={18}/></div>
+                            <div className="p-2 bg-white/20 rounded-lg text-white border border-white/20"><Car size={18}/></div>
                             <div className="text-[10px] font-bold px-2 py-1 rounded-full bg-white/20 text-white border border-white/20">
                                     {dashboardMetrics.totalFrotasAtivas} ATIVOS
                             </div>

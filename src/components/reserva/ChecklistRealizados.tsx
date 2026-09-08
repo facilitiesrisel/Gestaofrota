@@ -3,8 +3,173 @@ import {
   Search, Filter, ChevronDown, ChevronUp, Table, Kanban, Eye, 
   CheckCircle, AlertTriangle, Clock, Columns, FileText, ExternalLink, 
   User, Calendar, Gauge, MapPin, Download, AlertOctagon, CornerDownRight, Check,
-  Trash2, ChevronRight, ChevronLeft, Image as ImageIcon
+  Trash2, ChevronRight, ChevronLeft, Image as ImageIcon,
+  CreditCard, Radio, Key, BookOpen, Wrench, Flame, Disc, Volume2, Layers, CheckCircle2, XCircle, X,
+  CalendarCheck, Tag, Wifi
 } from "lucide-react";
+import { normalizeBaseOperacional, isSameCityOrBase } from "../../utils/baseOperacional";
+import { normalizeNomeCondutor, isSameDriver, isInvalidDriverName } from "../../utils/condutorOperacional";
+import { MercosulPlateBadge } from "../MercosulPlateBadge";
+
+// Lista oficial estrita dos 13 itens do formulário de checklist anexado pelo usuário
+export const STANDARD_CHECKLIST_ITEMS = [
+  { id: "CRLV", name: "CRLV", label: "CRLV", icon: FileText, desc: "Documento de porte obrigatório" },
+  { id: "TAG PEDÁGIOS", name: "TAG PEDÁGIOS", label: "TAG Pedágios", icon: Radio, desc: "Sem Parar / Veloe / ConectCar" },
+  { id: "CARTÃO ABASTECIMENTO", name: "CARTÃO ABASTECIMENTO", label: "Cartão Abastecimento", icon: CreditCard, desc: "Cartão corporativo de combustível" },
+  { id: "CHAVE RESERVA", name: "CHAVE RESERVA", label: "Chave Reserva", icon: Key, desc: "Cópia física de segurança" },
+  { id: "PLANO DE MANUTENÇÃO EM DIA", name: "PLANO DE MANUTENÇÃO EM DIA", label: "Plano de Manutenção em Dia", icon: CalendarCheck, desc: "Revisões e manutenções em dia" },
+  { id: "ADESIVO", name: "ADESIVO", label: "Adesivo", icon: Tag, desc: "Identificação institucional Risel" },
+  { id: "SOM", name: "SOM", label: "Som", icon: Volume2, desc: "Aparelho de som e multimídia" },
+  { id: "MANUAL", name: "MANUAL", label: "Manual", icon: BookOpen, desc: "Manual do proprietário de bordo" },
+  { id: "MACACO", name: "MACACO", label: "Macaco", icon: Wrench, desc: "Equipamento de elevação mecânica" },
+  { id: "CHAVE DE RODA", name: "CHAVE DE RODA", label: "Chave de Roda", icon: Disc, desc: "Ferramenta para troca de rodas" },
+  { id: "ANTENA", name: "ANTENA", label: "Antena", icon: Wifi, desc: "Antena de recepção de sinal" },
+  { id: "TAPETE", name: "TAPETE", label: "Tapete", icon: Layers, desc: "Jogo de tapetes do assoalho" },
+  { id: "TRIÂNGULO", name: "TRIÂNGULO", label: "Triângulo", icon: AlertTriangle, desc: "Item de sinalização e segurança" },
+];
+
+// Helper para verificar se o item consta como presente na lista informada no ato do Checklist
+export function isItemInChecklist(itemIdOrName: string, listaItens?: string[]): boolean {
+  if (!listaItens || !Array.isArray(listaItens) || listaItens.length === 0) return false;
+  const targetNorm = itemIdOrName.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  return listaItens.some(item => {
+    if (!item) return false;
+    const raw = String(item).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (raw === targetNorm) return true;
+
+    // Regras específicas de equivalência para os 13 itens oficiais
+    if (targetNorm === "CHAVE RESERVA") {
+      return raw.includes("CHAVE RESERVA");
+    }
+    if (targetNorm === "CHAVE DE RODA") {
+      return raw.includes("CHAVE DE RODA") || raw.includes("CHAVE RODA");
+    }
+    if (targetNorm === "PLANO DE MANUTENCAO EM DIA") {
+      return raw.includes("PLANO") || raw.includes("MANUTENCAO");
+    }
+    if (targetNorm === "CARTAO ABASTECIMENTO") {
+      return raw.includes("CARTAO") || raw.includes("ABASTECIMENTO");
+    }
+    if (targetNorm === "TAG PEDAGIOS") {
+      return raw.includes("TAG") || raw.includes("PEDAGIO");
+    }
+    if (targetNorm === "ADESIVO") {
+      return raw.includes("ADESIVO");
+    }
+    if (targetNorm === "ANTENA") {
+      return raw.includes("ANTENA");
+    }
+    if (targetNorm === "MACACO") {
+      return raw.includes("MACACO");
+    }
+    if (targetNorm === "MANUAL") {
+      return raw.includes("MANUAL");
+    }
+    if (targetNorm === "SOM") {
+      return raw.includes("SOM") || raw.includes("RADIO");
+    }
+    if (targetNorm === "TAPETE") {
+      return raw.includes("TAPETE");
+    }
+    if (targetNorm === "TRIANGULO") {
+      return raw.includes("TRIANGULO");
+    }
+    if (targetNorm === "CRLV") {
+      return raw.includes("CRLV") || raw.includes("DOCUMENTO");
+    }
+
+    return raw.includes(targetNorm) || targetNorm.includes(raw);
+  });
+}
+
+// Helper para obter ícone apropriado de acordo com o nome do item
+export function getItemIconByName(itemName: string) {
+  const norm = itemName.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (norm.includes("CRLV") || norm.includes("DOC")) return FileText;
+  if (norm.includes("TAG") || norm.includes("PEDAGIO")) return Radio;
+  if (norm.includes("CARTAO") || norm.includes("ABASTEC")) return CreditCard;
+  if (norm.includes("CHAVE RESERVA")) return Key;
+  if (norm.includes("CHAVE DE RODA") || norm.includes("RODA")) return Disc;
+  if (norm.includes("CHAVE")) return Key;
+  if (norm.includes("PLANO") || norm.includes("MANUTENCAO")) return CalendarCheck;
+  if (norm.includes("ADESIVO")) return Tag;
+  if (norm.includes("SOM") || norm.includes("RADIO") || norm.includes("MULTIMIDIA")) return Volume2;
+  if (norm.includes("MANUAL")) return BookOpen;
+  if (norm.includes("MACACO")) return Wrench;
+  if (norm.includes("ANTENA")) return Wifi;
+  if (norm.includes("TAPETE")) return Layers;
+  if (norm.includes("TRIANGULO")) return AlertTriangle;
+  return CheckCircle2;
+}
+
+// Estilo de gradiente suave, discreto e elegante para cada Tipo de Checklist realizado
+export function getTipoBadgeGradient(tipoStr?: string) {
+  const t = (tipoStr || "MENSAL").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  if (t.includes("MENSAL")) {
+    return {
+      bg: "bg-gradient-to-r from-blue-50/90 via-sky-50 to-indigo-50/80",
+      border: "border-blue-200/90",
+      text: "text-blue-900",
+      dot: "bg-blue-500",
+      label: "Mensal"
+    };
+  }
+  if (t.includes("ENTREGA") || t.includes("ENTRADA") || t.includes("ADMISSAO")) {
+    return {
+      bg: "bg-gradient-to-r from-emerald-50/90 via-teal-50 to-green-50/80",
+      border: "border-emerald-200/90",
+      text: "text-emerald-900",
+      dot: "bg-emerald-500",
+      label: "Entrega"
+    };
+  }
+  if (t.includes("DEVOLUCAO") || t.includes("SAIDA") || t.includes("DESLIGAMENTO")) {
+    return {
+      bg: "bg-gradient-to-r from-amber-50/90 via-orange-50/80 to-yellow-50/80",
+      border: "border-amber-200/90",
+      text: "text-amber-950",
+      dot: "bg-amber-500",
+      label: "Devolução"
+    };
+  }
+  if (t.includes("FERIAS") || t.includes("RETORNO")) {
+    return {
+      bg: "bg-gradient-to-r from-purple-50/90 via-fuchsia-50/70 to-pink-50/80",
+      border: "border-purple-200/90",
+      text: "text-purple-950",
+      dot: "bg-purple-500",
+      label: "Férias"
+    };
+  }
+  if (t.includes("TROCA") || t.includes("CONDUTOR") || t.includes("SUBSTITUICAO")) {
+    return {
+      bg: "bg-gradient-to-r from-teal-50/90 via-cyan-50 to-sky-50/80",
+      border: "border-cyan-200/90",
+      text: "text-cyan-950",
+      dot: "bg-cyan-500",
+      label: "Troca Condutor"
+    };
+  }
+  if (t.includes("VISTORIA") || t.includes("MANUTENCAO") || t.includes("OFICINA")) {
+    return {
+      bg: "bg-gradient-to-r from-violet-50/90 via-slate-50 to-indigo-50/80",
+      border: "border-violet-200/90",
+      text: "text-violet-950",
+      dot: "bg-violet-500",
+      label: "Vistoria"
+    };
+  }
+  // Padrão / Outros
+  return {
+    bg: "bg-gradient-to-r from-slate-50 via-gray-50 to-zinc-50",
+    border: "border-slate-200/90",
+    text: "text-slate-800",
+    dot: "bg-slate-400",
+    label: "Outros"
+  };
+}
 
 // Função utilitária robusta para converter formatos de data e carimbo de data/hora brasileiros ou ISO para milissegundos comparáveis
 function parseDateToComparable(val: string): number {
@@ -72,7 +237,7 @@ function getDirectImageUrl(url: string | undefined): string {
   return firstUrl;
 }
 
-export function generateLocalPDF(c: any) {
+export function generateLocalPDF(c: any, vehicles: any[] = []) {
   const printWindow = window.open("", "_blank");
   if (!printWindow) {
     alert("Por favor, permita popups para gerar o PDF.");
@@ -98,9 +263,24 @@ export function generateLocalPDF(c: any) {
   const obsMotorista = c.obsMotorista || "Ok";
   const obsPassageiro = c.obsPassageiro || "Ok";
 
-  const checklistItems = c.listaItens && c.listaItens.length > 0
-    ? c.listaItens.join(", ")
-    : "CRLV, TAG PEDÁGIOS, CARTÃO ABASTECIMENTO, CHAVE RESERVA, SOM, MANUAL, TAPETE, TRIÂNGULO, MACACO, CHAVE DE RODA, EXTINTOR";
+  const checklistItems = (() => {
+    const list = c.listaItens && Array.isArray(c.listaItens) ? c.listaItens : [];
+    if (list.length === 0) {
+      return `<div style="color: #718096; font-size: 10px; font-style: italic;">CRLV, TAG PEDÁGIOS, CARTÃO ABASTECIMENTO, CHAVE RESERVA, PLANO DE MANUTENÇÃO EM DIA, ADESIVO, SOM, MANUAL, MACACO, CHAVE DE RODA, ANTENA, TAPETE, TRIÂNGULO (Conforme padrão da frota)</div>`;
+    }
+    
+    // Gerar badges visuais para cada item oficial
+    const standardBadges = STANDARD_CHECKLIST_ITEMS.map(item => {
+      const isPresent = isItemInChecklist(item.id, list);
+      if (isPresent) {
+        return `<span style="display:inline-flex; align-items:center; gap:3px; padding: 2px 6px; margin: 2px; border-radius: 4px; background-color: #ECFDF5; border: 1px solid #A7F3D0; color: #065F46; font-size: 9px; font-weight: bold;">✓ ${item.name}</span>`;
+      } else {
+        return `<span style="display:inline-flex; align-items:center; gap:3px; padding: 2px 6px; margin: 2px; border-radius: 4px; background-color: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; font-size: 9px; font-weight: bold; text-decoration: line-through; opacity: 0.85;">✕ ${item.name}</span>`;
+      }
+    }).join(" ");
+
+    return standardBadges;
+  })();
 
   const html = `
   <!DOCTYPE html>
@@ -217,7 +397,7 @@ export function generateLocalPDF(c: any) {
         <th>📋 TIPO DE CHECKLIST</th><td>${c.tipo || "MENSAL"}</td>
       </tr>
       <tr>
-        <th>🏢 BASE OPERACIONAL</th><td>${c.base || "PAULÍNIA"}</td>
+        <th>🏢 BASE OPERACIONAL</th><td>${normalizeBaseOperacional(c.base)}</td>
         <th>🚗 PLACA DO VEÍCULO</th><td>${c.placa}</td>
       </tr>
       <tr>
@@ -397,10 +577,10 @@ export function generateLocalPDF(c: any) {
       </tr>
       <tr>
         <td style="padding: 22px; text-align: center; font-size: 13px; color: #1A202C; font-weight: bold; background-color: #FFFFFF !important;">
-          ${c.entreguePor || c.condutor || "Não Informado"}
+          ${normalizeNomeCondutor(c.entreguePor || c.condutor, c.placa, vehicles)}
         </td>
         <td style="padding: 22px; text-align: center; font-size: 13px; color: #1A202C; font-weight: bold; background-color: #FFFFFF !important;">
-          ${c.recebidoPor || "Não Informado"}
+          ${normalizeNomeCondutor(c.recebidoPor, c.placa, vehicles)}
         </td>
       </tr>
     </table>
@@ -496,18 +676,157 @@ interface Checklist {
   isGoogleSheet?: boolean;
 }
 
+interface ItensIntegradosSectionProps {
+  listaItens?: string[];
+}
+
+export function ItensIntegradosSection({ listaItens }: ItensIntegradosSectionProps) {
+  const items = listaItens && Array.isArray(listaItens) ? listaItens : [];
+  
+  // Analisar presença estrita de cada um dos 13 itens oficiais do formulário de checklist
+  const standardStats = useMemo(() => {
+    return STANDARD_CHECKLIST_ITEMS.map(item => {
+      const isPresent = isItemInChecklist(item.id, items);
+      return {
+        ...item,
+        isPresent
+      };
+    });
+  }, [items]);
+
+  const presentCount = standardStats.filter(i => i.isPresent).length;
+  const missingCount = standardStats.length - presentCount;
+  const conformityPercent = Math.round((presentCount / standardStats.length) * 100);
+
+  return (
+    <div className="space-y-3">
+      {/* Header com Estatísticas */}
+      <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-black text-slate-700 uppercase tracking-wide">
+              Itens Oficiais do Formulário de Checklist
+            </span>
+            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+              conformityPercent === 100 
+                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                : conformityPercent >= 80 
+                ? "bg-amber-100 text-amber-800 border-amber-300" 
+                : "bg-rose-100 text-rose-800 border-rose-300"
+            }`}>
+              {conformityPercent}% Conforme
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-500 font-semibold mt-0.5">
+            {presentCount} de {standardStats.length} itens obrigatórios e acessórios verificados no veículo
+          </p>
+        </div>
+
+        {/* Badges de contagem rápida */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200/90 px-2.5 py-1 rounded-lg text-emerald-800 text-[11px] font-extrabold shadow-2xs">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span>{presentCount} Presentes</span>
+          </div>
+          {missingCount > 0 && (
+            <div className="inline-flex items-center gap-1.5 bg-rose-50 border border-rose-200/90 px-2.5 py-1 rounded-lg text-rose-800 text-[11px] font-extrabold shadow-2xs">
+              <XCircle className="w-3.5 h-3.5 text-rose-600" />
+              <span>{missingCount} Não Constam</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Grid de Itens com Ícones e Identificação Visual */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+        {standardStats.map(item => {
+          const IconComponent = item.icon;
+          const isPresent = item.isPresent;
+
+          return (
+            <div
+              key={item.id}
+              className={`p-3 rounded-xl border transition-all flex flex-col justify-between gap-2.5 ${
+                isPresent
+                  ? "bg-gradient-to-br from-emerald-50/70 via-white to-emerald-50/20 border-emerald-200/90 shadow-2xs hover:border-emerald-300"
+                  : "bg-gradient-to-br from-rose-50/50 via-white to-slate-50/40 border-rose-200/80 shadow-2xs hover:border-rose-300"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                      isPresent
+                        ? "bg-emerald-100/90 text-emerald-800 border-emerald-200"
+                        : "bg-rose-100/80 text-rose-700 border-rose-200"
+                    }`}
+                  >
+                    <IconComponent className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="font-extrabold text-xs text-slate-800 block truncate" title={item.label}>
+                      {item.label}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-medium block truncate" title={item.desc}>
+                      {item.desc}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tag com Identificação Visual se Foi Informado Estar ou Não no Veículo */}
+              <div className="pt-1.5 border-t border-slate-100/80 flex items-center justify-between">
+                <span className="text-[9px] font-mono text-slate-400 font-bold uppercase tracking-wider">
+                  Status
+                </span>
+                {isPresent ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100/90 text-emerald-900 border border-emerald-300/80 text-[10px] font-black tracking-wide uppercase">
+                    <Check className="w-3 h-3 text-emerald-700 stroke-[3]" />
+                    No Veículo
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100/90 text-rose-900 border border-rose-300/80 text-[10px] font-black tracking-wide uppercase">
+                    <X className="w-3 h-3 text-rose-700 stroke-[3]" />
+                    Não Consta
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface ChecklistRealizadosProps {
   checklists: Checklist[];
+  vehicles?: any[];
   onDeleteChecklist?: (id: string) => Promise<void> | void;
 }
 
-export function ChecklistRealizados({ checklists, onDeleteChecklist }: ChecklistRealizadosProps) {
+export function ChecklistRealizados({ checklists, vehicles = [], onDeleteChecklist }: ChecklistRealizadosProps) {
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [isColumnSelectorOpen, setIsColumnSelectorOpen] = useState(false);
   const [selectedChecklist, setSelectedChecklist] = useState<Checklist | null>(null);
   const [checklistToDelete, setChecklistToDelete] = useState<Checklist | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Helper to ensure 'Condutor' priority shows 'Recebido Por' as requested, normalized to canonical Full Name
+  const getChecklistCondutor = (c: Checklist): string => {
+    let raw = "";
+    if (c.recebidoPor && c.recebidoPor.trim() && c.recebidoPor.trim().toUpperCase() !== "NÃO INFORMADO") {
+      raw = c.recebidoPor.trim();
+    } else if (c.condutor && c.condutor.trim() && c.condutor.trim().toUpperCase() !== "CONDUTOR") {
+      raw = c.condutor.trim();
+    } else if (c.entreguePor && c.entreguePor.trim()) {
+      raw = c.entreguePor.trim();
+    } else {
+      raw = c.condutor || "";
+    }
+    return normalizeNomeCondutor(raw, c.placa, vehicles);
+  };
 
   // Filters State
   const [filterMonthYear, setFilterMonthYear] = useState("");
@@ -531,6 +850,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
     cor: false,
     condutor: true,
     tipo: true,
+    itensIntegrados: false,
     base: true,
     odometro: true,
     tanque: true,
@@ -566,9 +886,17 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
 
   const baseOptions = useMemo(() => {
     const opts = new Set<string>();
-    checklists.forEach(c => { if (c.base) opts.add(c.base.toUpperCase().trim()); });
-    return Array.from(opts).filter(b => b !== "").sort();
-  }, [checklists]);
+    checklists.forEach(c => { 
+      if (c.base) opts.add(normalizeBaseOperacional(c.base)); 
+    });
+    if (vehicles && Array.isArray(vehicles)) {
+      vehicles.forEach(v => {
+        if (v.filial) opts.add(normalizeBaseOperacional(v.filial));
+        if (v.base) opts.add(normalizeBaseOperacional(v.base));
+      });
+    }
+    return Array.from(opts).filter(b => b !== "").sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [checklists, vehicles]);
 
   const tipoOptions = useMemo(() => {
     const opts = new Set<string>();
@@ -576,11 +904,52 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
     return Array.from(opts).sort();
   }, [checklists]);
 
+  // Placas: todas as placas que já tiveram checklist + placas do Controle de Frota Leve
   const placaOptions = useMemo(() => {
     const opts = new Set<string>();
-    checklists.forEach(c => { if (c.placa) opts.add(c.placa.toUpperCase()); });
-    return Array.from(opts).sort();
-  }, [checklists]);
+    checklists.forEach(c => { 
+      if (c.placa) {
+        const p = c.placa.toUpperCase().trim();
+        if (p && p !== "N/D" && p !== "N/A" && p !== "-") {
+          opts.add(p);
+        }
+      }
+    });
+    if (vehicles && Array.isArray(vehicles)) {
+      vehicles.forEach(v => {
+        if (v.placa) {
+          const p = v.placa.toUpperCase().trim();
+          if (p && p !== "N/D" && p !== "N/A" && p !== "-") {
+            opts.add(p);
+          }
+        }
+      });
+    }
+    return Array.from(opts).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [checklists, vehicles]);
+
+  // Motorista: condutores cadastrados no Controle de Frota Leve ou condutores nos Checklists já realizados, unificados pelo Nome Completo canônico
+  const motoristaOptions = useMemo(() => {
+    const opts = new Set<string>();
+    if (vehicles && Array.isArray(vehicles)) {
+      vehicles.forEach(v => {
+        const raw = (v.condutor || (v as any).motorista || "").trim();
+        if (!isInvalidDriverName(raw)) {
+          const canonical = normalizeNomeCondutor(raw, v.placa, vehicles);
+          if (canonical && canonical !== "Não Informado") {
+            opts.add(canonical);
+          }
+        }
+      });
+    }
+    checklists.forEach(c => {
+      const canonical = getChecklistCondutor(c);
+      if (canonical && canonical !== "Não Informado") {
+        opts.add(canonical);
+      }
+    });
+    return Array.from(opts).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [checklists, vehicles]);
 
   // Sorting Helper
   const handleSort = (col: string) => {
@@ -597,23 +966,31 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
     return checklists.filter(c => {
       if (filterMonthYear) {
         const [m, y] = filterMonthYear.split("/");
-        if (!c.data || !c.data.startsWith(`${y}-${m}`)) return false;
+        const targetPrefix = `${y}-${m}`;
+        const matchData = c.data && c.data.startsWith(targetPrefix);
+        const matchTs = c.timestamp && (c.timestamp.includes(`/${m}/${y}`) || c.timestamp.includes(targetPrefix));
+        if (!matchData && !matchTs) return false;
       }
-      if (filterBase && (!c.base || c.base.toUpperCase() !== filterBase.toUpperCase())) return false;
+      if (filterBase) {
+        if (!isSameCityOrBase(c.base, filterBase)) return false;
+      }
       if (filterTipo && (!c.tipo || c.tipo.toUpperCase() !== filterTipo.toUpperCase())) return false;
-      if (filterPlaca && c.placa !== filterPlaca) return false;
+      if (filterPlaca && c.placa.toUpperCase().trim() !== filterPlaca.toUpperCase().trim()) return false;
       
       if (searchQuery) {
-        const q = searchQuery.toLowerCase();
+        const q = searchQuery.toLowerCase().trim();
         const matchesPlaca = c.placa.toLowerCase().includes(q);
-        const matchesCondutor = c.condutor.toLowerCase().includes(q);
+        const condutorResolved = getChecklistCondutor(c).toLowerCase();
+        const matchesCondutor = condutorResolved.includes(q) || (c.condutor || "").toLowerCase().includes(q) || (c.recebidoPor || "").toLowerCase().includes(q) || (c.entreguePor || "").toLowerCase().includes(q);
         const matchesModelo = c.marcaModelo?.toLowerCase().includes(q);
-        const matchesBase = c.base?.toLowerCase().includes(q);
+        const cBaseNorm = normalizeBaseOperacional(c.base).toLowerCase();
+        const matchesBase = cBaseNorm.includes(q) || (c.base?.toLowerCase() || "").includes(q);
         if (!matchesPlaca && !matchesCondutor && !matchesModelo && !matchesBase) return false;
       }
 
       if (filterMotorista) {
-        const matches = c.condutor.toLowerCase().includes(filterMotorista.toLowerCase());
+        const condutorResolved = getChecklistCondutor(c);
+        const matches = condutorResolved === filterMotorista || isSameDriver(condutorResolved, filterMotorista, vehicles);
         if (!matches) return false;
       }
 
@@ -633,14 +1010,14 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
         valA = a.marcaModelo || "";
         valB = b.marcaModelo || "";
       } else if (sortColumn === "condutor") {
-        valA = a.condutor || "";
-        valB = b.condutor || "";
+        valA = getChecklistCondutor(a);
+        valB = getChecklistCondutor(b);
       } else if (sortColumn === "tipo") {
         valA = a.tipo || "";
         valB = b.tipo || "";
       } else if (sortColumn === "base") {
-        valA = a.base || "";
-        valB = b.base || "";
+        valA = normalizeBaseOperacional(a.base);
+        valB = normalizeBaseOperacional(b.base);
       } else if (sortColumn === "odometro") {
         valA = a.odometro || 0;
         valB = b.odometro || 0;
@@ -738,6 +1115,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                         cor: "Cor do Veículo",
                         condutor: "Condutor",
                         tipo: "Tipo de Inspeção",
+                        itensIntegrados: "Itens Integrados (Status)",
                         base: "Base Operacional",
                         status: "Status da Inspeção",
                         odometro: "Odômetro Atual",
@@ -828,6 +1206,17 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
               {placaOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
             </select>
           </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 uppercase">Condutor</label>
+            <select
+              value={filterMotorista}
+              onChange={(e) => setFilterMotorista(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500"
+            >
+              <option value="">Todos</option>
+              {motoristaOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          </div>
         </div>
       )}
 
@@ -882,16 +1271,23 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                     </th>
                   )}
                   {visibleColumns.condutor && (
-                    <th onClick={() => handleSort("condutor")} className="py-3.5 px-4 cursor-pointer select-none hover:bg-[#1d7053] transition-colors sticky top-0 bg-[#114D38] z-20 shadow-sm">
+                    <th onClick={() => handleSort("condutor")} className="py-3.5 px-4 cursor-pointer select-none hover:bg-[#1d7053] transition-colors sticky top-0 bg-[#114D38] z-20 shadow-sm whitespace-nowrap min-w-[200px]">
                       <div className="flex items-center gap-1">
                         Condutor {sortColumn === "condutor" && (sortDirection === "asc" ? "▲" : "▼")}
                       </div>
                     </th>
                   )}
                   {visibleColumns.tipo && (
-                    <th onClick={() => handleSort("tipo")} className="py-3.5 px-4 cursor-pointer select-none hover:bg-[#1d7053] transition-colors sticky top-0 bg-[#114D38] z-20 shadow-sm">
-                      <div className="flex items-center gap-1">
+                    <th onClick={() => handleSort("tipo")} className="py-3.5 px-4 cursor-pointer select-none hover:bg-[#1d7053] transition-colors sticky top-0 bg-[#114D38] z-20 shadow-sm whitespace-nowrap">
+                      <div className="flex items-center gap-1 whitespace-nowrap">
                         Tipo {sortColumn === "tipo" && (sortDirection === "asc" ? "▲" : "▼")}
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.itensIntegrados && (
+                    <th className="py-3.5 px-4 sticky top-0 bg-[#114D38] z-20 shadow-sm whitespace-nowrap">
+                      <div className="flex items-center gap-1">
+                        Itens Integrados
                       </div>
                     </th>
                   )}
@@ -982,7 +1378,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                     const dateFormatted = formatDateRobustly(c.data, c.timestamp);
 
                     return (
-                      <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr key={c.id} className="hover:bg-emerald-50/45 hover:shadow-[inset_3.5px_0_0_0_#114D38] transition-all duration-150 group cursor-default">
                         {visibleColumns.timestamp && (
                           <td className="py-3 px-4 font-mono text-[10px] text-slate-500 whitespace-nowrap">
                             {c.timestamp || "N/A"}
@@ -999,10 +1395,8 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                           </td>
                         )}
                         {visibleColumns.placa && (
-                          <td className="py-3 px-4">
-                            <span className="font-mono bg-slate-100 border border-slate-200/60 px-2.5 py-0.5 rounded-lg text-xs font-black text-slate-800">
-                              {c.placa}
-                            </span>
+                          <td className="py-2.5 px-4 whitespace-nowrap align-middle">
+                            <MercosulPlateBadge plate={c.placa} size="sm" />
                           </td>
                         )}
                         {visibleColumns.modelo && (
@@ -1016,20 +1410,45 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                           </td>
                         )}
                         {visibleColumns.condutor && (
-                          <td className="py-3 px-4 text-slate-800 font-black truncate max-w-[150px]">
-                            {c.condutor ? c.condutor.toUpperCase() : "N/D"}
+                          <td className="py-3 px-4 text-slate-800 font-extrabold whitespace-nowrap min-w-[200px]" title={getChecklistCondutor(c)}>
+                            {getChecklistCondutor(c).toUpperCase()}
                           </td>
                         )}
-                        {visibleColumns.tipo && (
-                          <td className="py-3 px-4">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                              {c.tipo || "MENSAL"}
-                            </span>
-                          </td>
-                        )}
+                        {visibleColumns.tipo && (() => {
+                          const badgeStyle = getTipoBadgeGradient(c.tipo);
+                          return (
+                            <td className="py-3 px-4 whitespace-nowrap">
+                              <span className={`text-[10px] font-extrabold uppercase tracking-wide px-2.5 py-1 rounded-lg border whitespace-nowrap inline-flex items-center gap-1.5 shrink-0 shadow-2xs ${badgeStyle.bg} ${badgeStyle.border} ${badgeStyle.text}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${badgeStyle.dot}`} />
+                                {c.tipo || "MENSAL"}
+                              </span>
+                            </td>
+                          );
+                        })()}
+                        {visibleColumns.itensIntegrados && (() => {
+                          const list = c.listaItens && Array.isArray(c.listaItens) ? c.listaItens : [];
+                          const presentCount = STANDARD_CHECKLIST_ITEMS.filter(item => isItemInChecklist(item.id, list)).length;
+                          const isFull = presentCount === STANDARD_CHECKLIST_ITEMS.length;
+                          return (
+                            <td className="py-3 px-4 whitespace-nowrap">
+                              <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-lg border whitespace-nowrap inline-flex items-center gap-1.5 shadow-2xs ${
+                                isFull 
+                                  ? "bg-emerald-50/90 text-emerald-900 border-emerald-200" 
+                                  : "bg-amber-50/90 text-amber-950 border-amber-200"
+                              }`}>
+                                {isFull ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                ) : (
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                )}
+                                {presentCount}/{STANDARD_CHECKLIST_ITEMS.length} Itens
+                              </span>
+                            </td>
+                          );
+                        })()}
                         {visibleColumns.base && (
                           <td className="py-3 px-4 text-[10px] uppercase font-extrabold text-slate-500">
-                            {c.base || "MATRIZ"}
+                            {normalizeBaseOperacional(c.base)}
                           </td>
                         )}
                         {visibleColumns.odometro && (
@@ -1122,7 +1541,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                           <td className="py-3 px-4">
                             {c.data >= "2026-07-15" ? (
                               <button 
-                                onClick={() => generateLocalPDF(c)}
+                                onClick={() => generateLocalPDF(c, vehicles)}
                                 className="text-emerald-600 hover:text-emerald-800 flex items-center gap-0.5 text-[10px] font-black uppercase tracking-wider cursor-pointer bg-transparent border-none p-0 outline-none"
                               >
                                 PDF <ExternalLink className="w-3 h-3" />
@@ -1183,11 +1602,9 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
             {/* Modal Header */}
             <div className="bg-[#114D38] text-white p-6 sticky top-0 z-10 flex justify-between items-center">
               <div>
-                <span className="font-mono bg-white/15 border border-white/20 px-3 py-1 rounded-lg text-xs font-black uppercase text-white tracking-widest inline-block">
-                  {selectedChecklist.placa}
-                </span>
+                <MercosulPlateBadge plate={selectedChecklist.placa} size="md" />
                 <h3 className="text-lg font-black mt-2 text-white">Visualização de Auditoria</h3>
-                <p className="text-xs font-bold text-emerald-200 mt-1">Checklist enviado por {selectedChecklist.condutor}</p>
+                <p className="text-xs font-bold text-emerald-200 mt-1">Checklist recebido por {getChecklistCondutor(selectedChecklist)}</p>
               </div>
               <button 
                 onClick={() => setSelectedChecklist(null)}
@@ -1232,11 +1649,11 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                       </div>
                       <div className="border-t border-slate-100 pt-2">
                         <span className="text-[9px] text-slate-400 font-extrabold uppercase block">🏢 Base Operacional</span>
-                        <span className="font-black text-slate-800 uppercase">{selectedChecklist.base || "PAULÍNIA"}</span>
+                        <span className="font-black text-slate-800 uppercase">{normalizeBaseOperacional(selectedChecklist.base)}</span>
                       </div>
                       <div className="border-t border-slate-100 pt-2">
-                        <span className="text-[9px] text-slate-400 font-extrabold uppercase block">🚗 Placa do Veículo</span>
-                        <span className="font-black text-[#005C30] font-mono">{selectedChecklist.placa}</span>
+                        <span className="text-[9px] text-slate-400 font-extrabold uppercase block mb-1">🚗 Placa do Veículo</span>
+                        <MercosulPlateBadge plate={selectedChecklist.placa} size="sm" />
                       </div>
                       <div className="border-t border-slate-100 pt-2 col-span-2">
                         <span className="text-[9px] text-slate-400 font-extrabold uppercase block">🚘 Marca / Modelo</span>
@@ -1260,16 +1677,10 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                   {/* Section 2: Itens Integrados */}
                   <div className="space-y-3">
                     <div className="border-l-4 border-[#F47920] bg-slate-50 px-3 py-2 rounded-r-lg">
-                      <h4 className="text-xs font-extrabold text-[#005C30] uppercase tracking-wider">🛠️ Componentes e Pneus</h4>
+                      <h4 className="text-xs font-extrabold text-[#005C30] uppercase tracking-wider">🛠️ Itens Integrados & Componentes</h4>
                     </div>
-                    <div className="border border-slate-150 rounded-xl p-4 bg-white text-xs space-y-2">
-                      <span className="text-[9px] text-slate-400 font-extrabold uppercase block">Itens do Veículo</span>
-                      <p className="text-slate-700 font-semibold leading-relaxed">
-                        {selectedChecklist.listaItens && selectedChecklist.listaItens.length > 0 
-                          ? selectedChecklist.listaItens.join(", ")
-                          : "CRLV, TAG PEDÁGIOS, CARTÃO ABASTECIMENTO, CHAVE RESERVA, SOM, MANUAL, TAPETE, TRIÂNGULO, MACACO, CHAVE DE RODA, EXTINTOR"}
-                      </p>
-                    </div>
+
+                    <ItensIntegradosSection listaItens={selectedChecklist.listaItens} />
                     
                     {/* Tires */}
                     <div className="border border-slate-150 rounded-xl p-4 bg-white space-y-3">
@@ -1373,11 +1784,11 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                     <div className="grid grid-cols-2 gap-4 border border-slate-150 rounded-xl p-4 bg-white text-center">
                       <div>
                         <span className="text-[9px] text-slate-400 font-extrabold uppercase block">📤 Entregue Por</span>
-                        <span className="text-xs font-bold text-slate-800">{selectedChecklist.entreguePor || selectedChecklist.condutor || "Não Informado"}</span>
+                        <span className="text-xs font-bold text-slate-800">{normalizeNomeCondutor(selectedChecklist.entreguePor || selectedChecklist.condutor, selectedChecklist.placa, vehicles)}</span>
                       </div>
                       <div className="border-l border-slate-150">
                         <span className="text-[9px] text-slate-400 font-extrabold uppercase block">📥 Recebido Por</span>
-                        <span className="text-xs font-bold text-slate-800">{selectedChecklist.recebidoPor || "Não Informado"}</span>
+                        <span className="text-xs font-bold text-slate-800">{normalizeNomeCondutor(selectedChecklist.recebidoPor, selectedChecklist.placa, vehicles)}</span>
                       </div>
                     </div>
                   </div>
@@ -1389,7 +1800,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                       <p className="text-[9px] font-semibold text-slate-400 mt-0.5">Versão premium idêntica ao laudo de auditoria</p>
                     </div>
                     <button
-                      onClick={() => generateLocalPDF(selectedChecklist)}
+                      onClick={() => generateLocalPDF(selectedChecklist, vehicles)}
                       className="px-4 py-2 bg-[#005C30] hover:bg-[#00361C] text-xs font-black text-white rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer transition-all"
                     >
                       Exportar PDF <ExternalLink className="w-3.5 h-3.5" />
@@ -1413,7 +1824,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                     </div>
                     <div className="space-y-0.5 text-left">
                       <span className="text-[10px] font-black text-slate-400 uppercase">Base Operacional</span>
-                      <p className="text-xs font-black text-slate-800 uppercase">{selectedChecklist.base || "MATRIZ"}</p>
+                      <p className="text-xs font-black text-slate-800 uppercase">{normalizeBaseOperacional(selectedChecklist.base)}</p>
                     </div>
                     <div className="space-y-0.5 text-left">
                       <span className="text-[10px] font-black text-slate-400 uppercase">Odômetro Atual</span>
@@ -1442,18 +1853,10 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
                   </div>
 
                   {/* Items in Vehicle */}
-                  {selectedChecklist.listaItens && selectedChecklist.listaItens.length > 0 && (
-                    <div className="space-y-2 text-left">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Documentos & Acessórios Inspecionados</h4>
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedChecklist.listaItens.map((item, idx) => (
-                          <span key={idx} className="bg-emerald-50 text-[#114D38] border border-emerald-100 px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase">
-                            ✓ {item}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div className="space-y-2 text-left">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Documentos & Acessórios Inspecionados</h4>
+                    <ItensIntegradosSection listaItens={selectedChecklist.listaItens} />
+                  </div>
 
                   {/* Visual Observations and damage */}
                   <div className="space-y-3 text-left">
@@ -1535,9 +1938,7 @@ export function ChecklistRealizados({ checklists, onDeleteChecklist }: Checklist
               </div>
               <p className="text-xs font-bold text-slate-500 leading-relaxed">
                 Tem certeza de que deseja excluir permanentemente o checklist do veículo de placa{" "}
-                <span className="font-mono bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-800 font-extrabold text-[11px]">
-                  {checklistToDelete.placa}
-                </span>
+                <MercosulPlateBadge plate={checklistToDelete.placa} size="sm" className="inline-flex align-middle mx-1" />
                 ? Esta ação é irreversível e o removerá permanentemente do sistema.
               </p>
             </div>

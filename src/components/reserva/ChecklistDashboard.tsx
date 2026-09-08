@@ -5,10 +5,12 @@ import {
 } from "recharts";
 import { 
   LayoutDashboard, Filter, ChevronDown, ChevronUp, CheckCircle, 
-  AlertTriangle, Clock, Truck, ClipboardList, HelpCircle, FileSpreadsheet,
+  AlertTriangle, Clock, Car, ClipboardList, HelpCircle, FileSpreadsheet,
   Calendar, CalendarDays, RotateCcw, ArrowRightLeft, Layers, CalendarRange
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { normalizeBaseOperacional, isSameCityOrBase } from "../../utils/baseOperacional";
+import { normalizeNomeCondutor, isSameDriver, isInvalidDriverName } from "../../utils/condutorOperacional";
 
 interface Checklist {
   id: string;
@@ -35,6 +37,8 @@ interface Checklist {
   nivelTanque?: string;
   listaItens?: string[];
   isGoogleSheet?: boolean;
+  recebidoPor?: string;
+  entreguePor?: string;
 }
 
 interface Vehicle {
@@ -45,6 +49,8 @@ interface Vehicle {
   filial?: string;
   status?: string;
   locadora?: string;
+  condutor?: string;
+  motorista?: string;
 }
 
 interface ChecklistDashboardProps {
@@ -54,14 +60,13 @@ interface ChecklistDashboardProps {
 
 type PeriodMode = "mes" | "intervalo" | "trimestre_ano" | "todos";
 
-// Robust date parser for all checklist date formats (ISO, BR, timestamp, sheets serial, etc.)
-function parseChecklistDate(dateStr?: string, timestampStr?: string): { year: string; month: string; day: string; key: string; monthYear: string } | null {
-  const val = dateStr || timestampStr || "";
+// Robust single date string parser (ISO, BR, timestamp, sheets serial, etc.)
+function parseSingleDate(val: string): { year: string; month: string; day: string; key: string; monthYear: string } | null {
   if (!val) return null;
   const clean = String(val).replace(",", "").trim();
   if (!clean) return null;
 
-  // 1. Se for timestamp numérico ou serial do Excel/Google Sheets (> 30000 e < 60000)
+  // 1. Se for timestamp numérico ou serial do Excel/Google Sheets (> 30000 e < 70000)
   const numVal = Number(clean);
   if (!isNaN(numVal) && numVal > 0) {
     if (numVal > 30000 && numVal < 70000) {
@@ -139,6 +144,19 @@ function parseChecklistDate(dateStr?: string, timestampStr?: string): { year: st
   return null;
 }
 
+// Prioriza o carimbo de data/hora oficial do envio (timestampStr) se disponível e válido
+function parseChecklistDate(dateStr?: string, timestampStr?: string): { year: string; month: string; day: string; key: string; monthYear: string } | null {
+  if (timestampStr) {
+    const parsedTs = parseSingleDate(timestampStr);
+    if (parsedTs) return parsedTs;
+  }
+  if (dateStr) {
+    const parsedD = parseSingleDate(dateStr);
+    if (parsedD) return parsedD;
+  }
+  return null;
+}
+
 export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardProps) {
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [volumeViewMode, setVolumeViewMode] = useState<"mes" | "dia">("mes");
@@ -175,7 +193,6 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
   // Secondary Filters
   const [filterBase, setFilterBase] = useState("");
   const [filterTipo, setFilterTipo] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
   const [filterPlaca, setFilterPlaca] = useState("");
   const [filterMotorista, setFilterMotorista] = useState("");
 
@@ -218,14 +235,17 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
     return options;
   }, []);
 
+  // Base Operacional: unifica e padroniza grafias e cidades (ex: São Paulo, Paulínia)
   const baseOptions = useMemo(() => {
     const opts = new Set<string>();
-    checklists.forEach(c => { if (c.base) opts.add(c.base.toUpperCase().trim()); });
-    vehicles.forEach(v => { 
-      if (v.filial) opts.add(v.filial.toUpperCase().trim());
-      if (v.base) opts.add(v.base.toUpperCase().trim());
+    checklists.forEach(c => { 
+      if (c.base) opts.add(normalizeBaseOperacional(c.base)); 
     });
-    return Array.from(opts).filter(b => b !== "").sort();
+    vehicles.forEach(v => { 
+      if (v.filial) opts.add(normalizeBaseOperacional(v.filial));
+      if (v.base) opts.add(normalizeBaseOperacional(v.base));
+    });
+    return Array.from(opts).filter(b => b !== "").sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [checklists, vehicles]);
 
   const tipoOptions = useMemo(() => {
@@ -234,18 +254,53 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
     return Array.from(opts).sort();
   }, [checklists]);
 
+  // Placas: todas as placas que já tiveram checklist + placas do Controle de Frota Leve
   const placaOptions = useMemo(() => {
     const opts = new Set<string>();
-    checklists.forEach(c => { if (c.placa) opts.add(c.placa.toUpperCase()); });
-    vehicles.forEach(v => { if (v.placa) opts.add(v.placa.toUpperCase()); });
-    return Array.from(opts).sort();
+    checklists.forEach(c => { 
+      if (c.placa) {
+        const p = c.placa.toUpperCase().trim();
+        if (p && p !== "N/D" && p !== "N/A" && p !== "-") {
+          opts.add(p);
+        }
+      }
+    });
+    vehicles.forEach(v => { 
+      if (v.placa) {
+        const p = v.placa.toUpperCase().trim();
+        if (p && p !== "N/D" && p !== "N/A" && p !== "-") {
+          opts.add(p);
+        }
+      }
+    });
+    return Array.from(opts).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [checklists, vehicles]);
 
+  // Motorista: condutores cadastrados no Controle de Frota Leve ou condutores nos Checklists já realizados, unificados pelo Nome Completo canônico
   const motoristaOptions = useMemo(() => {
     const opts = new Set<string>();
-    checklists.forEach(c => { if (c.condutor) opts.add(c.condutor.trim()); });
-    return Array.from(opts).sort();
-  }, [checklists]);
+    // 1. Condutores cadastrados no Controle de Frota Leve
+    vehicles.forEach(v => { 
+      const raw = (v.condutor || (v as any).motorista || "").trim();
+      if (!isInvalidDriverName(raw)) {
+        const canonical = normalizeNomeCondutor(raw, v.placa, vehicles);
+        if (canonical && canonical !== "Não Informado") {
+          opts.add(canonical);
+        }
+      }
+    });
+    // 2. Condutores nos Checklists já realizados
+    checklists.forEach(c => { 
+      const raw = (c.condutor || c.recebidoPor || c.entreguePor || "").trim();
+      if (!isInvalidDriverName(raw)) {
+        const canonical = normalizeNomeCondutor(raw, c.placa, vehicles);
+        if (canonical && canonical !== "Não Informado") {
+          opts.add(canonical);
+        }
+      }
+    });
+    return Array.from(opts).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [checklists, vehicles]);
 
   // Helper to check if a date falls in the selected period filter
   const isDateInPeriod = (dateStr?: string, timestampStr?: string) => {
@@ -306,22 +361,27 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
     return checklists.filter(c => {
       if (!isDateInPeriod(c.data, c.timestamp)) return false;
 
-      if (filterBase && (!c.base || c.base.toUpperCase() !== filterBase.toUpperCase())) {
-        return false;
+      if (filterBase) {
+        if (!isSameCityOrBase(c.base, filterBase)) {
+          return false;
+        }
       }
       if (filterTipo && (!c.tipo || c.tipo.toUpperCase() !== filterTipo.toUpperCase())) {
         return false;
       }
-      if (filterStatus) {
-        if (filterStatus === "Aprovado" && c.status !== "Aprovado") return false;
-        if (filterStatus === "Ressalvas" && c.status !== "Ressalvas") return false;
-        if (filterStatus === "Retido" && c.status !== "Retido") return false;
+      if (filterPlaca && c.placa.toUpperCase().trim() !== filterPlaca.toUpperCase().trim()) {
+        return false;
       }
-      if (filterPlaca && c.placa.toUpperCase() !== filterPlaca.toUpperCase()) return false;
-      if (filterMotorista && (!c.condutor || !c.condutor.toLowerCase().includes(filterMotorista.toLowerCase()))) return false;
+      if (filterMotorista) {
+        const raw = c.condutor || c.recebidoPor || c.entreguePor || "";
+        const canonical = normalizeNomeCondutor(raw, c.placa, vehicles);
+        if (canonical !== filterMotorista && !isSameDriver(canonical, filterMotorista, vehicles)) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [checklists, periodMode, filterMonthYear, rangeStartMonth, rangeEndMonth, selectedQuarterYear, filterBase, filterTipo, filterStatus, filterPlaca, filterMotorista]);
+  }, [checklists, periodMode, filterMonthYear, rangeStartMonth, rangeEndMonth, selectedQuarterYear, filterBase, filterTipo, filterPlaca, filterMotorista, vehicles]);
 
   // Clean filters
   const handleClearFilters = () => {
@@ -331,7 +391,6 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
     setFilterMonthYear(cur);
     setFilterBase("");
     setFilterTipo("");
-    setFilterStatus("");
     setFilterPlaca("");
     setFilterMotorista("");
   };
@@ -341,13 +400,19 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
     return vehicles.filter(v => {
       if (v.status === "Inativo") return false;
       if (filterBase) {
-        const vBase = (v.filial || v.base || "").toUpperCase();
-        if (!vBase.includes(filterBase.toUpperCase())) return false;
+        if (!isSameCityOrBase(v.filial || v.base, filterBase)) return false;
       }
-      if (filterPlaca && v.placa.toUpperCase() !== filterPlaca.toUpperCase()) return false;
+      if (filterPlaca && v.placa.toUpperCase().trim() !== filterPlaca.toUpperCase().trim()) return false;
+      if (filterMotorista) {
+        const raw = v.condutor || (v as any).motorista || "";
+        const canonical = normalizeNomeCondutor(raw, v.placa, vehicles);
+        if (canonical !== filterMotorista && !isSameDriver(canonical, filterMotorista, vehicles)) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [vehicles, filterBase, filterPlaca]);
+  }, [vehicles, filterBase, filterPlaca, filterMotorista]);
 
   const totalVehiclesCount = activeVehicles.length || vehicles.length;
   const totalChecklistsCount = filteredChecklists.length;
@@ -373,19 +438,53 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
 
   // Stats comparison with previous period
   const statsComparison = useMemo(() => {
-    const now = new Date();
-    const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    let targetYear: number;
+    let targetMonth: number; // 1-12
+
+    if (periodMode === "mes" && filterMonthYear) {
+      const [m, y] = filterMonthYear.split("/").map(Number);
+      targetMonth = m;
+      targetYear = y;
+    } else {
+      const now = new Date();
+      targetYear = now.getFullYear();
+      targetMonth = now.getMonth() + 1;
+    }
+
+    const currentKey = `${targetYear}-${String(targetMonth).padStart(2, "0")}`;
     
-    const prevMonth = new Date();
-    prevMonth.setMonth(prevMonth.getMonth() - 1);
-    const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
+    // Calculate previous month
+    let prevYear = targetYear;
+    let prevMonth = targetMonth - 1;
+    if (prevMonth < 1) {
+      prevMonth = 12;
+      prevYear -= 1;
+    }
+    const prevKey = `${prevYear}-${String(prevMonth).padStart(2, "0")}`;
 
-    const currentMonthChecklists = checklists.filter(c => c.data?.startsWith(currentMonthStr)).length;
-    const prevMonthChecklists = checklists.filter(c => c.data?.startsWith(prevMonthStr)).length;
+    let currentMonthChecklists = 0;
+    let prevMonthChecklists = 0;
 
+    checklists.forEach(c => {
+      const parsed = parseChecklistDate(c.data, c.timestamp);
+      if (!parsed) return;
+      if (filterBase) {
+        if (!isSameCityOrBase(c.base, filterBase)) return;
+      }
+      if (filterTipo && (!c.tipo || c.tipo.toUpperCase() !== filterTipo.toUpperCase())) return;
+      if (filterPlaca && c.placa.toUpperCase().trim() !== filterPlaca.toUpperCase().trim()) return;
+
+      if (parsed.key === currentKey) {
+        currentMonthChecklists++;
+      } else if (parsed.key === prevKey) {
+        prevMonthChecklists++;
+      }
+    });
+
+    const diffCount = currentMonthChecklists - prevMonthChecklists;
     let pctChange = 0;
     if (prevMonthChecklists > 0) {
-      pctChange = Math.round(((currentMonthChecklists - prevMonthChecklists) / prevMonthChecklists) * 100);
+      pctChange = Math.round((diffCount / prevMonthChecklists) * 100);
     } else if (currentMonthChecklists > 0) {
       pctChange = 100;
     }
@@ -393,10 +492,13 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
     return {
       currentCount: currentMonthChecklists,
       prevCount: prevMonthChecklists,
+      diffCount,
+      diffSign: diffCount > 0 ? "+" : "",
       pctChange,
-      isPositive: pctChange >= 0
+      pctSign: pctChange > 0 ? "+" : "",
+      isPositive: diffCount >= 0
     };
-  }, [checklists]);
+  }, [checklists, periodMode, filterMonthYear, filterBase, filterTipo, filterPlaca]);
 
   // --- CHARTS DATA GENERATION ---
 
@@ -419,9 +521,11 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
       checklists.forEach(c => {
         const parsed = parseChecklistDate(c.data, c.timestamp);
         if (!parsed) return;
-        if (filterBase && (!c.base || c.base.toUpperCase() !== filterBase.toUpperCase())) return;
+        if (filterBase) {
+          if (!isSameCityOrBase(c.base, filterBase)) return;
+        }
         if (filterTipo && (!c.tipo || c.tipo.toUpperCase() !== filterTipo.toUpperCase())) return;
-        if (filterPlaca && c.placa.toUpperCase() !== filterPlaca.toUpperCase()) return;
+        if (filterPlaca && c.placa.toUpperCase().trim() !== filterPlaca.toUpperCase().trim()) return;
 
         const key = parsed.monthYear;
         const sortingKey = parsed.key;
@@ -537,7 +641,7 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
   const baseChartData = useMemo(() => {
     const baseCounts: { [key: string]: number } = {};
     filteredChecklists.forEach(c => {
-      const baseName = c.base ? c.base.toUpperCase().trim() : "MATRIZ";
+      const baseName = normalizeBaseOperacional(c.base);
       baseCounts[baseName] = (baseCounts[baseName] || 0) + 1;
     });
 
@@ -733,7 +837,7 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
 
             {/* Right: Actions & Advanced Filters Drawer Toggle */}
             <div className="flex items-center gap-2 self-end lg:self-center">
-              {(filterBase || filterTipo || filterStatus || filterPlaca || filterMotorista || periodMode !== "mes") && (
+              {(filterBase || filterTipo || filterPlaca || filterMotorista || periodMode !== "mes") && (
                 <button
                   type="button"
                   onClick={handleClearFilters}
@@ -750,14 +854,14 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
                 onClick={() => setIsFilterExpanded(!isFilterExpanded)}
                 className={cn(
                   "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-2xs border",
-                  isFilterExpanded || filterBase || filterTipo || filterStatus || filterPlaca || filterMotorista
+                  isFilterExpanded || filterBase || filterTipo || filterPlaca || filterMotorista
                     ? "bg-emerald-50 text-[#114D38] border-emerald-300 hover:bg-emerald-100"
                     : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
                 )}
               >
                 <Filter className="w-3.5 h-3.5" />
                 <span>Filtros Avançados</span>
-                {(filterBase || filterTipo || filterStatus || filterPlaca || filterMotorista) && (
+                {(filterBase || filterTipo || filterPlaca || filterMotorista) && (
                   <span className="text-[9px] font-black uppercase bg-emerald-200 text-[#114D38] px-1.5 py-0.5 rounded-md">
                     Ativo
                   </span>
@@ -770,7 +874,7 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
 
           {/* Retractable Advanced Filters Sub-Drawer */}
           {isFilterExpanded && (
-            <div className="px-6 py-4 bg-slate-50/70 border-t border-slate-150 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="px-6 py-4 bg-slate-50/70 border-t border-slate-150 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5 animate-in fade-in slide-in-from-top-2 duration-200">
               
               {/* Base/Filial */}
               <div>
@@ -803,23 +907,6 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
                   {tipoOptions.map(t => (
                     <option key={t} value={t}>{t}</option>
                   ))}
-                </select>
-              </div>
-
-              {/* Status */}
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">
-                  Status de Inspeção
-                </label>
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="">Todos os Status</option>
-                  <option value="Aprovado">Aprovado</option>
-                  <option value="Ressalvas">Com Ressalvas</option>
-                  <option value="Retido">Retido / Crítico</option>
                 </select>
               </div>
 
@@ -865,63 +952,66 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
             
             {/* Total Vehicles Card */}
             <div className="bg-gradient-to-br from-[#114D38] to-[#0A3324] text-white p-5 rounded-[24px] shadow-sm relative overflow-hidden flex flex-col justify-between h-36">
-              <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-28 h-28 bg-white/5 rounded-full blur-2xl" />
+              <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-28 h-28 bg-white/5 rounded-full blur-2xl pointer-events-none" />
               <div className="flex justify-between items-start relative z-10 text-left">
                 <div>
-                  <span className="text-[9px] font-black text-emerald-300 uppercase tracking-wider">Frota Total Monitorada</span>
-                  <h3 className="text-sm font-extrabold mt-0.5">Total de Veículos</h3>
+                  <span className="text-[9px] font-black text-emerald-300 uppercase tracking-wider block">Frota Total Monitorada</span>
+                  <h3 className="text-sm font-extrabold mt-0.5 leading-snug">Total de Veículos</h3>
                 </div>
-                <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
-                  <Truck className="w-4 h-4 text-emerald-200" />
+                <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+                  <Car className="w-4 h-4 text-emerald-200" />
                 </div>
               </div>
-              <div className="mt-2 relative z-10 text-left">
-                <span className="text-3xl font-display font-black tracking-tight">{totalVehiclesCount}</span>
-                <span className="text-xs font-bold text-emerald-200 block mt-0.5">Veículos leves ativos</span>
+              <div className="relative z-10 text-left">
+                <span className="text-3xl font-display font-black tracking-tight leading-none block">{totalVehiclesCount}</span>
+                <span className="text-xs font-bold text-emerald-200 block mt-1.5">Veículos leves ativos</span>
               </div>
             </div>
 
             {/* Checklists Realizados Card */}
             <div className="bg-gradient-to-br from-emerald-600 via-emerald-700 to-[#114D38] text-white p-5 rounded-[24px] shadow-sm relative overflow-hidden flex flex-col justify-between h-36">
-              <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-28 h-28 bg-white/5 rounded-full blur-2xl" />
+              <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-28 h-28 bg-white/5 rounded-full blur-2xl pointer-events-none" />
               <div className="flex justify-between items-start relative z-10 text-left">
                 <div>
-                  <span className="text-[9px] font-black text-emerald-200 uppercase tracking-wider">Inspeções Realizadas</span>
-                  <h3 className="text-sm font-extrabold mt-0.5">Checklists Realizados</h3>
+                  <span className="text-[9px] font-black text-emerald-200 uppercase tracking-wider block">Inspeções Realizadas</span>
+                  <h3 className="text-sm font-extrabold mt-0.5 leading-snug">Checklists Realizados</h3>
                 </div>
-                <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
                   <CheckCircle className="w-4 h-4 text-emerald-200" />
                 </div>
               </div>
-              <div className="mt-1 relative z-10 text-left flex items-baseline justify-between">
+              <div className="relative z-10 text-left flex items-end justify-between gap-3">
                 <div>
-                  <span className="text-3xl font-display font-black tracking-tight">{totalChecklistsCount}</span>
-                  <span className="text-xs font-bold text-emerald-100 block mt-0.5">Inspecionados no período</span>
+                  <span className="text-3xl font-display font-black tracking-tight leading-none block">{totalChecklistsCount}</span>
+                  <span className="text-xs font-bold text-emerald-100 block mt-1.5">Inspecionados no período</span>
                 </div>
-                <div className="text-right">
-                  <span className={`text-[10px] font-black px-2 py-0.5 rounded bg-white/10 ${statsComparison.isPositive ? "text-emerald-300" : "text-amber-300"}`}>
-                    {statsComparison.isPositive ? "+" : ""}{statsComparison.pctChange}%
+                <div className="text-right flex flex-col items-end shrink-0">
+                  <span className={`inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-lg bg-white/15 backdrop-blur-xs ${statsComparison.isPositive ? "text-emerald-200" : "text-amber-200"}`}>
+                    <span>{statsComparison.diffSign}{statsComparison.diffCount}</span>
+                    <span className="opacity-90">({statsComparison.pctSign}{statsComparison.pctChange}%)</span>
                   </span>
-                  <span className="text-[8px] font-bold text-emerald-200 block mt-0.5">mês anterior</span>
+                  <span className="text-[9px] font-bold text-emerald-200/90 block mt-1 tracking-tight">
+                    ant: {statsComparison.prevCount} checklists
+                  </span>
                 </div>
               </div>
             </div>
 
             {/* Pending Checklists Card */}
             <div className="bg-gradient-to-br from-amber-500 to-orange-600 text-white p-5 rounded-[24px] shadow-sm relative overflow-hidden flex flex-col justify-between h-36">
-              <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-28 h-28 bg-white/5 rounded-full blur-2xl" />
+              <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-28 h-28 bg-white/5 rounded-full blur-2xl pointer-events-none" />
               <div className="flex justify-between items-start relative z-10 text-left">
                 <div>
-                  <span className="text-[9px] font-black text-amber-100 uppercase tracking-wider">Atenção & Cobrança</span>
-                  <h3 className="text-sm font-extrabold mt-0.5">Veículos Sem Checklist</h3>
+                  <span className="text-[9px] font-black text-amber-100 uppercase tracking-wider block">Atenção & Cobrança</span>
+                  <h3 className="text-sm font-extrabold mt-0.5 leading-snug">Veículos Sem Checklist</h3>
                 </div>
-                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
                   <AlertTriangle className="w-4 h-4 text-white" />
                 </div>
               </div>
-              <div className="mt-2 relative z-10 text-left">
-                <span className="text-3xl font-display font-black tracking-tight">{pendingChecklistsCount}</span>
-                <span className="text-xs font-bold text-amber-100 block mt-0.5">
+              <div className="relative z-10 text-left">
+                <span className="text-3xl font-display font-black tracking-tight leading-none block">{pendingChecklistsCount}</span>
+                <span className="text-xs font-bold text-amber-100 block mt-1.5">
                   {pendingChecklistsCount === 0 ? "Toda a frota está em dia!" : `${pendingChecklistsCount} veículos pendentes no período`}
                 </span>
               </div>
@@ -938,11 +1028,13 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
         <div className="w-full bg-white p-6 rounded-[28px] border border-slate-200/80 shadow-sm space-y-4 text-left">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">
-                  {volumeViewMode === "mes" ? "Volume Mensal Comparativo" : "Volume Diário"}
-                </span>
-              </div>
+              {volumeViewMode === "dia" && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">
+                    Volume Diário
+                  </span>
+                </div>
+              )}
               <h3 className="text-base font-extrabold text-slate-800 flex items-center gap-2 mt-0.5">
                 <ClipboardList className="w-5 h-5 text-[#114D38]" /> 
                 {volumeViewMode === "mes" ? "Evolução Mensal: Realizados vs Não Realizados" : "Checklists Realizados por Dia"}
@@ -985,11 +1077,11 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
             <div className="flex flex-wrap items-center gap-5 text-xs font-bold pt-1">
               <div className="flex items-center gap-2">
                 <span className="w-3.5 h-3.5 rounded-md bg-[#114D38] inline-block shadow-2xs" />
-                <span className="text-slate-700 font-extrabold">Checklists Realizados (Área Verde)</span>
+                <span className="text-slate-700 font-extrabold">Checklists Realizados</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-3.5 h-1.5 rounded-full bg-[#F47920] inline-block shadow-2xs" />
-                <span className="text-[#d96512] font-black">Veículos Não Realizados / Pendentes (Linha Laranja)</span>
+                <span className="text-[#d96512] font-black">Veículos Não Realizados</span>
               </div>
             </div>
           )}
@@ -1031,7 +1123,7 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
                   <Area 
                     type="monotone" 
                     dataKey="Realizados" 
-                    name="Realizados"
+                    name="Checklists Realizados"
                     stroke="#114D38" 
                     strokeWidth={3} 
                     fillOpacity={1} 
@@ -1041,7 +1133,7 @@ export function ChecklistDashboard({ checklists, vehicles }: ChecklistDashboardP
                   <Line 
                     type="monotone" 
                     dataKey="Não Realizados" 
-                    name="Não Realizados (Pendentes)"
+                    name="Não Realizados"
                     stroke="#F47920" 
                     strokeWidth={3}
                     dot={{ fill: "#F47920", stroke: "#ffffff", strokeWidth: 2.5, r: 5 }}

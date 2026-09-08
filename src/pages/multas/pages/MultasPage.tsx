@@ -12,6 +12,7 @@ import { mapQuotaService } from '../../../services/mapQuotaService';
 import { MapQuotaIndicator } from '../../../components/reserva/MapQuotaIndicator';
 import { getAccurateCoordinates, setManualCoordinateOverride } from '../../../services/accurateGeocodingService';
 import { fetchVehiclePositionAtTime, TrackerMatchResult } from '../../../services/geoFrotasService';
+import { MercosulPlateBadge } from '../../../components/MercosulPlateBadge';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -78,6 +79,34 @@ const MapModal: React.FC<{
     const mapInstanceRef = useRef<any>(null);
     const tileLayerRef = useRef<any>(null);
     const geoCacheRef = useRef<Record<string, any>>({});
+
+    // Travar scroll do fundo (body) e habilitar fechar via tecla Escape
+    useEffect(() => {
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            document.body.style.overflow = prevOverflow;
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [onClose]);
+
+    // Redimensionamento recalculado do Leaflet para garantir máxima estabilidade visual
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.invalidateSize();
+            }
+        }, 200);
+        return () => clearTimeout(timer);
+    }, []);
 
     // Sincronizar camadas caso haja chaveamento de cota
     useEffect(() => {
@@ -439,82 +468,153 @@ const MapModal: React.FC<{
     }, [multas, singleMode]);
 
     return (
-        <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
-            <div className="bg-[#0f172a] border border-gray-700 w-full max-w-7xl h-[90vh] rounded-2xl flex flex-col shadow-2xl relative overflow-hidden">
-                {/* Header */}
-                <div className="p-4 border-b border-gray-700 flex flex-wrap justify-between items-center bg-[#022c22] gap-3">
-                    <div className="flex items-center gap-3">
-                        <h3 className="text-white font-bold text-lg flex items-center">
-                            <MapIcon className="mr-2 text-risel-green" /> {title}
-                        </h3>
-                        {/* Status de Rastreador GPS quando presente */}
-                        {trackerInfo && (
-                            <div className="flex items-center gap-2 bg-sky-950/80 px-3 py-1 rounded-lg border border-sky-500/50 text-xs font-bold text-sky-300">
-                                <Radio className="w-3.5 h-3.5 text-sky-400 animate-pulse" />
-                                <span>Rastreador GPS ({Math.round(trackerInfo.speed)} km/h · {trackerInfo.ignitionStatus ? 'Ligado' : 'Desligado'})</span>
-                                <a 
-                                    href={trackerInfo.googleMapsUrl} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="ml-1.5 underline text-sky-200 hover:text-white flex items-center gap-1"
-                                >
-                                    Abrir no Maps ↗
-                                </a>
-                            </div>
-                        )}
-                        {/* Estatísticas de Economia de Requisições */}
-                        <div className="hidden sm:flex items-center gap-2 bg-black/40 px-3 py-1 rounded-lg border border-emerald-800/40 text-xs font-semibold">
-                            <span className="text-emerald-400 flex items-center gap-1">
-                                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                                {cachedCount} Salvas em Cache (0 req)
-                            </span>
-                            {newCount > 0 && (
-                                <span className="text-amber-400 border-l border-gray-700 pl-2">
-                                    {newCount} novas mapeadas
-                                </span>
-                            )}
+        <div 
+            className="fixed inset-0 z-[99999] bg-black/95 backdrop-blur-md flex flex-col w-screen h-screen overflow-hidden select-none"
+            onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+        >
+            {/* Header Fixo e Inviolável - Nunca se move, corta ou some durante arraste do mapa */}
+            <header 
+                className="shrink-0 w-full px-3 sm:px-6 py-2.5 sm:py-3 border-b border-emerald-900/80 flex flex-wrap sm:flex-nowrap justify-between items-center bg-[#022c22] gap-2.5 relative z-[100000] shadow-2xl"
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+            >
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
+                    <h3 className="text-white font-black text-sm sm:text-base flex items-center truncate">
+                        <MapIcon className="mr-2 text-risel-green shrink-0" size={20} />
+                        <span className="truncate">{title}</span>
+                    </h3>
+                    {/* Status de Rastreador GPS quando presente */}
+                    {trackerInfo && (
+                        <div className="flex items-center gap-1.5 bg-sky-950/90 px-2.5 py-1 rounded-lg border border-sky-500/50 text-[11px] font-bold text-sky-300 shadow-sm">
+                            <Radio className="w-3 h-3 text-sky-400 animate-pulse shrink-0" />
+                            <span>GPS ({Math.round(trackerInfo.speed)} km/h · {trackerInfo.ignitionStatus ? 'Ligado' : 'Desligado'})</span>
+                            <a 
+                                href={trackerInfo.googleMapsUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="ml-1 underline text-sky-200 hover:text-white"
+                            >
+                                Maps ↗
+                            </a>
                         </div>
+                    )}
+                    {/* Estatísticas de Economia de Requisições */}
+                    <div className="hidden md:flex items-center gap-2 bg-black/40 px-2.5 py-1 rounded-lg border border-emerald-800/40 text-[11px] font-semibold">
+                        <span className="text-emerald-400 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            {cachedCount} em Cache
+                        </span>
+                        {newCount > 0 && (
+                            <span className="text-amber-400 border-l border-gray-700 pl-2">
+                                {newCount} novas
+                            </span>
+                        )}
                     </div>
+                </div>
 
-                    <div className="flex items-center gap-2 flex-wrap">
-                        {/* Seletor de Camadas */}
-                        <div className="flex bg-black/40 p-1 rounded-lg border border-gray-700">
+                {/* Controles Principais do Cabeçalho - Fixos e Imediatamente Acessíveis */}
+                <div 
+                    className="flex items-center gap-2 shrink-0 ml-auto"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                >
+                    {/* Seletor de Tipo de Mapa */}
+                    <div className="flex items-center bg-black/60 p-1 rounded-xl border border-emerald-900/60 shadow-inner">
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider hidden lg:inline mr-1.5 px-1 flex items-center gap-1">
+                            <Layers size={12} className="text-risel-green" /> Tipo:
+                        </span>
+                        <div className="flex gap-1">
                             {availableLayers.map(layer => (
                                 <button 
                                     key={layer.id} 
-                                    onClick={() => setCurrentLayer(layer)} 
-                                    className={`px-3 py-1 text-xs font-bold rounded transition-all ${currentLayer.id === layer.id ? 'bg-risel-green text-black shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setCurrentLayer(layer); }} 
+                                    className={`px-2.5 sm:px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer select-none ${
+                                        currentLayer.id === layer.id 
+                                            ? 'bg-risel-green text-black shadow-md font-black ring-1 ring-white/30' 
+                                            : 'text-gray-300 hover:text-white hover:bg-white/10'
+                                    }`}
+                                    title={`Alterar tipo de mapa para ${layer.name}`}
                                 >
-                                    {layer.name}
+                                    {layer.name.split(' ')[0]}
                                 </button>
                             ))}
                         </div>
-
-                        {/* Indicador de Cota Zero Custo */}
-                        <MapQuotaIndicator compact />
-
-                        <button 
-                            onClick={onClose} 
-                            className="p-1 text-gray-400 hover:text-red-400 rounded-lg hover:bg-white/10 transition"
-                            title="Fechar Mapa"
-                        >
-                            <X size={24} />
-                        </button>
                     </div>
+
+                    {/* Indicador de Cota Zero Custo */}
+                    <div className="hidden sm:block">
+                        <MapQuotaIndicator compact />
+                    </div>
+
+                    {/* Botão de Fechar Principal com Alto Contraste */}
+                    <button 
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onClose(); }} 
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-lg border border-red-400/40 transition-all cursor-pointer select-none"
+                        title="Fechar Visualização do Mapa (Esc)"
+                    >
+                        <X size={16} />
+                        <span>Fechar</span>
+                    </button>
+                </div>
+            </header>
+
+            {/* Map Canvas em Tela Cheia com Dock Flutuante Permanente */}
+            <main className="flex-1 relative bg-slate-950 w-full h-full min-h-0 overflow-hidden">
+                <div ref={mapRef} className="w-full h-full z-0" />
+                
+                {/* HUD Flutuante de Atalho Rápido sobre o Mapa (Fixo no canto superior direito - z-[100000]) */}
+                <div 
+                    className="absolute top-4 right-4 z-[100000] pointer-events-auto flex items-center gap-2 bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-700 shadow-2xl ring-1 ring-white/10"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                >
+                    <div className="flex items-center gap-1">
+                        <Layers size={13} className="text-risel-green shrink-0" />
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-1 hidden sm:inline">Mapa:</span>
+                        <div className="flex gap-1 bg-black/60 p-0.5 rounded-lg border border-slate-800">
+                            {availableLayers.map(layer => (
+                                <button
+                                    key={layer.id}
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setCurrentLayer(layer); }}
+                                    className={`px-2 py-1 text-[11px] font-extrabold rounded-md transition-all cursor-pointer ${
+                                        currentLayer.id === layer.id 
+                                            ? 'bg-risel-green text-black font-black shadow-sm' 
+                                            : 'text-slate-300 hover:text-white hover:bg-white/10'
+                                    }`}
+                                    title={`Alterar tipo de mapa para ${layer.name}`}
+                                >
+                                    {layer.name.split(' ')[0]}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="h-4 w-px bg-slate-700 mx-0.5" />
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onClose(); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-xl transition-all font-black text-xs shadow-md cursor-pointer"
+                        title="Fechar Mapa (Esc)"
+                    >
+                        <X size={15} />
+                        <span>Fechar</span>
+                    </button>
                 </div>
 
-                {/* Map Body */}
-                <div className="flex-1 relative bg-slate-900">
-                    <div ref={mapRef} className="w-full h-full z-10" />
-                    {loadingMap && (
-                        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white backdrop-blur-sm">
-                            <Loader2 size={48} className="animate-spin text-risel-green mb-4" />
-                            <p className="font-bold text-sm tracking-wide">{statusText}</p>
-                            <span className="text-xs text-gray-400 mt-2">Reaproveitando coordenadas já salvas para máxima velocidade e economia de cota</span>
-                        </div>
-                    )}
-                </div>
-            </div>
+                {loadingMap && (
+                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/85 text-white backdrop-blur-sm">
+                        <Loader2 size={48} className="animate-spin text-risel-green mb-4" />
+                        <p className="font-bold text-sm tracking-wide">{statusText}</p>
+                        <span className="text-xs text-gray-400 mt-2">Reaproveitando coordenadas já salvas para máxima velocidade e economia de cota</span>
+                    </div>
+                )}
+            </main>
         </div>
     );
 };
@@ -536,6 +636,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const [uploadingAit, setUploadingAit] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [emailModalMulta, setEmailModalMulta] = useState<Partial<Multa> | null>(null);
+  const [showEmailPreviewHtml, setShowEmailPreviewHtml] = useState(false);
   const [emailTo, setEmailTo] = useState('');
   const [emailCc, setEmailCc] = useState('');
   const [baseMappings, setBaseMappings] = useState<Record<string, { to: string; cc: string }>>(DEFAULT_EMAIL_MAPPINGS);
@@ -1331,14 +1433,36 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           typeof targetMulta === 'object' && 
           !('nativeEvent' in targetMulta) && 
           !('currentTarget' in targetMulta) &&
-          ('placa' in targetMulta || 'id' in targetMulta || 'ait' in targetMulta || 'valor' in targetMulta)
+          ('placa' in targetMulta || 'id' in targetMulta || 'ait' in targetMulta || 'valor' in targetMulta || 'responsavelNome' in targetMulta)
       );
 
       const activeData: Partial<Multa> = isMultaObject ? (targetMulta as Partial<Multa>) : formData;
+      
+      const normalizedData: Partial<Multa> = {
+          ...activeData,
+          id: activeData.id || (activeData as any).idsistema || (activeData as any).codigo || '',
+          ait: String(activeData.ait || (activeData as any).numeroAit || (activeData as any).numDocumento || (activeData as any).aitDigitado || '').trim(),
+          placa: cleanString(activeData.placa || (activeData as any).placaVeiculo || ''),
+          frota: String(activeData.frota || (activeData as any).veiculo || '').trim(),
+          responsavelNome: String(activeData.responsavelNome || (activeData as any).motorista || (activeData as any).condutor || '').trim(),
+          descricaoInfracao: String(activeData.descricaoInfracao || activeData.enquadramento || (activeData as any).infracao || '').trim(),
+          base: String(activeData.base || (activeData as any).filial || (activeData as any).unidade || '').trim(),
+          valor: typeof activeData.valor === 'number' ? activeData.valor : parseFloat(String(activeData.valor || 0).replace(',', '.')),
+          valorComDesconto: typeof activeData.valorComDesconto === 'number' ? activeData.valorComDesconto : (activeData.valor ? Number(activeData.valor) * 0.8 : 0),
+          prazoIndicacao: activeData.prazoIndicacao || '',
+          dataHoraInfracao: activeData.dataHoraInfracao || '',
+          status: activeData.status || StatusMulta.AGUARDANDO_BOLETO,
+          linkAit: activeData.linkAit || '',
+          linkAuth: activeData.linkAuth || '',
+          pontosCnh: activeData.pontosCnh !== undefined ? activeData.pontosCnh : 0,
+          obs: activeData.obs || ''
+      };
+
+      setEmailModalMulta(normalizedData);
       if (isMultaObject) {
-          setFormData(activeData);
+          setFormData(normalizedData);
       }
-      const placaClean = cleanString(activeData.placa || '');
+      const placaClean = cleanString(normalizedData.placa || '');
       const placaMappings = await fetchPlacaEmailMappings();
       let toEmail = '';
       let ccEmail = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
@@ -1381,7 +1505,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
       // 3. Fallback: Mapeamento de e-mail por Base/Filial
       if (!toEmail) {
-          const baseUpper = activeData.base ? activeData.base.toUpperCase().trim() : '';
+          const baseUpper = normalizedData.base ? normalizedData.base.toUpperCase().trim() : '';
           const matchedKey = Object.keys(baseMappings).find(k => baseUpper.includes(k.toUpperCase()) || k.toUpperCase().includes(baseUpper));
           if (matchedKey && baseMappings[matchedKey]) {
               toEmail = baseMappings[matchedKey].to || '';
@@ -1399,20 +1523,23 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
       setEmailTo(toEmail);
       setEmailCc(ccEmail);
+      setShowEmailPreviewHtml(false);
       setIsEmailModalOpen(true);
   };
 
   const handleOpenOutlookOrWebmail = async () => {
+      const currentMulta: Partial<Multa> = emailModalMulta || formData;
       // 1. Garantir que os arquivos anexos estejam baixados localmente para anexar no Outlook/Webmail
-      const aitLinks = parseLinks(formData.linkAit);
-      let authLink = formData.linkAuth;
+      const aitLinks = parseLinks(currentMulta.linkAit);
+      let authLink = currentMulta.linkAuth;
       
       // Se não gerou Termo de Desconto, gera silenciosamente agora
-      if (!authLink && formData.placa) {
+      if (!authLink && currentMulta.placa) {
           try {
-              const res = await generateAutorizacaoDescontoPdf(formData);
+              const res = await generateAutorizacaoDescontoPdf(currentMulta);
               if (res) {
                   authLink = res.dataUrl;
+                  setEmailModalMulta(prev => prev ? ({ ...prev, linkAuth: res.dataUrl }) : currentMulta);
                   setFormData(prev => ({ ...prev, linkAuth: res.dataUrl }));
                   // Baixa o termo gerado
                   res.download();
@@ -1421,13 +1548,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       } else if (authLink) {
           // Se já existe Termo, baixa uma cópia para facilitar o anexo manual no Outlook
           try {
-              const res = await generateAutorizacaoDescontoPdf(formData);
+              const res = await generateAutorizacaoDescontoPdf(currentMulta);
               res.download();
           } catch (e) {}
       }
 
       // Baixa os AITs anexados se forem data URLs ou URLs disponíveis
-      aitLinks.forEach((att, idx) => {
+      aitLinks.forEach((att) => {
           if (att.url.startsWith('data:')) {
               const a = document.createElement('a');
               a.href = att.url;
@@ -1439,11 +1566,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       });
 
       // 2. Copiar tabela HTML rica e texto formatado para a área de transferência
-      const htmlContent = generateEmailHTML({ ...formData, linkAuth: authLink });
+      const htmlContent = generateEmailHTML({ ...currentMulta, linkAuth: authLink });
       try {
           if (navigator.clipboard && window.ClipboardItem) {
               const blobHtml = new Blob([htmlContent], { type: 'text/html' });
-              const blobText = new Blob([`NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa || '-'} - AIT: ${formData.ait || '-'}\nMotorista: ${formData.responsavelNome || '-'}\nValor: ${(formData.valorComDesconto || formData.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nPrazo Indicação: ${formData.prazoIndicacao || '-'}`], { type: 'text/plain' });
+              const blobText = new Blob([`NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || '-'} - AIT: ${currentMulta.ait || '-'}\nMotorista: ${currentMulta.responsavelNome || '-'}\nValor: ${(currentMulta.valorComDesconto || currentMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nPrazo Indicação: ${currentMulta.prazoIndicacao || '-'}`], { type: 'text/plain' });
               const data = [new ClipboardItem({ 'text/html': blobHtml, 'text/plain': blobText })];
               await navigator.clipboard.write(data);
           }
@@ -1452,20 +1579,20 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       }
 
       // 3. Abrir o cliente de e-mail padrão (Outlook / Webmail) pré-preenchido
-      const dataFormatada = formData.dataHoraInfracao ? formData.dataHoraInfracao.split('T')[0] : '';
-      const subject = encodeURIComponent(`NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa || 'S/P'} - FROTA: ${formData.frota || formData.placa || 'S/F'} - BASE: ${formData.base || '-'} - DATA ${dataFormatada}`);
+      const dataFormatada = currentMulta.dataHoraInfracao ? currentMulta.dataHoraInfracao.split('T')[0] : '';
+      const subject = encodeURIComponent(`NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`);
       
       const bodyPlainText = `Prezados(as),\n\nSeguem as informações da Notificação de Infração de Trânsito para providências:\n\n` +
-          `• Motorista / Condutor: ${formData.responsavelNome || '-'}\n` +
-          `• Auto de Infração (AIT): ${formData.ait || '-'}\n` +
-          `• Placa do Veículo: ${formData.placa || '-'}\n` +
-          `• Frota / Unidade: ${formData.frota || '-'}\n` +
-          `• Base / Filial: ${formData.base || '-'}\n` +
-          `• Infração Cometida: ${formData.descricaoInfracao || formData.enquadramento || '-'}\n` +
-          `• Valor Líquido com Desconto: ${(formData.valorComDesconto || formData.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\n` +
-          `• Pontuação CNH: ${formData.pontosCnh || 0} Pontos\n` +
-          `• Prazo Limite para Indicação: ${formData.prazoIndicacao || '-'}\n` +
-          `• Observações: ${formData.obs || 'Nenhuma'}\n\n` +
+          `• Motorista / Condutor: ${currentMulta.responsavelNome || '-'}\n` +
+          `• Auto de Infração (AIT): ${currentMulta.ait || '-'}\n` +
+          `• Placa do Veículo: ${currentMulta.placa || '-'}\n` +
+          `• Frota / Unidade: ${currentMulta.frota || '-'}\n` +
+          `• Base / Filial: ${currentMulta.base || '-'}\n` +
+          `• Infração Cometida: ${currentMulta.descricaoInfracao || currentMulta.enquadramento || '-'}\n` +
+          `• Valor Líquido com Desconto: ${(currentMulta.valorComDesconto || currentMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\n` +
+          `• Pontuação CNH: ${currentMulta.pontosCnh || 0} Pontos\n` +
+          `• Prazo Limite para Indicação: ${currentMulta.prazoIndicacao || '-'}\n` +
+          `• Observações: ${currentMulta.obs || 'Nenhuma'}\n\n` +
           `[DICA: A formatação visual completa e elegante foi copiada para sua área de transferência (Ctrl+V)].\n\n` +
           `Atenciosamente,\nGestão Integrada de Frotas • Risel Combustíveis Ltda`;
 
@@ -1481,8 +1608,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   };
 
   const handleSendEmail = async () => {
-      if (!formData.placa && !formData.ait) { 
-          alert("Por favor, preencha os dados da multa antes de enviar a notificação."); 
+      const currentMulta: Partial<Multa> = emailModalMulta || formData;
+      if (!currentMulta.placa && !currentMulta.ait) { 
+          alert("Por favor, selecione ou preencha os dados da multa antes de enviar a notificação."); 
           return; 
       }
       setSendingEmail(true);
@@ -1512,20 +1640,21 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
       };
 
-      const dataFormatada = getFormattedSubjectDate(formData.dataHoraInfracao);
-      const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa || 'S/P'} - FROTA: ${formData.frota || formData.placa || 'S/F'} - BASE: ${formData.base || '-'} - DATA ${dataFormatada}`;
+      const dataFormatada = getFormattedSubjectDate(currentMulta.dataHoraInfracao);
+      const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`;
       
       // Coleta todos os anexos (AITs anexados + Autorização de Desconto em PDF)
-      const aitLinks = parseLinks(formData.linkAit);
+      const aitLinks = parseLinks(currentMulta.linkAit);
       const driveUrls: Array<{ name: string; url: string }> = [...aitLinks];
       
       // Se não gerou PDF ainda, geramos silenciosamente agora
-      let authLink = formData.linkAuth;
-      if (!authLink && formData.placa) {
+      let authLink = currentMulta.linkAuth;
+      if (!authLink && currentMulta.placa) {
           try {
-              const pdfRes = await generateAutorizacaoDescontoPdf(formData);
+              const pdfRes = await generateAutorizacaoDescontoPdf(currentMulta);
               if (pdfRes) {
                   authLink = pdfRes.dataUrl;
+                  setEmailModalMulta(prev => prev ? ({ ...prev, linkAuth: pdfRes.dataUrl }) : currentMulta);
                   setFormData(prev => ({ ...prev, linkAuth: pdfRes.dataUrl }));
               }
           } catch (e) {}
@@ -1533,7 +1662,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
       if (authLink) {
           driveUrls.push({
-              name: `Autorizacao_Desconto_${formData.placa || 'MULTA'}`,
+              name: `Autorizacao_Desconto_${currentMulta.placa || 'MULTA'}`,
               url: authLink
           });
       }
@@ -1558,7 +1687,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   to: toRecipientsList.join(', ') || ADMIN_EMAIL,
                   cc: ccRecipientsList.join(', '),
                   subject,
-                  html: generateEmailHTML({ ...formData, linkAuth: authLink }),
+                  html: generateEmailHTML({ ...currentMulta, linkAuth: authLink }),
                   driveUrls
               })
           });
@@ -1576,15 +1705,17 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               } else {
                   alert(result.message || "E-mail Enviado!");
               }
-              setIsEmailModalOpen(false); 
+              setIsEmailModalOpen(false);
+              setShowEmailPreviewHtml(false);
           } else { 
               console.error(result); 
               alert("Erro ao enviar e-mail: " + (result.message || result.error || "Verifique a conexão ou configurações de SMTP.")); 
           }
-      } catch (error: any) { 
-          alert("Erro ao enviar e-mail: " + (error.message || "Falha na comunicação com o servidor.")); 
-      } finally { 
-          setSendingEmail(false); 
+      } catch (err: any) {
+          console.error("Erro ao enviar e-mail:", err);
+          alert(`Não foi possível enviar o e-mail via servidor: ${err.message || err}\n\nVocê pode utilizar o botão "Abrir no Outlook / Webmail" para disparar diretamente pelo seu e-mail pessoal/corporativo.`);
+      } finally {
+          setSendingEmail(false);
       }
   };
 
@@ -1596,6 +1727,257 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const FormTooltip = ({ text }: { text: string }) => (
       <div className="group/tooltip relative inline-flex ml-1.5 cursor-help tooltip-trigger"><HelpCircle size={12} className="text-gray-400 hover:text-risel-blue" /><div className="tooltip-content absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-gray-900/95 text-white text-[10px] p-2 rounded shadow-lg backdrop-blur-sm z-50 text-center leading-relaxed">{text}</div></div>
   );
+
+  const renderEmailModal = () => {
+    if (!isEmailModalOpen) return null;
+    const activeMulta: Partial<Multa> = emailModalMulta || formData;
+    const modalAttachments = parseLinks(activeMulta.linkAit);
+
+    const formatModalDate = (val?: string) => {
+      if (!val) return '-';
+      try {
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return val;
+        return d.toLocaleDateString('pt-BR');
+      } catch (e) {
+        return val;
+      }
+    };
+
+    const formatModalDateTime = (val?: string) => {
+      if (!val) return '-';
+      try {
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return val;
+        return d.toLocaleDateString('pt-BR') + ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      } catch (e) {
+        return val;
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4 overflow-y-auto">
+        <div className="bg-white rounded-3xl shadow-2xl p-5 sm:p-7 w-full max-w-2xl my-auto animate-in zoom-in-95 duration-200 border border-slate-100 max-h-[92vh] flex flex-col">
+          {/* Top Header */}
+          <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 shrink-0">
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-2xl border border-emerald-100">
+                <Mail size={22} className="text-emerald-700" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-800 tracking-tight">
+                  Enviar Notificação de Infração
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Auto de Infração: <strong className="text-emerald-800 font-mono">{activeMulta.ait || 'Não informado'}</strong> • Placa: <strong className="text-slate-800">{activeMulta.placa || '-'}</strong> {activeMulta.frota ? `• Frota: ${activeMulta.frota}` : ''}
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                setIsEmailModalOpen(false);
+                setShowEmailPreviewHtml(false);
+              }}
+              className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+              title="Fechar"
+            >
+              <X size={18}/>
+            </button>
+          </div>
+
+          {/* Scrollable Content */}
+          <div className="overflow-y-auto custom-scrollbar pr-1 py-3 space-y-3.5 flex-1 text-xs">
+            
+            {/* CARD EXECUTIVO: DADOS COMPLETOS DO LANÇAMENTO */}
+            <div className="bg-gradient-to-br from-slate-50 to-emerald-50/30 rounded-2xl p-3.5 border border-slate-200 shadow-2xs">
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80">
+                <span className="text-[11px] font-black uppercase tracking-wider text-[#114D38] flex items-center gap-1.5">
+                  <FileText size={13} className="text-emerald-700" /> Dados do Lançamento da Notificação
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  {activeMulta.status || 'Lançado'}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Condutor / Motorista</span>
+                  <span className="font-black text-slate-800 truncate block text-xs" title={activeMulta.responsavelNome}>
+                    {activeMulta.responsavelNome || 'Não informado'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase mb-1">Veículo / Placa</span>
+                  <div className="flex items-center gap-2">
+                    <MercosulPlateBadge plate={activeMulta.placa || ''} size="sm" />
+                    {activeMulta.frota && <span className="text-slate-500 font-bold text-xs">(Frota {activeMulta.frota})</span>}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Auto Infração (AIT)</span>
+                  <span className="font-mono font-black text-emerald-800 text-xs">
+                    {activeMulta.ait || 'Não informado'}
+                  </span>
+                </div>
+                <div className="col-span-2 sm:col-span-3 bg-white/70 p-2 rounded-xl border border-slate-200/60">
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase mb-0.5">Infração Cometida</span>
+                  <span className="font-bold text-slate-800 block text-xs leading-snug" title={activeMulta.descricaoInfracao || activeMulta.enquadramento}>
+                    {activeMulta.descricaoInfracao || activeMulta.enquadramento || '-'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Data da Infração</span>
+                  <span className="font-bold text-slate-700 text-xs">
+                    {formatModalDateTime(activeMulta.dataHoraInfracao)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-rose-600 block uppercase">Prazo de Indicação</span>
+                  <span className="font-black text-rose-700 text-xs">
+                    {formatModalDate(activeMulta.prazoIndicacao)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-emerald-700 block uppercase">Valor Líquido c/ Desconto</span>
+                  <span className="font-mono font-black text-emerald-800 text-xs">
+                    {(activeMulta.valorComDesconto || activeMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </span>
+                </div>
+                {activeMulta.base && (
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Base / Filial</span>
+                    <span className="font-bold text-slate-700 text-xs">{activeMulta.base}</span>
+                  </div>
+                )}
+                {activeMulta.pontosCnh !== undefined && Number(activeMulta.pontosCnh) > 0 && (
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Pontuação CNH</span>
+                    <span className="font-bold text-slate-700 text-xs">{activeMulta.pontosCnh} Pontos</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* EXPANDABLE EMAIL PREVIEW */}
+            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setShowEmailPreviewHtml(!showEmailPreviewHtml)}
+                className="w-full px-3.5 py-2.5 flex items-center justify-between text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <Eye size={14} className="text-emerald-700" />
+                  <span>Visualizar modelo do e-mail oficial (Risel)</span>
+                </span>
+                <span className="text-[11px] text-emerald-700 font-extrabold">
+                  {showEmailPreviewHtml ? 'Ocultar Prévia ▲' : 'Expandir Prévia Visual ▼'}
+                </span>
+              </button>
+              {showEmailPreviewHtml && (
+                <div className="p-3 bg-slate-50 border-t border-slate-200 max-h-56 overflow-y-auto custom-scrollbar">
+                  <div 
+                    className="bg-white p-3 rounded-xl shadow-2xs border border-slate-200 text-xs"
+                    dangerouslySetInnerHTML={{ __html: generateEmailHTML(activeMulta) }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* DESTINATÁRIOS */}
+            <div className="space-y-2.5">
+              <div>
+                <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1 block">
+                  Destinatário Principal (Para):
+                </label>
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none text-xs font-semibold" 
+                  value={emailTo} 
+                  onChange={e => setEmailTo(e.target.value)} 
+                  placeholder="exemplo@risel.com.br; outro@risel.com.br" 
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">Preenchido automaticamente pelo cadastro da placa e base.</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1 block">
+                  Cópia Automática (CC):
+                </label>
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none text-xs font-semibold" 
+                  value={emailCc} 
+                  onChange={e => setEmailCc(e.target.value)} 
+                  placeholder="copia@risel.com.br" 
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">Garante cópia de segurança para a Gestão de Frotas e RH Risel.</p>
+              </div>
+            </div>
+
+            {/* ANEXOS */}
+            <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
+              <p className="text-xs font-black text-slate-700 mb-1.5 flex items-center">
+                <Paperclip size={14} className="mr-1.5 text-emerald-700"/> Arquivos anexos do e-mail:
+              </p>
+              <ul className="space-y-1 text-xs text-slate-600">
+                {modalAttachments.map((att, idx) => (
+                  <li key={idx} className="flex items-center text-[11px] font-semibold text-slate-800">
+                    <FileCheck size={13} className="text-emerald-600 mr-1.5 shrink-0"/> {att.name} (Auto de Infração - AIT)
+                  </li>
+                ))}
+                {activeMulta.linkAuth ? (
+                  <li className="flex items-center text-[11px] font-semibold text-emerald-800">
+                    <FileText size={13} className="text-emerald-600 mr-1.5 shrink-0"/> Termo de Autorização de Desconto (PDF Timbrado Risel)
+                  </li>
+                ) : (
+                  <li className="flex items-center text-[11px] text-amber-700 italic">
+                    <AlertTriangle size={13} className="mr-1.5 shrink-0"/> O Termo de Desconto Timbrado será gerado e anexado automaticamente no envio.
+                  </li>
+                )}
+              </ul>
+            </div>
+          </div>
+
+          {/* Modal Footer Actions */}
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-2 pt-3 mt-1 border-t border-slate-100 shrink-0">
+            <button
+              type="button"
+              onClick={handleOpenOutlookOrWebmail}
+              className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3.5 py-2 rounded-xl font-bold transition-all flex items-center cursor-pointer active:scale-95"
+              title="Baixar anexos, copiar formato visual e abrir no seu Outlook / Webmail"
+            >
+              <Mail size={14} className="mr-1.5 text-blue-600"/> Abrir no Outlook / Webmail
+            </button>
+
+            <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsEmailModalOpen(false);
+                  setShowEmailPreviewHtml(false);
+                }} 
+                className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl transition-colors font-bold cursor-pointer" 
+                disabled={sendingEmail}
+              >
+                Cancelar
+              </button>
+              <button 
+                type="button"
+                onClick={handleSendEmail} 
+                disabled={sendingEmail} 
+                className={`px-5 py-2 bg-emerald-700 text-white rounded-xl shadow-md hover:bg-emerald-800 active:scale-95 flex items-center font-black text-xs transition-all cursor-pointer ${
+                  sendingEmail ? 'opacity-70 cursor-not-allowed' : ''
+                }`}
+              >
+                {sendingEmail ? <Loader2 size={15} className="animate-spin mr-1.5"/> : <Send size={15} className="mr-1.5"/>} 
+                {sendingEmail ? 'Enviando e-mail...' : 'Confirmar e Disparar E-mail'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (view === 'LIST') {
     return (
@@ -1783,7 +2165,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                                     {formatDateString(multa.prazoIndicacao)}
                                                 </span>
                                             </td>
-                                            <td className="px-3 py-2 border-r border-gray-200/50 font-mono font-bold text-gray-700 whitespace-nowrap align-middle">{multa.placa}</td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle">
+                                                <MercosulPlateBadge plate={multa.placa} size="sm" />
+                                            </td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 font-medium text-gray-600 text-[10px] whitespace-nowrap align-middle">{multa.ait}</td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 text-gray-800 text-xs font-medium align-middle truncate max-w-[260px]" title={multa.descricaoInfracao || multa.enquadramento}>
                                                 {multa.descricaoInfracao || multa.enquadramento || '-'}
@@ -1855,6 +2239,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 title={pdfModalData.title}
                 fileName={pdfModalData.fileName}
             />
+
+            {renderEmailModal()}
         </div>
     );
   }
@@ -2420,113 +2806,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         </div>
 
         {/* Modal Executivo de Envio de E-mail */}
-        {isEmailModalOpen && (
-            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-                <div className="bg-white rounded-3xl shadow-2xl p-6 sm:p-8 w-full max-w-xl animate-in zoom-in-95 duration-200 border border-slate-100">
-                    <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
-                        <div className="flex items-center space-x-3">
-                            <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl">
-                                <Mail size={22}/>
-                            </div>
-                            <div>
-                                <h3 className="text-lg font-black text-slate-800">Enviar Notificação de Infração</h3>
-                                <p className="text-xs text-slate-500 font-medium">Auto de Infração: <strong>{formData.ait || 'Não informado'}</strong> • Placa: <strong>{formData.placa || '-'}</strong></p>
-                            </div>
-                        </div>
-                        <button 
-                            onClick={() => setIsEmailModalOpen(false)}
-                            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"
-                        >
-                            <X size={18}/>
-                        </button>
-                    </div>
-
-                    <div className="space-y-4">
-                        <div>
-                            <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1.5 block">
-                                Destinatário Principal (Para):
-                            </label>
-                            <input 
-                                type="text" 
-                                className="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none text-xs font-semibold" 
-                                value={emailTo} 
-                                onChange={e => setEmailTo(e.target.value)} 
-                                placeholder="exemplo@risel.com.br; outro@risel.com.br" 
-                            />
-                            <p className="text-[10px] text-slate-400 mt-1">Preenchido automaticamente de acordo com o mapeamento da placa e filial.</p>
-                        </div>
-
-                        <div>
-                            <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1.5 block">
-                                Cópia Automática (CC):
-                            </label>
-                            <input 
-                                type="text" 
-                                className="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none text-xs font-semibold" 
-                                value={emailCc} 
-                                onChange={e => setEmailCc(e.target.value)} 
-                                placeholder="copia@risel.com.br" 
-                            />
-                            <p className="text-[10px] text-slate-400 mt-1">Garante cópia de segurança para o Admin e RH Risel.</p>
-                        </div>
-
-                        {/* Resumo dos Anexos incluídos no e-mail */}
-                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                            <p className="text-xs font-black text-slate-700 mb-2 flex items-center">
-                                <Paperclip size={14} className="mr-1.5 text-emerald-700"/> Arquivos que serão anexados ao e-mail:
-                            </p>
-                            <ul className="space-y-1.5 text-xs text-slate-600">
-                                {currentAttachments.map((att, idx) => (
-                                    <li key={idx} className="flex items-center text-[11px] font-semibold text-slate-800">
-                                        <FileCheck size={13} className="text-emerald-600 mr-2 shrink-0"/> {att.name} (AIT)
-                                    </li>
-                                ))}
-                                {formData.linkAuth ? (
-                                    <li className="flex items-center text-[11px] font-semibold text-emerald-800">
-                                        <FileText size={13} className="text-emerald-600 mr-2 shrink-0"/> Termo de Autorização de Desconto (PDF Timbrado)
-                                    </li>
-                                ) : (
-                                    <li className="flex items-center text-[11px] text-amber-700 italic">
-                                        <AlertTriangle size={13} className="mr-2 shrink-0"/> O Termo de Desconto será gerado e anexado automaticamente no envio.
-                                    </li>
-                                )}
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row justify-between items-center gap-2 mt-6 pt-4 border-t border-slate-100">
-                        <button
-                            type="button"
-                            onClick={handleOpenOutlookOrWebmail}
-                            className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3.5 py-2.5 rounded-xl font-bold transition-all flex items-center"
-                            title="Baixar anexos, copiar formato visual e abrir no seu Outlook / Webmail"
-                        >
-                            <Mail size={14} className="mr-1.5 text-blue-600"/> Abrir no Outlook / Webmail
-                        </button>
-
-                        <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
-                            <button 
-                                onClick={() => setIsEmailModalOpen(false)} 
-                                className="px-4 py-2.5 text-xs text-slate-600 hover:bg-slate-100 rounded-xl transition-colors font-bold" 
-                                disabled={sendingEmail}
-                            >
-                                Cancelar
-                            </button>
-                            <button 
-                                onClick={handleSendEmail} 
-                                disabled={sendingEmail} 
-                                className={`px-5 py-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/20 flex items-center font-black text-xs hover:bg-blue-700 active:scale-95 transition-all ${
-                                    sendingEmail ? 'opacity-70 cursor-not-allowed' : ''
-                                }`}
-                            >
-                                {sendingEmail ? <Loader2 size={16} className="animate-spin mr-2"/> : <Send size={16} className="mr-2"/>} 
-                                {sendingEmail ? 'Enviando e-mail...' : 'Confirmar e Disparar E-mail'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        )}
+        {renderEmailModal()}
 
         <PdfViewerModal
             isOpen={pdfModalOpen}

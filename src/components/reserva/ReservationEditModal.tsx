@@ -4,6 +4,8 @@ import { Reservation, Vehicle, ReservationStatus } from '../../types_reserva';
 import { useReservations } from '../../context/ReservationContext';
 import Modal from './Modal';
 import { SP_CITIES } from '../../constants_reserva';
+import { normalizeCidade } from '../../utils/baseOperacional';
+import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 
 interface ReservationEditModalProps {
   isOpen: boolean;
@@ -58,6 +60,8 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
 
     const dataToSave: { [key: string]: any } = {
         ...formData,
+        department: formData.department ? normalizeNomeSetor(formData.department) : formData.department,
+        destinationCity: formData.destinationCity ? normalizeCidade(formData.destinationCity) : formData.destinationCity,
         departureDateTime: formData.departureDateTime ? new Date(formData.departureDateTime as any) : undefined,
         // Support saving full Return Date & Time
         returnDate: formData.returnDate ? parseDateTime(String(formData.returnDate)) : undefined,
@@ -93,7 +97,12 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
             </div>
             <div>
                 <label className="block text-sm font-medium text-gray-700">Setor</label>
-                <input type="text" name="department" value={formData.department || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+                <input type="text" name="department" list="modal-setores-list" value={formData.department || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+                <datalist id="modal-setores-list">
+                    {SETORES_OFICIAIS.map(s => (
+                        <option key={s} value={s} />
+                    ))}
+                </datalist>
             </div>
              <div>
                 <label className="block text-sm font-medium text-gray-700">Função</label>

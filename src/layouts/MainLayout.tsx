@@ -1,10 +1,11 @@
 import { ReactNode, useState, useRef, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, Users, CalendarDays, Home, Bell, Search, ChevronLeft, ChevronRight, LogOut, Settings, Shield, Mail, Eye, X, AlertTriangle, Edit2, Check, Truck, CheckSquare, ShieldAlert, Navigation, LayoutGrid, Clock, Activity, DollarSign, BarChart3, Plus, FileSpreadsheet, Map, KeyRound, Siren, BellRing, Car } from "lucide-react";
+import { LayoutDashboard, FileText, Users, CalendarDays, Home, Bell, Search, ChevronLeft, ChevronRight, LogOut, Settings, Shield, Mail, Eye, X, AlertTriangle, Edit2, Check, CheckSquare, ShieldAlert, Navigation, LayoutGrid, Clock, Activity, DollarSign, BarChart3, Plus, FileSpreadsheet, Map, KeyRound, Siren, BellRing, Car, Wrench } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAuth, hasModuleAccess, hasSubmoduleAccess } from "../context/AuthContext";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
 import { UserProfileBadge } from "../components/UserProfileBadge";
+import { DocumentoAnexoModal } from "../components/documentos/DocumentoAnexoModal";
 
 export function MainLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -153,9 +154,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
       if (activeTab === "frota") {
         baseMenuItems.push(
-          { name: "Todos os Veículos", path: "/frota?tab=frota&sub=veiculos", icon: Truck, visible: true },
+          { name: "Todos os Veículos", path: "/frota?tab=frota&sub=veiculos", icon: Car, visible: true },
           { name: "Contratos Próximos", path: "/frota?tab=frota&sub=vencidos", icon: Clock, visible: true },
-          { name: "Abastecimento", path: "/frota?tab=frota&sub=custos", icon: DollarSign, visible: true }
+          { name: "Abastecimento", path: "/frota?tab=frota&sub=custos", icon: DollarSign, visible: true },
+          { name: "Manutenção", path: "/frota?tab=frota&sub=manutencao", icon: Wrench, visible: true }
         );
       } else if (activeTab === "checklist") {
         baseMenuItems.push(
@@ -171,7 +173,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
             { name: "Dashboard Analítico", path: "/frota?tab=reservas&sub=dashboard", icon: BarChart3, visible: true },
             { name: "Gestão de Reservas", path: "/frota?tab=reservas&sub=reservations", icon: FileText, visible: true },
             { name: "Diário de Bordo", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
-            { name: "Frota de Veículos", path: "/frota?tab=reservas&sub=vehicles", icon: Truck, visible: true },
+            { name: "Frota de Veículos", path: "/frota?tab=reservas&sub=vehicles", icon: Car, visible: true },
             { name: "Status da Frota", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
             { name: "Locações RAC", path: "/frota?tab=reservas&sub=racRentals", icon: DollarSign, visible: true },
             { name: "Sair do Admin", path: "/frota?tab=reservas&sub=logout_reservas", icon: LogOut, visible: true }
@@ -179,7 +181,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
         } else {
           baseMenuItems.push(
             { name: "Solicitar Reserva", path: "/frota?tab=reservas&sub=request", icon: FileText, visible: true },
-            { name: "Solicitar Locação RAC", path: "/frota?tab=reservas&sub=racRequest", icon: Car, visible: true },
+            { name: "Solicitar Veículo Locado", path: "/frota?tab=reservas&sub=racRequest", icon: Car, visible: true },
             { name: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
             { name: "Status da Frota", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
             { name: "Área Administrativa", path: "/frota?tab=reservas&sub=login", icon: Shield, visible: true }
@@ -350,7 +352,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100/90 border border-orange-200/80 text-orange-700 font-bold text-xs transition-all cursor-pointer shadow-2xs hover:shadow-xs"
                 title="Ir para o Módulo de Controle de Frota Leve Direto"
               >
-                <Truck className="w-3.5 h-3.5 text-orange-600" />
+                <Car className="w-3.5 h-3.5 text-orange-600" />
                 <span className="hidden sm:inline">Módulo de Frota Leve</span>
               </Link>
             ) : <div />}
@@ -477,110 +479,28 @@ export function MainLayout({ children }: { children: ReactNode }) {
         </div>
       </main>
 
-      {/* Modal de Visualização Rápida de Documento do Alerta */}
-      {selectedDocToView && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 text-slate-800 text-left">
-          <div className={cn(
-            "bg-white rounded-[24px] shadow-2xl border border-slate-200 overflow-hidden flex flex-col transition-all duration-300",
-            selectedDocToView.arquivoAnexoBase64 ? "w-full max-w-4xl h-[80vh]" : "w-full max-w-md"
-          )}>
-            <div className="bg-[#114D38] px-5 py-4 text-white flex justify-between items-center shrink-0">
-              <div>
-                <h3 className="font-display font-bold text-sm flex items-center gap-2">
-                  <FileText className="w-4.5 h-4.5 text-emerald-350" />
-                  {selectedDocToView.arquivoAnexoBase64 ? "Documento Fiscal Original Anexado" : "Visualização de Documento"}
-                </h3>
-                <p className="text-[10px] text-emerald-100 mt-0.5">
-                  {selectedDocToView.arquivoAnexoBase64 ? selectedDocToView.nomeArquivoAnexo : "Visualizador Digital Risel ERP"}
-                </p>
-              </div>
-              <button 
-                onClick={() => setSelectedDocToView(null)}
-                className="text-emerald-100 hover:text-white transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-5 flex-1 overflow-y-auto flex flex-col">
-              {selectedDocToView.arquivoAnexoBase64 ? (
-                // Exibe o documento original anexado (sem IA, arquivo real anexado)
-                <div className="flex-1 min-h-[350px] w-full border border-slate-250 bg-slate-100 rounded-xl overflow-hidden flex items-center justify-center relative">
-                  {selectedDocToView.arquivoAnexoBase64.startsWith("data:application/pdf") ? (
-                    <iframe 
-                      src={selectedDocToView.arquivoAnexoBase64} 
-                      className="w-full h-full min-h-[350px]"
-                      title="Documento Fiscal Original"
-                    />
-                  ) : (
-                    <img 
-                      src={selectedDocToView.arquivoAnexoBase64} 
-                      alt="Documento Fiscal Original" 
-                      className="max-w-full max-h-full object-contain p-2"
-                    />
-                  )}
-                </div>
-              ) : (
-                // Mensagem explícita informando a falta de anexo conforme requisitado
-                <div className="space-y-4 flex-1 flex flex-col justify-center py-4">
-                  <div className="border-4 border-dashed border-slate-200 rounded-2xl p-6 bg-slate-50 relative overflow-hidden flex flex-col items-center justify-center text-center">
-                    <div className="w-12 h-12 bg-rose-50 text-rose-600 border border-rose-100 rounded-full flex items-center justify-center mb-3 animate-bounce">
-                      <FileText className="w-6 h-6" />
-                    </div>
-                    
-                    <h4 className="text-sm font-extrabold text-slate-800">Nenhum documento original foi anexado</h4>
-                    <p className="text-xs text-slate-500 mt-1.5 leading-relaxed max-w-xs">
-                      Este lançamento não possui um arquivo PDF ou imagem original anexado no momento.
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-1 font-semibold">
-                      Fornecedor: <span className="font-bold text-slate-650">{selectedDocToView.fornecedor}</span> | Ref: {selectedDocToView.doc}
-                    </p>
-
-                    <div className="my-4 w-full border-t border-slate-200/60" />
-
-                    <div className="grid grid-cols-2 gap-3 w-full text-left text-[11px]">
-                      <div>
-                        <span className="text-[8px] text-slate-400 font-bold block uppercase leading-none">Vencimento</span>
-                        <span className="font-bold text-slate-700">
-                          {(() => {
-                            if (!selectedDocToView.vencimento) return "Sem data";
-                            const vStr = String(selectedDocToView.vencimento).trim();
-                            const d = vStr.includes("T") ? new Date(vStr) : new Date(vStr + "T12:00:00");
-                            return isNaN(d.getTime()) ? vStr : d.toLocaleDateString('pt-BR');
-                          })()}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[8px] text-slate-400 font-bold block uppercase leading-none">Valor Cobrado</span>
-                        <span className="font-bold text-slate-750 font-mono">{selectedDocToView.valor}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-slate-50 px-5 py-3 border-t border-slate-150 flex justify-end gap-2 shrink-0">
-              <button 
-                onClick={() => setSelectedDocToView(null)}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-bold text-[10px] text-slate-600 cursor-pointer"
-              >
-                Fechar
-              </button>
-              <button 
-                onClick={() => {
-                  setSelectedDocToView(null);
-                  navigate("/documentos/lancamento", { state: { editLancamentoId: selectedDocToView.id } });
-                }}
-                className="px-3.5 py-1.5 rounded-lg bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold text-[10px] cursor-pointer shadow-sm flex items-center gap-1.5"
-              >
-                <Edit2 className="w-3 h-3 text-emerald-300" />
-                Editar Lançamento
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal Seguro de Visualização de Documento do Alerta */}
+      <DocumentoAnexoModal
+        isOpen={!!selectedDocToView}
+        onClose={() => setSelectedDocToView(null)}
+        documento={selectedDocToView ? {
+          nome: selectedDocToView.nomeArquivoAnexo || `Documento_${selectedDocToView.doc || "Fiscal"}.pdf`,
+          fornecedor: selectedDocToView.fornecedor,
+          fornecedorCnpj: selectedDocToView.cnpj,
+          cnpj: selectedDocToView.cnpj,
+          valor: selectedDocToView.valor,
+          doc: selectedDocToView.doc,
+          descricao: selectedDocToView.descricao,
+          tipo: selectedDocToView.tipo,
+          estabelecimento: selectedDocToView.estabelecimento,
+          centroCusto: selectedDocToView.centroCusto,
+          aprovadores: selectedDocToView.aprovadores,
+          formaPagto: selectedDocToView.formaPagto,
+          dataEmissao: selectedDocToView.dataEmissao,
+          dataVencimento: selectedDocToView.vencimento || selectedDocToView.dataVencimento,
+          arquivoAnexoBase64: selectedDocToView.arquivoAnexoBase64
+        } : null}
+      />
 
       {/* Modal de Alteração Obrigatoria ou Solicitada de Senha */}
       <ChangePasswordModal 

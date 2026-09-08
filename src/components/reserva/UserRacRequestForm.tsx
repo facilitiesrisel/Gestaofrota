@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RacRental } from '../../types_reserva';
 import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
+import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 import { addRacRental, sendEmail, generateRacEmailHtml } from '../../services/firebaseService';
 import { checkDriverCnhStatus, saveDriverCnhRecord } from '../../services/cnhService';
 import Modal from './Modal';
@@ -26,7 +28,7 @@ const VEHICLE_CATEGORIES = [
 ];
 
 // Cidades com bases Risel para destaque no topo
-const BASE_CITIES = ['Paulínia', 'Betim', 'Jales', 'Aguai', 'Campinas', 'São Paulo', 'Belo Horizonte', 'Rio de Janeiro'];
+const BASE_CITIES = ['Paulínia', 'Betim', 'Jales', 'Aguaí', 'Campinas', 'São Paulo', 'Belo Horizonte', 'Rio de Janeiro'];
 
 const parseDateTime = (dateTimeStr: string) => {
   if (!dateTimeStr) return new Date();
@@ -265,10 +267,13 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
       const randomCode = Math.floor(1000 + Math.random() * 9000);
       const protocolNumber = `RAC-${nowStr}-${randomCode}`;
 
-      const finalSector = formData.requesterSector.trim() || 'GERAL';
+      const finalSector = normalizeNomeSetor(formData.requesterSector, 'Operações');
 
       const finalDriverName = isDriverSameAsRequester ? formData.requesterName : formData.driverName;
       const finalDriverRole = isDriverSameAsRequester ? formData.requesterRole : formData.driverRole;
+
+      const normPickupCity = normalizeCidade(formData.pickupCity.trim());
+      const normReturnCity = normalizeCidade(formData.returnCity.trim());
 
       // Monta objeto da locação RAC
       const newRentalData: Omit<RacRental, 'id'> = {
@@ -284,15 +289,15 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         driverName: finalDriverName.toUpperCase().trim(),
         driverRole: finalDriverRole.toUpperCase().trim(),
         status: 'Solicitada',
-        base: formData.pickupCity || 'Matriz',
+        base: normalizeBaseOperacional(normPickupCity) || 'Matriz',
         createdByUser: formData.requesterEmail || 'Solicitante Público RAC',
         reservationDate: new Date(),
         pickupDate: pickupDateObj,
-        pickupStore: formData.pickupCity + ' (A definir loja)',
+        pickupStore: normPickupCity + ' (A definir loja)',
         returnDate: returnDateObj,
-        returnStore: formData.returnCity + ' (A definir loja)',
-        pickupCity: formData.pickupCity.trim(),
-        returnCity: formData.returnCity.trim(),
+        returnStore: normReturnCity + ' (A definir loja)',
+        pickupCity: normPickupCity,
+        returnCity: normReturnCity,
         category: 'Conforme Observações',
         purpose: formData.purpose.trim(),
         observations: formData.observations.trim(),
@@ -476,7 +481,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-              Solicitar Locação de Veículo (RAC)
+              Solicitar Veículo Locado
             </h2>
           </div>
         </div>
@@ -520,11 +525,17 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                 type="text"
                 required
                 name="requesterSector"
+                list="rac-user-setores-list"
                 value={formData.requesterSector}
                 onChange={handleChange}
                 placeholder="Ex: Comercial, Manutenção, Diretoria..."
-                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase"
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all"
               />
+              <datalist id="rac-user-setores-list">
+                {SETORES_OFICIAIS.map(s => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
             </div>
 
             <div>

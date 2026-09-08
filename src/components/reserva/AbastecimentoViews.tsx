@@ -11,7 +11,9 @@ import {
   BarChart, Bar, Legend, Cell, AreaChart, Area, ReferenceLine
 } from "recharts";
 import { Veiculo, Abastecimento } from "../../pages/Frota";
+import { MercosulPlateBadge } from "../MercosulPlateBadge";
 import { toTitleCase } from "../../lib/utils";
+import { normalizeCidade, normalizeBaseOperacional, isSameCityOrBase } from "../../utils/baseOperacional";
 
 export function parseAbastDate(dataStr?: string | null): Date {
   if (!dataStr) return new Date();
@@ -71,7 +73,8 @@ const mapAbastecimentosComVeiculos = (abastecimentos: Abastecimento[], veiculos:
       return {
         ...ab,
         placa: cleanPlate,
-        base: veic ? veic.filial : (ab.base || "CAMPINEIRA"),
+        base: normalizeBaseOperacional(veic ? veic.filial : (ab.base || "Campinas")),
+        cidade: normalizeCidade(ab.cidade),
         condutor: veic ? veic.condutor : (ab.condutor || "Sem Motorista Associado"),
         litros: typeof ab.litros === 'number' && !isNaN(ab.litros) ? ab.litros : 0,
         valorTotal: typeof ab.valorTotal === 'number' && !isNaN(ab.valorTotal) ? ab.valorTotal : 0,
@@ -184,7 +187,7 @@ export const AbastecimentoTableView: React.FC<AbastecimentoViewProps> = ({
   const rawData = useMemo(() => {
     let filtered = abastecimentosMapeados;
     if (filterPlaca) filtered = filtered.filter(a => a.placa.includes(filterPlaca));
-    if (filterBase) filtered = filtered.filter(a => a.base === filterBase);
+    if (filterBase) filtered = filtered.filter(a => isSameCityOrBase(a.base, filterBase));
     if (filterCondutor) filtered = filtered.filter(a => a.condutor.toLowerCase().includes(filterCondutor.toLowerCase()));
     
     // Agrupar por Placa
@@ -450,7 +453,9 @@ export const AbastecimentoTableView: React.FC<AbastecimentoViewProps> = ({
                         )}
                       </button>
                     </td>
-                    <td className="py-3 px-3 font-mono text-slate-900 font-bold tracking-tight text-[11px] whitespace-nowrap">{item.placa}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap align-middle">
+                      <MercosulPlateBadge plate={item.placa} size="sm" />
+                    </td>
                     <td className="py-3 px-3 text-slate-500 text-[10px] whitespace-nowrap">{toTitleCase(item.base) || "Frota Risel"}</td>
                     <td className="py-3 px-3 text-slate-700 font-medium max-w-[180px] truncate whitespace-nowrap">{toTitleCase(item.condutor) || "Sem Motorista Associado"}</td>
                     <td className="py-3 px-3 text-right text-slate-800 font-bold whitespace-nowrap">{formatNum(item.litrosCurrent)} L</td>
@@ -483,10 +488,11 @@ export const AbastecimentoTableView: React.FC<AbastecimentoViewProps> = ({
                       <td colSpan={10} className="p-3">
                         <div className="bg-white border border-slate-150 rounded-[16px] p-4 shadow-sm text-left mx-6 my-1">
                           <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2">
-                            <span className="text-[10px] font-black text-[#114D38] uppercase tracking-wider flex items-center gap-1.5">
+                            <div className="text-[10px] font-black text-[#114D38] uppercase tracking-wider flex items-center gap-2">
                               <Activity className="w-4 h-4 text-[#114D38]" />
-                              Histórico Diário de Abastecimentos — Veículo {item.placa}
-                            </span>
+                              <span>Histórico Diário de Abastecimentos — Veículo</span>
+                              <MercosulPlateBadge plate={item.placa} size="sm" />
+                            </div>
                             <span className="text-[9px] text-slate-400 font-semibold">Total do Período: {item.abastecimentosDetalhe.length} transações</span>
                           </div>
 
@@ -912,18 +918,14 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
   const biDashboardScrollRef = useRef<HTMLDivElement>(null);
 
   const normalizeCityName = (city?: string): string => {
-    if (!city) return "NÃO INFORMADO";
-    return city
-      .toUpperCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .trim();
+    return normalizeCidade(city);
   };
 
   const abastecimentosMapeados = useMemo(() => {
     return mapAbastecimentosComVeiculos(abastecimentos, veiculos).map(ab => ({
       ...ab,
-      cidade: normalizeCityName(ab.cidade)
+      cidade: normalizeCidade(ab.cidade),
+      base: normalizeBaseOperacional(ab.base)
     }));
   }, [abastecimentos, veiculos]);
 
@@ -944,7 +946,7 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
   const stats = useMemo(() => {
     let filtered = abastecimentosMapeados;
     if (filterPlaca) filtered = filtered.filter(a => a.placa.includes(filterPlaca));
-    if (filterBase) filtered = filtered.filter(a => a.base === filterBase);
+    if (filterBase) filtered = filtered.filter(a => isSameCityOrBase(a.base, filterBase));
     if (filterCondutor) filtered = filtered.filter(a => a.condutor.toLowerCase().includes(filterCondutor.toLowerCase()));
     
     let curValor = 0, pastValor = 0;
@@ -983,7 +985,7 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
   const chartData = useMemo(() => {
     let filtered = abastecimentosMapeados;
     if (filterPlaca) filtered = filtered.filter(a => a.placa.includes(filterPlaca));
-    if (filterBase) filtered = filtered.filter(a => a.base === filterBase);
+    if (filterBase) filtered = filtered.filter(a => isSameCityOrBase(a.base, filterBase));
     if (filterCondutor) filtered = filtered.filter(a => a.condutor.toLowerCase().includes(filterCondutor.toLowerCase()));
 
     // Filtrar pelo período/mês ativo selecionado se houver intervalo de datas
@@ -1010,7 +1012,7 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
       byMonth[m].litros += ab.litros;
       byMonth[m].km += ab.kmPercorrido;
 
-      const baseKey = ab.base || "Indefinida";
+      const baseKey = normalizeBaseOperacional(ab.base);
       if (!byBase[baseKey]) byBase[baseKey] = { base: baseKey, valor: 0 };
       byBase[baseKey].valor += ab.valorTotal;
 
@@ -1019,7 +1021,7 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
       byFuel[fuelKey].value += ab.valorTotal;
       byFuel[fuelKey].litros += ab.litros;
 
-      const normCidade = normalizeCityName(ab.cidade);
+      const normCidade = normalizeCidade(ab.cidade);
       const pKey = `${ab.posto}-${normCidade}`;
       if (!byPosto[pKey]) {
         byPosto[pKey] = { 
@@ -1090,7 +1092,7 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
     const byBaseKmL: Record<string, { base: string, kmTotal: number, litrosTotal: number, valorTotal: number }> = {};
 
     filtered.forEach(ab => {
-      const bKey = ab.base || "Indefinida";
+      const bKey = normalizeBaseOperacional(ab.base);
       if (!byBasePreco[bKey]) byBasePreco[bKey] = { base: bKey, valorTotal: 0, litrosTotal: 0 };
       byBasePreco[bKey].valorTotal += ab.valorTotal;
       byBasePreco[bKey].litrosTotal += ab.litros;
@@ -1229,7 +1231,7 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
   
   const tablePostos = useMemo(() => {
     return chartData.postoData
-      .filter(p => !filterCidade || p.cidade.toLowerCase().includes(filterCidade.toLowerCase()))
+      .filter(p => !filterCidade || isSameCityOrBase(p.cidade, filterCidade) || p.cidade.toLowerCase().includes(filterCidade.toLowerCase()))
       .sort((a, b) => {
         const priceA = a.precoMedioEtanol > 0 ? a.precoMedioEtanol : 999999;
         const priceB = b.precoMedioEtanol > 0 ? b.precoMedioEtanol : 999999;
@@ -1363,7 +1365,24 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
                   <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{fontSize: 9, fill: '#64748b'}} tickFormatter={(val) => `R$ ${val.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`} />
                   <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{fontSize: 9, fill: '#64748b'}} tickFormatter={(val) => `${val.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} L`} />
                   <Tooltip 
-                    contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
+                    contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', backgroundColor: '#ffffff' }}
+                    formatter={(value: any, name: string) => {
+                      const num = Number(value) || 0;
+                      if (name === "Valor Gasto (R$)" || name === "valor") {
+                        return [
+                          num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+                          "Valor Gasto"
+                        ];
+                      }
+                      if (name === "Volume Abastecido (L)" || name === "litros") {
+                        return [
+                          `${num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`,
+                          "Volume Abastecido"
+                        ];
+                      }
+                      return [num.toLocaleString('pt-BR', { maximumFractionDigits: 2 }), name];
+                    }}
+                    labelFormatter={(label: string) => `Período: ${label}`}
                   />
                   <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }} />
                   <Bar yAxisId="left" dataKey="valor" name="Valor Gasto (R$)" fill="#114D38" radius={[4, 4, 0, 0]} />
@@ -1441,29 +1460,38 @@ export const AbastecimentoDashboardView: React.FC<AbastecimentoViewProps> = ({
 
       case "distribuicao_base":
         return (
-          <div key="distribuicao_base" className="bg-white p-5 rounded-[22px] border border-slate-150 shadow-sm flex flex-col gap-4 text-left">
+          <div key="distribuicao_base" className="col-span-full bg-white p-5 rounded-[22px] border border-slate-150 shadow-sm flex flex-col gap-4 text-left">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <h4 className="text-xs font-extrabold text-slate-800 flex items-center gap-2">
                 <Crown className="w-4.5 h-4.5 text-amber-500" /> Distribuição de Gastos por Base / Filial
               </h4>
               {renderControls()}
             </div>
-            <div className="h-64 w-full">
+            <div className="h-72 w-full">
               {chartData.baseData.length === 0 ? (
                 <div className="h-full flex items-center justify-center">
                   <span className="text-xs text-slate-400 font-medium">Nenhum dado por base disponível.</span>
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData.baseData} margin={{ left: -20, top: 10, right: 10, bottom: 0 }}>
+                  <BarChart data={chartData.baseData} margin={{ left: -10, top: 15, right: 15, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="base" axisLine={false} tickLine={false} tick={{fontSize: 9, fill: '#64748b'}} dy={10} />
+                    <XAxis dataKey="base" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#64748b', fontWeight: 600}} dy={10} />
                     <YAxis axisLine={false} tickLine={false} tick={{fontSize: 9, fill: '#64748b'}} tickFormatter={(val) => `R$ ${val.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`} />
                     <Tooltip 
-                      contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
-                      formatter={(val: number) => [formatCurrency(val), "Gasto Total"]}
+                      contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', backgroundColor: '#ffffff' }}
+                      formatter={(val: number) => {
+                        const num = Number(val) || 0;
+                        const totalGeral = chartData.baseData.reduce((acc, curr) => acc + (Number(curr.valor) || 0), 0);
+                        const perc = totalGeral > 0 ? ((num / totalGeral) * 100).toFixed(1) : "0.0";
+                        return [
+                          `${formatCurrency(num)} (${perc}% do total)`,
+                          "Gasto da Base"
+                        ];
+                      }}
+                      labelFormatter={(label: string) => `Base / Filial: ${label}`}
                     />
-                    <Bar dataKey="valor" fill="#f97316" radius={[4, 4, 0, 0]}>
+                    <Bar dataKey="valor" fill="#f97316" radius={[6, 6, 0, 0]} maxBarSize={60}>
                       {chartData.baseData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}

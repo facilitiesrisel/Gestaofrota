@@ -8,8 +8,9 @@ export const isDenyUser = (currentUser?: any): boolean => {
     const email = (currentUser.email || currentUser.username || '').toLowerCase().trim();
     if (
       email === 'deny.goncalves@risel.com.br' ||
-      email === 'deny.risel@gmail.com' ||
       email.includes('deny') ||
+      email === 'lorena.padilha@risel.com.br' ||
+      email.includes('lorena') ||
       currentUser.role === 'admin'
     ) {
       return true;
@@ -35,15 +36,16 @@ export const isDenyUser = (currentUser?: any): boolean => {
           const email = (parsed.email || parsed.username || parsed.name || '').toLowerCase().trim();
           if (
             email === 'deny.goncalves@risel.com.br' ||
-            email === 'deny.risel@gmail.com' ||
             email.includes('deny') ||
+            email === 'lorena.padilha@risel.com.br' ||
+            email.includes('lorena') ||
             parsed.role === 'admin' ||
             parsed.permissions?.admin === true
           ) {
             return true;
           }
         } catch (e) {
-          if (stored.toLowerCase().includes('deny') || stored.toLowerCase().includes('admin')) {
+          if (stored.toLowerCase().includes('deny') || stored.toLowerCase().includes('lorena') || stored.toLowerCase().includes('admin')) {
             return true;
           }
         }

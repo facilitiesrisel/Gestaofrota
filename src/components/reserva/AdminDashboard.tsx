@@ -273,7 +273,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       case 'vehicles':
         return <VehiclesView />;
       case 'fleetStatus':
-        return <FleetStatusView />;
+        return <FleetStatusView isAdmin={true} />;
       case 'settings':
         return <SettingsView />;
       default:

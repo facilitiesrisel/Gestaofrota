@@ -5,6 +5,7 @@ import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
 import { formatCPFCNPJ } from "./Fornecedores";
+import { DocumentoAnexoModal } from "../../components/documentos/DocumentoAnexoModal";
 import { 
   fetchLancamentosSupabase, 
   saveLancamentoSupabase, 
@@ -1506,8 +1507,23 @@ export default function Lancamento() {
                               setViewingAnexo({
                                 nome: formData.nomeArquivoAnexo,
                                 fornecedor: formData.fornecedor || "Não identificado",
+                                fornecedorCnpj: formData.cnpj || "Sem CNPJ",
                                 valor: formData.valorNf ? `R$ ${formData.valorNf}` : "Não identificado",
                                 cnpj: formData.cnpj || "Sem CNPJ",
+                                doc: formData.codigoLancamento || formData.itemSistema || "S/N",
+                                tipo: formData.tipoDocumento || formData.tipo || "NF-e",
+                                estabelecimento: formData.estabelecimento || "",
+                                centroCusto: formData.centroCusto || "",
+                                aprovadores: formData.aprovadores || "",
+                                formaPagto: formData.formaPagamento || "",
+                                itemSistema: formData.itemSistema || "",
+                                lancadoPor: formData.lancadoPor || "",
+                                status: formData.status || "Aguardando aprovação",
+                                frequencia: formData.tipo || "Esporádico",
+                                dataEmissao: formData.dataEmissao || "",
+                                dataVencimento: formData.dataVencimento || "",
+                                descricao: formData.descricao || "",
+                                observacao: formData.observacao || "",
                                 arquivoAnexoBase64: formData.arquivoAnexoBase64
                               });
                             }}
@@ -2257,12 +2273,20 @@ export default function Lancamento() {
                                         fornecedorCnpj: item.cnpj || "Sem CNPJ",
                                         valor: item.valor,
                                         cnpj: item.cnpj || "Sem CNPJ",
-                                        doc: item.doc,
+                                        doc: item.doc || item.codigoLancamento || "S/N",
                                         descricao: item.descricao,
-                                        tipo: item.tipo,
+                                        tipo: item.tipo || item.tipoDocumento || "NF-e",
                                         estabelecimento: item.estabelecimento,
-                                        dataEmissao: item.dataEmissao,
-                                        dataVencimento: item.dataVencimento,
+                                        centroCusto: item.centroCusto,
+                                        aprovadores: item.aprovadores,
+                                        formaPagto: item.formaPagto || item.formaPagamento,
+                                        itemSistema: item.itemSistema,
+                                        lancadoPor: item.lancadoPor,
+                                        status: item.status,
+                                        frequencia: item.frequencia,
+                                        dataEmissao: item.dataEmissao || item.dataLancamento,
+                                        dataVencimento: item.dataVencimento || item.vencimento,
+                                        observacao: item.observacao,
                                         arquivoAnexoBase64: item.arquivoAnexoBase64
                                       });
                                     }}
@@ -2563,95 +2587,12 @@ export default function Lancamento() {
         </div>
       )}
 
-      {/* Modal de Visualização de Anexo Simulado */}
-      {viewingAnexo && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-4xl bg-slate-100 rounded-3xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col h-[85vh]">
-            <div className="bg-[#114D38] text-white px-6 py-4 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <FileText className="w-5 h-5 text-rose-300" />
-                <div>
-                  <h3 className="text-sm font-extrabold truncate max-w-md">{viewingAnexo.nome}</h3>
-                  <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">Documento Fiscal Original Anexado</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setViewingAnexo(null)}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center justify-center bg-slate-200/50 min-h-[500px]">
-              {viewingAnexo.arquivoAnexoBase64 ? (
-                viewingAnexo.arquivoAnexoBase64.startsWith("data:application/pdf") ? (
-                  <iframe 
-                    src={viewingAnexo.arquivoAnexoBase64} 
-                    className="w-full h-full border border-slate-300 rounded-xl min-h-[500px]"
-                    title="Documento Fiscal Original"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-4 bg-white border border-slate-300 rounded-xl w-full h-full min-h-[500px] overflow-auto">
-                    <img 
-                      src={viewingAnexo.arquivoAnexoBase64} 
-                      alt="Documento Fiscal Original" 
-                      className="max-w-full max-h-[480px] object-contain shadow rounded"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                )
-              ) : (
-                <div className="w-full max-w-md bg-white rounded-2xl shadow-md border border-slate-200 p-8 text-center space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-                    <FileText className="w-8 h-8" />
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold text-slate-800 text-sm">Sem Arquivo Físico Original</h4>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                      Este lançamento é um dado histórico ou pré-cadastrado que não possui um arquivo PDF físico real anexado nesta máquina. 
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Para visualizar um arquivo real, por favor, selecione um arquivo PDF ao criar ou editar um lançamento.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex justify-between items-center shrink-0">
-              <span className="text-xs text-slate-500 font-bold font-mono truncate max-w-xs">
-                Anexo: {viewingAnexo.nome || "Não definido"}
-              </span>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => {
-                    if (viewingAnexo.arquivoAnexoBase64) {
-                      const link = document.createElement("a");
-                      link.href = viewingAnexo.arquivoAnexoBase64;
-                      link.download = viewingAnexo.nome || "documento_original.pdf";
-                      document.body.appendChild(link);
-                      link.click();
-                      document.body.removeChild(link);
-                    } else {
-                      alert("Não há arquivo físico anexado para download. Por favor, adicione um arquivo PDF real editando este lançamento.");
-                    }
-                  }}
-                  className="px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-extrabold text-xs transition-colors cursor-pointer shadow-sm"
-                >
-                  Baixar Documento Original
-                </button>
-                <button 
-                  onClick={() => setViewingAnexo(null)}
-                  className="px-4 py-2 rounded-xl bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold text-xs transition-colors cursor-pointer shadow-sm"
-                >
-                  Fechar Visualizador
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal Seguro de Visualização de Documento Anexo */}
+      <DocumentoAnexoModal
+        isOpen={!!viewingAnexo}
+        onClose={() => setViewingAnexo(null)}
+        documento={viewingAnexo}
+      />
 
       {/* Modal de Criação de Novo Centro de Custo */}
       {isNewCcModalOpen && (

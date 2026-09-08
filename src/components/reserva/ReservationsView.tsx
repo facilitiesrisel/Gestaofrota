@@ -12,6 +12,8 @@ import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
 import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { normalizeCidade } from '../../utils/baseOperacional';
+import { normalizeNomeSetor } from '../../utils/setorOperacional';
 
 // Helper para calcular duração estimada
 const formatDuration = (start: Date | string, end: Date | string) => {
@@ -571,7 +573,7 @@ const ReservationsView: React.FC = () => {
             {selectedReservation && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1.5">
                     <p><strong className="text-slate-700">Solicitante:</strong> {selectedReservation.requesterName}</p>
-                    <p><strong className="text-slate-700">Destino:</strong> {selectedReservation.destinationCity} - {selectedReservation.destination}</p>
+                    <p><strong className="text-slate-700">Destino:</strong> {normalizeCidade(selectedReservation.destinationCity)} - {selectedReservation.destination}</p>
                     <p><strong className="text-slate-700">Data de Saída:</strong> {new Date(selectedReservation.departureDateTime).toLocaleString('pt-BR')}</p>
                 </div>
             )}
@@ -625,7 +627,7 @@ const ReservationsView: React.FC = () => {
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Destino:</span>
-                <span className="font-bold text-slate-900">{selectedReservation.destinationCity} - {selectedReservation.destination}</span>
+                <span className="font-bold text-slate-900">{normalizeCidade(selectedReservation.destinationCity)} - {selectedReservation.destination}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Período:</span>
@@ -869,7 +871,7 @@ const ReservationsView: React.FC = () => {
                               <tr key={res.id} className="hover:bg-slate-50/60 transition-colors">
                                   <td className="px-6 py-4">
                                       <div className="text-sm font-bold text-gray-900">{res.requesterName}</div>
-                                      <div className="text-xs text-gray-500">{res.department} {res.role ? `• ${res.role}` : ''}</div>
+                                      <div className="text-xs text-gray-500">{normalizeNomeSetor(res.department)} {res.role ? `• ${res.role}` : ''}</div>
                                   </td>
                                   <td className="px-6 py-4 text-sm font-medium text-slate-600">
                                       {res.requestTimestamp ? new Date(res.requestTimestamp).toLocaleDateString('pt-BR') : '-'}
@@ -895,7 +897,7 @@ const ReservationsView: React.FC = () => {
                                       </div>
                                   </td>
                                   <td className="px-6 py-4 text-xs font-medium text-slate-750">
-                                      <div className="font-bold text-slate-800">{res.destinationCity}</div>
+                                      <div className="font-bold text-slate-800">{normalizeCidade(res.destinationCity)}</div>
                                       <div className="text-[11px] text-slate-500 truncate max-w-[140px]">{res.destination || '-'}</div>
                                   </td>
                                   <td className="px-6 py-4 text-xs">
@@ -955,7 +957,7 @@ const ReservationsView: React.FC = () => {
                                     ) : (
                                         <p><strong>Retorno Previsto:</strong> {new Date(res.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
                                     )}
-                                    <p><strong>Destino:</strong> {res.destinationCity} {res.destination ? `(${res.destination})` : ''}</p>
+                                    <p><strong>Destino:</strong> {normalizeCidade(res.destinationCity)} {res.destination ? `(${res.destination})` : ''}</p>
                                     {res.status === ReservationStatus.Completed && (
                                         <p><strong>KM Final:</strong> <span className="font-mono text-emerald-800 font-bold">{res.finalKm ? `${res.finalKm.toLocaleString('pt-BR')} km` : 'N/I'}</span></p>
                                     )}
@@ -1019,7 +1021,7 @@ const ReservationsView: React.FC = () => {
                                       <div>{new Date(res.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
                                       <div className="text-xs text-slate-550 font-medium">até {new Date(res.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
                                   </td>
-                                  <td className="px-6 py-4 text-sm font-medium text-slate-750">{res.destinationCity}</td>
+                                  <td className="px-6 py-4 text-sm font-medium text-slate-750">{normalizeCidade(res.destinationCity)}</td>
                                   <td className="px-6 py-4">{getStatusChip(res.status)}</td>
                                   <td className="px-6 py-4 flex gap-2 justify-end">
                                       {res.status === ReservationStatus.Pending && (
@@ -1068,7 +1070,7 @@ const ReservationsView: React.FC = () => {
                                     <p><strong>Veículo:</strong> {getVehicleById(res.vehicleId)?.model} - {getVehicleById(res.vehicleId)?.plate}</p>
                                     <p><strong>Saída:</strong> {new Date(res.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
                                     <p><strong>Retorno Previsto:</strong> {new Date(res.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
-                                    <p><strong>Destino:</strong> {res.destinationCity}</p>
+                                    <p><strong>Destino:</strong> {normalizeCidade(res.destinationCity)}</p>
                                 </div>
                                 <div className="flex justify-end mt-3 gap-3 border-t pt-3">
                                       {res.status === ReservationStatus.Pending && (

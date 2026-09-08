@@ -27,6 +27,8 @@ import {
   generateRacEmailHtml
 } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
+import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 import { useAuth } from '../../context/ReservationAuthContext';
 import { 
   PlusIcon, 
@@ -46,48 +48,7 @@ import {
 } from './icons';
 import Modal from './Modal';
 import { firebaseConfig } from '../../firebaseConfig';
-
-// Componente de Placa Mercosul Realista e de Alto Padrão
-const MercosulPlateBadge: React.FC<{ plate?: string }> = ({ plate }) => {
-    const cleanPlate = (plate || '').toUpperCase().trim();
-    const hasValidPlate = cleanPlate.length >= 6;
-    
-    if (!hasValidPlate) {
-        return (
-            <div className="inline-flex items-center justify-center border border-dashed border-slate-300 bg-slate-100/80 rounded-lg px-2.5 py-1 text-center select-none" style={{ minWidth: '92px' }}>
-                <span className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">
-                    {cleanPlate || 'SEM PLACA'}
-                </span>
-            </div>
-        );
-    }
-    
-    return (
-        <div className="inline-flex flex-col items-center justify-center border border-slate-300 rounded-lg overflow-hidden shadow-xs bg-white select-none hover:border-slate-400 transition-all" style={{ width: '92px', minWidth: '92px' }}>
-            {/* Faixa Azul Mercosul */}
-            <div className="w-full py-0.5 px-1.5 flex items-center justify-between bg-[#003399]">
-                <div className="flex items-center gap-0.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-300 opacity-90"></div>
-                    <div className="w-1 h-1 rounded-full bg-yellow-200 opacity-70"></div>
-                </div>
-                <span className="text-[7.5px] font-black text-white tracking-widest leading-none font-sans uppercase">
-                    BRASIL
-                </span>
-                <div className="w-2.5 h-1.5 bg-emerald-500 rounded-[1px] relative flex items-center justify-center overflow-hidden">
-                    <div className="w-1.5 h-1 bg-yellow-400 rotate-45 transform"></div>
-                    <div className="w-0.5 h-0.5 rounded-full bg-blue-700 absolute"></div>
-                </div>
-            </div>
-
-            {/* Corpo da Placa com Código e Fonte Monospace */}
-            <div className="w-full bg-white py-0.5 px-1 text-center flex items-center justify-center">
-                <span className="text-[12px] font-mono font-black tracking-wider leading-tight text-slate-900">
-                    {cleanPlate}
-                </span>
-            </div>
-        </div>
-    );
-};
+import { MercosulPlateBadge } from '../MercosulPlateBadge';
 
 // Helper to calculate usage time dynamically
 const calculateUsageTime = (start: Date | string, end: Date | string) => {
@@ -632,19 +593,29 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 ...updatedData
             };
 
-            // Prepara anexos do e-mail de aprovação (Voucher da Reserva)
+            // Prepara anexos do e-mail de aprovação/resposta (Voucher da Locadora e CNH do Condutor)
             const emailAttachments: Array<{ filename: string; content?: string; contentType?: string }> = [];
             
+            // 1. Voucher da Locadora
             if (voucherFile && voucherFile.base64) {
                 emailAttachments.push({
                     filename: voucherFile.fileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
                     content: voucherFile.base64,
                     contentType: voucherFile.file.type || 'application/pdf'
                 });
-            } else if (selectedRental.voucherBase64) {
+            } else if (selectedRental.voucherBase64 || fullUpdated.voucherBase64) {
                 emailAttachments.push({
-                    filename: selectedRental.voucherFileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
-                    content: selectedRental.voucherBase64,
+                    filename: selectedRental.voucherFileName || fullUpdated.voucherFileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
+                    content: selectedRental.voucherBase64 || fullUpdated.voucherBase64,
+                    contentType: 'application/pdf'
+                });
+            }
+
+            // 2. Preserva CNH do Condutor se vinculada à reserva
+            if (fullUpdated.cnhBase64) {
+                emailAttachments.push({
+                    filename: fullUpdated.cnhFileName || `CNH_${(fullUpdated.driverName || 'Condutor').replace(/\s+/g, '_')}.pdf`,
+                    content: fullUpdated.cnhBase64,
                     contentType: 'application/pdf'
                 });
             }
@@ -654,7 +625,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 const emailHtml = generateRacEmailHtml(fullUpdated, {
                     actionType: 'approved',
                     adminNotes: approveFormData.adminNotes.trim(),
-                    voucherAttachedNow: emailAttachments.length > 0
+                    voucherAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('voucher')),
+                    cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
                 const recipients = [...ADMIN_EMAIL_RECIPIENTS];
@@ -718,12 +690,31 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 ...updatedData
             };
 
+            // Prepara anexos para o e-mail de recusa (mantém documentos originais anexados para conferência)
+            const emailAttachments: Array<{ filename: string; content?: string; contentType?: string }> = [];
+            if (fullUpdated.voucherBase64) {
+                emailAttachments.push({
+                    filename: fullUpdated.voucherFileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
+                    content: fullUpdated.voucherBase64,
+                    contentType: 'application/pdf'
+                });
+            }
+            if (fullUpdated.cnhBase64) {
+                emailAttachments.push({
+                    filename: fullUpdated.cnhFileName || `CNH_${(fullUpdated.driverName || 'Condutor').replace(/\s+/g, '_')}.pdf`,
+                    content: fullUpdated.cnhBase64,
+                    contentType: 'application/pdf'
+                });
+            }
+
             // Dispara e-mail de Recusa com justificativa e observações
             try {
                 const emailHtml = generateRacEmailHtml(fullUpdated, {
                     actionType: 'rejected',
                     rejectReason: rejectReason.trim(),
-                    adminNotes: rejectReason.trim()
+                    adminNotes: rejectReason.trim(),
+                    voucherAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('voucher')),
+                    cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
                 const recipients = [...ADMIN_EMAIL_RECIPIENTS];
@@ -734,7 +725,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 await sendEmail(
                     recipients,
                     `[Solicitação RAC RECUSADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
-                    emailHtml
+                    emailHtml,
+                    {
+                        fromName: 'Gestão de Reservas Risel',
+                        cc: fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : undefined,
+                        attachments: emailAttachments.length > 0 ? emailAttachments : undefined
+                    }
                 );
             } catch (mailErr) {
                 console.warn("Aviso ao enviar e-mail de recusa RAC:", mailErr);
@@ -765,7 +761,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 rentalCompany: formData.rentalCompany || 'Localiza',
                 plate: (formData.plate || '').toUpperCase().trim(),
                 requesterName: (formData.requesterName || '').trim(),
-                requesterSector: (formData.requesterSector || '').trim(),
+                requesterSector: normalizeNomeSetor(formData.requesterSector),
                 requesterRole: (formData.requesterRole || '').trim(),
                 requesterEmail: (formData.requesterEmail || '').trim(),
                 requesterPhone: (formData.requesterPhone || '').trim(),
@@ -780,8 +776,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 purpose: (formData.purpose || '').trim(),
                 observations: (formData.observations || '').trim(),
                 adminNotes: (formData.adminNotes || '').trim(),
-                pickupCity: (formData.pickupCity || '').trim(),
-                returnCity: (formData.returnCity || '').trim(),
+                pickupCity: normalizeCidade((formData.pickupCity || '').trim()),
+                returnCity: normalizeCidade((formData.returnCity || '').trim()),
                 reservationDate: formData.reservationDate ? new Date(formData.reservationDate) : new Date(),
                 pickupDate: formData.pickupDate ? new Date(formData.pickupDate) : new Date(),
                 pickupStore: (formData.pickupStore || '').trim(),
@@ -792,15 +788,33 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             if (selectedRental) {
                 await updateRacRental(selectedRental.id, dataToSave);
 
-                // Envia e-mail de atualização com observações se for edição
+                // Envia e-mail de atualização com observações e documentos se for edição
                 try {
                     const fullUpdated: RacRental = {
                         ...selectedRental,
                         ...dataToSave
                     };
+                    const emailAttachments: Array<{ filename: string; content?: string; contentType?: string }> = [];
+                    if (fullUpdated.voucherBase64) {
+                        emailAttachments.push({
+                            filename: fullUpdated.voucherFileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
+                            content: fullUpdated.voucherBase64,
+                            contentType: 'application/pdf'
+                        });
+                    }
+                    if (fullUpdated.cnhBase64) {
+                        emailAttachments.push({
+                            filename: fullUpdated.cnhFileName || `CNH_${(fullUpdated.driverName || 'Condutor').replace(/\s+/g, '_')}.pdf`,
+                            content: fullUpdated.cnhBase64,
+                            contentType: 'application/pdf'
+                        });
+                    }
+
                     const emailHtml = generateRacEmailHtml(fullUpdated, {
                         actionType: 'updated',
-                        adminNotes: (formData.adminNotes || '').trim()
+                        adminNotes: (formData.adminNotes || '').trim(),
+                        voucherAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('voucher')),
+                        cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                     });
                     const recipients = [...ADMIN_EMAIL_RECIPIENTS];
                     if (fullUpdated.requesterEmail && !recipients.includes(fullUpdated.requesterEmail)) {
@@ -809,7 +823,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     await sendEmail(
                         recipients,
                         `[Atualização de Locação RAC] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
-                        emailHtml
+                        emailHtml,
+                        {
+                            fromName: 'Gestão de Reservas Risel',
+                            cc: fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : undefined,
+                            attachments: emailAttachments.length > 0 ? emailAttachments : undefined
+                        }
                     );
                 } catch (mErr) {
                     console.warn("Aviso ao enviar e-mail de atualização RAC:", mErr);
@@ -1452,11 +1471,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 <div className="flex flex-col gap-1 text-[11px]">
                                                     <div className="flex items-center gap-1.5 text-slate-800">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                                        <span className="font-bold">{r.pickupCity || r.pickupStore || 'Retirada a definir'}</span>
+                                                        <span className="font-bold">{r.pickupCity ? normalizeCidade(r.pickupCity) : (r.pickupStore || 'Retirada a definir')}</span>
                                                     </div>
                                                     <div className="flex items-center gap-1.5 text-slate-500">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                                                        <span className="font-medium">{r.returnCity || r.returnStore || 'Devolução a definir'}</span>
+                                                        <span className="font-medium">{r.returnCity ? normalizeCidade(r.returnCity) : (r.returnStore || 'Devolução a definir')}</span>
                                                     </div>
                                                     {r.category && (
                                                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
@@ -1690,7 +1709,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <div className="flex justify-between">
                                     <span className="text-[10px] text-slate-400 font-bold uppercase">Itinerário</span>
                                     <span className="font-bold text-slate-700">
-                                        {r.pickupCity || 'A definir'} ➔ {r.returnCity || 'A definir'}
+                                        {(r.pickupCity ? normalizeCidade(r.pickupCity) : 'A definir')} ➔ {(r.returnCity ? normalizeCidade(r.returnCity) : 'A definir')}
                                     </span>
                                 </div>
                                 <div className="flex justify-between items-center">
@@ -1813,11 +1832,17 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Setor Solicitante</label>
                                 <input 
                                     type="text" 
+                                    list="rac-admin-setores-list"
                                     value={formData.requesterSector} 
                                     onChange={e => setFormData({ ...formData, requesterSector: e.target.value })}
-                                    placeholder="Ex: Operações, Logística, Diretoria"
+                                    placeholder="Ex: Operações, Comercial, Diretoria"
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
                                 />
+                                <datalist id="rac-admin-setores-list">
+                                    {SETORES_OFICIAIS.map(s => (
+                                        <option key={s} value={s} />
+                                    ))}
+                                </datalist>
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Telefone / WhatsApp</label>
@@ -2040,7 +2065,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             Solicitante: <span className="font-bold">{selectedRental?.requesterName}</span> ({selectedRental?.requesterEmail || 'Sem e-mail cadastrado'})
                         </p>
                         <p className="text-slate-600 font-medium">
-                            Itinerário: <span className="font-bold">{selectedRental?.pickupCity || 'Origem'}</span> ➔ <span className="font-bold">{selectedRental?.returnCity || 'Destino'}</span>
+                            Itinerário: <span className="font-bold">{(selectedRental?.pickupCity ? normalizeCidade(selectedRental.pickupCity) : 'Origem')}</span> ➔ <span className="font-bold">{(selectedRental?.returnCity ? normalizeCidade(selectedRental.returnCity) : 'Destino')}</span>
                         </p>
                     </div>
 
@@ -2139,8 +2164,20 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 )}
                             </div>
                             <p className="text-[11px] text-emerald-800/80">
-                                O voucher anexado será encaminhado automaticamente no e-mail de aprovação para o solicitante.
+                                O voucher anexado será encaminhado automaticamente no e-mail de aprovação para o solicitante e gestores.
                             </p>
+
+                            {selectedRental?.cnhBase64 && (
+                                <div className="p-2 bg-blue-50/80 border border-blue-200 rounded-lg flex items-center justify-between text-xs text-blue-900 font-semibold">
+                                    <div className="flex items-center gap-1.5 truncate">
+                                        <span>🪪</span>
+                                        <span className="truncate">CNH do Condutor anexada ({selectedRental.cnhFileName || 'CNH_Condutor.pdf'})</span>
+                                    </div>
+                                    <span className="text-[10px] font-bold text-blue-700 bg-white px-2 py-0.5 rounded border border-blue-200 shrink-0">
+                                        Mantida no anexo
+                                    </span>
+                                </div>
+                            )}
 
                             <input
                                 ref={voucherInputRef}

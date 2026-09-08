@@ -63,3 +63,84 @@ function sanitizeObject(obj: any) {
     }
   }
 }
+
+/**
+ * Verifica se um host é de rede privada, loopback ou endereço de metadados de nuvem (Prevenção de SSRF)
+ */
+export function isPrivateOrLoopbackHost(hostname: string): boolean {
+  if (!hostname) return true;
+  const host = hostname.toLowerCase().trim();
+
+  // Bloqueia nomes óbvios de loopback e metadados
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host === 'metadata.google.internal' ||
+    host === '169.254.169.254' // Endereço de metadados AWS/GCP/Azure
+  ) {
+    return true;
+  }
+
+  // Se for endereço IPv4, verifica faixas privadas RFC 1918 e Link-Local
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const b0 = parseInt(ipv4Match[1], 10);
+    const b1 = parseInt(ipv4Match[2], 10);
+
+    // 10.0.0.0/8
+    if (b0 === 10) return true;
+    // 127.0.0.0/8 (loopback)
+    if (b0 === 127) return true;
+    // 172.16.0.0/12
+    if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
+    // 192.168.0.0/16
+    if (b0 === 192 && b1 === 168) return true;
+    // 169.254.0.0/16 (link-local / cloud metadata)
+    if (b0 === 169 && b1 === 254) return true;
+    // 0.0.0.0/8
+    if (b0 === 0) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Validador estrito de URLs externas para prevenir SSRF (Server-Side Request Forgery)
+ */
+export function isValidSafeHttpsUrl(urlString: string, allowedHostSuffixes?: string[]): boolean {
+  if (!urlString || typeof urlString !== 'string') return false;
+  try {
+    const parsed = new URL(urlString.trim());
+    if (parsed.protocol !== 'https:') return false;
+    if (isPrivateOrLoopbackHost(parsed.hostname)) return false;
+
+    if (allowedHostSuffixes && allowedHostSuffixes.length > 0) {
+      const host = parsed.hostname.toLowerCase();
+      const isAllowed = allowedHostSuffixes.some(suffix => host === suffix || host.endsWith('.' + suffix));
+      if (!isAllowed) return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validação de URL do Google Apps Script
+ */
+export function validateAppsScriptUrl(url: string): boolean {
+  return isValidSafeHttpsUrl(url, ['script.google.com', 'script.googleusercontent.com']);
+}
+
+/**
+ * Validação de URL do Microsoft OneDrive / SharePoint
+ */
+export function validateOneDriveUrl(url: string): boolean {
+  return isValidSafeHttpsUrl(url, ['sharepoint.com', 'onedrive.live.com', '1drv.ms', 'microsoft.com']);
+}
+
