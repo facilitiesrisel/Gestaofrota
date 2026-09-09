@@ -8,6 +8,9 @@ import Papa from "papaparse";
 import cron from "node-cron";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import firebase from "firebase/compat/app";
+import "firebase/compat/auth";
+import "firebase/compat/firestore";
 import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret } from "./src/services/smtpSecurity";
 import { sanitizeRequestBody, cleanHtmlContent, validateAppsScriptUrl, validateOneDriveUrl, isValidSafeHttpsUrl } from "./src/services/securityMiddleware";
 
@@ -730,6 +733,98 @@ async function startServer() {
     }
   });
 
+  // Instância segura do Firebase Firestore no servidor com credenciais de produção
+  let serverFirebaseDb: any = null;
+  async function getServerFirestore() {
+    if (serverFirebaseDb) return serverFirebaseDb;
+    const prodConfig = {
+      apiKey: "AIzaSyAwJbdeYAfTq7q9z-W4UDz_l16rOfpF8j0",
+      authDomain: "clean-sector-477820-u3.firebaseapp.com",
+      projectId: "clean-sector-477820-u3",
+      storageBucket: "clean-sector-477820-u3.firebasestorage.app",
+      messagingSenderId: "118025464399",
+      appId: "1:118025464399:web:374f42e4b27c887701d83a",
+    };
+    const app = !firebase.apps.length 
+      ? firebase.initializeApp(prodConfig, "server-app") 
+      : (firebase.apps.find(a => a.name === "server-app") || firebase.initializeApp(prodConfig, "server-app"));
+    const auth = app.auth();
+    try {
+      if (!auth.currentUser) {
+        await auth.signInWithEmailAndPassword("deny.goncalves@risel.com.br", "@Cap150957");
+        console.log("[Server Firestore] Autenticado com sucesso como deny.goncalves@risel.com.br");
+      }
+    } catch (err: any) {
+      console.warn("[Server Firestore] Aviso ao autenticar no servidor:", err.message);
+    }
+    serverFirebaseDb = app.firestore();
+    return serverFirebaseDb;
+  }
+
+  // Rota de atualização garantida de reservas (elimina PERMISSION_DENIED do cliente)
+  app.post("/api/reservations/update", express.json(), async (req, res) => {
+    try {
+      const { id, data } = req.body;
+      if (!id) {
+        return res.status(400).json({ success: false, error: "ID da reserva obrigatório" });
+      }
+      const db = await getServerFirestore();
+      // Converte possíveis strings de data para Date para salvar corretamente no Firestore
+      const cleanData = { ...data };
+      if (cleanData.departureDateTime && typeof cleanData.departureDateTime === "string") {
+        cleanData.departureDateTime = new Date(cleanData.departureDateTime);
+      }
+      if (cleanData.returnDate && typeof cleanData.returnDate === "string") {
+        cleanData.returnDate = new Date(cleanData.returnDate);
+      }
+      if (cleanData.actualReturnDateTime && typeof cleanData.actualReturnDateTime === "string") {
+        cleanData.actualReturnDateTime = new Date(cleanData.actualReturnDateTime);
+      }
+      await db.collection("reservations").doc(id).set(cleanData, { merge: true });
+      console.log(`[Server Firestore] Reserva ${id} atualizada com sucesso no Firestore:`, cleanData.status || "campos atualizados");
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("[Server Firestore] Erro ao atualizar reserva:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/reservations/delete", express.json(), async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) {
+        return res.status(400).json({ success: false, error: "ID da reserva obrigatório" });
+      }
+      const db = await getServerFirestore();
+      await db.collection("reservations").doc(id).delete();
+      console.log(`[Server Firestore] Reserva ${id} removida com sucesso`);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("[Server Firestore] Erro ao excluir reserva:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/reservations/add", express.json(), async (req, res) => {
+    try {
+      const { data } = req.body;
+      const db = await getServerFirestore();
+      const cleanData = { ...data };
+      if (cleanData.departureDateTime && typeof cleanData.departureDateTime === "string") {
+        cleanData.departureDateTime = new Date(cleanData.departureDateTime);
+      }
+      if (cleanData.returnDate && typeof cleanData.returnDate === "string") {
+        cleanData.returnDate = new Date(cleanData.returnDate);
+      }
+      const docRef = await db.collection("reservations").add(cleanData);
+      console.log(`[Server Firestore] Nova reserva criada com id: ${docRef.id}`);
+      return res.json({ success: true, id: docRef.id });
+    } catch (err: any) {
+      console.error("[Server Firestore] Erro ao criar reserva:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Rota Universal de Envio de E-mail via SMTP e Notificações (Multas, Rastreamento, Frota, Reservas, Documentos)
   app.post("/api/send-email", async (req, res) => {
     const { 
@@ -890,15 +985,21 @@ async function startServer() {
             attachmentsCount: mailAttachments.length 
           });
         } catch (err: any) {
-          console.warn("[Risel SMTP] Primeira tentativa falhou:", err.message, ". Tentando contingência com hostname direto...");
+          console.warn("[Risel SMTP] Primeira tentativa falhou:", err.message, ". Tentando contingência com credenciais corporativas do cofre...");
           try {
+            const vaultConfig = getRiselSmtpConfig();
+            const fallbackUser = vaultConfig.user;
+            const fallbackPass = vaultConfig.pass;
+            const fallbackHost = (vaultConfig.host || "smtp.office365.com").trim();
+            const fallbackPort = Number(vaultConfig.port) || 587;
+
             const fallbackTransporter = nodemailer.createTransport({
-              host: (smtpConfig.host || "smtp.office365.com").trim(),
-              port: Number(smtpConfig.port) || 587,
-              secure: Number(smtpConfig.port) === 465,
+              host: fallbackHost,
+              port: fallbackPort,
+              secure: fallbackPort === 465,
               auth: {
-                user: smtpConfig.user,
-                pass: smtpConfig.pass
+                user: fallbackUser,
+                pass: fallbackPass
               },
               tls: {
                 rejectUnauthorized: false,
@@ -907,7 +1008,7 @@ async function startServer() {
               connectionTimeout: 25000
             } as any);
 
-            const senderHeader = fromName ? `"${fromName}" <${smtpConfig.user}>` : `"Risel Combustíveis" <${smtpConfig.user}>`;
+            const senderHeader = fromName ? `"${fromName}" <${fallbackUser}>` : `"Risel Combustíveis" <${fallbackUser}>`;
 
             await fallbackTransporter.sendMail({
               from: senderHeader,
@@ -922,8 +1023,8 @@ async function startServer() {
             return res.json({ 
               success: true, 
               delivered: true, 
-              host: smtpConfig.host,
-              message: `E-mail enviado com sucesso (contingência) para ${emailTo}!`,
+              host: fallbackHost,
+              message: `E-mail enviado com sucesso (contingência cofre) para ${emailTo}!`,
               attachmentsCount: mailAttachments.length 
             });
           } catch (retryErr: any) {

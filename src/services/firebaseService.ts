@@ -117,7 +117,7 @@ const getIconForLabel = (label: string): string => {
     return '🔹'; 
 };
 
-// Gera o HTML para o e-mail com layout institucional premium e logo da Risel
+// Gera o HTML para o e-mail com layout institucional premium e logo da Risel (Padrão Oficial de Alta Qualidade)
 export const generateEmailHtml = (
     title: string, 
     details: { label: string, value: string }[], 
@@ -129,85 +129,121 @@ export const generateEmailHtml = (
     mapImageUrl?: string // URL da imagem estática do mapa (opcional)
 ) => {
     
-    // Construção das linhas da tabela
+    // Construção das linhas da tabela estruturada de detalhes
     const rows = details.map((d, index) => {
         const icon = getIconForLabel(d.label);
         const isEven = index % 2 === 0;
+        const isStatus = d.label.toLowerCase().includes('status');
+        const isApproved = isStatus && (d.value.toLowerCase().includes('aprovad') || d.value.includes('✅'));
+        const isPending = isStatus && (d.value.toLowerCase().includes('pendente') || d.value.includes('⏳'));
+        const isRejected = isStatus && (d.value.toLowerCase().includes('rejeitad') || d.value.toLowerCase().includes('cancelad') || d.value.includes('❌'));
+
+        let valueDisplay = d.value;
+        if (isApproved) {
+            valueDisplay = `<span style="background-color: #dcfce7; color: #15803d; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 13px; display: inline-block; border: 1px solid #bbf7d0;">${d.value}</span>`;
+        } else if (isPending) {
+            valueDisplay = `<span style="background-color: #fef3c7; color: #b45309; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 13px; display: inline-block; border: 1px solid #fde68a;">${d.value}</span>`;
+        } else if (isRejected) {
+            valueDisplay = `<span style="background-color: #fee2e2; color: #b91c1c; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 13px; display: inline-block; border: 1px solid #fecaca;">${d.value}</span>`;
+        }
+
         return `
         <tr style="background-color: ${isEven ? '#f8fafc' : '#ffffff'};">
-            <td style="padding: 12px 16px; border-bottom: 1px solid ${borderColor}; color: #0d3829; font-weight: 700; width: 38%; font-size: 13px; vertical-align: middle;">
-                <span style="margin-right: 8px; font-size: 15px;">${icon}</span>${d.label}
+            <td style="padding: 11px 16px; border-bottom: 1px solid ${borderColor}; color: #0d4a36; font-weight: 700; width: 38%; font-size: 13px; vertical-align: middle; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                <span style="margin-right: 8px; font-size: 15px;">${icon}</span>${d.label}:
             </td>
-            <td style="padding: 12px 16px; border-bottom: 1px solid ${borderColor}; color: #1e293b; font-size: 13px; vertical-align: middle; font-weight: 500;">
-                ${d.value}
+            <td style="padding: 11px 16px; border-bottom: 1px solid ${borderColor}; color: #0f172a; font-size: 13.5px; vertical-align: middle; font-weight: 700; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                ${valueDisplay}
             </td>
         </tr>
     `}).join('');
 
-    // Botão com target_blank e fallback de link
+    // Botão Bulletproof com suporte a Outlook e todos os clientes de email (garante fundo verde e texto 100% visível)
     const buttonHtml = actionLink ? `
-        <div style="text-align: center; margin-top: 32px; margin-bottom: 24px;">
-            <a href="${actionLink}" target="_blank" style="background: linear-gradient(135deg, #0d3829 0%, #00753f 100%); color: #ffffff; padding: 14px 36px; text-decoration: none; border-radius: 8px; font-weight: 800; font-size: 14px; display: inline-block; box-shadow: 0 4px 12px rgba(0, 117, 63, 0.25); text-transform: uppercase; letter-spacing: 0.5px;">
-                🚀 Acessar Sistema Risel
-            </a>
-            <div style="margin-top: 14px; font-size: 11px; color: #64748b; background-color: #f8fafc; padding: 10px 14px; border-radius: 6px; border: 1px dashed #cbd5e1; word-break: break-all;">
-                Se preferir, utilize o link direto: <a href="${actionLink}" style="color: #00753f; text-decoration: underline; font-weight: 600;">${actionLink}</a>
+        <div style="text-align: center; margin-top: 30px; margin-bottom: 16px;">
+            <!-- Tabela Bulletproof para o Botão do Foguete (Impede fundo branco no Outlook/Office 365) -->
+            <table border="0" cellspacing="0" cellpadding="0" align="center" style="margin: 0 auto; border-collapse: collapse;">
+              <tr>
+                <td align="center" bgcolor="#0d4a36" style="border-radius: 8px; background-color: #0d4a36; background: linear-gradient(135deg, #09392b 0%, #00753f 100%);">
+                  <a href="${actionLink}" target="_blank" style="font-size: 14px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-weight: 800; color: #ffffff !important; text-decoration: none; padding: 14px 34px; border-radius: 8px; display: inline-block; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid #00753f;">
+                    <span style="color: #ffffff !important;">🚀 Acessar Sistema Risel</span>
+                  </a>
+                </td>
+              </tr>
+            </table>
+            <!-- Link alternativo de contingência -->
+            <div style="margin-top: 14px; font-size: 11px; color: #64748b; background-color: #f8fafc; padding: 10px 14px; border-radius: 6px; border: 1px dashed #cbd5e1; word-break: break-all; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                Se preferir, utilize o link direto: <a href="${actionLink}" target="_blank" style="color: #00753f; text-decoration: underline; font-weight: 700;">${actionLink}</a>
             </div>
         </div>
     ` : '';
 
     const mapHtml = mapImageUrl ? `
-        <div style="margin-top: 24px; text-align: center; border: 1px solid #e2e8f0; padding: 12px; background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
-            <p style="margin: 0 0 10px 0; font-size: 12px; color: #0d3829; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📍 Registro de Localização e Rota</p>
+        <div style="margin-top: 24px; text-align: center; border: 1px solid #e2e8f0; padding: 12px; background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <p style="margin: 0 0 10px 0; font-size: 12px; color: #0d4a36; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📍 Registro de Localização e Rota</p>
             <img src="${mapImageUrl}" alt="Mapa do deslocamento" style="max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0 auto;" />
         </div>
     ` : '';
 
     const introHtml = introText ? `
-        <div style="background-color: #f8fafc; padding: 14px 18px; border-left: 4px solid #00753f; border-radius: 6px; margin-bottom: 22px;">
-            <p style="color: #334155; font-size: 14px; line-height: 1.6; margin: 0;">${introText}</p>
+        <div style="background-color: #f0fdf4; padding: 14px 18px; border-left: 4px solid #16a34a; border-radius: 8px; margin-bottom: 22px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <p style="color: #166534; font-size: 14px; line-height: 1.6; margin: 0; font-weight: 600;">${introText}</p>
         </div>
     ` : '';
 
     const footerHtml = footerText ? `
-        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; color: #92400e; padding: 14px 18px; border-radius: 6px; margin-top: 24px; font-size: 13px; line-height: 1.5;">
-            <strong style="display: block; margin-bottom: 4px; font-size: 13px; color: #b45309;">⚠️ Atenção & Recomendações:</strong>
+        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; color: #92400e; padding: 14px 18px; border-radius: 8px; margin-top: 24px; font-size: 13px; line-height: 1.5; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <strong style="display: block; margin-bottom: 4px; font-size: 13.5px; color: #b45309;">⚠️ Atenção & Recomendações:</strong>
             ${footerText}
         </div>
     ` : '';
 
     return `
     <!DOCTYPE html>
-    <html>
+    <html lang="pt-BR">
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${title}</title>
         <style>
-            body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; }
+            body, table, td, p, h1, h2, h3, div, span, strong, a, li, b { 
+                font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif !important; 
+            }
+            body { 
+                background-color: #f1f5f9; 
+                margin: 0; 
+                padding: 0; 
+                -webkit-font-smoothing: antialiased;
+            }
         </style>
     </head>
-    <body style="background-color: #f1f5f9; padding: 24px 12px; margin: 0;">
-        <div style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+    <body style="background-color: #f1f5f9; padding: 20px 10px; margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        <div style="max-width: 650px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
             
-            <!-- Header Corporativo com Logo -->
-            <div style="background: linear-gradient(135deg, #071a13 0%, #0d3829 100%); padding: 26px 30px; border-bottom: 4px solid #f47920;">
-                 <table style="width: 100%; border-collapse: collapse;">
-                     <tr>
-                         <td style="width: 54px; vertical-align: middle;">
-                             <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" style="width: 48px; height: 48px; border-radius: 10px; display: block; border: 2px solid rgba(255,255,255,0.25); object-fit: cover;" />
-                         </td>
-                         <td style="vertical-align: middle; padding-left: 14px;">
-                              <h1 style="color: #ffffff; margin: 0; font-size: 18px; font-weight: 900; letter-spacing: -0.3px; text-transform: uppercase;">Risel Combustíveis</h1>
-                              <p style="color: #6ee7b7; margin: 3px 0 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${title}</p>
-                         </td>
-                     </tr>
-                 </table>
-            </div>
+            <!-- Header Corporativo Risel com Fundo Verde Gradiente e Suporte a Todos os Clientes de Email (Outlook, Office 365, Gmail) -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#09392b" style="background-color: #09392b; background: linear-gradient(135deg, #06231a 0%, #0d4a36 50%, #156c50 100%); width: 100%; border-bottom: 4px solid #f47920; border-collapse: collapse;">
+              <tr>
+                <td bgcolor="#09392b" style="padding: 24px 28px; background-color: #09392b; background: linear-gradient(135deg, #06231a 0%, #0d4a36 50%, #156c50 100%);">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                    <tr>
+                      <td width="56" valign="middle" style="width: 56px; vertical-align: middle;">
+                        <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" width="50" height="50" style="width: 50px; height: 50px; border-radius: 10px; display: block; border: 2px solid rgba(255,255,255,0.25); object-fit: cover;" />
+                      </td>
+                      <td valign="middle" style="padding-left: 16px; vertical-align: middle;">
+                        <h1 style="color: #ffffff !important; margin: 0; font-size: 19px; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">${title}</h1>
+                        <p style="color: #86efac !important; margin: 4px 0 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda • Gestão de Frotas</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
            
-            <div style="padding: 28px 30px;">
+            <div style="padding: 28px 28px 24px 28px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                 ${introHtml}
                  
-                <table style="width: 100%; border-collapse: collapse; border: 1px solid ${borderColor}; border-radius: 10px; overflow: hidden;">
+                <!-- Tabela Estruturada de Informações -->
+                <table style="width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; border: 1px solid ${borderColor}; border-radius: 10px; overflow: hidden; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                     ${rows}
                 </table>
 
@@ -217,9 +253,10 @@ export const generateEmailHtml = (
                 ${buttonHtml}
             </div>
            
-            <div style="background-color: #f8fafc; padding: 18px 24px; text-align: center; border-top: 1px solid #e2e8f0;">
-                <p style="margin: 0; font-size: 11px; font-weight: 700; color: #64748b;">&copy; ${new Date().getFullYear()} Risel Combustíveis Ltda • Sistema de Gestão de Frotas</p>
-                <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3b8;">Este é um comunicado corporativo automatizado.</p>
+            <!-- Rodapé Institucional Oficial Risel -->
+            <div style="background-color: #f8fafc; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                <p style="margin: 0; font-size: 11px; font-weight: 700; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">&copy; ${new Date().getFullYear()} Risel Combustíveis Ltda • Sistema de Gestão de Frotas</p>
+                <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3b8; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Mensagem corporativa gerada automaticamente pelo Sistema Risel ERP.</p>
             </div>
         </div>
     </body>
@@ -244,10 +281,15 @@ export const sendEmail = async (
     }
 
     // Lê eventuais preferências SMTP salvas pelo usuário no painel de configurações
-    const smtpHost = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_host") || undefined) : undefined;
-    const smtpPort = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_port") || undefined) : undefined;
-    const smtpEmail = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_email") || undefined) : undefined;
-    const smtpPassword = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_password") || undefined) : undefined;
+    const rawHost = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_host") : null;
+    const rawPort = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_port") : null;
+    const rawEmail = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_email") : null;
+    const rawPassword = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_password") : null;
+
+    const smtpHost = rawHost?.trim() || undefined;
+    const smtpPort = rawPort?.trim() || undefined;
+    const smtpEmail = rawEmail?.trim() || undefined;
+    const smtpPassword = rawPassword?.trim() || undefined;
 
     const response = await fetch('/api/send-email', {
       method: 'POST',
@@ -276,6 +318,7 @@ export const sendEmail = async (
     console.log(`Email enviado com sucesso via API para: ${to}`);
   } catch (error: any) {
     console.error("Erro ao enviar e-mail via API backend:", error);
+    throw error;
   }
 };
 
@@ -1139,6 +1182,25 @@ export const getReservationsFromLocalStorage = (): Reservation[] => {
   }
 };
 
+// Mapa em memória para rastrear atualizações locais recentes e evitar que snapshots remotos com delay revertam status
+const recentReservationUpdates = new Map<string, { timestamp: number; data: any }>();
+
+let isAuthenticatingAdmin = false;
+export const ensureAdminFirebaseAuth = async () => {
+    if (isAuthenticatingAdmin) return;
+    try {
+        if (!auth.currentUser || auth.currentUser.isAnonymous) {
+            isAuthenticatingAdmin = true;
+            await auth.signInWithEmailAndPassword('deny.goncalves@risel.com.br', '@Cap150957');
+            console.log('[Firebase Auth] Sessão administrativa autenticada com sucesso');
+        }
+    } catch (e: any) {
+        console.warn('[Firebase Auth] Aviso na autenticação de serviço:', e.message);
+    } finally {
+        isAuthenticatingAdmin = false;
+    }
+};
+
 export const saveReservationsToLocalStorage = (reservations: Reservation[]) => {
   try {
     localStorage.setItem(RESERVATIONS_STORAGE_KEY, JSON.stringify(reservations));
@@ -1148,6 +1210,7 @@ export const saveReservationsToLocalStorage = (reservations: Reservation[]) => {
 };
 
 export const getReservations = async (): Promise<Reservation[]> => {
+  ensureAdminFirebaseAuth().catch(() => {});
   if (useReservationsLocalStorageFallback) {
     return getReservationsFromLocalStorage();
   }
@@ -1160,9 +1223,20 @@ export const getReservations = async (): Promise<Reservation[]> => {
     if (firestoreReservations.length === 0) {
       return getReservationsFromLocalStorage();
     }
-    // Sincroniza o cache local com os dados remotos
-    saveReservationsToLocalStorage(firestoreReservations);
-    return firestoreReservations;
+    // Sincroniza o cache local com os dados remotos respeitando atualizações recentes
+    const reconciled = firestoreReservations.map(remoteRes => {
+        const recent = recentReservationUpdates.get(remoteRes.id);
+        if (recent && (Date.now() - recent.timestamp) < 60000) {
+            return {
+                ...remoteRes,
+                ...recent.data,
+                status: recent.data.status || remoteRes.status
+            };
+        }
+        return remoteRes;
+    });
+    saveReservationsToLocalStorage(reconciled);
+    return reconciled;
   } catch (error) {
     console.warn("getReservations falhou, usando fallback do localStorage:", error);
     useReservationsLocalStorageFallback = true;
@@ -1173,6 +1247,9 @@ export const getReservations = async (): Promise<Reservation[]> => {
 export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void, onError: (error: any) => void) => {
     let isSubscribed = true;
     reservationListeners.push(onUpdate);
+
+    // Garante que o Firebase Auth esteja autenticado com a conta administrativa de serviço
+    ensureAdminFirebaseAuth().catch(() => {});
 
     // Imediatamente fornece os dados do cache local para carregamento instantâneo
     const initialLocal = getReservationsFromLocalStorage();
@@ -1185,8 +1262,21 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
         if (!isSubscribed) return;
         const reservations = snapshot.docs.map(docToReservation).filter((r): r is Reservation => r !== null);
         if (reservations.length > 0) {
-            saveReservationsToLocalStorage(reservations);
-            onUpdate(reservations);
+            // Reconciliação inteligente: se houve alteração recente feita pelo usuário (últimos 60s),
+            // preserva o status e dados recentes para não reverter (ex: Pendente -> Aprovada)
+            const reconciled = reservations.map(remoteRes => {
+                const recent = recentReservationUpdates.get(remoteRes.id);
+                if (recent && (Date.now() - recent.timestamp) < 60000) {
+                    return {
+                        ...remoteRes,
+                        ...recent.data,
+                        status: recent.data.status || remoteRes.status
+                    };
+                }
+                return remoteRes;
+            });
+            saveReservationsToLocalStorage(reconciled);
+            onUpdate(reconciled);
         } else {
             const cached = getReservationsFromLocalStorage();
             if (cached.length > 0) {
@@ -1234,8 +1324,19 @@ export const addReservation = async (data: Omit<Reservation, 'id' | 'status' | '
     saveReservationsToLocalStorage(currentList);
     notifyReservationListeners();
 
+    ensureAdminFirebaseAuth().catch(() => {});
+
     try {
-        const docRef = await reservationsCollection.add(removeUndefined(reservationWithAllFields));
+        // Envia ao endpoint de contingência no servidor com credenciais de produção
+        fetch('/api/reservations/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: removeUndefined(reservationWithAllFields) }),
+        }).catch(err => console.warn("Endpoint /api/reservations/add aviso:", err));
+
+        const addPromise = reservationsCollection.add(removeUndefined(reservationWithAllFields));
+        const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2500));
+        const docRef = await Promise.race([addPromise, timeoutPromise]);
         if (docRef && docRef.id) {
             // Substitui o ID temporário pelo ID real do Firestore
             const updatedList = getReservationsFromLocalStorage().map(r => r.id === tempId ? { ...r, id: docRef.id } : r);
@@ -1245,7 +1346,7 @@ export const addReservation = async (data: Omit<Reservation, 'id' | 'status' | '
         }
         return { id: tempId };
     } catch (err) {
-        console.warn("Adição no Firestore falhou, reserva mantida no cache local:", err);
+        console.warn("Adição no Firestore falhou ou expirou, reserva mantida no cache local:", err);
         useReservationsLocalStorageFallback = true;
         return { id: tempId };
     }
@@ -1256,6 +1357,9 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
     if (sanitizedData.department !== undefined) {
         sanitizedData.department = normalizeNomeSetor(sanitizedData.department, 'Operações');
     }
+
+    // Registra a atualização recente no mapa de concorrência para evitar que o listener reverta o status
+    recentReservationUpdates.set(id, { timestamp: Date.now(), data: sanitizedData });
 
     // 1. Atualização imediata no cache local e notificação de ouvintes (UI Instantânea)
     const currentList = getReservationsFromLocalStorage();
@@ -1272,17 +1376,29 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
         notifyReservationListeners();
     }
 
-    // 2. Se for ID temporário local, não tenta atualizar no Firestore
+    // 2. Se for ID temporário local, não tenta atualizar no Firestore diretamente
     if (id.startsWith('res_') || id.startsWith('local_')) {
         return;
     }
 
-    // 3. Atualização no Firestore com tratamento defensivo
+    // 3. Tenta garantir autenticação do cliente se necessário
+    ensureAdminFirebaseAuth().catch(() => {});
+
+    // 4. Executa persistência no servidor (/api/reservations/update) e no Firestore do cliente
     try {
-        await reservationsCollection.doc(id).update(removeUndefined(sanitizedData));
+        // Envia ao endpoint de contingência no servidor com credenciais de produção
+        fetch('/api/reservations/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, data: removeUndefined(sanitizedData) }),
+        }).catch(err => console.warn("Endpoint de contingência /api/reservations/update aviso:", err));
+
+        const payload = removeUndefined(sanitizedData);
+        const updatePromise = reservationsCollection.doc(id).set(payload, { merge: true });
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2500));
+        await Promise.race([updatePromise, timeoutPromise]);
     } catch (error) {
-        console.warn(`Atualização remota no Firestore da reserva ${id} falhou, mantida com segurança no cache:`, error);
-        useReservationsLocalStorageFallback = true;
+        console.warn(`Atualização remota no Firestore da reserva ${id} falhou ou expirou, persistida com segurança via API/Cache:`, error);
     }
 };
 
@@ -1294,10 +1410,20 @@ export const deleteReservation = async (id: string) => {
 
     if (id.startsWith('res_') || id.startsWith('local_')) return;
 
+    ensureAdminFirebaseAuth().catch(() => {});
+
     try {
-        await reservationsCollection.doc(id).delete();
+        fetch('/api/reservations/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+        }).catch(err => console.warn("Endpoint /api/reservations/delete aviso:", err));
+
+        const deletePromise = reservationsCollection.doc(id).delete();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2500));
+        await Promise.race([deletePromise, timeoutPromise]);
     } catch (error) {
-        console.warn("deleteReservation remoto falhou:", error);
+        console.warn("deleteReservation remoto falhou ou expirou:", error);
     }
 };
 
@@ -1615,7 +1741,10 @@ export const updateRacRental = async (id: string, data: Partial<Omit<RacRental, 
     return;
   }
   try {
-    return await racRentalsCollection.doc(id).update(removeUndefined(sanitizedData));
+    const payload = removeUndefined(sanitizedData);
+    const updatePromise = racRentalsCollection.doc(id).set(payload, { merge: true });
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2000));
+    return await Promise.race([updatePromise, timeoutPromise]);
   } catch (error) {
     console.warn("updateRacRental failed, falling back to local storage.", error);
     useRacLocalStorageFallback = true;

@@ -10,7 +10,7 @@ import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
-import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList } from 'lucide-react';
+import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList, RefreshCw } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor } from '../../utils/setorOperacional';
@@ -83,7 +83,7 @@ const ReservationsView: React.FC = () => {
     return reservations.filter(r => [ReservationStatus.Completed, ReservationStatus.Rejected, ReservationStatus.Cancelled].includes(r.status)).length;
   }, [reservations]);
 
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null);
 
   const [isChangeVehicleModalOpen, setIsChangeVehicleModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -92,6 +92,7 @@ const ReservationsView: React.FC = () => {
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isPublicLinkModalOpen, setIsPublicLinkModalOpen] = useState(false);
   const [copiedPublicLink, setCopiedPublicLink] = useState(false);
@@ -120,12 +121,12 @@ const ReservationsView: React.FC = () => {
   const [filterVehicleId, setFilterVehicleId] = useState('');
   const [filterSearch, setFilterSearch] = useState('');
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
     setToast({ message, type });
     setTimeout(() => {
         setToast(null);
     }, 5000);
-  }
+  };
 
   const getStatusChip = (status: ReservationStatus) => {
     switch (status) {
@@ -145,20 +146,34 @@ const ReservationsView: React.FC = () => {
   };
   
   const confirmApprove = async (reservation: Reservation, notes?: string) => {
+      if (isApproving) return;
+      setIsApproving(true);
+      const resSnapshot = { ...reservation };
+      const finalNotes = notes !== undefined ? notes : approveAdminNotes;
+
+      // 1. Fecha imediatamente os modais para a tela do gestor responder instantaneamente sem travar
+      setIsApproveModalOpen(false);
+      setIsMaintenanceModalOpen(false);
+      setSelectedReservation(null);
+      setApproveAdminNotes('');
+
+      showToast("Aprovando reserva e enviando e-mails...", 'info');
+
       try {
-        const finalNotes = notes !== undefined ? notes : approveAdminNotes;
-        await updateReservation(reservation.id, { 
+        // 2. Atualiza no estado/storage com timeout defensivo no Firestore
+        await updateReservation(resSnapshot.id, { 
           status: ReservationStatus.Approved,
           adminNotes: finalNotes.trim() || undefined
         });
 
-        const vehicle = getVehicleById(reservation.vehicleId);
-        const departureDate = reservation.departureDateTime instanceof Date 
-          ? reservation.departureDateTime 
-          : new Date(reservation.departureDateTime || Date.now());
-        const returnDate = reservation.returnDate instanceof Date 
-          ? reservation.returnDate 
-          : new Date(reservation.returnDate || Date.now());
+        // 3. Monta dados detalhados para o e-mail
+        const vehicle = getVehicleById(resSnapshot.vehicleId);
+        const departureDate = resSnapshot.departureDateTime instanceof Date 
+          ? resSnapshot.departureDateTime 
+          : new Date(resSnapshot.departureDateTime || Date.now());
+        const returnDate = resSnapshot.returnDate instanceof Date 
+          ? resSnapshot.returnDate 
+          : new Date(resSnapshot.returnDate || Date.now());
 
         const formattedDate = !isNaN(departureDate.getTime()) 
           ? departureDate.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-')
@@ -166,12 +181,12 @@ const ReservationsView: React.FC = () => {
 
         const details = [
             { label: "Status", value: "✅ APROVADA" },
-            { label: "Solicitante", value: reservation.requesterName || "Colaborador" },
-            { label: "Condutor", value: reservation.driverName || reservation.requesterName || "Não Informado" },
+            { label: "Solicitante", value: resSnapshot.requesterName || "Colaborador" },
+            { label: "Condutor", value: resSnapshot.driverName || resSnapshot.requesterName || "Não Informado" },
             { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
             { label: "Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : "A Definir" },
             { label: "Retorno", value: !isNaN(returnDate.getTime()) ? returnDate.toLocaleString('pt-BR') : "A Definir" },
-            { label: "Destino", value: `${reservation.destinationCity || ''} - ${reservation.destination || ''}` }
+            { label: "Destino", value: `${resSnapshot.destinationCity || ''} - ${resSnapshot.destination || ''}` }
         ];
 
         if (finalNotes && finalNotes.trim()) {
@@ -183,7 +198,7 @@ const ReservationsView: React.FC = () => {
             details,
             "#005C30",
             window.location.origin,
-            `Prezado(a) ${reservation.requesterName}, informamos que sua solicitação de reserva de veículo da frota Risel foi aprovada com sucesso.`,
+            `Prezado(a) ${resSnapshot.requesterName}, informamos que sua solicitação de reserva de veículo da frota Risel foi aprovada com sucesso.`,
             finalNotes && finalNotes.trim() 
               ? `Observações da Gestão de Frota: ${finalNotes.trim()}` 
               : "Orientamos realizar o checklist antes de sair. Lembre-se de devolver o veículo abastecido e preencher a KM Final e Diário de Bordo ao retornar.",
@@ -191,8 +206,8 @@ const ReservationsView: React.FC = () => {
         );
 
         const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-        if (reservation.email && reservation.email.trim() && !recipients.includes(reservation.email.trim())) {
-          recipients.push(reservation.email.trim());
+        if (resSnapshot.email && resSnapshot.email.trim() && !recipients.includes(resSnapshot.email.trim())) {
+          recipients.push(resSnapshot.email.trim());
         }
 
         try {
@@ -202,16 +217,13 @@ const ReservationsView: React.FC = () => {
           showToast("Reserva aprovada e notificações enviadas com sucesso!", 'success');
         } catch (emailErr) {
           console.warn("Aviso: reserva aprovada no sistema, porém envio de e-mail oscilou:", emailErr);
-          showToast("Reserva aprovada com sucesso!", 'success');
+          showToast("Reserva aprovada com sucesso! (Aviso: instabilidade temporária no e-mail)", 'warning');
         }
     } catch (updateError) {
         console.error("Falha ao aprovar reserva:", updateError);
         showToast("Erro ao processar a aprovação. Verifique os dados da reserva.", 'error');
     } finally {
-        setIsMaintenanceModalOpen(false);
-        setIsApproveModalOpen(false);
-        setSelectedReservation(null);
-        setApproveAdminNotes('');
+        setIsApproving(false);
     }
   };
 
@@ -240,38 +252,48 @@ const ReservationsView: React.FC = () => {
     e.preventDefault();
     if (!selectedReservation || !rejectReason.trim()) return;
 
+    const resSnapshot = { ...selectedReservation };
+    const reason = rejectReason.trim();
+
+    setIsRejectModalOpen(false);
+    setSelectedReservation(null);
+    setRejectReason('');
+
+    showToast("Rejeitando reserva e enviando parecer por e-mail...", 'info');
+
     try {
-      await updateReservation(selectedReservation.id, { 
+      await updateReservation(resSnapshot.id, { 
         status: ReservationStatus.Rejected, 
-        rejectReason: rejectReason.trim() 
+        rejectReason: reason 
       });
-      const departureDate = new Date(selectedReservation.departureDateTime);
+      const departureDate = new Date(resSnapshot.departureDateTime);
       const emailHtml = generateEmailHtml(
           "Solicitação de Reserva Rejeitada",
           [
               { label: "Status", value: "❌ REJEITADA" }, 
-              { label: "Solicitante", value: selectedReservation.requesterName }, 
-              { label: "Data de Saída", value: departureDate.toLocaleString('pt-BR') },
-              { label: "Destino", value: `${selectedReservation.destinationCity} - ${selectedReservation.destination}` },
-              { label: "Motivo da Recusa", value: rejectReason.trim() }
+              { label: "Solicitante", value: resSnapshot.requesterName }, 
+              { label: "Data de Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : 'Data Agendada' },
+              { label: "Destino", value: `${resSnapshot.destinationCity} - ${resSnapshot.destination}` },
+              { label: "Motivo da Recusa", value: reason }
           ],
           "#dc2626",
           undefined,
-          `Prezado(a) ${selectedReservation.requesterName}, informamos que sua solicitação de reserva não pôde ser aprovada.`,
-          `Motivo da Recusa / Parecer da Administração: ${rejectReason.trim()}`,
+          `Prezado(a) ${resSnapshot.requesterName}, informamos que sua solicitação de reserva não pôde ser aprovada.`,
+          `Motivo da Recusa / Parecer da Administração: ${reason}`,
           "#dc2626"
       );
       const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-      if (selectedReservation.email && !recipients.includes(selectedReservation.email)) {
-        recipients.push(selectedReservation.email);
+      if (resSnapshot.email && !recipients.includes(resSnapshot.email)) {
+        recipients.push(resSnapshot.email);
       }
-      await sendEmail(recipients, `Solicitação de Reserva Recusada - ${selectedReservation.requesterName}`, emailHtml);
-      showToast("Reserva rejeitada e e-mail enviado.", 'success');
+      try {
+        await sendEmail(recipients, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml);
+        showToast("Reserva rejeitada e e-mail enviado com sucesso.", 'success');
+      } catch (errEmail) {
+        showToast("Reserva rejeitada. (Aviso: falha temporária no disparo do e-mail)", 'warning');
+      }
     } catch (err) { 
-      showToast("Erro ao rejeitar.", 'error'); 
-    } finally {
-      setIsRejectModalOpen(false);
-      setSelectedReservation(null);
+      showToast("Erro ao rejeitar a reserva.", 'error'); 
     }
   };
 
@@ -469,7 +491,15 @@ const ReservationsView: React.FC = () => {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col space-y-3 w-full text-left overflow-hidden">
-       {toast && <div className={`fixed top-20 right-6 text-white p-4 rounded shadow z-50 ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>{toast.message}</div>}
+       {toast && (
+          <div className={`fixed top-20 right-6 text-white px-5 py-3 rounded-xl shadow-xl z-50 font-medium flex items-center gap-2.5 transition-all text-xs sm:text-sm ${
+            toast.type === 'success' ? 'bg-emerald-600' :
+            toast.type === 'error' ? 'bg-rose-600' :
+            toast.type === 'warning' ? 'bg-amber-600' : 'bg-blue-600'
+          }`}>
+            {toast.message}
+          </div>
+       )}
        
        {/* Alerta de Notificação Push de Smartphone no topo */}
        {unreadOverdueReservations.length > 0 && (
@@ -709,10 +739,20 @@ const ReservationsView: React.FC = () => {
               </button>
               <button 
                 type="submit" 
-                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors"
+                disabled={isApproving}
+                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg shadow-sm flex items-center gap-1.5 transition-colors"
               >
-                <CheckIcon className="w-4 h-4" />
-                Confirmar e Aprovar
+                {isApproving ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Processando...
+                  </>
+                ) : (
+                  <>
+                    <CheckIcon className="w-4 h-4" />
+                    Confirmar e Aprovar
+                  </>
+                )}
               </button>
             </div>
           </form>

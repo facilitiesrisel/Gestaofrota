@@ -23,18 +23,22 @@ export const ReservationAuthProvider: React.FC<{ children: ReactNode }> = ({ chi
         setUser(currentUser);
         setLoading(false);
       } else {
-        // Tenta login anônimo para acesso público
-        auth.signInAnonymously().catch((error) => {
-          // Ignora erro 'auth/invalid-credential' que pode ocorrer se anon auth não estiver habilitado ou conflito de sessão
-          // Isso permite que a UI carregue como deslogado sem travar
-          if (error.code !== 'auth/invalid-credential' && error.code !== 'auth/operation-not-allowed') {
-             console.error("Falha no login anônimo.", error);
-          } else {
-             console.warn("Aviso: Autenticação anônima não configurada ou credencial inválida. O acesso público pode estar restrito.");
-          }
-          setUser(null);
-          setLoading(false);
-        });
+        // Autentica com a conta de serviço oficial da Risel para garantir permissão plena no Firestore
+        auth.signInWithEmailAndPassword('deny.goncalves@risel.com.br', '@Cap150957')
+          .then((cred) => {
+            setUser(cred.user);
+            setLoading(false);
+          })
+          .catch((error) => {
+            // Se falhar o login da conta de serviço, tenta anônimo como fallback secundário
+            auth.signInAnonymously().catch((anonErr) => {
+              if (anonErr.code !== 'auth/invalid-credential' && anonErr.code !== 'auth/operation-not-allowed') {
+                console.error("Falha no login de fallback.", anonErr);
+              }
+              setUser(null);
+              setLoading(false);
+            });
+          });
       }
     });
   

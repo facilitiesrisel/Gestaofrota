@@ -153,7 +153,7 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
     await firebaseApi.updateReservation(id, data);
   }, []);
 
-  // AUTO-START RESERVATIONS Logic
+  // AUTO-START RESERVATIONS Logic (com margem de tolerância operacional)
   useEffect(() => {
     // Apenas administradores logados devem processar essa automação para evitar conflitos ou erros de permissão
     if (!user || user.isAnonymous || reservations.length === 0) return;
@@ -161,10 +161,10 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
     const checkAutoStartReservations = async () => {
         const now = new Date();
         
-        // Filtra reservas que estão Aprovadas E cujo horário de saída já passou
+        // Filtra reservas que estão Aprovadas E cujo horário de saída já passou há pelo menos 10 minutos
         const reservationsToStart = reservations.filter(r => 
             r.status === ReservationStatus.Approved && 
-            new Date(r.departureDateTime) <= now
+            (new Date(r.departureDateTime).getTime() + (10 * 60 * 1000)) <= now.getTime()
         );
 
         if (reservationsToStart.length > 0) {
@@ -183,9 +183,13 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
 
     // Verifica a cada 60 segundos
     const interval = setInterval(checkAutoStartReservations, 60000);
-    checkAutoStartReservations(); // Verifica também ao carregar
+    // Não executa imediatamente no mount para evitar concorrência com o carregamento de dados
+    const initialTimer = setTimeout(checkAutoStartReservations, 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+        clearInterval(interval);
+        clearTimeout(initialTimer);
+    };
   }, [reservations, user, updateReservation]);
 
   const getVehicleById = useCallback((id: string) => {
