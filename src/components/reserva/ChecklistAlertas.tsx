@@ -54,6 +54,22 @@ interface ChecklistAlertasProps {
   onOpenChecklistFormForPlate?: (plate: string) => void;
 }
 
+function formatarDataBr(dataStr?: string | null): string {
+  if (!dataStr) return "-";
+  const clean = String(dataStr).trim();
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) return clean;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    const [y, m, d] = clean.split("-");
+    return `${d}/${m}/${y}`;
+  }
+  try {
+    const d = new Date(clean.includes("T") ? clean : clean + "T12:00:00");
+    return isNaN(d.getTime()) ? clean : d.toLocaleDateString("pt-BR");
+  } catch {
+    return clean;
+  }
+}
+
 export function ChecklistAlertas({ 
   checklists, 
   vehicles,
@@ -678,7 +694,7 @@ Agradecemos pela colaboração!
                         {last && last.data ? (
                           <div className="space-y-0.5">
                             <span className="font-bold text-slate-800 block">
-                              {new Date(last.data).toLocaleDateString('pt-BR')}
+                              {formatarDataBr(last.data)}
                             </span>
                             <span className="text-[10px] text-slate-500 block">
                               há {item.diasSemChecklist} dias

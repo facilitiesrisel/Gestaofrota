@@ -1182,8 +1182,58 @@ export const getReservationsFromLocalStorage = (): Reservation[] => {
   }
 };
 
-// Mapa em memória para rastrear atualizações locais recentes e evitar que snapshots remotos com delay revertam status
+// Mapa em memória e armazenamento persistente para rastrear atualizações locais e evitar que snapshots remotos defasados revertam status
 const recentReservationUpdates = new Map<string, { timestamp: number; data: any }>();
+const RESERVATIONS_OVERRIDES_STORAGE_KEY = 'risel_reservas_overrides_v2';
+
+export const getPersistentReservationOverrides = (): Record<string, any> => {
+  try {
+    const raw = localStorage.getItem(RESERVATIONS_OVERRIDES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+};
+
+export const setPersistentReservationOverride = (id: string, data: any) => {
+  if (!id) return;
+  try {
+    const current = getPersistentReservationOverrides();
+    current[id] = {
+      ...(current[id] || {}),
+      ...data,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(RESERVATIONS_OVERRIDES_STORAGE_KEY, JSON.stringify(current));
+  } catch (e) {}
+};
+
+// Sincroniza e carrega reservas do backend (/api/reservations)
+export const fetchBackendReservations = async (): Promise<Reservation[]> => {
+  try {
+    const res = await fetch('/api/reservations');
+    if (res.ok) {
+      const items = await res.json();
+      if (Array.isArray(items)) {
+        items.forEach((item: any) => {
+          if (item && item.id && item.status) {
+            setPersistentReservationOverride(item.id, item);
+          }
+        });
+        return items.map(item => ({
+          ...item,
+          departureDateTime: item.departureDateTime ? new Date(item.departureDateTime) : new Date(),
+          returnDate: item.returnDate ? new Date(item.returnDate) : new Date(),
+          actualReturnDateTime: item.actualReturnDateTime ? new Date(item.actualReturnDateTime) : undefined,
+          requestTimestamp: item.requestTimestamp ? new Date(item.requestTimestamp) : undefined
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn("Aviso ao sincronizar reservas com o backend /api/reservations:", e);
+  }
+  return [];
+};
 
 let isAuthenticatingAdmin = false;
 export const ensureAdminFirebaseAuth = async () => {
@@ -1211,6 +1261,10 @@ export const saveReservationsToLocalStorage = (reservations: Reservation[]) => {
 
 export const getReservations = async (): Promise<Reservation[]> => {
   ensureAdminFirebaseAuth().catch(() => {});
+  
+  // Tenta carregar do backend em paralelo
+  fetchBackendReservations().catch(() => {});
+
   if (useReservationsLocalStorageFallback) {
     return getReservationsFromLocalStorage();
   }
@@ -1223,17 +1277,39 @@ export const getReservations = async (): Promise<Reservation[]> => {
     if (firestoreReservations.length === 0) {
       return getReservationsFromLocalStorage();
     }
-    // Sincroniza o cache local com os dados remotos respeitando atualizações recentes
+    
+    const persistentOverrides = getPersistentReservationOverrides();
+
+    // Sincroniza o cache local com os dados remotos respeitando atualizações recentes e status persistidos
     const reconciled = firestoreReservations.map(remoteRes => {
         const recent = recentReservationUpdates.get(remoteRes.id);
-        if (recent && (Date.now() - recent.timestamp) < 60000) {
+        const persistent = persistentOverrides[remoteRes.id];
+        
+        let finalStatus = remoteRes.status;
+        let finalNotes = remoteRes.adminNotes;
+
+        // Se houver alteração persistida (ex: Aprovada, Em Uso, Rejeitada, Cancelada), nunca retrocede para Pendente
+        if (persistent && persistent.status && persistent.status !== ReservationStatus.Pending) {
+            finalStatus = persistent.status;
+            if (persistent.adminNotes) finalNotes = persistent.adminNotes;
+        }
+
+        if (recent && recent.data) {
+            if (recent.data.status) finalStatus = recent.data.status;
+            if (recent.data.adminNotes !== undefined) finalNotes = recent.data.adminNotes;
             return {
                 ...remoteRes,
                 ...recent.data,
-                status: recent.data.status || remoteRes.status
+                status: finalStatus,
+                adminNotes: finalNotes
             };
         }
-        return remoteRes;
+
+        return {
+            ...remoteRes,
+            status: finalStatus,
+            adminNotes: finalNotes
+        };
     });
     saveReservationsToLocalStorage(reconciled);
     return reconciled;
@@ -1257,23 +1333,56 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
         onUpdate(initialLocal);
     }
 
+    // Busca atualizações do backend e notifica caso haja novidades
+    fetchBackendReservations().then(backendItems => {
+        if (isSubscribed && backendItems.length > 0) {
+            const currentCached = getReservationsFromLocalStorage();
+            const persistentOverrides = getPersistentReservationOverrides();
+            const merged = currentCached.map(r => {
+                const over = persistentOverrides[r.id];
+                return over ? { ...r, ...over, status: over.status || r.status } : r;
+            });
+            saveReservationsToLocalStorage(merged);
+            onUpdate(merged);
+        }
+    }).catch(() => {});
+
     const unsubscribe = reservationsCollection.orderBy('departureDateTime', 'desc').onSnapshot(
       snapshot => {
         if (!isSubscribed) return;
         const reservations = snapshot.docs.map(docToReservation).filter((r): r is Reservation => r !== null);
         if (reservations.length > 0) {
-            // Reconciliação inteligente: se houve alteração recente feita pelo usuário (últimos 60s),
-            // preserva o status e dados recentes para não reverter (ex: Pendente -> Aprovada)
+            const persistentOverrides = getPersistentReservationOverrides();
+
+            // Reconciliação inteligente: preserva aprovações e alterações recentes
             const reconciled = reservations.map(remoteRes => {
                 const recent = recentReservationUpdates.get(remoteRes.id);
-                if (recent && (Date.now() - recent.timestamp) < 60000) {
+                const persistent = persistentOverrides[remoteRes.id];
+                
+                let finalStatus = remoteRes.status;
+                let finalNotes = remoteRes.adminNotes;
+
+                if (persistent && persistent.status && persistent.status !== ReservationStatus.Pending) {
+                    finalStatus = persistent.status;
+                    if (persistent.adminNotes) finalNotes = persistent.adminNotes;
+                }
+
+                if (recent && recent.data) {
+                    if (recent.data.status) finalStatus = recent.data.status;
+                    if (recent.data.adminNotes !== undefined) finalNotes = recent.data.adminNotes;
                     return {
                         ...remoteRes,
                         ...recent.data,
-                        status: recent.data.status || remoteRes.status
+                        status: finalStatus,
+                        adminNotes: finalNotes
                     };
                 }
-                return remoteRes;
+
+                return {
+                    ...remoteRes,
+                    status: finalStatus,
+                    adminNotes: finalNotes
+                };
             });
             saveReservationsToLocalStorage(reconciled);
             onUpdate(reconciled);
@@ -1358,8 +1467,9 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
         sanitizedData.department = normalizeNomeSetor(sanitizedData.department, 'Operações');
     }
 
-    // Registra a atualização recente no mapa de concorrência para evitar que o listener reverta o status
+    // Registra a atualização recente no mapa de concorrência e no override persistente
     recentReservationUpdates.set(id, { timestamp: Date.now(), data: sanitizedData });
+    setPersistentReservationOverride(id, sanitizedData);
 
     // 1. Atualização imediata no cache local e notificação de ouvintes (UI Instantânea)
     const currentList = getReservationsFromLocalStorage();
@@ -1376,23 +1486,27 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
         notifyReservationListeners();
     }
 
-    // 2. Se for ID temporário local, não tenta atualizar no Firestore diretamente
-    if (id.startsWith('res_') || id.startsWith('local_')) {
-        return;
-    }
-
-    // 3. Tenta garantir autenticação do cliente se necessário
-    ensureAdminFirebaseAuth().catch(() => {});
-
-    // 4. Executa persistência no servidor (/api/reservations/update) e no Firestore do cliente
+    // 2. Envia ao endpoint no servidor para persistência física no backend
     try {
-        // Envia ao endpoint de contingência no servidor com credenciais de produção
         fetch('/api/reservations/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id, data: removeUndefined(sanitizedData) }),
-        }).catch(err => console.warn("Endpoint de contingência /api/reservations/update aviso:", err));
+        }).catch(err => console.warn("Endpoint /api/reservations/update aviso:", err));
+    } catch (apiErr) {
+        console.warn("Aviso ao disparar /api/reservations/update:", apiErr);
+    }
 
+    // 3. Se for ID temporário local, não tenta atualizar no Firestore diretamente
+    if (id.startsWith('res_') || id.startsWith('local_')) {
+        return;
+    }
+
+    // 4. Tenta garantir autenticação do cliente se necessário
+    ensureAdminFirebaseAuth().catch(() => {});
+
+    // 5. Executa persistência no Firestore do cliente
+    try {
         const payload = removeUndefined(sanitizedData);
         const updatePromise = reservationsCollection.doc(id).set(payload, { merge: true });
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2500));
@@ -1403,10 +1517,18 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
 };
 
 export const deleteReservation = async (id: string) => {
-    // Remove do cache local
+    // Remove do cache local e do override persistente
     const currentList = getReservationsFromLocalStorage().filter(r => r.id !== id);
     saveReservationsToLocalStorage(currentList);
     notifyReservationListeners();
+
+    try {
+      const overrides = getPersistentReservationOverrides();
+      if (overrides[id]) {
+        delete overrides[id];
+        localStorage.setItem(RESERVATIONS_OVERRIDES_STORAGE_KEY, JSON.stringify(overrides));
+      }
+    } catch (e) {}
 
     if (id.startsWith('res_') || id.startsWith('local_')) return;
 

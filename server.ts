@@ -108,6 +108,7 @@ async function createSafeTransporter(smtpConfig: any) {
 const DATA_DIR = path.join(process.cwd(), "data");
 const ABASTECIMENTOS_FILE = path.join(DATA_DIR, "imported_abastecimentos.json");
 const CHECKLISTS_FILE = path.join(DATA_DIR, "imported_checklists.json");
+const RESERVATIONS_FILE = path.join(DATA_DIR, "reservations.json");
 const APPS_SCRIPT_FILE = path.join(DATA_DIR, "apps_script_url.txt");
 const ONEDRIVE_CONFIG_FILE = path.join(DATA_DIR, "onedrive_config.json");
 const ONEDRIVE_LOGS_FILE = path.join(DATA_DIR, "onedrive_logs.json");
@@ -180,6 +181,32 @@ function saveStoredChecklists(items: any[]) {
     fs.writeFileSync(CHECKLISTS_FILE, JSON.stringify(items, null, 2), "utf-8");
   } catch (err) {
     console.warn("Erro ao persistir checklists:", err);
+  }
+}
+
+function loadStoredReservations(): any[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(RESERVATIONS_FILE)) {
+      const raw = fs.readFileSync(RESERVATIONS_FILE, "utf-8");
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.warn("Erro ao carregar reservas salvas:", err);
+  }
+  return [];
+}
+
+function saveStoredReservations(items: any[]) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(RESERVATIONS_FILE, JSON.stringify(items, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("Erro ao persistir reservas:", err);
   }
 }
 
@@ -2581,6 +2608,75 @@ async function startServer() {
     } catch (error: any) {
       console.error("Risel Backend: Erro ao processar envio de checklist:", error);
       return res.status(500).json({ error: error.message || "Erro interno ao salvar checklist no sistema." });
+    }
+  });
+
+  // --- Rotas de Gestão e Persistência de Reservas (Backend Resiliente) ---
+  app.get("/api/reservations", (req, res) => {
+    try {
+      const list = loadStoredReservations();
+      return res.json(list);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/reservations/add", express.json(), (req, res) => {
+    try {
+      const { data } = req.body;
+      if (!data) return res.status(400).json({ error: "Dados da reserva ausentes." });
+      const list = loadStoredReservations();
+      const id = data.id || `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const existingIdx = list.findIndex(r => r.id === id);
+      const item = { ...data, id, updatedAt: new Date().toISOString() };
+      if (existingIdx !== -1) {
+        list[existingIdx] = { ...list[existingIdx], ...item };
+      } else {
+        list.unshift(item);
+      }
+      saveStoredReservations(list);
+      console.log(`[Risel Backend] Reserva adicionada/salva: ID ${id}, Status: ${item.status || 'Pendente'}`);
+      return res.json({ success: true, id, reservation: item });
+    } catch (err: any) {
+      console.error("Erro no /api/reservations/add:", err);
+      return res.status(500).json({ error: err.message || "Erro ao salvar reserva" });
+    }
+  });
+
+  app.post("/api/reservations/update", express.json(), (req, res) => {
+    try {
+      const { id, data } = req.body;
+      if (!id || !data) return res.status(400).json({ error: "ID ou dados da reserva ausentes." });
+      const list = loadStoredReservations();
+      const idx = list.findIndex(r => r.id === id);
+      let updatedItem;
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...data, id, updatedAt: new Date().toISOString() };
+        updatedItem = list[idx];
+      } else {
+        updatedItem = { id, ...data, updatedAt: new Date().toISOString() };
+        list.unshift(updatedItem);
+      }
+      saveStoredReservations(list);
+      console.log(`[Risel Backend] Reserva atualizada com sucesso: ID ${id}, Status: ${updatedItem.status}`);
+      return res.json({ success: true, id, updated: updatedItem });
+    } catch (err: any) {
+      console.error("Erro no /api/reservations/update:", err);
+      return res.status(500).json({ error: err.message || "Erro ao atualizar reserva" });
+    }
+  });
+
+  app.post("/api/reservations/delete", express.json(), (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) return res.status(400).json({ error: "ID ausente." });
+      const list = loadStoredReservations();
+      const filtered = list.filter(r => r.id !== id);
+      saveStoredReservations(filtered);
+      console.log(`[Risel Backend] Reserva deletada com sucesso: ID ${id}`);
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
     }
   });
 

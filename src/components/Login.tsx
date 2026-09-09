@@ -28,10 +28,15 @@ export function Login({
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+  const [expiredNotice, setExpiredNotice] = useState<string | null>(() => {
+    return localStorage.getItem("risel_session_expired_message");
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setExpiredNotice(null);
+    localStorage.removeItem("risel_session_expired_message");
     setIsLoading(true);
 
     setTimeout(() => {
@@ -118,6 +123,19 @@ export function Login({
             </p>
           )}
         </div>
+
+        {expiredNotice && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="mb-5 p-3.5 bg-amber-950/60 border border-amber-800/40 text-amber-200 rounded-2xl text-xs font-semibold flex items-start gap-2.5"
+          >
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span>{expiredNotice}</span>
+            </div>
+          </motion.div>
+        )}
 
         {error && (
           <motion.div 

@@ -240,12 +240,20 @@ export interface Abastecimento {
   observacoes?: string;
 }
 
+import { 
+  ServicoManutencaoItem, 
+  AnexoManutencao, 
+  AutorizacaoDescontoAvaria 
+} from "../services/termoAvariaPdfService";
+
 export interface Manutencao {
   id: string;
   placa: string;
   tipo: "Preventiva" | "Corretiva";
   descricao: string;
   data: string;
+  dataEntrada?: string;
+  dataSaida?: string;
   odometro: number;
   custo: number;
   oficina: string;
@@ -256,6 +264,9 @@ export interface Manutencao {
   status?: "Concluída" | "Em Andamento" | "Agendada";
   observacoes?: string;
   created_at?: string;
+  servicos?: ServicoManutencaoItem[];
+  anexos?: AnexoManutencao[];
+  autorizacaoAvaria?: AutorizacaoDescontoAvaria;
 }
 
 const THEMES = {

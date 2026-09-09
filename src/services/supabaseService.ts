@@ -1731,6 +1731,12 @@ export async function saveBatchMultasSupabase(items: any[]): Promise<{ count: nu
   return { count, success: count > 0 };
 }
 
+import { 
+  ServicoManutencaoItem, 
+  AnexoManutencao, 
+  AutorizacaoDescontoAvaria 
+} from './termoAvariaPdfService';
+
 // 12. Interfaces e Funções para a Tabela de Manutenções da Frota no Supabase
 export interface SupabaseManutencao {
   id: string;
@@ -1750,6 +1756,9 @@ export interface SupabaseManutencao {
   status?: "Concluída" | "Em Andamento" | "Agendada";
   observacoes?: string;
   created_at?: string;
+  servicos?: ServicoManutencaoItem[];
+  anexos?: AnexoManutencao[];
+  autorizacaoAvaria?: AutorizacaoDescontoAvaria;
 }
 
 export async function fetchManutencoesSupabase(): Promise<SupabaseManutencao[]> {
@@ -1834,7 +1843,10 @@ export async function fetchManutencoesSupabase(): Promise<SupabaseManutencao[]> 
           nf_os: obsObj.nf_os || row.doc,
           status: (obsObj.status || (row.status === 'Aprovado' ? 'Concluída' : 'Em Andamento')) as any,
           observacoes: obsObj.observacoes || row.observacao,
-          created_at: row.created_at
+          created_at: row.created_at,
+          servicos: obsObj.servicos || undefined,
+          anexos: obsObj.anexos || undefined,
+          autorizacaoAvaria: obsObj.autorizacaoAvaria || undefined
         };
       });
 
@@ -1898,7 +1910,10 @@ export async function saveManutencaoSupabase(item: any): Promise<boolean> {
     modelo: item.modelo,
     nf_os: item.nf_os,
     status: item.status || 'Concluída',
-    observacoes: item.observacoes
+    observacoes: item.observacoes,
+    servicos: item.servicos || undefined,
+    anexos: item.anexos || undefined,
+    autorizacaoAvaria: item.autorizacaoAvaria || undefined
   };
 
   // Atualiza cache local imediatamente garantindo apenas registros reais

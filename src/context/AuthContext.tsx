@@ -289,39 +289,79 @@ const DEFAULT_USERS: UserSession[] = [
   }
 ];
 
+export const SESSION_INACTIVITY_LIMIT_MS = 60 * 60 * 1000; // 1 hora de inatividade (60 minutos)
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserSession | null>(() => {
+    // 1. Se o usuário realizou logout explícito anteriormente, NUNCA restaura sessão
+    if (localStorage.getItem("risel_explicit_logout") === "true") {
+      sessionStorage.removeItem("risel_session");
+      localStorage.removeItem("risel_active_session");
+      localStorage.removeItem("risel_last_activity");
+      return null;
+    }
+
+    // 2. Validação estrita de inatividade de mais de 1 hora
+    const lastActivityStr = localStorage.getItem("risel_last_activity");
+    if (lastActivityStr) {
+      const lastActivityTime = parseInt(lastActivityStr, 10);
+      if (!isNaN(lastActivityTime) && Date.now() - lastActivityTime > SESSION_INACTIVITY_LIMIT_MS) {
+        console.warn("[Auth] Sessão expirada por inatividade (mais de 1 hora). Requer novo login.");
+        sessionStorage.removeItem("risel_session");
+        localStorage.removeItem("risel_active_session");
+        localStorage.removeItem("risel_last_activity");
+        localStorage.setItem(
+          "risel_session_expired_message",
+          "Sua sessão expirou após 1 hora de inatividade por motivos de segurança. Por favor, faça login novamente."
+        );
+        return null;
+      }
+    }
+
+    // 3. Tenta recuperar sessão da aba atual (sessionStorage)
     const sessionSaved = sessionStorage.getItem("risel_session");
     if (sessionSaved) {
       try { 
         const parsed = JSON.parse(sessionSaved);
-        if (parsed.email && parsed.email.toLowerCase() === "deny.risel@gmail.com") {
-          sessionStorage.removeItem("risel_session");
-          return DEFAULT_USERS[0];
+        if (parsed && parsed.email) {
+          if (parsed.email.toLowerCase() === "deny.risel@gmail.com") {
+            sessionStorage.removeItem("risel_session");
+            return null;
+          }
+          if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
+            parsed.role = "admin";
+            parsed.permissions = MASTER_PERMISSIONS;
+          }
+          // Atualiza carimbo de atividade recente
+          localStorage.setItem("risel_last_activity", Date.now().toString());
+          return parsed;
         }
-        if (parsed.email && parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
-          parsed.role = "admin";
-          parsed.permissions = MASTER_PERMISSIONS;
-        }
-        return parsed;
       } catch (e) {}
     }
+
+    // 4. Tenta recuperar sessão persistente (localStorage - "Manter conectado")
     const localSaved = localStorage.getItem("risel_active_session");
     if (localSaved) {
       try { 
         const parsed = JSON.parse(localSaved);
-        if (parsed.email && parsed.email.toLowerCase() === "deny.risel@gmail.com") {
-          localStorage.removeItem("risel_active_session");
-          return DEFAULT_USERS[0];
+        if (parsed && parsed.email) {
+          if (parsed.email.toLowerCase() === "deny.risel@gmail.com") {
+            localStorage.removeItem("risel_active_session");
+            return null;
+          }
+          if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
+            parsed.role = "admin";
+            parsed.permissions = MASTER_PERMISSIONS;
+          }
+          // Atualiza carimbo de atividade recente
+          localStorage.setItem("risel_last_activity", Date.now().toString());
+          return parsed;
         }
-        if (parsed.email && parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
-          parsed.role = "admin";
-          parsed.permissions = MASTER_PERMISSIONS;
-        }
-        return parsed;
       } catch (e) {}
     }
-    return DEFAULT_USERS[0];
+
+    // 5. Se não houver sessão ativa registrada no navegador, retorna estritamente NULL
+    return null;
   });
 
   const [usersList, setUsersList] = useState<UserSession[]>(() => {
@@ -506,10 +546,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
 
       setUser(activeSession);
+      // Remove marcas de logout anterior e mensagens de expiração
+      localStorage.removeItem("risel_explicit_logout");
+      localStorage.removeItem("risel_session_expired_message");
+      localStorage.setItem("risel_last_activity", Date.now().toString());
+
       sessionStorage.setItem("risel_session", JSON.stringify(activeSession));
       if (rememberMe) {
         localStorage.setItem("risel_active_session", JSON.stringify(activeSession));
+      } else {
+        localStorage.removeItem("risel_active_session");
       }
+      window.dispatchEvent(new Event("risel_submodule_auth_change"));
       return true;
     }
 
@@ -520,7 +568,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     sessionStorage.removeItem("risel_session");
     localStorage.removeItem("risel_active_session");
+    localStorage.removeItem("risel_last_activity");
+    localStorage.removeItem("reserva_admin_logado");
+    localStorage.removeItem("risel_auth_submodules");
+    // Garante que uma nova recarga (F5) não logará automaticamente
+    localStorage.setItem("risel_explicit_logout", "true");
+    window.dispatchEvent(new Event("risel_submodule_auth_change"));
   };
+
+  // MONITOR DE INATIVIDADE CONTÍNUA (Timeout de 1 hora - 60 minutos)
+  useEffect(() => {
+    if (!user) return;
+
+    let lastRecordedActivity = Date.now();
+
+    // Atualiza o registro de última atividade (throttle de 15 segundos para máxima performance)
+    const handleUserInteraction = () => {
+      const now = Date.now();
+      if (now - lastRecordedActivity > 15000) {
+        lastRecordedActivity = now;
+        localStorage.setItem("risel_last_activity", now.toString());
+      }
+    };
+
+    // Eventos globais de atividade no navegador
+    const events = ["mousedown", "keydown", "touchstart", "scroll", "click"];
+    events.forEach(event => {
+      window.addEventListener(event, handleUserInteraction, { passive: true });
+    });
+
+    // Verificação periódica de inatividade a cada 20 segundos
+    const checkInterval = setInterval(() => {
+      const lastActivityStr = localStorage.getItem("risel_last_activity");
+      if (lastActivityStr) {
+        const lastTime = parseInt(lastActivityStr, 10);
+        if (!isNaN(lastTime) && Date.now() - lastTime >= SESSION_INACTIVITY_LIMIT_MS) {
+          console.warn("[Auth] Mais de 1 hora de inatividade detectada. Sessão encerrada automaticamente por segurança.");
+          localStorage.setItem(
+            "risel_session_expired_message",
+            "Sua sessão foi encerrada automaticamente por inatividade (mais de 1 hora sem uso). Por favor, informe suas credenciais novamente."
+          );
+          logout();
+        }
+      }
+    }, 20000);
+
+    return () => {
+      events.forEach(event => {
+        window.removeEventListener(event, handleUserInteraction);
+      });
+      clearInterval(checkInterval);
+    };
+  }, [user]);
 
   const createUser = async (
     name: string, 

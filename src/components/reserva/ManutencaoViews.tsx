@@ -4,7 +4,8 @@ import {
   Gauge, Activity, Search, LayoutDashboard, Table2, BarChart3,
   ChevronDown, ChevronUp, AlertTriangle, Trash2, Edit2, Plus, 
   Building2, X, CheckCircle2, Clock, Car, ShieldAlert,
-  HelpCircle, ArrowUpDown, FileText
+  HelpCircle, ArrowUpDown, FileText, FileSignature, Paperclip, 
+  Upload, Send, Layers, Eye, Minus, Image as ImageIcon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -15,6 +16,13 @@ import { Veiculo } from "../../pages/Frota";
 import { MercosulPlateBadge } from "../MercosulPlateBadge";
 import { SupabaseManutencao } from "../../services/supabaseService";
 import { normalizeBaseOperacional, isSameCityOrBase } from "../../utils/baseOperacional";
+import { 
+  ServicoManutencaoItem, 
+  AnexoManutencao, 
+  AutorizacaoDescontoAvaria,
+  generateTermoAvariaPdf 
+} from "../../services/termoAvariaPdfService";
+import { TermoAvariaViewerModal } from "./TermoAvariaViewerModal";
 
 export type Manutencao = SupabaseManutencao;
 
@@ -40,12 +48,51 @@ export function parseManutDate(dataStr?: string | null): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
+export function formatarDataBr(dataStr?: string | null): string {
+  if (!dataStr) return "-";
+  const cleanStr = String(dataStr).trim();
+  if (!cleanStr) return "-";
+
+  // Se já estiver no padrão DD/MM/AAAA (ex: 15/02/2025)
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(cleanStr)) {
+    return cleanStr;
+  }
+
+  // Se for YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleanStr)) {
+    const [ano, mes, dia] = cleanStr.split("-");
+    return `${dia}/${mes}/${ano}`;
+  }
+
+  // Se tiver formato com T ou timestamp
+  try {
+    const d = parseManutDate(cleanStr);
+    const dia = String(d.getDate()).padStart(2, "0");
+    const mes = String(d.getMonth() + 1).padStart(2, "0");
+    const ano = d.getFullYear();
+    return `${dia}/${mes}/${ano}`;
+  } catch {
+    return cleanStr;
+  }
+}
+
+export function formatarMesAnoBr(mesAnoStr?: string | null): string {
+  if (!mesAnoStr) return "-";
+  const clean = String(mesAnoStr).trim();
+  if (/^\d{4}-\d{2}$/.test(clean)) {
+    const [ano, mes] = clean.split("-");
+    return `${mes}/${ano}`;
+  }
+  return clean;
+}
+
 export function calcDiasOficina(dataEntrada?: string, dataSaida?: string): number {
   if (!dataEntrada) return 0;
   const dEntrada = parseManutDate(dataEntrada);
   const dSaida = dataSaida ? parseManutDate(dataSaida) : parseManutDate(dataEntrada);
-  const diffTime = dSaida.getTime() - dEntrada.getTime();
-  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  const tEntrada = new Date(dEntrada.getFullYear(), dEntrada.getMonth(), dEntrada.getDate()).getTime();
+  const tSaida = new Date(dSaida.getFullYear(), dSaida.getMonth(), dSaida.getDate()).getTime();
+  const diffDays = Math.round((tSaida - tEntrada) / (1000 * 60 * 60 * 24));
   return Math.max(0, diffDays);
 }
 
@@ -129,6 +176,155 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
   const [editingItem, setEditingItem] = useState<Manutencao | null>(null);
   const [itemToDelete, setItemToDelete] = useState<Manutencao | null>(null);
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+
+  // Visualizador do Termo de Autorização de Desconto por Avaria
+  const [selectedTermoAvaria, setSelectedTermoAvaria] = useState<{
+    manutencao: Manutencao;
+    autorizacao: AutorizacaoDescontoAvaria;
+    anexos?: AnexoManutencao[];
+  } | null>(null);
+
+  // Estados dinâmicos do Modal de Nova Manutenção
+  const [selectedPlacaNew, setSelectedPlacaNew] = useState<string>("");
+  const [servicosNew, setServicosNew] = useState<ServicoManutencaoItem[]>([
+    { id: "srv-1", descricao: "", tipo: "Serviço", quantidade: 1, valorUnitario: 0, valorTotal: 0 }
+  ]);
+  const [anexosNew, setAnexosNew] = useState<AnexoManutencao[]>([]);
+  const [isAvariaModalOpen, setIsAvariaModalOpen] = useState(false);
+  const [dadosAvaria, setDadosAvaria] = useState<AutorizacaoDescontoAvaria | null>(null);
+
+  // Campos do formulário de Autorização de Desconto de Avaria
+  const [avariaColaborador, setAvariaColaborador] = useState("");
+  const [avariaBase, setAvariaBase] = useState("");
+  const [avariaCpf, setAvariaCpf] = useState("");
+  const [avariaCargo, setAvariaCargo] = useState("Condutor / Operador");
+  const [avariaDescricao, setAvariaDescricao] = useState("");
+  const [avariaData, setAvariaData] = useState(new Date().toISOString().split("T")[0]);
+  const [avariaValorTotal, setAvariaValorTotal] = useState(0);
+  const [avariaSubsidio, setAvariaSubsidio] = useState(0);
+  const [avariaParcelas, setAvariaParcelas] = useState(1);
+
+  // Adicionar novo serviço à lista da Nova Manutenção
+  const handleAddServico = () => {
+    setServicosNew(prev => [
+      ...prev,
+      {
+        id: `srv-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+        descricao: "",
+        tipo: "Serviço",
+        quantidade: 1,
+        valorUnitario: 0,
+        valorTotal: 0
+      }
+    ]);
+  };
+
+  // Remover serviço
+  const handleRemoveServico = (id: string) => {
+    if (servicosNew.length <= 1) {
+      setServicosNew([{ id: "srv-1", descricao: "", tipo: "Serviço", quantidade: 1, valorUnitario: 0, valorTotal: 0 }]);
+      return;
+    }
+    setServicosNew(prev => prev.filter(s => s.id !== id));
+  };
+
+  // Atualizar campo de um serviço específico
+  const handleUpdateServico = (id: string, field: keyof ServicoManutencaoItem, value: any) => {
+    setServicosNew(prev => prev.map(s => {
+      if (s.id !== id) return s;
+      const updated = { ...s, [field]: value };
+      if (field === 'quantidade' || field === 'valorUnitario') {
+        const qtd = field === 'quantidade' ? Math.max(0, Number(value) || 0) : s.quantidade;
+        const vUnit = field === 'valorUnitario' ? Math.max(0, Number(value) || 0) : s.valorUnitario;
+        updated.valorTotal = qtd * vUnit;
+      }
+      return updated;
+    }));
+  };
+
+  // Soma total de todos os serviços
+  const totalServicosCalculado = useMemo(() => {
+    return servicosNew.reduce((acc, s) => acc + (Number(s.valorTotal) || 0), 0);
+  }, [servicosNew]);
+
+  // Upload de imagens e documentos
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file: File) => {
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        const dataUrl = loadEvent.target?.result as string;
+        if (dataUrl) {
+          setAnexosNew(prev => [
+            ...prev,
+            {
+              id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              nome: file.name,
+              tipo: file.type || 'application/octet-stream',
+              tamanho: file.size,
+              dataUrl,
+              criadoEm: new Date().toISOString()
+            }
+          ]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+
+    e.target.value = '';
+  };
+
+  // Remover anexo
+  const handleRemoveAnexo = (id: string) => {
+    setAnexosNew(prev => prev.filter(a => a.id !== id));
+  };
+
+  // Abrir Modal de Desconto de Avaria pré-carregando dados
+  const handleOpenAvariaModal = () => {
+    const activePlaca = selectedPlacaNew || (veiculos[0]?.placa || "");
+    const veic = veiculos.find(v => v.placa === activePlaca);
+    setAvariaColaborador(dadosAvaria?.colaboradorNome || veic?.condutor || "");
+    setAvariaBase(dadosAvaria?.base || veic?.filial || "Paulínia");
+    setAvariaCpf(dadosAvaria?.cpfMatricula || "");
+    setAvariaCargo(dadosAvaria?.cargoFuncao || "Condutor / Operador");
+    setAvariaDescricao(dadosAvaria?.descricaoOcorrencia || `Avaria identificada no veículo ${activePlaca}`);
+    const custoOS = totalServicosCalculado > 0 ? totalServicosCalculado : 0;
+    setAvariaValorTotal(dadosAvaria?.valorTotalReparo || custoOS);
+    setAvariaSubsidio(dadosAvaria?.subsidioEmpresa || 0);
+    setAvariaParcelas(dadosAvaria?.quantidadeParcelas || 1);
+    setIsAvariaModalOpen(true);
+  };
+
+  // Confirmar e gerar a autorização de desconto de avaria
+  const handleConfirmarAvaria = (e: React.FormEvent) => {
+    e.preventDefault();
+    const valorReparo = Number(avariaValorTotal) || totalServicosCalculado || 0;
+    const sub = Number(avariaSubsidio) || 0;
+    const desc = Math.max(0, valorReparo - sub);
+    const parc = Math.max(1, Number(avariaParcelas) || 1);
+    const vParc = desc / parc;
+
+    const avariaObj: AutorizacaoDescontoAvaria = {
+      id: `av-${Date.now()}`,
+      colaboradorNome: avariaColaborador.trim() || "Condutor Responsável",
+      base: avariaBase.trim() || "Paulínia",
+      cpfMatricula: avariaCpf.trim() || "-",
+      cargoFuncao: avariaCargo.trim() || "Condutor",
+      descricaoOcorrencia: avariaDescricao.trim() || "Avaria veicular",
+      dataOcorrencia: avariaData,
+      valorTotalReparo: valorReparo,
+      subsidioEmpresa: sub,
+      valorDesconto: desc,
+      quantidadeParcelas: parc,
+      valorParcela: vParc,
+      geradoEm: new Date().toISOString()
+    };
+
+    setDadosAvaria(avariaObj);
+    setIsAvariaModalOpen(false);
+  };
 
   const togglePlaca = (placa: string) => {
     setExpandedPlacas(prev => ({ ...prev, [placa]: !prev[placa] }));
@@ -231,9 +427,9 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
       }
 
       if (sortField === "data" || sortField === "dataEntrada" || sortField === "dataSaida") {
-        const dA = String(a[sortField as keyof Manutencao] || a.data || "");
-        const dB = String(b[sortField as keyof Manutencao] || b.data || "");
-        return sortDirection === "asc" ? dA.localeCompare(dB) : dB.localeCompare(dA);
+        const tA = parseManutDate(String(a[sortField as keyof Manutencao] || a.data || "")).getTime();
+        const tB = parseManutDate(String(b[sortField as keyof Manutencao] || b.data || "")).getTime();
+        return sortDirection === "asc" ? tA - tB : tB - tA;
       }
 
       return sortDirection === "asc" 
@@ -300,6 +496,12 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingItem) return;
+    const hojeStr = new Date().toLocaleDateString('en-CA');
+    const dataSaidaEfetiva = editingItem.dataSaida || editingItem.data;
+    if (dataSaidaEfetiva && dataSaidaEfetiva > hojeStr) {
+      alert("Não é permitido salvar Data de Saída da Oficina com data futura.");
+      return;
+    }
     onUpdateManutencao?.(editingItem);
     setEditingItem(null);
   };
@@ -313,28 +515,81 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
     const dataOS = (formData.get("data") as string) || new Date().toISOString().split("T")[0];
     const dataEntrada = (formData.get("dataEntrada") as string) || dataOS;
     const dataSaida = (formData.get("dataSaida") as string) || dataOS;
+    const hojeStr = new Date().toLocaleDateString('en-CA');
+
+    if (dataSaida > hojeStr) {
+      alert("Não é permitido incluir Data de Saída da Oficina com data futura.");
+      return;
+    }
+
+    const servicosValidos = servicosNew.filter(s => s.descricao.trim());
+    const custoInformado = Number(formData.get("custo"));
+    const custoFinal = !isNaN(custoInformado) && custoInformado > 0 ? custoInformado : (totalServicosCalculado > 0 ? totalServicosCalculado : 0);
+
+    let descricaoFinal = (formData.get("descricao") as string || "").trim();
+    if (!descricaoFinal && servicosValidos.length > 0) {
+      descricaoFinal = servicosValidos.map(s => s.descricao).join(", ");
+    }
+    if (!descricaoFinal) {
+      descricaoFinal = "Manutenção veicular";
+    }
+
+    let avariaFinal = dadosAvaria;
+    if (avariaFinal) {
+      const repFinal = avariaFinal.valorTotalReparo || custoFinal;
+      const descFinal = avariaFinal.valorDesconto || repFinal;
+      const parcFinal = avariaFinal.quantidadeParcelas || 1;
+      avariaFinal = {
+        ...avariaFinal,
+        colaboradorNome: avariaFinal.colaboradorNome || veic?.condutor || "Colaborador",
+        base: avariaFinal.base || veic?.filial || "Paulínia",
+        valorTotalReparo: repFinal,
+        valorDesconto: descFinal,
+        quantidadeParcelas: parcFinal,
+        valorParcela: descFinal / parcFinal
+      };
+    }
 
     const nova: Manutencao = {
       id: `mn-${Date.now()}`,
       placa,
       tipo: (formData.get("tipo") as "Preventiva" | "Corretiva") || "Preventiva",
-      descricao: (formData.get("descricao") as string || "").trim(),
+      descricao: descricaoFinal,
       data: dataOS,
       dataEntrada,
       dataSaida,
       odometro: Number(formData.get("odometro")) || 0,
-      custo: Number(formData.get("custo")) || 0,
+      custo: custoFinal,
       oficina: (formData.get("oficina") as string || "").trim() || "Oficina Credenciada",
       nf_os: (formData.get("nf_os") as string || "").trim(),
       condutor: veic?.condutor,
       base: veic?.filial,
       modelo: veic?.modelo,
       status: "Concluída",
-      observacoes: (formData.get("observacoes") as string || "").trim()
+      observacoes: (formData.get("observacoes") as string || "").trim(),
+      servicos: servicosValidos.length > 0 ? servicosValidos : undefined,
+      anexos: anexosNew.length > 0 ? anexosNew : undefined,
+      autorizacaoAvaria: avariaFinal || undefined
     };
 
+    onAddManutencao?.(nova);
     onUpdateManutencao?.(nova);
     setIsNewModalOpen(false);
+
+    // Se gerou autorização de desconto de avaria, abre imediatamente o modal timbrado para download e envio por e-mail!
+    if (avariaFinal) {
+      setSelectedTermoAvaria({
+        manutencao: nova,
+        autorizacao: avariaFinal,
+        anexos: anexosNew
+      });
+    }
+
+    // Reset de formulário
+    setServicosNew([{ id: "srv-1", descricao: "", tipo: "Serviço", quantidade: 1, valorUnitario: 0, valorTotal: 0 }]);
+    setAnexosNew([]);
+    setDadosAvaria(null);
+    setSelectedPlacaNew("");
   };
 
   return (
@@ -473,55 +728,55 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
         {viewMode === "linear" ? (
           /* MODO LISTA LINEAR */
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10 font-black text-slate-500 uppercase tracking-wider text-[10px]">
+            <thead className="sticky top-0 bg-gradient-to-r from-[#114D38] via-[#0D3B2B] to-[#114D38] text-white shadow-xs border-b-2 border-[#00A859] z-10 font-black uppercase tracking-wider text-[10px]">
               <tr>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800" onClick={() => handleSort("data")}>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors" onClick={() => handleSort("data")}>
                   <div className="flex items-center gap-1">
                     <span>Data OS</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    <ArrowUpDown className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800" onClick={() => handleSort("dataEntrada")}>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors" onClick={() => handleSort("dataEntrada")}>
                   <div className="flex items-center gap-1">
                     <span>Entrada / Saída</span>
-                    <Clock className="w-3 h-3 text-slate-400" />
+                    <Clock className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800" onClick={() => handleSort("placa")}>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors" onClick={() => handleSort("placa")}>
                   <div className="flex items-center gap-1">
                     <span>Placa / Veículo</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    <ArrowUpDown className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800" onClick={() => handleSort("tipo")}>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors" onClick={() => handleSort("tipo")}>
                   <div className="flex items-center gap-1">
                     <span>Tipo</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    <ArrowUpDown className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
-                <th className="py-3 px-4">Descrição do Serviço</th>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800" onClick={() => handleSort("oficina")}>
+                <th className="py-3 px-4">Descrição Principal do Serviço</th>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors" onClick={() => handleSort("oficina")}>
                   <div className="flex items-center gap-1">
                     <span>Oficina / Fornecedor</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    <ArrowUpDown className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800" onClick={() => handleSort("base")}>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors" onClick={() => handleSort("base")}>
                   <div className="flex items-center gap-1">
                     <span>Base</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    <ArrowUpDown className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800 text-right" onClick={() => handleSort("odometro")}>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors text-right" onClick={() => handleSort("odometro")}>
                   <div className="flex items-center justify-end gap-1">
                     <span>Odômetro</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    <ArrowUpDown className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
-                <th className="py-3 px-4 cursor-pointer hover:text-slate-800 text-right" onClick={() => handleSort("custo")}>
+                <th className="py-3 px-4 cursor-pointer hover:text-amber-200 transition-colors text-right" onClick={() => handleSort("custo")}>
                   <div className="flex items-center justify-end gap-1">
                     <span>Custo Total</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    <ArrowUpDown className="w-3 h-3 text-emerald-300" />
                   </div>
                 </th>
                 <th className="py-3 px-4 text-center">Ações</th>
@@ -543,7 +798,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                   return (
                   <tr key={m.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3 px-4 whitespace-nowrap font-bold text-slate-800">
-                      {m.data}
+                      {formatarDataBr(m.data)}
                       {m.nf_os && (
                         <span className="block text-[10px] text-slate-400 font-mono">OS: {m.nf_os}</span>
                       )}
@@ -552,11 +807,11 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                       <div className="text-[11px] font-semibold text-slate-700">
                         <div className="flex items-center gap-1.5">
                           <span className="text-[9px] uppercase font-bold text-slate-400">Entrada:</span>
-                          <span className="font-mono font-bold text-slate-800">{m.dataEntrada || m.data}</span>
+                          <span className="font-mono font-bold text-slate-800">{formatarDataBr(m.dataEntrada || m.data)}</span>
                         </div>
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <span className="text-[9px] uppercase font-bold text-slate-400">Saída:</span>
-                          <span className="font-mono font-bold text-slate-800">{m.dataSaida || m.data}</span>
+                          <span className="font-mono font-bold text-slate-800">{formatarDataBr(m.dataSaida || m.data)}</span>
                         </div>
                         <span className={`inline-block mt-1 px-2 py-0.5 rounded-full font-black text-[9px] border ${
                           diasOficina === 0 
@@ -587,15 +842,54 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                         {m.tipo}
                       </span>
                     </td>
-                    <td className="py-3 px-4 max-w-xs">
-                      <p className="text-xs text-slate-700 font-medium line-clamp-2 leading-relaxed" title={m.descricao}>
-                        {m.descricao}
-                      </p>
-                      {m.observacoes && (
-                        <span className="block text-[10px] text-slate-400 italic truncate mt-0.5">
-                          Obs: {m.observacoes}
+                    <td className="py-2.5 px-4 whitespace-nowrap max-w-sm">
+                      <div className="flex items-center gap-2">
+                        <span 
+                          className="text-xs text-slate-800 font-semibold truncate block flex-1" 
+                          title={
+                            (m.servicos && m.servicos.length > 0)
+                              ? `${m.servicos.map((s, idx) => `${idx + 1}. ${s.descricao} (${s.quantidade}x ${formatBRL(s.valorUnitario || 0)})`).join('\n')}${m.observacoes ? `\nObs: ${m.observacoes}` : ''}`
+                              : `${m.descricao}${m.observacoes ? `\nObs: ${m.observacoes}` : ''}`
+                          }
+                        >
+                          {m.servicos && m.servicos.length > 0 ? m.servicos[0].descricao : m.descricao}
                         </span>
-                      )}
+
+                        {/* Indicador compacto de múltiplos serviços */}
+                        {m.servicos && m.servicos.length > 1 && (
+                          <span 
+                            className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-help"
+                            title={`Total de ${m.servicos.length} itens discriminados:\n${m.servicos.map((s, idx) => `${idx + 1}. ${s.descricao} (${s.quantidade}x ${formatBRL(s.valorUnitario || 0)})`).join('\n')}`}
+                          >
+                            <Layers className="w-2.5 h-2.5 text-emerald-600" />
+                            +{m.servicos.length - 1}
+                          </span>
+                        )}
+
+                        {/* Indicador compacto de anexos */}
+                        {m.anexos && m.anexos.length > 0 && (
+                          <span 
+                            className="shrink-0 inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600 border border-slate-200"
+                            title={`${m.anexos.length} anexo(s) arquivado(s): ${m.anexos.map(a => a.nome).join(', ')}`}
+                          >
+                            <Paperclip className="w-2.5 h-2.5 text-slate-400" />
+                            {m.anexos.length}
+                          </span>
+                        )}
+
+                        {/* Badge do Termo Avaria */}
+                        {m.autorizacaoAvaria && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTermoAvaria({ manutencao: m, autorizacao: m.autorizacaoAvaria!, anexos: m.anexos })}
+                            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                            title="Visualizar Termo de Desconto de Avaria (PDF / E-mail)"
+                          >
+                            <FileSignature className="w-2.5 h-2.5 text-amber-600" />
+                            <span>Avaria</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span className="font-semibold text-slate-800 block">{m.oficina}</span>
@@ -611,6 +905,16 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap text-center">
                       <div className="flex items-center justify-center gap-1">
+                        {m.autorizacaoAvaria && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTermoAvaria({ manutencao: m, autorizacao: m.autorizacaoAvaria!, anexos: m.anexos })}
+                            className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                            title="Abrir Termo de Avaria e Enviar por E-mail"
+                          >
+                            <FileSignature className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => setEditingItem(m)}
                           className="p-1.5 text-slate-400 hover:text-[#114D38] hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
@@ -676,7 +980,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                         </div>
                         <div className="hidden md:block">
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Último Serviço</span>
-                          <span className="font-bold text-slate-700 text-xs">{g.ultimaData}</span>
+                          <span className="font-bold text-slate-700 text-xs">{formatarDataBr(g.ultimaData)}</span>
                         </div>
                         <div>
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Custo Acumulado</span>
@@ -696,12 +1000,12 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                         >
                           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                             <table className="w-full text-left text-xs">
-                              <thead className="bg-slate-100/80 font-black text-slate-500 text-[10px] uppercase tracking-wider border-b border-slate-200">
+                              <thead className="bg-gradient-to-r from-[#114D38] via-[#0D3B2B] to-[#114D38] text-white font-black text-[10px] uppercase tracking-wider border-b-2 border-[#00A859]">
                                 <tr>
                                   <th className="py-2.5 px-3">Data OS</th>
                                   <th className="py-2.5 px-3">Entrada / Saída</th>
                                   <th className="py-2.5 px-3">Tipo</th>
-                                  <th className="py-2.5 px-3">Descrição do Serviço Realizado</th>
+                                  <th className="py-2.5 px-3">Descrição Principal do Serviço</th>
                                   <th className="py-2.5 px-3">Oficina</th>
                                   <th className="py-2.5 px-3 text-right">Odômetro</th>
                                   <th className="py-2.5 px-3 text-right">Custo Total</th>
@@ -714,12 +1018,12 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                                   return (
                                   <tr key={item.id} className="hover:bg-slate-50/80">
                                     <td className="py-2 px-3 whitespace-nowrap font-bold text-slate-800">
-                                      {item.data}
+                                      {formatarDataBr(item.data)}
                                       {item.nf_os && <span className="block text-[9px] text-slate-400 font-mono">OS: {item.nf_os}</span>}
                                     </td>
                                     <td className="py-2 px-3 whitespace-nowrap">
                                       <div className="text-[10px] font-semibold text-slate-700">
-                                        <span>{item.dataEntrada || item.data} ➔ {item.dataSaida || item.data}</span>
+                                        <span>{formatarDataBr(item.dataEntrada || item.data)} ➔ {formatarDataBr(item.dataSaida || item.data)}</span>
                                         <span className={`block font-black text-[9px] ${
                                           diasItem === 0 ? "text-emerald-700" : "text-amber-700"
                                         }`}>
@@ -736,8 +1040,54 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                                         {item.tipo}
                                       </span>
                                     </td>
-                                    <td className="py-2 px-3 text-slate-700 font-medium">
-                                      {item.descricao}
+                                    <td className="py-2 px-3 whitespace-nowrap max-w-sm">
+                                      <div className="flex items-center gap-1.5">
+                                        <span 
+                                          className="text-xs text-slate-800 font-semibold truncate block flex-1" 
+                                          title={
+                                            (item.servicos && item.servicos.length > 0)
+                                              ? `${item.servicos.map((s, idx) => `${idx + 1}. ${s.descricao} (${s.quantidade}x ${formatBRL(s.valorUnitario || 0)})`).join('\n')}${item.observacoes ? `\nObs: ${item.observacoes}` : ''}`
+                                              : `${item.descricao}${item.observacoes ? `\nObs: ${item.observacoes}` : ''}`
+                                          }
+                                        >
+                                          {item.servicos && item.servicos.length > 0 ? item.servicos[0].descricao : item.descricao}
+                                        </span>
+
+                                        {item.servicos && item.servicos.length > 1 && (
+                                          <span 
+                                            className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-help"
+                                            title={`Total de ${item.servicos.length} itens:\n${item.servicos.map((s, idx) => `${idx + 1}. ${s.descricao}`).join('\n')}`}
+                                          >
+                                            <Layers className="w-2.5 h-2.5 text-emerald-600" />
+                                            +{item.servicos.length - 1}
+                                          </span>
+                                        )}
+
+                                        {item.anexos && item.anexos.length > 0 && (
+                                          <span 
+                                            className="shrink-0 inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold bg-slate-100 text-slate-600 border border-slate-200"
+                                            title={`${item.anexos.length} anexo(s)`}
+                                          >
+                                            <Paperclip className="w-2.5 h-2.5 text-slate-400" />
+                                            {item.anexos.length}
+                                          </span>
+                                        )}
+
+                                        {item.autorizacaoAvaria && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedTermoAvaria({ manutencao: item, autorizacao: item.autorizacaoAvaria!, anexos: item.anexos });
+                                            }}
+                                            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                                            title="Ver Termo de Avaria"
+                                          >
+                                            <FileSignature className="w-2.5 h-2.5 text-amber-600" />
+                                            <span>Avaria</span>
+                                          </button>
+                                        )}
+                                      </div>
                                     </td>
                                     <td className="py-2 px-3 whitespace-nowrap text-slate-700 font-semibold">
                                       {item.oficina}
@@ -750,6 +1100,18 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                                     </td>
                                     <td className="py-2 px-3 whitespace-nowrap text-center">
                                       <div className="flex items-center justify-center gap-1">
+                                        {item.autorizacaoAvaria && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedTermoAvaria({ manutencao: item, autorizacao: item.autorizacaoAvaria!, anexos: item.anexos });
+                                            }}
+                                            className="p-1 text-amber-600 hover:text-amber-800 rounded transition-colors cursor-pointer"
+                                            title="Abrir Termo de Avaria e Enviar por E-mail"
+                                          >
+                                            <FileSignature className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
                                         <button
                                           onClick={(e) => { e.stopPropagation(); setEditingItem(item); }}
                                           className="p-1 text-slate-400 hover:text-[#114D38] rounded transition-colors"
@@ -857,12 +1219,24 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block">Data Saída Oficina *</label>
+                  <div className="flex items-center justify-between">
+                    <label className="block">Data Saída Oficina *</label>
+                    <span className="text-[10px] text-slate-400 font-normal">Máx: Hoje</span>
+                  </div>
                   <input
                     type="date"
                     required
+                    max={new Date().toLocaleDateString('en-CA')}
                     value={editingItem.dataSaida || editingItem.data}
-                    onChange={(e) => setEditingItem({ ...editingItem, dataSaida: e.target.value })}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const hoje = new Date().toLocaleDateString('en-CA');
+                      if (val > hoje) {
+                        alert("Não é permitido incluir Data de Saída da Oficina com data futura.");
+                        return;
+                      }
+                      setEditingItem({ ...editingItem, dataSaida: val });
+                    }}
                     className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
                   />
                 </div>
@@ -956,25 +1330,50 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
 
       {/* 5. Modal de Nova Manutenção */}
       {isNewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="bg-white rounded-[24px] shadow-2xl border border-slate-200 overflow-hidden w-full max-w-lg">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-[24px] shadow-2xl border border-slate-200 overflow-hidden w-full max-w-3xl max-h-[92vh] flex flex-col">
+            {/* Header */}
             <div className="bg-[#114D38] px-5 py-4 text-white flex justify-between items-center shrink-0">
-              <div className="flex items-center gap-2">
-                <Plus className="w-4 h-4 text-emerald-300" />
-                <h3 className="font-display font-bold text-sm">Registrar Ordem de Serviço (Oficina)</h3>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-700/60 border border-emerald-500/30 flex items-center justify-center">
+                  <Wrench className="w-4 h-4 text-emerald-300" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-sm tracking-tight">Nova Ordem de Serviço de Manutenção</h3>
+                  <p className="text-[11px] text-emerald-200/80 font-normal">Oficinas credenciadas e controle de avarias da frota</p>
+                </div>
               </div>
-              <button onClick={() => setIsNewModalOpen(false)} className="text-emerald-200 hover:text-white cursor-pointer">
+              <button 
+                type="button"
+                onClick={() => setIsNewModalOpen(false)} 
+                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-emerald-800/50 transition-colors cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleCreateNew} className="p-5 space-y-4 text-xs font-bold text-slate-700">
-              <div className="grid grid-cols-2 gap-3">
+
+            {/* Form Body Scrollable */}
+            <form onSubmit={handleCreateNew} className="p-5 space-y-4 text-xs font-bold text-slate-700 overflow-y-auto custom-scrollbar flex-1">
+              {/* Seleção do Veículo e Tipo */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block">Selecione o Veículo *</label>
+                  <label className="block text-slate-800">Selecione o Veículo *</label>
                   <select
                     name="placa"
                     required
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
+                    value={selectedPlacaNew || (veiculos[0]?.placa || "")}
+                    onChange={(e) => {
+                      setSelectedPlacaNew(e.target.value);
+                      const veic = veiculos.find(v => v.placa === e.target.value);
+                      if (dadosAvaria && veic) {
+                        setDadosAvaria(prev => prev ? {
+                          ...prev,
+                          colaboradorNome: veic.condutor || prev.colaboradorNome,
+                          base: veic.filial || prev.base
+                        } : null);
+                      }
+                    }}
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] bg-slate-50 focus:bg-white text-xs font-bold"
                   >
                     {veiculos.map(v => (
                       <option key={v.id} value={v.placa}>
@@ -982,140 +1381,564 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                       </option>
                     ))}
                   </select>
+                  {(() => {
+                    const veicAtivo = veiculos.find(v => v.placa === (selectedPlacaNew || veiculos[0]?.placa));
+                    return veicAtivo ? (
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 font-semibold px-1 pt-0.5">
+                        <span>Motorista: <strong className="text-slate-800">{veicAtivo.condutor || "Não atribuído"}</strong></span>
+                        <span>Base: <strong className="text-slate-800">{veicAtivo.filial || "Sede"}</strong></span>
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 <div className="space-y-1">
-                  <label className="block">Tipo de Manutenção *</label>
+                  <label className="block text-slate-800">Tipo de Manutenção *</label>
                   <select
                     name="tipo"
                     required
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] bg-slate-50 focus:bg-white text-xs font-bold"
                   >
-                    <option value="Preventiva">Preventiva (Revisão Periódica)</option>
-                    <option value="Corretiva">Corretiva (Reparo / Quebra)</option>
+                    <option value="Preventiva">Preventiva (Revisão Periódica / Preventiva)</option>
+                    <option value="Corretiva">Corretiva (Reparo / Quebra / Avaria)</option>
                   </select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Datas da OS e Prazos em Oficina */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="block">Data da OS *</label>
+                  <label className="block text-slate-800">Data da OS *</label>
                   <input
                     type="date"
                     name="data"
                     required
                     defaultValue={new Date().toISOString().split("T")[0]}
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] text-xs font-bold"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block">Custo Total (R$) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    name="custo"
-                    required
-                    placeholder="Ex: 650.00"
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
-                  />
-                </div>
-              </div>
-
-              {/* Data Entrada e Saída Oficina */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="block">Data Entrada Oficina *</label>
+                  <label className="block text-slate-800">Entrada na Oficina *</label>
                   <input
                     type="date"
                     name="dataEntrada"
                     required
                     defaultValue={new Date().toISOString().split("T")[0]}
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] text-xs font-bold"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block">Data Saída Oficina *</label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-slate-800">Saída da Oficina *</label>
+                    <span className="text-[10px] text-slate-400 font-normal">Máx: Hoje</span>
+                  </div>
                   <input
                     type="date"
                     name="dataSaida"
                     required
-                    defaultValue={new Date().toISOString().split("T")[0]}
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
+                    max={new Date().toLocaleDateString('en-CA')}
+                    defaultValue={new Date().toLocaleDateString('en-CA')}
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] text-xs font-bold"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Odômetro, Número NF/OS e Oficina */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="block">Odômetro do Serviço (km) *</label>
+                  <label className="block text-slate-800">Odômetro do Serviço (km) *</label>
                   <input
                     type="number"
                     name="odometro"
                     required
                     placeholder="Ex: 45000"
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] text-xs font-bold"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block">Número da OS / NF</label>
+                  <label className="block text-slate-800">Número da OS / NF</label>
                   <input
                     type="text"
                     name="nf_os"
                     placeholder="Ex: OS-2026-90"
-                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] text-xs font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-slate-800">Oficina Prestadora *</label>
+                  <input
+                    type="text"
+                    name="oficina"
+                    required
+                    placeholder="Ex: Oficina Mecânica Macaé"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] text-xs font-bold"
+                  />
+                </div>
+              </div>
+
+              {/* SEÇÃO MULTI-SERVIÇOS: INCLUIR MAIS DE UM SERVIÇO COM BOTÃO + */}
+              <div className="border border-slate-200/90 rounded-2xl p-3.5 bg-slate-50/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[#114D38]" />
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-xs">Serviços e Peças Realizados</h4>
+                      <p className="text-[10px] text-slate-500 font-normal">Adicione um ou múltiplos serviços/peças discriminados</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddServico}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-200 rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-2xs active:scale-95"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Adicionar Serviço</span>
+                  </button>
+                </div>
+
+                {/* Lista de Linhas de Serviços */}
+                <div className="space-y-2">
+                  {servicosNew.map((srv, idx) => (
+                    <div 
+                      key={srv.id} 
+                      className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-2xs grid grid-cols-12 gap-2 items-center text-xs"
+                    >
+                      <div className="col-span-12 sm:col-span-2">
+                        <select
+                          value={srv.tipo}
+                          onChange={(e) => handleUpdateServico(srv.id, "tipo", e.target.value as "Serviço" | "Peça / Produto")}
+                          className="w-full border border-slate-200 px-2 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-[11px] font-bold bg-slate-50"
+                        >
+                          <option value="Serviço">Serviço</option>
+                          <option value="Peça / Produto">Peça / Produto</option>
+                        </select>
+                      </div>
+
+                      <div className="col-span-12 sm:col-span-5">
+                        <input
+                          type="text"
+                          required
+                          value={srv.descricao}
+                          onChange={(e) => handleUpdateServico(srv.id, "descricao", e.target.value)}
+                          placeholder={idx === 0 ? "Ex: Substituição das pastilhas de freio" : "Descrição da peça ou serviço"}
+                          className="w-full border border-slate-200 px-2.5 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs font-normal"
+                        />
+                      </div>
+
+                      <div className="col-span-4 sm:col-span-1">
+                        <input
+                          type="number"
+                          min="1"
+                          value={srv.quantidade}
+                          onChange={(e) => handleUpdateServico(srv.id, "quantidade", e.target.value)}
+                          placeholder="Qtd"
+                          title="Quantidade"
+                          className="w-full border border-slate-200 px-2 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs text-center font-bold"
+                        />
+                      </div>
+
+                      <div className="col-span-4 sm:col-span-2">
+                        <div className="relative">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-bold">R$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={srv.valorUnitario || ""}
+                            onChange={(e) => handleUpdateServico(srv.id, "valorUnitario", e.target.value)}
+                            placeholder="Unitário"
+                            title="Valor Unitário"
+                            className="w-full pl-6 pr-2 py-1.5 border border-slate-200 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] text-xs text-right font-mono font-bold"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="col-span-3 sm:col-span-1 text-right">
+                        <span className="text-[11px] font-mono font-black text-slate-800 block truncate" title="Subtotal">
+                          {formatBRL(srv.valorTotal || 0)}
+                        </span>
+                      </div>
+
+                      <div className="col-span-1 sm:col-span-1 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveServico(srv.id)}
+                          disabled={servicosNew.length <= 1}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            servicosNew.length <= 1 
+                              ? "text-slate-300 cursor-not-allowed" 
+                              : "text-rose-500 hover:text-rose-700 hover:bg-rose-50 cursor-pointer"
+                          }`}
+                          title="Remover serviço"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Subtotal dos Serviços e Custo Final */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200 text-xs">
+                  <span className="text-slate-500 font-normal">
+                    {servicosNew.filter(s => s.descricao.trim()).length} serviço(s) adicionado(s)
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-slate-600">Custo Total da OS:</span>
+                    <div className="relative w-36">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">R$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        name="custo"
+                        required
+                        value={totalServicosCalculado > 0 ? totalServicosCalculado : undefined}
+                        defaultValue={totalServicosCalculado === 0 ? "" : undefined}
+                        placeholder="0.00"
+                        className="w-full pl-8 pr-2.5 py-1.5 border border-emerald-300 bg-emerald-50/50 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] font-mono font-black text-slate-900 text-sm text-right"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SEÇÃO DE ANEXOS (IMAGENS E DOCUMENTOS) */}
+              <div className="border border-slate-200/90 rounded-2xl p-3.5 bg-slate-50/50 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Paperclip className="w-4 h-4 text-[#114D38]" />
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-xs">Anexos e Documentos (Fotos de Avarias, NF, Orçamentos)</h4>
+                      <p className="text-[10px] text-slate-500 font-normal">Comprovantes e fotos que farão parte da autorização em PDF</p>
+                    </div>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-extrabold cursor-pointer transition-colors shadow-2xs">
+                    <Upload className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Anexar Arquivos</span>
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*,application/pdf"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                {/* Grid de Anexos */}
+                {anexosNew.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                    {anexosNew.map((anexo) => (
+                      <div 
+                        key={anexo.id} 
+                        className="relative group bg-white border border-slate-200 rounded-xl p-2 flex items-center gap-2 overflow-hidden shadow-2xs"
+                      >
+                        {anexo.tipo.startsWith("image/") ? (
+                          <img 
+                            src={anexo.dataUrl} 
+                            alt={anexo.nome} 
+                            className="w-9 h-9 object-cover rounded-lg shrink-0 border border-slate-100" 
+                          />
+                        ) : (
+                          <div className="w-9 h-9 rounded-lg bg-rose-50 border border-rose-100 flex items-center justify-center shrink-0 text-rose-600">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-bold text-slate-800 truncate" title={anexo.nome}>
+                            {anexo.nome}
+                          </p>
+                          <span className="text-[9px] text-slate-400 font-medium">
+                            {(anexo.tamanho / 1024).toFixed(0)} KB
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAnexo(anexo.id)}
+                          className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors"
+                          title="Remover anexo"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400 italic">
+                    Nenhum arquivo anexado ainda. Você pode anexar fotos de danos ou documentos comprobatórios.
+                  </p>
+                )}
+              </div>
+
+              {/* SEÇÃO: BOTÃO "GERAR DESCONTO DE AVARIA" */}
+              <div className="border border-amber-200 rounded-2xl p-3.5 bg-amber-50/40 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <ShieldAlert className="w-4 h-4 text-amber-700" />
+                      <h4 className="font-extrabold text-amber-900 text-xs">Autorização de Desconto por Avaria (Art. 462 da CLT)</h4>
+                    </div>
+                    <p className="text-[10px] text-amber-800/80 font-normal mt-0.5">
+                      Gera o termo jurídico timbrado com dados do colaborador, serviços discriminados, fotos e parcelamento em folha
+                    </p>
+                  </div>
+
+                  {dadosAvaria ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenAvariaModal}
+                        className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-xl text-xs font-black transition-colors cursor-pointer"
+                      >
+                        Editar Desconto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDadosAvaria(null)}
+                        className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        title="Remover termo de avaria"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleOpenAvariaModal}
+                      className="px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer shrink-0 active:scale-95"
+                    >
+                      <FileSignature className="w-4 h-4 text-amber-200" />
+                      <span>Gerar Desconto de Avaria</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Banner com os dados confirmados de avaria */}
+                {dadosAvaria && (
+                  <div className="bg-white/90 border border-amber-200 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-slate-800 block">
+                        Colaborador: <strong className="text-amber-900">{dadosAvaria.colaboradorNome}</strong> ({dadosAvaria.base})
+                      </span>
+                      <span className="text-[10px] text-slate-500 block">
+                        Desconto de <strong>{formatBRL(dadosAvaria.valorDesconto)}</strong> em <strong>{dadosAvaria.quantidadeParcelas}x de {formatBRL(dadosAvaria.valorParcela)}</strong> em folha
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-800 font-black text-[10px] rounded-lg">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      Pronto para PDF e Envio por E-mail
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Observações Complementares */}
+              <div className="space-y-1">
+                <label className="block text-slate-800">Observações Complementares</label>
+                <input
+                  type="text"
+                  name="observacoes"
+                  placeholder="Ex: Peças com garantia de 6 meses pela oficina credenciada"
+                  className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#114D38] text-xs font-normal"
+                />
+              </div>
+
+              {/* Botões do Rodapé */}
+              <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsNewModalOpen(false)}
+                  className="px-4 py-2.5 border border-slate-200 rounded-xl font-bold text-xs text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm flex items-center gap-2 active:scale-95 transition-all"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                  <span>Gravar Ordem de Serviço</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-modal: Configuração do Desconto de Avaria */}
+      {isAvariaModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-[24px] shadow-2xl border border-slate-200 overflow-hidden w-full max-w-lg">
+            <div className="bg-gradient-to-r from-amber-700 to-amber-800 px-5 py-4 text-white flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2">
+                <FileSignature className="w-5 h-5 text-amber-200" />
+                <div>
+                  <h3 className="font-display font-bold text-sm">Dados da Autorização de Desconto por Avaria</h3>
+                  <p className="text-[10px] text-amber-100 font-normal">Em conformidade com o Artigo 462, § 1º da CLT</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setIsAvariaModalOpen(false)} 
+                className="text-amber-200 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmarAvaria} className="p-5 space-y-3.5 text-xs font-bold text-slate-700 max-h-[80vh] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-slate-800">Nome Completo do Colaborador *</label>
+                  <input
+                    type="text"
+                    required
+                    value={avariaColaborador}
+                    onChange={(e) => setAvariaColaborador(e.target.value)}
+                    placeholder="Ex: Carlos Eduardo da Silva"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-amber-600 text-xs font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-slate-800">Base / Filial Operacional *</label>
+                  <input
+                    type="text"
+                    required
+                    value={avariaBase}
+                    onChange={(e) => setAvariaBase(e.target.value)}
+                    placeholder="Ex: Paulínia / Macaé"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-amber-600 text-xs font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-slate-800">CPF ou Matrícula</label>
+                  <input
+                    type="text"
+                    value={avariaCpf}
+                    onChange={(e) => setAvariaCpf(e.target.value)}
+                    placeholder="Ex: 123.456.789-00"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-amber-600 text-xs font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-slate-800">Cargo / Função</label>
+                  <input
+                    type="text"
+                    value={avariaCargo}
+                    onChange={(e) => setAvariaCargo(e.target.value)}
+                    placeholder="Ex: Operador de Guindaste / Condutor"
+                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-amber-600 text-xs font-bold"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="block">Oficina / Prestador de Serviços *</label>
-                <input
-                  type="text"
-                  name="oficina"
-                  required
-                  placeholder="Ex: Oficina Multimarcas Macaé"
-                  className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38]"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block">Descrição dos Serviços e Peças *</label>
+                <label className="block text-slate-800">Relato / Descrição da Avaria / Ocorrência *</label>
                 <textarea
-                  name="descricao"
-                  rows={3}
                   required
-                  placeholder="Ex: Substituição das pastilhas de freio dianteiras, troca de óleo 5W30 e filtro de combustível..."
-                  className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] font-normal"
+                  rows={3}
+                  value={avariaDescricao}
+                  onChange={(e) => setAvariaDescricao(e.target.value)}
+                  placeholder="Ex: Colisão em manobra de ré no pátio operacional causando quebra da lanterna traseira direita e amassado na tampa do porta-malas..."
+                  className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-amber-600 text-xs font-normal"
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="block">Observações Complementares</label>
-                <input
-                  type="text"
-                  name="observacoes"
-                  placeholder="Ex: Garantia de 6 meses nas peças substituídas"
-                  className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-[#114D38] font-normal"
-                />
+              {/* Valores e Parcelas */}
+              <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="block text-[11px] text-amber-900 font-bold">Valor do Reparo (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      value={avariaValorTotal || ""}
+                      onChange={(e) => setAvariaValorTotal(Number(e.target.value) || 0)}
+                      placeholder="0.00"
+                      className="w-full px-2.5 py-1.5 border border-slate-200 bg-white rounded-lg outline-none focus:ring-1 focus:ring-amber-600 text-xs font-mono font-bold"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[11px] text-amber-900 font-bold">Subsídio Empresa (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={avariaSubsidio || ""}
+                      onChange={(e) => setAvariaSubsidio(Number(e.target.value) || 0)}
+                      placeholder="0.00"
+                      className="w-full px-2.5 py-1.5 border border-slate-200 bg-white rounded-lg outline-none focus:ring-1 focus:ring-amber-600 text-xs font-mono font-bold"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[11px] text-amber-900 font-bold">Parcelas em Folha</label>
+                    <select
+                      value={avariaParcelas}
+                      onChange={(e) => setAvariaParcelas(Number(e.target.value) || 1)}
+                      className="w-full px-2.5 py-1.5 border border-slate-200 bg-white rounded-lg outline-none focus:ring-1 focus:ring-amber-600 text-xs font-bold"
+                    >
+                      {[1, 2, 3, 4, 5, 6, 8, 10, 12].map(n => (
+                        <option key={n} value={n}>{n}x parcela{n > 1 ? "s" : ""}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Resumo do Cálculo */}
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-amber-200/80 font-bold">
+                  <span className="text-amber-900">Total a Descontar:</span>
+                  <span className="font-mono font-black text-amber-900 text-sm">
+                    {formatBRL(Math.max(0, (avariaValorTotal || 0) - (avariaSubsidio || 0)))}
+                    <span className="text-[11px] text-amber-700 font-normal ml-1.5">
+                      ({avariaParcelas}x de {formatBRL(Math.max(0, (avariaValorTotal || 0) - (avariaSubsidio || 0)) / (avariaParcelas || 1))})
+                    </span>
+                  </span>
+                </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setIsNewModalOpen(false)}
+                  onClick={() => setIsAvariaModalOpen(false)}
                   className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-xs text-slate-600 hover:bg-slate-50 cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+                  className="px-5 py-2 bg-amber-700 hover:bg-amber-800 text-white font-extrabold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm"
                 >
-                  Gravar Ordem de Serviço
+                  Confirmar Autorização
                 </button>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {/* Visualizador do Termo de Avaria (PDF, Impressão e Envio de E-mail) */}
+      {selectedTermoAvaria && (
+        <TermoAvariaViewerModal
+          isOpen={!!selectedTermoAvaria}
+          onClose={() => setSelectedTermoAvaria(null)}
+          manutencao={selectedTermoAvaria.manutencao}
+          autorizacao={selectedTermoAvaria.autorizacao}
+          anexos={selectedTermoAvaria.anexos || selectedTermoAvaria.manutencao.anexos || []}
+          onSaveAnexos={(novosAnexos) => {
+            const manutAtualizada: Manutencao = {
+              ...selectedTermoAvaria.manutencao,
+              anexos: novosAnexos
+            };
+            onUpdateManutencao?.(manutAtualizada);
+            setSelectedTermoAvaria(prev => prev ? {
+              ...prev,
+              manutencao: manutAtualizada,
+              anexos: novosAnexos
+            } : null);
+          }}
+        />
       )}
 
       {/* 6. Modal de Confirmação de Exclusão */}
@@ -1130,7 +1953,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
               <p className="text-xs text-slate-500 mt-1">
                 Deseja realmente remover o registro de manutenção do veículo{" "}
                 <span className="font-bold text-slate-800">{itemToDelete.placa}</span> de{" "}
-                <span className="font-bold text-slate-800">{itemToDelete.data}</span>?
+                <span className="font-bold text-slate-800">{formatarDataBr(itemToDelete.data)}</span>?
               </p>
             </div>
             <div className="flex gap-2 justify-center pt-2">
@@ -1481,7 +2304,7 @@ export const ManutencaoDashboardView: React.FC<ManutencaoViewProps> = ({
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={monthlyData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} tickFormatter={(val) => formatarMesAnoBr(val)} />
                   <YAxis 
                     tick={{ fontSize: 11, fill: '#64748b' }} 
                     axisLine={{ stroke: '#cbd5e1' }}
@@ -1489,7 +2312,7 @@ export const ManutencaoDashboardView: React.FC<ManutencaoViewProps> = ({
                   />
                   <Tooltip 
                     formatter={(value: any) => [formatBRL(Number(value)), ""]}
-                    labelFormatter={(label) => `Mês: ${label}`}
+                    labelFormatter={(label) => `Mês: ${formatarMesAnoBr(String(label))}`}
                     contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                   />
                   <Bar dataKey="preventiva" name="Preventiva" fill="#3b82f6" radius={[4, 4, 0, 0]} stackId="a" />

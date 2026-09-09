@@ -3,6 +3,20 @@
  */
 
 export const isDenyUser = (currentUser?: any): boolean => {
+  // Se o usuário deslogou ou a sessão expirou por inatividade (> 1 hora), bloqueia autorização automática
+  if (typeof window !== 'undefined') {
+    if (localStorage.getItem("risel_explicit_logout") === "true") {
+      return false;
+    }
+    const lastActivity = localStorage.getItem("risel_last_activity");
+    if (lastActivity) {
+      const lastTime = parseInt(lastActivity, 10);
+      if (!isNaN(lastTime) && Date.now() - lastTime > 3600000) {
+        return false;
+      }
+    }
+  }
+
   // 1. Verifica pelo objeto de usuário passado via prop ou hook useAuth
   if (currentUser) {
     const email = (currentUser.email || currentUser.username || '').toLowerCase().trim();
