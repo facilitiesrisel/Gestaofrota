@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Mail, CheckCircle2, ArrowRight, Copy, Check, ExternalLink, ShieldCheck, RefreshCw, X, AlertCircle, Sparkles, FileCode2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../context/AuthContext";
+import { sendEmail } from "../services/firebaseService";
 
 interface ForgotPasswordModalProps {
   isOpen: boolean;
@@ -44,13 +45,26 @@ export function ForgotPasswordModal({
       setIsLoading(false);
 
       if (result.success && result.resetToken && result.htmlEmail) {
+        const userEmail = email.trim().toLowerCase();
         setSuccessData({
           token: result.resetToken,
-          email: email.trim().toLowerCase(),
+          email: userEmail,
           name: result.user?.name || "Colaborador",
           htmlEmail: result.htmlEmail,
-          link: `${window.location.origin}/redefinir-senha?token=${result.resetToken}&email=${encodeURIComponent(email.trim().toLowerCase())}`
+          link: `${window.location.origin}/redefinir-senha?token=${result.resetToken}&email=${encodeURIComponent(userEmail)}`
         });
+
+        // Dispara e-mail de recuperação diretamente para a caixa de entrada do usuário
+        try {
+          await sendEmail(
+            [userEmail],
+            "Recuperação de Acesso e Senha - Risel Combustíveis",
+            result.htmlEmail,
+            { fromName: "Segurança Risel" }
+          );
+        } catch (mailErr) {
+          console.warn("Aviso ao enviar e-mail de redefinição de senha:", mailErr);
+        }
       } else {
         setError(result.message || "E-mail não localizado na base cadastral.");
       }

@@ -352,8 +352,8 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
       const emailHtml = generateRacEmailHtml(fullRental, !!cnhFile, hasCnhAlready);
 
       const emailRecipients = [...ADMIN_EMAIL_RECIPIENTS];
-      if (formData.requesterEmail && !emailRecipients.includes(formData.requesterEmail)) {
-        // Envia para admins e coloca o solicitante como cópia
+      if (formData.requesterEmail && !emailRecipients.includes(formData.requesterEmail.trim())) {
+        emailRecipients.push(formData.requesterEmail.trim());
       }
 
       await sendEmail(
@@ -362,7 +362,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         emailHtml,
         {
           fromName: 'Gestão de Reservas Risel',
-          cc: formData.requesterEmail ? [formData.requesterEmail] : undefined,
+          cc: formData.requesterEmail ? [formData.requesterEmail.trim()] : undefined,
           attachments: emailAttachments.length > 0 ? emailAttachments : undefined
         }
       );

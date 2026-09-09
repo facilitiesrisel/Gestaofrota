@@ -149,6 +149,7 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   }, [user, authLoading]);
 
   const updateReservation = useCallback(async (id: string, data: Partial<Omit<Reservation, 'id'>>) => {
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, ...data } : r));
     await firebaseApi.updateReservation(id, data);
   }, []);
 

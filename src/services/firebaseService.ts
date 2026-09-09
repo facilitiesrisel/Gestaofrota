@@ -243,6 +243,12 @@ export const sendEmail = async (
         return;
     }
 
+    // Lê eventuais preferências SMTP salvas pelo usuário no painel de configurações
+    const smtpHost = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_host") || undefined) : undefined;
+    const smtpPort = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_port") || undefined) : undefined;
+    const smtpEmail = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_email") || undefined) : undefined;
+    const smtpPassword = typeof window !== 'undefined' ? (localStorage.getItem("risel_smtp_password") || undefined) : undefined;
+
     const response = await fetch('/api/send-email', {
       method: 'POST',
       headers: {
@@ -254,7 +260,11 @@ export const sendEmail = async (
         html,
         fromName: options?.fromName || "Gestão de Reservas Risel",
         cc: options?.cc,
-        attachments: options?.attachments
+        attachments: options?.attachments,
+        smtpHost,
+        smtpPort,
+        smtpEmail,
+        smtpPassword
       }),
     });
 
@@ -1092,41 +1102,200 @@ export const deleteVehicle = async (id: string) => {
 };
 
 
-// --- Funções CRUD para Reservas ---
+// --- Funções CRUD para Reservas com Fallback e Cache Resiliente ---
+const RESERVATIONS_STORAGE_KEY = 'risel_reservas_cache_v2';
+let useReservationsLocalStorageFallback = false;
+const reservationListeners: ((data: Reservation[]) => void)[] = [];
+
+const notifyReservationListeners = () => {
+  const data = getReservationsFromLocalStorage();
+  reservationListeners.forEach(listener => {
+    try {
+      listener(data);
+    } catch (e) {
+      console.error("Erro ao notificar ouvinte de reservas:", e);
+    }
+  });
+};
+
+export const getReservationsFromLocalStorage = (): Reservation[] => {
+  try {
+    const raw = localStorage.getItem(RESERVATIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item: any) => ({
+        ...item,
+        departureDateTime: item.departureDateTime ? new Date(item.departureDateTime) : new Date(),
+        returnDate: item.returnDate ? new Date(item.returnDate) : new Date(),
+        actualReturnDateTime: item.actualReturnDateTime ? new Date(item.actualReturnDateTime) : undefined,
+        requestTimestamp: item.requestTimestamp ? new Date(item.requestTimestamp) : undefined
+      }));
+    }
+    return [];
+  } catch (err) {
+    console.error("Erro ao ler reservas do localStorage:", err);
+    return [];
+  }
+};
+
+export const saveReservationsToLocalStorage = (reservations: Reservation[]) => {
+  try {
+    localStorage.setItem(RESERVATIONS_STORAGE_KEY, JSON.stringify(reservations));
+  } catch (err) {
+    console.error("Erro ao salvar reservas no localStorage:", err);
+  }
+};
+
 export const getReservations = async (): Promise<Reservation[]> => {
-  const snapshot = await reservationsCollection.orderBy('departureDateTime', 'desc').get();
-  return snapshot.docs
-    .map(docToReservation)
-    .filter((r): r is Reservation => r !== null);
+  if (useReservationsLocalStorageFallback) {
+    return getReservationsFromLocalStorage();
+  }
+  try {
+    const snapshot = await reservationsCollection.orderBy('departureDateTime', 'desc').get();
+    const firestoreReservations = snapshot.docs
+      .map(docToReservation)
+      .filter((r): r is Reservation => r !== null);
+      
+    if (firestoreReservations.length === 0) {
+      return getReservationsFromLocalStorage();
+    }
+    // Sincroniza o cache local com os dados remotos
+    saveReservationsToLocalStorage(firestoreReservations);
+    return firestoreReservations;
+  } catch (error) {
+    console.warn("getReservations falhou, usando fallback do localStorage:", error);
+    useReservationsLocalStorageFallback = true;
+    return getReservationsFromLocalStorage();
+  }
 };
 
 export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void, onError: (error: any) => void) => {
-    return reservationsCollection.orderBy('departureDateTime', 'desc').onSnapshot(snapshot => {
+    let isSubscribed = true;
+    reservationListeners.push(onUpdate);
+
+    // Imediatamente fornece os dados do cache local para carregamento instantâneo
+    const initialLocal = getReservationsFromLocalStorage();
+    if (initialLocal.length > 0) {
+        onUpdate(initialLocal);
+    }
+
+    const unsubscribe = reservationsCollection.orderBy('departureDateTime', 'desc').onSnapshot(
+      snapshot => {
+        if (!isSubscribed) return;
         const reservations = snapshot.docs.map(docToReservation).filter((r): r is Reservation => r !== null);
-        onUpdate(reservations);
-    }, onError);
+        if (reservations.length > 0) {
+            saveReservationsToLocalStorage(reservations);
+            onUpdate(reservations);
+        } else {
+            const cached = getReservationsFromLocalStorage();
+            if (cached.length > 0) {
+                onUpdate(cached);
+            } else {
+                onUpdate([]);
+            }
+        }
+      }, 
+      error => {
+        if (!isSubscribed) return;
+        console.warn("Sincronização de reservas remota falhou, ativando cache local:", error);
+        useReservationsLocalStorageFallback = true;
+        onUpdate(getReservationsFromLocalStorage());
+        if (onError) onError(error);
+      }
+    );
+
+    return () => {
+      isSubscribed = false;
+      const index = reservationListeners.indexOf(onUpdate);
+      if (index !== -1) {
+        reservationListeners.splice(index, 1);
+      }
+      unsubscribe();
+    };
 };
 
-export const addReservation = (data: Omit<Reservation, 'id' | 'status' | 'actualReturnDateTime' | 'finalKm' | 'requestTimestamp'>) => {
-    const reservationWithAllFields = {
+export const addReservation = async (data: Omit<Reservation, 'id' | 'status' | 'actualReturnDateTime' | 'finalKm' | 'requestTimestamp'>) => {
+    const reservationWithAllFields: Omit<Reservation, 'id'> = {
         ...data,
         department: normalizeNomeSetor(data.department, 'Operações'),
         status: ReservationStatus.Pending,
         requestTimestamp: new Date(),
     };
-    return reservationsCollection.add(removeUndefined(reservationWithAllFields));
-}
-export const updateReservation = (id: string, data: Partial<Omit<Reservation, 'id'>>) => {
+
+    // Atualiza imediatamente no cache local
+    const currentList = getReservationsFromLocalStorage();
+    const tempId = 'res_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const newReservation: Reservation = {
+        ...reservationWithAllFields,
+        id: tempId,
+    };
+    currentList.unshift(newReservation);
+    saveReservationsToLocalStorage(currentList);
+    notifyReservationListeners();
+
+    try {
+        const docRef = await reservationsCollection.add(removeUndefined(reservationWithAllFields));
+        if (docRef && docRef.id) {
+            // Substitui o ID temporário pelo ID real do Firestore
+            const updatedList = getReservationsFromLocalStorage().map(r => r.id === tempId ? { ...r, id: docRef.id } : r);
+            saveReservationsToLocalStorage(updatedList);
+            notifyReservationListeners();
+            return { id: docRef.id };
+        }
+        return { id: tempId };
+    } catch (err) {
+        console.warn("Adição no Firestore falhou, reserva mantida no cache local:", err);
+        useReservationsLocalStorageFallback = true;
+        return { id: tempId };
+    }
+};
+
+export const updateReservation = async (id: string, data: Partial<Omit<Reservation, 'id'>>) => {
     const sanitizedData = { ...data };
     if (sanitizedData.department !== undefined) {
         sanitizedData.department = normalizeNomeSetor(sanitizedData.department, 'Operações');
     }
-    return reservationsCollection.doc(id).update(removeUndefined(sanitizedData));
-};
-export const deleteReservation = async (id: string) => {
+
+    // 1. Atualização imediata no cache local e notificação de ouvintes (UI Instantânea)
+    const currentList = getReservationsFromLocalStorage();
+    const idx = currentList.findIndex(r => r.id === id);
+    if (idx !== -1) {
+        currentList[idx] = {
+            ...currentList[idx],
+            ...sanitizedData,
+            departureDateTime: sanitizedData.departureDateTime ? new Date(sanitizedData.departureDateTime) : currentList[idx].departureDateTime,
+            returnDate: sanitizedData.returnDate ? new Date(sanitizedData.returnDate) : currentList[idx].returnDate,
+            actualReturnDateTime: sanitizedData.actualReturnDateTime ? new Date(sanitizedData.actualReturnDateTime) : currentList[idx].actualReturnDateTime,
+        };
+        saveReservationsToLocalStorage(currentList);
+        notifyReservationListeners();
+    }
+
+    // 2. Se for ID temporário local, não tenta atualizar no Firestore
+    if (id.startsWith('res_') || id.startsWith('local_')) {
+        return;
+    }
+
+    // 3. Atualização no Firestore com tratamento defensivo
     try {
-        if (!id || id.startsWith('local_')) return;
-        return await reservationsCollection.doc(id).delete();
+        await reservationsCollection.doc(id).update(removeUndefined(sanitizedData));
+    } catch (error) {
+        console.warn(`Atualização remota no Firestore da reserva ${id} falhou, mantida com segurança no cache:`, error);
+        useReservationsLocalStorageFallback = true;
+    }
+};
+
+export const deleteReservation = async (id: string) => {
+    // Remove do cache local
+    const currentList = getReservationsFromLocalStorage().filter(r => r.id !== id);
+    saveReservationsToLocalStorage(currentList);
+    notifyReservationListeners();
+
+    if (id.startsWith('res_') || id.startsWith('local_')) return;
+
+    try {
+        await reservationsCollection.doc(id).delete();
     } catch (error) {
         console.warn("deleteReservation remoto falhou:", error);
     }

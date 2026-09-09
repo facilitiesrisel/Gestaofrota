@@ -890,15 +890,53 @@ async function startServer() {
             attachmentsCount: mailAttachments.length 
           });
         } catch (err: any) {
-          console.warn("[Risel SMTP] Erro no envio direto:", err.message);
-          return res.status(500).json({ 
-            success: false, 
-            delivered: false, 
-            error: err.message,
-            host: smtpConfig.host,
-            message: `Erro ao enviar e-mail: ${err.message}`,
-            attachmentsCount: mailAttachments.length
-          });
+          console.warn("[Risel SMTP] Primeira tentativa falhou:", err.message, ". Tentando contingência com hostname direto...");
+          try {
+            const fallbackTransporter = nodemailer.createTransport({
+              host: (smtpConfig.host || "smtp.office365.com").trim(),
+              port: Number(smtpConfig.port) || 587,
+              secure: Number(smtpConfig.port) === 465,
+              auth: {
+                user: smtpConfig.user,
+                pass: smtpConfig.pass
+              },
+              tls: {
+                rejectUnauthorized: false,
+                minVersion: "TLSv1.2"
+              },
+              connectionTimeout: 25000
+            } as any);
+
+            const senderHeader = fromName ? `"${fromName}" <${smtpConfig.user}>` : `"Risel Combustíveis" <${smtpConfig.user}>`;
+
+            await fallbackTransporter.sendMail({
+              from: senderHeader,
+              to: emailTo,
+              cc: emailCc || undefined,
+              subject: emailSubject,
+              html: emailHtml,
+              attachments: mailAttachments
+            });
+
+            console.log(`[Risel SMTP] Envio de contingência bem-sucedido para ${emailTo}!`);
+            return res.json({ 
+              success: true, 
+              delivered: true, 
+              host: smtpConfig.host,
+              message: `E-mail enviado com sucesso (contingência) para ${emailTo}!`,
+              attachmentsCount: mailAttachments.length 
+            });
+          } catch (retryErr: any) {
+            console.warn("[Risel SMTP] Erro em ambas as tentativas de envio:", retryErr.message);
+            return res.status(500).json({ 
+              success: false, 
+              delivered: false, 
+              error: retryErr.message || err.message,
+              host: smtpConfig.host,
+              message: `Erro ao enviar e-mail: ${retryErr.message || err.message}`,
+              attachmentsCount: mailAttachments.length
+            });
+          }
         }
       } else {
         console.log(`[Risel SMTP] Notificação não disparada: senha SMTP ausente.`);
@@ -2412,13 +2450,19 @@ async function startServer() {
         const checklistSmtp = getRiselSmtpConfig({ defaultSenderName: "Risel Frota" });
         if (checklistSmtp.pass && checklistSmtp.pass.length > 0) {
           const transporter = await createSafeTransporter(checklistSmtp);
+          const checklistRecipients = Array.from(new Set([
+            mailRecipient,
+            "deny.goncalves@risel.com.br",
+            "lorena.padilha@risel.com.br"
+          ])).filter(Boolean);
+
           await transporter.sendMail({
             from: `"Risel Frota" <${checklistSmtp.user}>`,
-            to: mailRecipient,
+            to: checklistRecipients.join(", "),
             subject: emailSubject,
             html: htmlEmail
           });
-          console.log(`[Risel Frota] E-mail de notificação de checklist enviado com sucesso para ${mailRecipient} via ${checklistSmtp.host}`);
+          console.log(`[Risel Frota] E-mail de notificação de checklist enviado com sucesso para ${checklistRecipients.join(", ")} via ${checklistSmtp.host}`);
         } else {
           console.log(`[Risel Frota] Notificação de e-mail de checklist pronta para ${mailRecipient}.`);
         }

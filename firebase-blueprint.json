@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "Reservation": {
+      "title": "Reservation",
+      "description": "Reserva de veículo da frota leve própria",
+      "type": "object",
+      "properties": {
+        "requesterName": { "type": "string" },
+        "department": { "type": "string" },
+        "role": { "type": "string" },
+        "email": { "type": "string" },
+        "departureDateTime": { "type": "string" },
+        "returnDate": { "type": "string" },
+        "destination": { "type": "string" },
+        "destinationCity": { "type": "string" },
+        "distanceKm": { "type": "number" },
+        "vehicleId": { "type": "string" },
+        "status": { "type": "string" },
+        "driverName": { "type": "string" },
+        "actualReturnDateTime": { "type": "string" },
+        "finalKm": { "type": "number" },
+        "purpose": { "type": "string" },
+        "rejectReason": { "type": "string" },
+        "adminNotes": { "type": "string" }
+      },
+      "required": ["requesterName", "vehicleId", "status"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Veículo cadastrado na frota leve",
+      "type": "object",
+      "properties": {
+        "plate": { "type": "string" },
+        "model": { "type": "string" },
+        "status": { "type": "string" },
+        "lastKm": { "type": "number" }
+      },
+      "required": ["plate", "model"]
+    },
+    "RacRental": {
+      "title": "RacRental",
+      "description": "Locação de veículo terceirizado RAC",
+      "type": "object",
+      "properties": {
+        "rentalCompany": { "type": "string" },
+        "plate": { "type": "string" },
+        "requesterName": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["requesterName", "status"]
+    },
+    "DailyTrip": {
+      "title": "DailyTrip",
+      "description": "Uso diário de veículo da frota",
+      "type": "object",
+      "properties": {
+        "vehicleId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["vehicleId", "status"]
+    }
+  },
+  "firestore": {
+    "/reservations/{reservationId}": {
+      "schema": "Reservation",
+      "description": "Coleção de reservas da frota leve"
+    },
+    "/reservas/{reservaId}": {
+      "schema": "Reservation",
+      "description": "Coleção alternativa de reservas"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Coleção de veículos da frota"
+    },
+    "/veiculos/{veiculoId}": {
+      "schema": "Vehicle",
+      "description": "Coleção em português de veículos"
+    },
+    "/racRentals/{rentalId}": {
+      "schema": "RacRental",
+      "description": "Coleção de locações terceirizadas RAC"
+    },
+    "/dailyUse/{tripId}": {
+      "schema": "DailyTrip",
+      "description": "Coleção de uso diário de veículos"
+    }
+  }
+}

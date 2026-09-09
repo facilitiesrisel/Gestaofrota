@@ -13,6 +13,7 @@ import {
   getPlateFinalDigit 
 } from '../../services/rodizioService';
 import { useAuth } from '../../context/ReservationAuthContext';
+import { useAuth as useGlobalAuth } from '../../context/AuthContext';
 import Modal from './Modal';
 import { CarIcon, MapPinIcon, CalendarIcon, DocumentTextIcon, CheckIcon, ExclamationTriangleIcon } from './icons';
 import { normalizeCidade } from '../../utils/baseOperacional';
@@ -49,13 +50,14 @@ interface ReservationFormProps {
 const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onSuccess }) => {
   const { vehicles, reservations, dailyTrips, addReservation, getVehicleById } = useReservations();
   const { user } = useAuth();
-  const isAdmin = user && !user.isAnonymous;
+  const { user: globalUser } = useGlobalAuth();
+  const isAdmin = Boolean((user && !user.isAnonymous) || (globalUser && globalUser.email));
 
   const [formData, setFormData] = useState({
-    requesterName: '',
-    department: '',
-    role: '',
-    email: '',
+    requesterName: globalUser?.name ? globalUser.name.toUpperCase() : '',
+    department: globalUser?.department ? normalizeNomeSetor(globalUser.department) : '',
+    role: globalUser?.role === 'admin' ? 'DIRETORIA / GESTÃO' : (globalUser?.role ? globalUser.role.toUpperCase() : ''),
+    email: globalUser?.email || '',
     departureDateTime: '',
     returnDate: '',
     destination: '',
@@ -64,6 +66,19 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     driverName: '', // Added separate driverName field
     driverRole: '', // Added separate driverRole field for hierarchy check
   });
+
+  // Atualiza automaticamente os dados se o usuário logar enquanto o formulário estiver aberto
+  useEffect(() => {
+    if (globalUser && globalUser.email) {
+      setFormData(prev => ({
+        ...prev,
+        requesterName: prev.requesterName || (globalUser.name ? globalUser.name.toUpperCase() : 'DENY GONÇALVES'),
+        email: prev.email || globalUser.email || 'deny.goncalves@risel.com.br',
+        department: prev.department || (globalUser.department ? normalizeNomeSetor(globalUser.department) : 'OPERAÇÕES'),
+        role: prev.role || (globalUser.role === 'admin' ? 'DIRETORIA / GESTÃO' : 'COLABORADOR'),
+      }));
+    }
+  }, [globalUser]);
 
   const [isDriverSameAsRequester, setIsDriverSameAsRequester] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -465,15 +480,31 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         });
     }
 
-    // Enviar e-mail para o administrador
+    // Enviar e-mail para a administração e com cópia para o solicitante
     const emailHtml = generateEmailHtml(
         "Detalhes da Solicitação",
         emailDetails,
-        '#ff9b00', // Laranja
-        window.location.origin // Action Link para o sistema
+        '#005C30',
+        window.location.origin
     );
 
-    await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Nova Solicitação de Reserva realizada por: ${formData.requesterName}`, emailHtml);
+    const recipients = [...ADMIN_EMAIL_RECIPIENTS];
+    if (formData.email && formData.email.trim() && !recipients.includes(formData.email.trim())) {
+      recipients.push(formData.email.trim());
+    }
+
+    try {
+      await sendEmail(
+        recipients, 
+        `Nova Solicitação de Reserva de Veículo - ${formData.requesterName}`, 
+        emailHtml,
+        {
+          fromName: "Gestão de Reservas Risel"
+        }
+      );
+    } catch (emailErr) {
+      console.warn("Aviso: reserva gravada no sistema, porém o despacho de e-mail oscilou:", emailErr);
+    }
 
     setModalState({
         isOpen: true,
