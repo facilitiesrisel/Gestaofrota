@@ -600,7 +600,7 @@ const UserDailyUseForm: React.FC = () => {
                                                 <option value="" className="text-slate-400">Selecione o veículo na lista...</option>
                                                 {availableVehicles.map(v => (
                                                     <option key={v.id} value={v.id} className="text-slate-900 font-semibold">
-                                                        {v.model} • Placa: {v.plate} (KM Atual: {formatNumber(v.currentKm)})
+                                                        {v.model} • Placa: {v.plate} (KM Atual: {formatNumber(v.lastKm ?? v.initialKm ?? (v as any).currentKm ?? 0)})
                                                     </option>
                                                 ))}
                                             </select>

@@ -20,7 +20,29 @@ const SettingsView: React.FC = () => {
     // State for SMTP Email Test
     const [testEmailRecipient, setTestEmailRecipient] = useState('deny.goncalves@risel.com.br');
     const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
-    const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; message: string; help?: string } | null>(null);
+
+    // State para Diagnóstico de Conectividade do Render
+    const [isDiagnosing, setIsDiagnosing] = useState(false);
+    const [diagnosticData, setDiagnosticData] = useState<any>(null);
+    const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
+
+    const handleRunDiagnostic = async () => {
+        setIsDiagnosing(true);
+        try {
+            const response = await fetch('/api/email-diagnostic');
+            const data = await response.json();
+            setDiagnosticData(data);
+            setShowDiagnosticModal(true);
+        } catch (err: any) {
+            setDiagnosticData({
+                error: `Falha ao executar diagnóstico: ${err.message || String(err)}`
+            });
+            setShowDiagnosticModal(true);
+        } finally {
+            setIsDiagnosing(false);
+        }
+    };
 
     const handleSendTestEmail = async () => {
         setIsSendingTestEmail(true);
@@ -42,7 +64,7 @@ const SettingsView: React.FC = () => {
                             </div>
                             <div style="padding: 24px; color: #333; line-height: 1.6;">
                                 <h2 style="color: #15803d; margin-top: 0;">Parabéns! Conexão realizada com sucesso.</h2>
-                                <p>Este é um e-mail de teste automático enviado pelo sistema <strong>Risel Frota</strong> para certificar que as novas credenciais e configurações SMTP seguras do seu domínio estão 100% ativas e funcionais.</p>
+                                <p>Este é um e-mail de teste automático enviado pelo sistema <strong>Risel Frota</strong> para certificar que as credenciais e configurações de envio de e-mail do seu domínio estão ativas e funcionais.</p>
                                 
                                 <div style="background-color: #f0fdf4; border-left: 4px solid #15803d; padding: 15px; margin: 20px 0; border-radius: 4px;">
                                     <strong>Detalhes do Envio:</strong>
@@ -68,12 +90,14 @@ const SettingsView: React.FC = () => {
             if (response.ok && data.success) {
                 setTestEmailResult({
                     success: true,
-                    message: `E-mail de teste enviado com SUCESSO através do servidor SMTP (${data.host})!`
+                    message: `E-mail de teste enviado com SUCESSO via ${data.provider || data.host || 'SMTP'}!`,
+                    help: undefined
                 });
             } else {
                 setTestEmailResult({
                     success: false,
-                    message: `Falha no envio: ${data.error || 'Erro desconhecido.'} ${data.details ? `Detalhes: ${data.details}` : ''}`
+                    message: `Falha no envio: ${data.message || data.error || 'Erro desconhecido.'}`,
+                    help: data.help
                 });
             }
         } catch (error: any) {
@@ -141,7 +165,7 @@ const SettingsView: React.FC = () => {
                         O sistema tentará enviar uma mensagem de teste formatada utilizando conexões SMTP seguras.
                     </p>
 
-                    <div className="flex flex-col sm:flex-row gap-4 items-end justify-between">
+                    <div className="flex flex-col sm:flex-row gap-3 items-end justify-between">
                         <div className="w-full sm:w-auto flex-1 max-w-lg">
                             <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Destinatário do Teste</label>
                             <input 
@@ -153,22 +177,92 @@ const SettingsView: React.FC = () => {
                             />
                         </div>
 
-                        <button 
-                            onClick={handleSendTestEmail}
-                            disabled={isSendingTestEmail || !testEmailRecipient}
-                            className="w-full sm:w-auto bg-primary text-white font-bold py-2 px-5 rounded hover:bg-green-800 transition-colors shrink-0 text-sm shadow disabled:opacity-50"
-                        >
-                            {isSendingTestEmail ? 'Enviando Teste...' : 'Enviar E-mail de Teste'}
-                        </button>
+                        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                            <button 
+                                onClick={handleRunDiagnostic}
+                                disabled={isDiagnosing}
+                                type="button"
+                                className="bg-white border border-gray-300 text-gray-700 font-semibold py-2 px-4 rounded hover:bg-gray-100 transition-colors text-sm shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                                {isDiagnosing ? 'Testando Portas...' : 'Diagnosticar Rede (Render)'}
+                            </button>
+
+                            <button 
+                                onClick={handleSendTestEmail}
+                                disabled={isSendingTestEmail || !testEmailRecipient}
+                                className="bg-primary text-white font-bold py-2 px-5 rounded hover:bg-green-800 transition-colors shrink-0 text-sm shadow disabled:opacity-50"
+                            >
+                                {isSendingTestEmail ? 'Enviando Teste...' : 'Enviar E-mail de Teste'}
+                            </button>
+                        </div>
                     </div>
 
                     {testEmailResult && (
-                        <div className={`mt-4 p-3 rounded text-sm font-semibold border ${
+                        <div className={`mt-4 p-4 rounded text-sm font-medium border ${
                             testEmailResult.success 
-                                ? 'bg-green-100 border-green-300 text-green-800' 
-                                : 'bg-red-100 border-red-300 text-red-800'
+                                ? 'bg-green-100 border-green-300 text-green-900' 
+                                : 'bg-red-50 border-red-300 text-red-900'
                         }`}>
-                            {testEmailResult.message}
+                            <div className="font-bold mb-1">{testEmailResult.message}</div>
+                            {testEmailResult.help && (
+                                <div className="mt-2 pt-2 border-t border-red-200 text-xs text-red-800 leading-relaxed bg-white/60 p-2.5 rounded">
+                                    <strong>💡 Como resolver no Render:</strong><br />
+                                    {testEmailResult.help}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {showDiagnosticModal && diagnosticData && (
+                        <div className="mt-4 p-4 bg-white border border-gray-300 rounded shadow-sm text-sm text-gray-800">
+                            <div className="flex justify-between items-center border-b pb-2 mb-3">
+                                <h4 className="font-bold text-gray-900 flex items-center gap-2">
+                                    Relatório de Conectividade de Rede (Render / SMTP)
+                                </h4>
+                                <button 
+                                    onClick={() => setShowDiagnosticModal(false)}
+                                    className="text-gray-400 hover:text-gray-600 font-bold text-xs uppercase"
+                                >
+                                    Fechar ✕
+                                </button>
+                            </div>
+
+                            {diagnosticData.error ? (
+                                <div className="p-3 bg-red-50 text-red-700 rounded border border-red-200 text-xs">
+                                    {diagnosticData.error}
+                                </div>
+                            ) : (
+                                <div className="space-y-3 text-xs">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-gray-50 p-2.5 rounded border border-gray-200">
+                                        <div><strong>Ambiente:</strong> {diagnosticData.environment}</div>
+                                        <div><strong>IP IPv4 Resolvido:</strong> {diagnosticData.dns?.resolvedIpv4 || 'N/A'}</div>
+                                    </div>
+
+                                    <div>
+                                        <strong className="block mb-1 text-gray-700">Teste de Portas TCP de Saída (Direto do Servidor):</strong>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            {diagnosticData.smtpPortTests && Object.entries(diagnosticData.smtpPortTests).map(([portName, result]: [string, any]) => (
+                                                <div 
+                                                    key={portName} 
+                                                    className={`p-2 rounded border ${result?.reachable ? 'bg-green-50 border-green-300 text-green-800' : 'bg-red-50 border-red-200 text-red-700'}`}
+                                                >
+                                                    <div className="font-bold truncate">{portName}</div>
+                                                    <div>{result?.reachable ? `✓ Aberta (${result.latencyMs}ms)` : `✗ Bloqueada / Timeout`}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="p-2.5 bg-blue-50 border border-blue-200 rounded text-blue-900 leading-relaxed">
+                                        <strong>Status:</strong> {diagnosticData.statusSummary}
+                                        {diagnosticData.recommendation && diagnosticData.recommendation !== "Nenhuma ação necessária." && (
+                                            <div className="mt-1.5 pt-1.5 border-t border-blue-200 text-blue-950 font-medium">
+                                                <strong>Ação Recomendada:</strong> {diagnosticData.recommendation}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

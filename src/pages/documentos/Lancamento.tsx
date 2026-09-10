@@ -20,6 +20,14 @@ import {
   saveSupabaseConfig, 
   SUPABASE_SQL_SCHEMA 
 } from "../../services/supabaseService";
+import {
+  getLancamentosUnified,
+  subscribeToLancamentosUnified,
+  saveLancamentoUnified,
+  deleteLancamentoUnified,
+  normalizeLancamento,
+  forceSyncLancamentos
+} from "../../services/lancamentosService";
 
 export function formatDateDisplay(dateString: string | undefined | null): string {
   if (!dateString) return "---";
@@ -147,6 +155,7 @@ const INITIAL_FORM_STATE = {
   status: "Aguardando aprovação",
   aprovadores: "",
   codigoLancamento: "",
+  codLancamentoOc: "",
   dataAprovacao: "",
   dataEnvio: "",
   observacao: "",
@@ -322,56 +331,12 @@ export default function Lancamento() {
   const [pingStatus, setPingStatus] = useState<string>("");
   const [copiedSql, setCopiedSql] = useState(false);
 
-  // Carregar dados reais do Supabase na inicialização com merge seguro para não perder alterações locais
+  // Sincronização em tempo real multiusuário (Supabase, Servidor e Firestore)
   useEffect(() => {
-    async function loadDataFromSupabase() {
-      // Limpa dados legados fictícios de mensais se existirem
-      localStorage.removeItem("risel_mensais");
-
-      const items = await fetchLancamentosSupabase();
-      if (Array.isArray(items) && items.length > 0) {
-        setLancamentos(prev => {
-          // Garante mesclagem segura mantendo lançamentos e status recentes do localStorage/estado local
-          const mapMerged = new Map<number, any>();
-          
-          // Adiciona itens do Supabase
-          items.forEach(i => mapMerged.set(Number(i.id), i));
-
-          // Preserva itens locais e status atualizados se divergirem do Supabase
-          prev.forEach(localItem => {
-            const numId = Number(localItem.id);
-            const dbItem = mapMerged.get(numId);
-            if (dbItem) {
-              if (localItem.status && localItem.status !== dbItem.status) {
-                const updated = { ...dbItem, ...localItem };
-                mapMerged.set(numId, updated);
-                saveLancamentoSupabase(updated);
-              }
-            } else {
-              mapMerged.set(numId, localItem);
-              saveLancamentoSupabase(localItem);
-            }
-          });
-
-          const mergedList = Array.from(mapMerged.values());
-          localStorage.setItem("risel_lancamentos", JSON.stringify(mergedList));
-          return mergedList;
-        });
-        console.log(`[Supabase ERP Risel] ${items.length} lançamentos sincronizados do Supabase!`);
-      } else {
-        // Se o Supabase estiver vazio ou sem tabela, envia os lançamentos locais se existirem
-        const saved = localStorage.getItem("risel_lancamentos");
-        if (saved) {
-          try {
-            const list = JSON.parse(saved);
-            if (Array.isArray(list) && list.length > 0) {
-              syncLocalLancamentosToSupabase(list);
-            }
-          } catch (e) {}
-        }
-      }
-    }
-    loadDataFromSupabase();
+    // Limpa dados legados fictícios de mensais se existirem
+    localStorage.removeItem("risel_mensais");
+    // Dispara sincronização autoritativa imediata ao entrar na tela
+    forceSyncLancamentos();
   }, []);
 
   const handleTestSupabase = async () => {
@@ -390,6 +355,7 @@ export default function Lancamento() {
     const res = await syncLocalLancamentosToSupabase(lancamentos);
     if (res.success) {
       setSyncMsg(`🎉 Sucesso! ${res.count} lançamentos foram sincronizados e gravados no banco Supabase!`);
+      await forceSyncLancamentos();
     } else {
       setSyncMsg("⚠️ Falha ao sincronizar. Verifique a URL, Anon Key e se a tabela 'lancamentos' foi criada no Supabase.");
     }
@@ -450,35 +416,15 @@ export default function Lancamento() {
     }
   };
 
-  // Estados persistentes no LocalStorage para uma experiência 100% dinâmica e profissional
-  const [lancamentos, setLancamentos] = useState<any[]>(() => {
-    const saved = localStorage.getItem("risel_lancamentos");
-    let list = saved ? JSON.parse(saved) : DEFAULT_LANCAMENTOS;
-    
-    // Se a lista contiver dados fictícios antigos de IDs legados, zera para manter sincronizado com o Supabase
-    if (Array.isArray(list) && list.some((x: any) => x.fornecedor === "Postos ABC Locações" || x.fornecedor === "Manutenção XYZ Ltda")) {
-      list = [];
-      localStorage.setItem("risel_lancamentos", JSON.stringify([]));
-    }
-    
-    // Obter data de hoje no formato YYYY-MM-DD
-    const hoje = new Date().toISOString().split("T")[0];
-    let alterado = false;
-    
-    const listAtualizada = list.map((item: any) => {
-      // Se for "Aprovado" e a data de vencimento <= hoje
-      if (item.status === "Aprovado" && item.dataVencimento && item.dataVencimento <= hoje) {
-        alterado = true;
-        return { ...item, status: "Finalizado" };
-      }
-      return item;
-    });
+  // Estados unificados e sincronizados em tempo real entre todos os usuários via Firestore, Servidor e Supabase
+  const [lancamentos, setLancamentos] = useState<any[]>(() => getLancamentosUnified());
 
-    if (alterado) {
-      localStorage.setItem("risel_lancamentos", JSON.stringify(listAtualizada));
-    }
-    return listAtualizada;
-  });
+  useEffect(() => {
+    const unsubscribe = subscribeToLancamentosUnified((updatedList) => {
+      setLancamentos(updatedList);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Vencimentos dinâmicos derivados diretamente dos lançamentos reais (sem dados fictícios)
   const vencimentosReais = useMemo(() => {
@@ -527,10 +473,6 @@ export default function Lancamento() {
       });
   }, [lancamentos]);
 
-  useEffect(() => {
-    localStorage.setItem("risel_lancamentos", JSON.stringify(lancamentos));
-  }, [lancamentos]);
-
   const [formData, setFormData] = useState(() => ({
     ...INITIAL_FORM_STATE,
     lancadoPor: user?.name ? user.name.split(" ")[0] : "Deny"
@@ -566,6 +508,7 @@ export default function Lancamento() {
     const defaultCols = {
       status: true,
       vencimento: true,
+      codLancamento: true,
       lancamento: true,
       prazo: true,
       fornecedor: true,
@@ -606,6 +549,7 @@ export default function Lancamento() {
     return [
       "status",
       "vencimento",
+      "codLancamento",
       "lancamento",
       "prazo",
       "fornecedor",
@@ -1094,7 +1038,7 @@ export default function Lancamento() {
     }
   };
 
-  const executeSave = (data: typeof formData, calculatedDocName: string) => {
+  const executeSave = async (data: typeof formData, calculatedDocName: string) => {
     const numVal = parseCurrencyToNumber(data.valorNf);
     const formatValueCurrency = `R$ ${numVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const formatVencimiento = data.dataVencimento || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -1135,16 +1079,12 @@ export default function Lancamento() {
         frequencia: data.tipo || "Esporádico",
         lancadoPor: data.lancadoPor || primeiroNome,
         dataAprovacao: dataAprovacao,
-        centroCusto: data.centroCusto || "C.C 101 - Operacional"
+        centroCusto: data.centroCusto || "C.C 101 - Operacional",
+        codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
+        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || ""
       };
 
-      setLancamentos(prev => {
-        const next = prev.map(item => Number(item.id) === Number(editingId) ? savedItem : item);
-        localStorage.setItem("risel_lancamentos", JSON.stringify(next));
-        return next;
-      });
-
-      saveLancamentoSupabase(savedItem);
+      await saveLancamentoUnified(savedItem);
     } else {
       // Cadastrar novo lançamento
       const newId = Date.now();
@@ -1170,15 +1110,12 @@ export default function Lancamento() {
         frequencia: data.tipo || "Esporádico",
         lancadoPor: data.lancadoPor || primeiroNome,
         dataAprovacao: isNowApproved ? new Date().toLocaleDateString('pt-BR') : "",
-        centroCusto: data.centroCusto || "C.C 101 - Operacional"
+        centroCusto: data.centroCusto || "C.C 101 - Operacional",
+        codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
+        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || ""
       };
 
-      setLancamentos(prev => {
-        const next = [savedItem, ...prev];
-        localStorage.setItem("risel_lancamentos", JSON.stringify(next));
-        return next;
-      });
-      saveLancamentoSupabase(savedItem);
+      await saveLancamentoUnified(savedItem);
     }
 
     // REGRA DE NEGÓCIO: Se for lançamento com recorrência MENSAL, adiciona/atualiza no Menu de Fornecedores
@@ -1246,13 +1183,7 @@ export default function Lancamento() {
       dataAprovacao
     };
 
-    setLancamentos(prev => {
-      const next = prev.map(item => Number(item.id) === Number(id) ? updatedItem : item);
-      localStorage.setItem("risel_lancamentos", JSON.stringify(next));
-      return next;
-    });
-
-    await saveLancamentoSupabase(updatedItem);
+    await saveLancamentoUnified(updatedItem);
   };
 
   // Abrir o formulário de edição de Lançamento
@@ -1282,6 +1213,7 @@ export default function Lancamento() {
       status: item.status || "Aguardando aprovação",
       aprovadores: item.aprovadores || "",
       codigoLancamento: docCode,
+      codLancamentoOc: item.codLancamentoOc || item.codigoLancamento || "",
       dataAprovacao: item.dataAprovacao || "",
       dataEnvio: "",
       observacao: item.observacao || "",
@@ -1296,10 +1228,9 @@ export default function Lancamento() {
     setIsFormOpen(true);
   };
 
-  const handleDeleteLancamento = (id: number) => {
-    if (confirm("Tem certeza que deseja excluir permanentemente este lançamento?")) {
-      setLancamentos(prev => prev.filter(item => item.id !== id));
-      deleteLancamentoSupabase(id);
+  const handleDeleteLancamento = async (id: number | string) => {
+    if (confirm("Tem certeza que deseja excluir permanentemente este lançamento? Essa exclusão será sincronizada para todos os usuários.")) {
+      await deleteLancamentoUnified(id);
     }
   };
 
@@ -1385,6 +1316,7 @@ export default function Lancamento() {
                       const labelMap: Record<string, string> = {
                         status: "Status do Fluxo",
                         vencimento: "Vencimento",
+                        codLancamento: "Cód. Lançamento / Nº OC",
                         lancamento: "Data de Lançamento",
                         prazo: "Prazo do Boleto",
                         fornecedor: "Fornecedor / Emitente",
@@ -1565,6 +1497,21 @@ export default function Lancamento() {
                         </div>
                       </div>
                     )}
+                  </div>
+
+                  <div className="space-y-0.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Cód. Lançamento / Nº OC</span>
+                      <span className="text-[8.5px] font-normal text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Reflete para todos</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      name="codLancamentoOc" 
+                      value={formData.codLancamentoOc || ""} 
+                      onChange={handleChange} 
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50/20 focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-emerald-950 shadow-sm" 
+                      placeholder="Ex: OC-84920 / LAN-104" 
+                    />
                   </div>
 
                   <div className="space-y-0.5">
@@ -2045,6 +1992,9 @@ export default function Lancamento() {
                     if (colKey === "vencimento") {
                       return <th key="vencimento" onClick={() => handleSort("dataVencimento")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">VENCIMENTO {getSortIcon("dataVencimento")}</th>;
                     }
+                    if (colKey === "codLancamento") {
+                      return <th key="codLancamento" onClick={() => handleSort("codLancamentoOc")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">CÓD. LANÇAMENTO / Nº OC {getSortIcon("codLancamentoOc")}</th>;
+                    }
                     if (colKey === "lancamento") {
                       return <th key="lancamento" onClick={() => handleSort("dataLancamento")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">LANÇAMENTO {getSortIcon("dataLancamento")}</th>;
                     }
@@ -2168,6 +2118,20 @@ export default function Lancamento() {
                           return (
                             <td key="vencimento" className="px-4 py-3 font-bold text-slate-800 font-mono whitespace-nowrap border-r border-slate-200/50">
                               {formatDateDisplay(item.dataVencimento)}
+                            </td>
+                          );
+                        }
+                        if (colKey === "codLancamento") {
+                          const codOc = item.codLancamentoOc || item.codigoLancamento || "";
+                          return (
+                            <td key="codLancamento" className="px-4 py-3 text-slate-700 font-bold whitespace-nowrap border-r border-slate-200/50">
+                              {codOc ? (
+                                <span className="px-2 py-0.5 rounded bg-emerald-50 text-[#114D38] font-black text-[9.5px] border border-emerald-300 font-mono inline-block">
+                                  {codOc.toUpperCase()}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 font-normal">---</span>
+                              )}
                             </td>
                           );
                         }

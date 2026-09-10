@@ -55,7 +55,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
 
   const [formData, setFormData] = useState({
     requesterName: globalUser?.name ? globalUser.name.toUpperCase() : '',
-    department: globalUser?.department ? normalizeNomeSetor(globalUser.department) : '',
+    department: (globalUser as any)?.department ? normalizeNomeSetor((globalUser as any).department) : '',
     role: globalUser?.role === 'admin' ? 'DIRETORIA / GESTÃO' : (globalUser?.role ? globalUser.role.toUpperCase() : ''),
     email: globalUser?.email || '',
     departureDateTime: '',
@@ -74,7 +74,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         ...prev,
         requesterName: prev.requesterName || (globalUser.name ? globalUser.name.toUpperCase() : 'DENY GONÇALVES'),
         email: prev.email || globalUser.email || 'deny.goncalves@risel.com.br',
-        department: prev.department || (globalUser.department ? normalizeNomeSetor(globalUser.department) : 'OPERAÇÕES'),
+        department: prev.department || ((globalUser as any)?.department ? normalizeNomeSetor((globalUser as any).department) : 'OPERAÇÕES'),
         role: prev.role || (globalUser.role === 'admin' ? 'DIRETORIA / GESTÃO' : 'COLABORADOR'),
       }));
     }

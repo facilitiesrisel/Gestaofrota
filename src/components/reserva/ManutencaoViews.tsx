@@ -51,16 +51,17 @@ export function parseManutDate(dataStr?: string | null): Date {
 export function formatarDataBr(dataStr?: string | null): string {
   if (!dataStr) return "-";
   const cleanStr = String(dataStr).trim();
-  if (!cleanStr) return "-";
+  if (!cleanStr || cleanStr === "-" || cleanStr === "undefined" || cleanStr === "null") return "-";
 
   // Se já estiver no padrão DD/MM/AAAA (ex: 15/02/2025)
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(cleanStr)) {
     return cleanStr;
   }
 
-  // Se for YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(cleanStr)) {
-    const [ano, mes, dia] = cleanStr.split("-");
+  // Se começar com YYYY-MM-DD (com ou sem horário após)
+  const isoMatch = cleanStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const [, ano, mes, dia] = isoMatch;
     return `${dia}/${mes}/${ano}`;
   }
 
@@ -119,7 +120,7 @@ export interface ManutencaoViewProps {
   filterOficina?: string;
   filterMesAno?: string;
   onMesAnoChange?: (val: string) => void;
-  onAddManutencao?: () => void;
+  onAddManutencao?: (item?: any) => void;
   onUpdateManutencao?: (updated: Manutencao) => void;
   onDeleteManutencao?: (id: string) => void;
 }

@@ -1,85 +1,118 @@
-import React, { useState, useEffect } from "react";
+import React, { Component, ErrorInfo, ReactNode } from "react";
+import { AlertTriangle, RefreshCw, Home, RotateCcw } from "lucide-react";
 
 interface Props {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
-export function ErrorBoundary({ children }: Props) {
-  const [hasError, setHasError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+interface State {
+  hasError: boolean;
+  error: Error | null;
+  errorInfo: ErrorInfo | null;
+}
 
-  useEffect(() => {
-    const errorHandler = (event: ErrorEvent) => {
-      console.error("Global error caught by Risel Boundary:", event.error || event.message);
-      // Ignora erros conhecidos inofensivos de extensões ou terceiros
-      if (event.message && (
-        event.message.includes("ResizeObserver") ||
-        event.message.includes("extension") ||
-        event.message.includes("clarity")
-      )) {
-        return;
-      }
-      setHasError(true);
-      setErrorMessage(event.message || "Erro de execução no navegador.");
+/**
+ * ErrorBoundary oficial do Risel ERP.
+ * Implementado como React Class Component conforme especificações do React,
+ * capturando estritamente falhas críticas na árvore de renderização sem
+ * interceptar requisições de rede, avisos de terceiros ou eventos de janela normais.
+ */
+export class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null,
+      errorInfo: null,
     };
-
-    const rejectionHandler = (event: PromiseRejectionEvent) => {
-      console.error("Unhandled promise rejection caught by Risel Boundary:", event.reason);
-      const reasonStr = String(event.reason?.message || event.reason || "");
-      if (reasonStr.includes("ResizeObserver") || reasonStr.includes("extension")) {
-        return;
-      }
-      // Não bloqueia a tela se for rejeição de rede em segundo plano
-    };
-
-    window.addEventListener("error", errorHandler);
-    window.addEventListener("unhandledrejection", rejectionHandler);
-
-    return () => {
-      window.removeEventListener("error", errorHandler);
-      window.removeEventListener("unhandledrejection", rejectionHandler);
-    };
-  }, []);
-
-  if (hasError) {
-    return (
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4">
-        <div className="max-w-lg w-full bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
-          <div className="flex items-center space-x-3 text-amber-400">
-            <svg className="w-8 h-8 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <h2 className="text-xl font-bold">Risel ERP - Recuperação de Sistema</h2>
-          </div>
-          
-          <p className="text-sm text-slate-300">
-            Ocorreu uma falha inesperada durante a inicialização de um componente.
-          </p>
-
-          {errorMessage && (
-            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs text-red-400 font-mono overflow-auto max-h-36">
-              {errorMessage}
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => window.location.reload()}
-              className="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold py-2 px-4 rounded-xl text-sm transition-colors"
-            >
-              Recarregar Página
-            </button>
-            <button
-              onClick={() => { window.location.href = "/"; }}
-              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-4 rounded-xl text-sm transition-colors"
-            >
-              Ir para o Início
-            </button>
-          </div>
-        </div>
-      </div>
-    );
   }
 
-  return <>{children}</>;
+  public static getDerivedStateFromError(error: Error): Partial<State> {
+    return { hasError: true, error };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("[Risel ERP] Erro crítico de renderização:", error, errorInfo);
+    this.setState({ error, errorInfo });
+  }
+
+  private handleReset = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null });
+  };
+
+  private handleHardReload = () => {
+    window.location.reload();
+  };
+
+  private handleClearCacheAndReload = () => {
+    try {
+      // Limpa dados transitórios preservando sessões principais se possível
+      sessionStorage.clear();
+      localStorage.removeItem("risel_temp_state");
+    } catch (e) {
+      console.error(e);
+    }
+    window.location.href = "/";
+  };
+
+  public render() {
+    if (this.state.hasError) {
+      return (
+        <div id="risel-error-boundary-screen" className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+          <div className="max-w-lg w-full bg-white border border-slate-200 rounded-2xl p-6 shadow-xl space-y-4">
+            <div className="flex items-center space-x-3 text-emerald-800">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-emerald-700" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">Risel ERP - Recuperação Rápida</h2>
+                <p className="text-xs text-slate-500">O sistema encontrou uma oscilação temporária na interface.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Você pode tentar retomar a tela imediatamente ou recarregar para restabelecer a conexão com os servidores.
+            </p>
+
+            {this.state.error && (
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-[11px] text-slate-700 font-mono overflow-auto max-h-28">
+                {this.state.error.toString()}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
+              <button
+                id="btn-retry-boundary"
+                onClick={this.handleReset}
+                className="flex items-center justify-center gap-1.5 bg-[#114D38] hover:bg-[#0c3728] text-white font-bold py-2 px-3 rounded-xl text-xs transition-colors shadow-sm"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Tentar de novo
+              </button>
+
+              <button
+                id="btn-reload-boundary"
+                onClick={this.handleHardReload}
+                className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-3 rounded-xl text-xs border border-slate-300 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Recarregar
+              </button>
+
+              <button
+                id="btn-home-boundary"
+                onClick={this.handleClearCacheAndReload}
+                className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-3 rounded-xl text-xs border border-slate-300 transition-colors"
+              >
+                <Home className="w-3.5 h-3.5" />
+                Início
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
 }

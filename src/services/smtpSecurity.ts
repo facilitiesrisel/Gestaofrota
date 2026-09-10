@@ -62,16 +62,27 @@ export interface SmtpConfig {
  * - Módulo Lançamento de Documentos
  */
 export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig {
-  const envEmail = (typeof process !== "undefined" && process.env ? process.env.SMTP_EMAIL : "") || "";
-  const envHost = (typeof process !== "undefined" && process.env ? process.env.SMTP_HOST : "") || "";
-  const envPort = (typeof process !== "undefined" && process.env ? process.env.SMTP_PORT : "") || "";
-  const envPass = (typeof process !== "undefined" && process.env ? process.env.SMTP_PASSWORD : "") || "";
+  const p = typeof process !== "undefined" && process.env ? process.env : ({} as any);
+  const envEmail = (p.SMTP_USER || p.SMTP_EMAIL || "").trim();
+  const envHost = (p.SMTP_HOST || p.SMTP_SERVER || "").trim();
+  const envPort = (p.SMTP_PORT || "").trim();
+  const envPass = (p.SMTP_PASSWORD || p.SMTP_PASS || "").trim();
+  const envSenderName = (p.SMTP_DEFAULT_SENDER_NAME || p.SMTP_FROM_NAME || "").trim();
 
-  const user = overrides?.user || envEmail || 'deny.goncalves@risel.com.br';
-  const isRiselCorporate = user.toLowerCase().includes('@risel.com.br');
-  const defaultHost = isRiselCorporate ? 'smtp.office365.com' : 'smtp.gmail.com';
-  const host = overrides?.host || envHost || defaultHost;
-  const port = overrides?.port || parseInt(envPort || '587', 10) || (host === 'smtp.gmail.com' ? 465 : 587);
+  // Tratamento de tolerância a falhas de configuração:
+  // Se o usuário colocou o servidor SMTP no campo SMTP_EMAIL (ex: 'smtp.office365.com') sem '@'
+  let hostFromEmailField = "";
+  let userCandidate = envEmail;
+  if (envEmail && !envEmail.includes("@") && (envEmail.includes("smtp") || envEmail.includes("."))) {
+    hostFromEmailField = envEmail;
+    userCandidate = "";
+  }
+
+  const user = overrides?.user || (userCandidate.includes("@") ? userCandidate : "deny.goncalves@risel.com.br");
+  const isRiselCorporate = user.toLowerCase().includes("@risel.com.br");
+  const defaultHost = isRiselCorporate ? "smtp.office365.com" : "smtp.gmail.com";
+  const host = overrides?.host || envHost || hostFromEmailField || defaultHost;
+  const port = overrides?.port || parseInt(envPort || "587", 10) || (host === "smtp.gmail.com" ? 465 : 587);
   const secure = port === 465;
 
   let rawPass = overrides?.pass || envPass || ENCRYPTED_DEFAULT_PASSWORD;
@@ -83,7 +94,7 @@ export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig 
     port,
     secure,
     pass,
-    defaultSenderName: overrides?.defaultSenderName || 'Risel Combustíveis'
+    defaultSenderName: overrides?.defaultSenderName || envSenderName || "Risel Combustíveis"
   };
 }
 

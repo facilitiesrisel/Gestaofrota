@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import dns from "dns";
+import net from "net";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import Papa from "papaparse";
@@ -99,10 +100,170 @@ async function createSafeTransporter(smtpConfig: any) {
     requireTLS: !isPort465,
     family: 4, // Força conexão IPv4 direta
     lookup: strictIpv4Lookup,
-    connectionTimeout: 30000,
-    greetingTimeout: 20000,
-    socketTimeout: 35000,
+    connectionTimeout: 12000, // Falha rapidamente caso a porta esteja bloqueada no provedor (ex: Render Free)
+    greetingTimeout: 8000,
+    socketTimeout: 15000,
   } as any);
+}
+
+/**
+ * Utilitário de diagnóstico TCP para testar se uma porta externa está aberta ou bloqueada pelo firewall do provedor.
+ */
+function probeTcpPort(host: string, port: number, timeoutMs = 3500): Promise<{ reachable: boolean; latencyMs?: number; error?: string }> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const socket = new net.Socket();
+    let isSettled = false;
+
+    socket.setTimeout(timeoutMs);
+
+    socket.connect(port, host, () => {
+      if (!isSettled) {
+        isSettled = true;
+        const latencyMs = Date.now() - start;
+        socket.destroy();
+        resolve({ reachable: true, latencyMs });
+      }
+    });
+
+    socket.on("timeout", () => {
+      if (!isSettled) {
+        isSettled = true;
+        socket.destroy();
+        resolve({ reachable: false, error: `Timeout após ${timeoutMs}ms (Possível bloqueio de tráfego na porta ${port} pelo firewall do provedor)` });
+      }
+    });
+
+    socket.on("error", (err: any) => {
+      if (!isSettled) {
+        isSettled = true;
+        socket.destroy();
+        resolve({ reachable: false, error: err.message });
+      }
+    });
+  });
+}
+
+interface SendHttpEmailOptions {
+  to: string | string[];
+  cc?: string | string[];
+  subject: string;
+  html: string;
+  fromName?: string;
+  fromEmail?: string;
+  attachments?: Array<{ filename: string; content?: Buffer; path?: string }>;
+}
+
+/**
+ * Envio HTTP via Resend API (Porta 443 - Imune a bloqueios de portas SMTP do Render Free)
+ */
+async function sendEmailViaResend(options: SendHttpEmailOptions, apiKey: string) {
+  const toList = Array.isArray(options.to) ? options.to : [options.to];
+  const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : undefined;
+  
+  // Resend aceita remetente oficial se o domínio estiver verificado ou onboarding@resend.dev em sandbox
+  const fromEmail = options.fromEmail || "deny.goncalves@risel.com.br";
+  const fromAddress = `"${options.fromName || 'Risel Frota'}" <${fromEmail}>`;
+
+  const payload: any = {
+    from: fromAddress,
+    to: toList,
+    subject: options.subject,
+    html: options.html,
+  };
+
+  if (ccList && ccList.length > 0) {
+    payload.cc = ccList;
+  }
+
+  if (options.attachments && options.attachments.length > 0) {
+    payload.attachments = options.attachments.map(att => {
+      if (att.content) {
+        return {
+          filename: att.filename,
+          content: att.content.toString("base64")
+        };
+      }
+      if (att.path) {
+        return {
+          filename: att.filename,
+          path: att.path
+        };
+      }
+      return { filename: att.filename };
+    });
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey.trim()}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const resData = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Resend API HTTP (${response.status}): ${resData.message || JSON.stringify(resData)}`);
+  }
+  return { provider: "Resend (HTTPS / Porta 443)", id: resData.id };
+}
+
+/**
+ * Envio HTTP via Brevo API (Porta 443 - Imune a bloqueios de portas SMTP do Render Free)
+ */
+async function sendEmailViaBrevo(options: SendHttpEmailOptions, apiKey: string) {
+  const toList = (Array.isArray(options.to) ? options.to : [options.to]).map(e => ({ email: e }));
+  const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]).map(e => ({ email: e })) : undefined;
+
+  const payload: any = {
+    sender: {
+      name: options.fromName || "Risel Frota",
+      email: options.fromEmail || "deny.goncalves@risel.com.br"
+    },
+    to: toList,
+    subject: options.subject,
+    htmlContent: options.html
+  };
+
+  if (ccList && ccList.length > 0) {
+    payload.cc = ccList;
+  }
+
+  if (options.attachments && options.attachments.length > 0) {
+    payload.attachment = options.attachments.map(att => {
+      if (att.content) {
+        return {
+          name: att.filename,
+          content: att.content.toString("base64")
+        };
+      }
+      if (att.path) {
+        return {
+          name: att.filename,
+          url: att.path
+        };
+      }
+      return { name: att.filename };
+    });
+  }
+
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": apiKey.trim(),
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const resData = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Brevo API HTTP (${response.status}): ${resData.message || JSON.stringify(resData)}`);
+  }
+  return { provider: "Brevo (HTTPS / Porta 443)", id: resData.messageId };
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -112,10 +273,14 @@ const RESERVATIONS_FILE = path.join(DATA_DIR, "reservations.json");
 const APPS_SCRIPT_FILE = path.join(DATA_DIR, "apps_script_url.txt");
 const ONEDRIVE_CONFIG_FILE = path.join(DATA_DIR, "onedrive_config.json");
 const ONEDRIVE_LOGS_FILE = path.join(DATA_DIR, "onedrive_logs.json");
+const LANCAMENTOS_FILE = path.join(DATA_DIR, "lancamentos.json");
+const LANCAMENTOS_DELETED_FILE = path.join(DATA_DIR, "lancamentos_deleted_ids.json");
 
-const DEFAULT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw4b-wAzc99jr-CQo3THJtlQpC925RroOb1lqOjE3ibl96sOZwnQMGIGNEwHT-zGk2t/exec";
+const DEFAULT_APPS_SCRIPT_URL = process.env.GOOGLE_APPS_SCRIPT_URL || 
+  process.env.APPS_SCRIPT_URL || 
+  "https://script.google.com/macros/s/AKfycbw4b-wAzc99jr-CQo3THJtlQpC925RroOb1lqOjE3ibl96sOZwnQMGIGNEwHT-zGk2t/exec";
 
-let storedAppsScriptUrl = DEFAULT_APPS_SCRIPT_URL;
+let storedAppsScriptUrl = process.env.GOOGLE_APPS_SCRIPT_URL || process.env.APPS_SCRIPT_URL || DEFAULT_APPS_SCRIPT_URL;
 try {
   if (fs.existsSync(APPS_SCRIPT_FILE)) {
     const content = fs.readFileSync(APPS_SCRIPT_FILE, "utf-8").trim();
@@ -130,6 +295,41 @@ try {
   }
 } catch (e) {
   console.warn("Aviso ao carregar URL do Apps Script:", e);
+}
+
+// Envio de e-mail via Google Apps Script (MailApp com a conta do Google conectada)
+async function sendEmailViaAppsScript(options: {
+  to: string;
+  cc?: string;
+  subject: string;
+  html: string;
+  fromName?: string;
+  customUrl?: string;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  const targetUrl = (options.customUrl || storedAppsScriptUrl || "").trim();
+  if (!targetUrl) {
+    return { success: false, error: "URL do Google Apps Script não configurada." };
+  }
+  try {
+    const res = await fetch(targetUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({
+        action: "sendEmail",
+        to: options.to,
+        cc: options.cc,
+        subject: options.subject,
+        html: options.html,
+        fromName: options.fromName || "Checklist Frota Leve - Risel"
+      })
+    });
+    const text = await res.text();
+    let data: any = {};
+    try { data = JSON.parse(text); } catch (e) { data = { message: text }; }
+    return { success: res.ok, message: data.message || text };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
 }
 
 function loadStoredAbastecimentos(): any[] {
@@ -328,6 +528,16 @@ async function startServer() {
   app.use("/api/gemini-assistant", aiRateLimiter);
   app.use("/api/onedrive/sync-now", syncRateLimiter);
   app.use("/api/sheets/append", syncRateLimiter);
+
+  // Endpoint de Saúde e Keep-Alive (Ping) para monitoramento e prevenção de hibernação no Render
+  app.get(["/api/health", "/api/ping"], (req, res) => {
+    res.status(200).json({
+      status: "ok",
+      service: "Risel Gestao de Frotas",
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString()
+    });
+  });
 
   // 3. Body parsers com limite estrito de payload
   app.use(express.json({ limit: "25mb" }));
@@ -760,6 +970,56 @@ async function startServer() {
     }
   });
 
+  // Diagnóstico aprofundado de rede (portas 587/465, IPv4/IPv6, bloqueios do Render e APIs HTTP)
+  app.get("/api/email-diagnostic", async (req, res) => {
+    try {
+      const [probeOffice587, probeOffice465, probeGmail587] = await Promise.all([
+        probeTcpPort("smtp.office365.com", 587, 3000),
+        probeTcpPort("smtp.office365.com", 465, 3000),
+        probeTcpPort("smtp.gmail.com", 587, 3000),
+      ]);
+
+      const resolvedIpv4 = await resolveIpv4Address("smtp.office365.com");
+      const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_API_KEY.trim().length > 0);
+      const hasBrevo = Boolean(process.env.BREVO_API_KEY && process.env.BREVO_API_KEY.trim().length > 0);
+      const isRender = Boolean(process.env.RENDER === "true" || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
+
+      const portBlocked = !probeOffice587.reachable && !probeOffice465.reachable;
+
+      const diagnostic = {
+        timestamp: new Date().toISOString(),
+        environment: isRender ? "Render Cloud Container" : "Desenvolvimento / Sandbox",
+        renderServiceId: process.env.RENDER_SERVICE_ID || "srv-dabbg63tqb8s73fd9pog",
+        dns: {
+          host: "smtp.office365.com",
+          resolvedIpv4,
+        },
+        smtpPortTests: {
+          "smtp.office365.com:587 (STARTTLS)": probeOffice587,
+          "smtp.office365.com:465 (SSL)": probeOffice465,
+          "smtp.gmail.com:587 (Teste auxiliar)": probeGmail587,
+        },
+        httpApiAvailable: {
+          resend: hasResend,
+          brevo: hasBrevo,
+        },
+        renderFreeTierPortBlockDetected: isRender && portBlocked,
+        statusSummary: portBlocked 
+          ? (hasResend || hasBrevo 
+              ? "Portas SMTP bloqueadas pelo Render Free, mas contingência via API HTTP (Porta 443) está ATIVA e funcionando!" 
+              : "ATENÇÃO: Portas SMTP (587 e 465) bloqueadas pelo firewall do plano Free do Render.")
+          : "Conectividade SMTP normal (portas abertas e acessíveis).",
+        recommendation: portBlocked && !hasResend && !hasBrevo
+          ? "O plano gratuito (Free Web Service) do Render bloqueia conexões de saída nas portas SMTP 25, 465 e 587 por política anti-spam. Para permitir o envio de e-mails você tem 2 opções: 1) Fazer o upgrade do serviço para o plano Starter ($7/mês) no Render que desbloqueia as portas SMTP; OU 2) Criar uma chave gratuita no Resend (resend.com) ou Brevo (brevo.com) e adicionar a variável RESEND_API_KEY ou BREVO_API_KEY no painel do Render (Environment Variables). O envio via HTTPS porta 443 funciona 100% no Render Free sem restrições."
+          : "Nenhuma ação necessária."
+      };
+
+      return res.json(diagnostic);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro ao executar diagnóstico de e-mail" });
+    }
+  });
+
   // Instância segura do Firebase Firestore no servidor com credenciais de produção
   let serverFirebaseDb: any = null;
   async function getServerFirestore() {
@@ -852,6 +1112,175 @@ async function startServer() {
     }
   });
 
+  // Funções auxiliares para persistência e IDs deletados de lançamentos
+  function getStoredDeletedLancamentoIds(): string[] {
+    try {
+      if (fs.existsSync(LANCAMENTOS_DELETED_FILE)) {
+        const raw = fs.readFileSync(LANCAMENTOS_DELETED_FILE, "utf-8");
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) return list.map(String);
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  function addStoredDeletedLancamentoId(id: string | number) {
+    try {
+      const idStr = String(id);
+      const list = getStoredDeletedLancamentoIds();
+      if (!list.includes(idStr)) {
+        list.push(idStr);
+        fs.writeFileSync(LANCAMENTOS_DELETED_FILE, JSON.stringify(list), "utf-8");
+      }
+    } catch (e) {}
+  }
+
+  function removeStoredDeletedLancamentoId(id: string | number) {
+    try {
+      const idStr = String(id);
+      let list = getStoredDeletedLancamentoIds();
+      list = list.filter(x => x !== idStr);
+      fs.writeFileSync(LANCAMENTOS_DELETED_FILE, JSON.stringify(list), "utf-8");
+    } catch (e) {}
+  }
+
+  // Endpoints para Sincronização em Tempo Real de Lançamentos de Documentos entre Usuários
+  app.get("/api/lancamentos", async (req, res) => {
+    try {
+      const deletedIds = getStoredDeletedLancamentoIds();
+      const deletedSet = new Set(deletedIds);
+      const itemMap = new Map<string, any>();
+
+      // 1. Ler do arquivo de persistência em disco local
+      try {
+        if (fs.existsSync(LANCAMENTOS_FILE)) {
+          const raw = fs.readFileSync(LANCAMENTOS_FILE, "utf-8");
+          const localList: any[] = JSON.parse(raw);
+          if (Array.isArray(localList)) {
+            localList.forEach(item => {
+              const idStr = String(item.id);
+              if (!deletedSet.has(idStr)) {
+                itemMap.set(idStr, item);
+              }
+            });
+          }
+        }
+      } catch (e) {}
+
+      // 2. Tentar ler do Firestore do Servidor (se disponível)
+      try {
+        const db = await getServerFirestore();
+        const snapshot = await db.collection("lancamentos").get();
+        snapshot.forEach((doc: any) => {
+          const d = doc.data();
+          const docId = String(doc.id || d.id);
+          if (!deletedSet.has(docId)) {
+            itemMap.set(docId, {
+              id: Number(doc.id) || Number(d.id) || doc.id,
+              ...d
+            });
+          }
+        });
+      } catch (err: any) {
+        console.warn("[Server Lancamentos] Aviso Firestore:", err.message);
+      }
+
+      const items = Array.from(itemMap.values());
+      items.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+
+      return res.json({ 
+        success: true, 
+        count: items.length, 
+        items,
+        deletedIds,
+        updatedAt: Date.now()
+      });
+    } catch (err: any) {
+      console.error("[Server Lancamentos] Erro ao carregar lançamentos:", err);
+      return res.status(500).json({ success: false, error: err.message, items: [], deletedIds: [] });
+    }
+  });
+
+  app.post("/api/lancamentos", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const item = req.body;
+      if (!item || !item.id) {
+        return res.status(400).json({ success: false, error: "Dados do lançamento ou ID ausente" });
+      }
+
+      const docId = String(item.id);
+      removeStoredDeletedLancamentoId(docId);
+
+      const cleanItem = { ...item };
+      // Remove campos undefined para compatibilidade com Firestore
+      Object.keys(cleanItem).forEach(k => cleanItem[k] === undefined && delete cleanItem[k]);
+
+      // 1. Grava no Firestore do Servidor
+      try {
+        const db = await getServerFirestore();
+        await db.collection("lancamentos").doc(docId).set(cleanItem, { merge: true });
+      } catch (fErr: any) {
+        console.warn("[Server Lancamentos] Firestore write warning:", fErr.message);
+      }
+
+      // 2. Grava no arquivo de persistência em disco local
+      try {
+        let list: any[] = [];
+        if (fs.existsSync(LANCAMENTOS_FILE)) {
+          try { list = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8")); } catch (e) {}
+        }
+        const existingIdx = list.findIndex((l: any) => String(l.id) === docId);
+        if (existingIdx >= 0) {
+          list[existingIdx] = { ...list[existingIdx], ...cleanItem };
+        } else {
+          list.unshift(cleanItem);
+        }
+        fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(list, null, 2), "utf-8");
+      } catch (fsErr) {}
+
+      console.log(`[Server Lancamentos] Lançamento ${docId} sincronizado com sucesso.`);
+      return res.json({ success: true, id: item.id });
+    } catch (err: any) {
+      console.error("[Server Lancamentos] Erro ao salvar lançamento:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/lancamentos/:id", async (req, res) => {
+    try {
+      const targetId = req.params.id;
+      if (!targetId) {
+        return res.status(400).json({ success: false, error: "ID ausente" });
+      }
+
+      const idStr = String(targetId);
+      addStoredDeletedLancamentoId(idStr);
+
+      // 1. Remove do Firestore
+      try {
+        const db = await getServerFirestore();
+        await db.collection("lancamentos").doc(idStr).delete();
+      } catch (fErr: any) {
+        console.warn("[Server Lancamentos] Firestore delete warning:", fErr.message);
+      }
+
+      // 2. Remove do arquivo em disco
+      try {
+        if (fs.existsSync(LANCAMENTOS_FILE)) {
+          let list: any[] = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
+          list = list.filter((l: any) => String(l.id) !== idStr);
+          fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(list, null, 2), "utf-8");
+        }
+      } catch (fsErr) {}
+
+      console.log(`[Server Lancamentos] Lançamento ${idStr} excluído permanentemente do servidor para todos os usuários.`);
+      return res.json({ success: true, id: idStr, deletedIds: getStoredDeletedLancamentoIds() });
+    } catch (err: any) {
+      console.error("[Server Lancamentos] Erro ao excluir lançamento:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Rota Universal de Envio de E-mail via SMTP e Notificações (Multas, Rastreamento, Frota, Reservas, Documentos)
   app.post("/api/send-email", async (req, res) => {
     const { 
@@ -867,17 +1296,44 @@ async function startServer() {
       subject,
       html,
       fromName,
+      provider,
+      source,
       attachments: rawAttachments,
       driveUrls
     } = req.body;
 
+    // REGRA DE OURO RISIL:
+    // Itens de CHECKLIST mantêm envio pelo e-mail do Google (Google Apps Script já configurado).
+    // TODO O RESTANTE (Multas, Reservas, Avarias, Faturas, Lançamentos, Frota, Usuários) é enviado por deny.goncalves@risel.com.br.
+    const isChecklist = provider === "google" || 
+                        source === "checklist" || 
+                        (subject && String(subject).toLowerCase().includes("checklist"));
+
+    if (isChecklist) {
+      const emailTo = (Array.isArray(to) ? to.join(", ") : to) || (Array.isArray(destinatarios) ? destinatarios.join(", ") : destinatarios) || "deny.goncalves@risel.com.br";
+      const emailCc = Array.isArray(cc) ? cc.join(", ") : cc;
+      console.log(`[Risel Email Router] Roteando envio de CHECKLIST pelo e-mail do Google (Apps Script) para: ${emailTo}`);
+      const resGs = await sendEmailViaAppsScript({
+        to: emailTo,
+        cc: emailCc,
+        subject: subject || "Notificação de Checklist Frota Leve - Risel",
+        html: html || "<p>Notificação automática do Checklist Risel.</p>",
+        fromName: fromName || "Checklist Frota Leve - Risel"
+      });
+      if (resGs.success) {
+        return res.json({ success: true, delivered: true, provider: "Google Apps Script (Google MailApp)", message: "E-mail de checklist enviado com sucesso pelo Google!" });
+      }
+      console.warn("[Risel Email Router] Envio via Google Apps Script retornou aviso, continuando para contingência:", resGs.error || resGs.message);
+    }
+
     // Obtém a configuração SMTP consolidada e segura (descriptografando se necessário)
+    // Para todo o restante do sistema (Multas, Reservas, Avarias, Faturas, etc.), o remetente padrão é deny.goncalves@risel.com.br
     const smtpConfig = getRiselSmtpConfig({
-      user: smtpEmail,
+      user: smtpEmail || "deny.goncalves@risel.com.br",
       host: smtpHost,
       port: smtpPort ? parseInt(smtpPort, 10) : undefined,
       pass: smtpPassword,
-      defaultSenderName: fromName
+      defaultSenderName: fromName || "Risel Combustíveis"
     });
 
     // Caso 1: Envio Direto de Notificação (Multas, Rastreamento, Frota, Reservas, E-mails Gerais)
@@ -1012,28 +1468,11 @@ async function startServer() {
             attachmentsCount: mailAttachments.length 
           });
         } catch (err: any) {
-          console.warn("[Risel SMTP] Primeira tentativa falhou:", err.message, ". Tentando contingência com credenciais corporativas do cofre...");
+          console.warn("[Risel SMTP] Primeira tentativa SMTP falhou:", err.message, ". Tentando contingência com credenciais corporativas do cofre...");
           try {
             const vaultConfig = getRiselSmtpConfig();
             const fallbackUser = vaultConfig.user;
-            const fallbackPass = vaultConfig.pass;
-            const fallbackHost = (vaultConfig.host || "smtp.office365.com").trim();
-            const fallbackPort = Number(vaultConfig.port) || 587;
-
-            const fallbackTransporter = nodemailer.createTransport({
-              host: fallbackHost,
-              port: fallbackPort,
-              secure: fallbackPort === 465,
-              auth: {
-                user: fallbackUser,
-                pass: fallbackPass
-              },
-              tls: {
-                rejectUnauthorized: false,
-                minVersion: "TLSv1.2"
-              },
-              connectionTimeout: 25000
-            } as any);
+            const fallbackTransporter = await createSafeTransporter(vaultConfig);
 
             const senderHeader = fromName ? `"${fromName}" <${fallbackUser}>` : `"Risel Combustíveis" <${fallbackUser}>`;
 
@@ -1050,18 +1489,89 @@ async function startServer() {
             return res.json({ 
               success: true, 
               delivered: true, 
-              host: fallbackHost,
+              host: vaultConfig.host || "smtp.office365.com",
+              provider: "SMTP (Contingência Cofre)",
               message: `E-mail enviado com sucesso (contingência cofre) para ${emailTo}!`,
               attachmentsCount: mailAttachments.length 
             });
           } catch (retryErr: any) {
-            console.warn("[Risel SMTP] Erro em ambas as tentativas de envio:", retryErr.message);
+            console.warn("[Risel SMTP] Ambas as tentativas de envio direto via SMTP falharam:", retryErr.message);
+
+            // Tentativa 3: Se houver chave de API HTTP configurada (Resend ou Brevo), dispara via HTTPS (Porta 443)
+            const resendKey = (process.env.RESEND_API_KEY || "").trim();
+            const brevoKey = (process.env.BREVO_API_KEY || "").trim();
+
+            if (resendKey) {
+              try {
+                console.log("[Risel SMTP] Acionando envio via Resend HTTP API (Porta 443)...");
+                const resendResult = await sendEmailViaResend({
+                  to: emailTo,
+                  cc: emailCc,
+                  subject: emailSubject,
+                  html: emailHtml,
+                  fromName,
+                  attachments: mailAttachments
+                }, resendKey);
+
+                return res.json({
+                  success: true,
+                  delivered: true,
+                  provider: "Resend HTTP API (Porta 443)",
+                  message: `E-mail entregue com sucesso via Resend HTTP API (Porta 443) para ${emailTo}!`,
+                  attachmentsCount: mailAttachments.length,
+                  details: resendResult
+                });
+              } catch (resendErr: any) {
+                console.error("[Risel SMTP] Falha no envio via Resend HTTP:", resendErr.message);
+              }
+            }
+
+            if (brevoKey) {
+              try {
+                console.log("[Risel SMTP] Acionando envio via Brevo HTTP API (Porta 443)...");
+                const brevoResult = await sendEmailViaBrevo({
+                  to: emailTo,
+                  cc: emailCc,
+                  subject: emailSubject,
+                  html: emailHtml,
+                  fromName,
+                  attachments: mailAttachments
+                }, brevoKey);
+
+                return res.json({
+                  success: true,
+                  delivered: true,
+                  provider: "Brevo HTTP API (Porta 443)",
+                  message: `E-mail entregue com sucesso via Brevo HTTP API (Porta 443) para ${emailTo}!`,
+                  attachmentsCount: mailAttachments.length,
+                  details: brevoResult
+                });
+              } catch (brevoErr: any) {
+                console.error("[Risel SMTP] Falha no envio via Brevo HTTP:", brevoErr.message);
+              }
+            }
+
+            const isRender = Boolean(process.env.RENDER === "true" || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
+            const errStr = `${err.message || ""} ${retryErr.message || ""}`;
+            const isBlockedByFirewall = errStr.includes("ETIMEDOUT") || errStr.includes("ENETUNREACH") || errStr.includes("timeout") || errStr.includes("ECONNREFUSED");
+
+            let friendlyMessage = `Erro ao enviar e-mail: ${retryErr.message || err.message}`;
+            let helpAdvice = undefined;
+
+            if (isRender && isBlockedByFirewall) {
+              friendlyMessage = "Bloqueio de portas SMTP pelo Render (Plano Free). O Render bloqueia conexões de saída nas portas 25, 465 e 587 em planos gratuitos.";
+              helpAdvice = "Soluções recomendadas: 1) Fazer upgrade do serviço para o plano Starter ($7/mês) no Render que libera o tráfego SMTP; OU 2) Adicionar a variável RESEND_API_KEY ou BREVO_API_KEY no painel do Render (Environment Variables) para envio via HTTPS (porta 443, gratuita e sem bloqueio).";
+            }
+
             return res.status(500).json({ 
               success: false, 
               delivered: false, 
               error: retryErr.message || err.message,
+              primaryError: err.message,
+              fallbackError: retryErr.message,
               host: smtpConfig.host,
-              message: `Erro ao enviar e-mail: ${retryErr.message || err.message}`,
+              message: friendlyMessage,
+              help: helpAdvice,
               attachmentsCount: mailAttachments.length
             });
           }
@@ -2574,25 +3084,35 @@ async function startServer() {
           </div>
         `;
 
-        // Envio automático do e-mail do Checklist usando o SMTP Vault Risel
-        const checklistSmtp = getRiselSmtpConfig({ defaultSenderName: "Risel Frota" });
-        if (checklistSmtp.pass && checklistSmtp.pass.length > 0) {
-          const transporter = await createSafeTransporter(checklistSmtp);
-          const checklistRecipients = Array.from(new Set([
-            mailRecipient,
-            "deny.goncalves@risel.com.br",
-            "lorena.padilha@risel.com.br"
-          ])).filter(Boolean);
+        // Envio automático do e-mail do Checklist mantido via conta do Google configurada no Google Apps Script
+        const checklistRecipients = Array.from(new Set([
+          mailRecipient,
+          "deny.goncalves@risel.com.br",
+          "lorena.padilha@risel.com.br"
+        ])).filter(Boolean);
 
-          await transporter.sendMail({
-            from: `"Risel Frota" <${checklistSmtp.user}>`,
-            to: checklistRecipients.join(", "),
-            subject: emailSubject,
-            html: htmlEmail
-          });
-          console.log(`[Risel Frota] E-mail de notificação de checklist enviado com sucesso para ${checklistRecipients.join(", ")} via ${checklistSmtp.host}`);
+        const googleMailRes = await sendEmailViaAppsScript({
+          to: checklistRecipients.join(", "),
+          subject: emailSubject,
+          html: htmlEmail,
+          fromName: "Risel Frota (Checklist Google)"
+        });
+
+        if (googleMailRes.success) {
+          console.log(`[Risel Frota] E-mail de notificação de checklist enviado com sucesso via Google Apps Script para ${checklistRecipients.join(", ")}`);
         } else {
-          console.log(`[Risel Frota] Notificação de e-mail de checklist pronta para ${mailRecipient}.`);
+          console.warn(`[Risel Frota] Envio via Google Apps Script retornou aviso: ${googleMailRes.error || googleMailRes.message}. Tentando contingência SMTP...`);
+          const checklistSmtp = getRiselSmtpConfig({ defaultSenderName: "Risel Frota" });
+          if (checklistSmtp.pass && checklistSmtp.pass.length > 0) {
+            const transporter = await createSafeTransporter(checklistSmtp);
+            await transporter.sendMail({
+              from: `"Risel Frota" <${checklistSmtp.user}>`,
+              to: checklistRecipients.join(", "),
+              subject: emailSubject,
+              html: htmlEmail
+            });
+            console.log(`[Risel Frota] E-mail enviado com sucesso via SMTP para ${checklistRecipients.join(", ")}`);
+          }
         }
       } catch (mailErr) {
         console.warn("Aviso ao enviar e-mail de notificação do checklist:", mailErr);
@@ -2772,6 +3292,23 @@ Responda sempre em Português do Brasil com clareza, objetividade, sofisticaçã
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+
+    // Rotina Keep-Alive para Render e plataformas em nuvem:
+    // Pede periodicamente o endpoint /api/health para manter o serviço acordado durante o horário de operação
+    const externalUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL;
+    if (externalUrl) {
+      console.log(`[Keep-Alive] Monitoramento ativo para a URL: ${externalUrl}`);
+      // Intervalo de 10 minutos (Render dorme com 15 min de inatividade)
+      setInterval(async () => {
+        try {
+          const pingUrl = `${externalUrl.replace(/\/+$/, "")}/api/health`;
+          await fetch(pingUrl);
+          console.log(`[Keep-Alive Ping] Ping realizado com sucesso em ${pingUrl}`);
+        } catch (err: any) {
+          console.warn(`[Keep-Alive Ping] Aviso no ping: ${err.message}`);
+        }
+      }, 10 * 60 * 1000);
+    }
   });
 }
 

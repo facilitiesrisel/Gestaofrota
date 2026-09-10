@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion } from "motion/react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart, Pie, Legend, LabelList } from "recharts";
 import { Filter, TrendingUp, TrendingDown, Clock, CheckCircle2, Users, Receipt, Calendar, Building, CreditCard, Trophy, Crown, Award } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { getLancamentosUnified, subscribeToLancamentosUnified } from "../../services/lancamentosService";
 
 // Inicialização zerada do módulo para lançamentos reais
 const DEFAULT_LANCAMENTOS: any[] = [];
@@ -80,28 +81,14 @@ export default function Dashboard() {
   const [filtroMes, setFiltroMes] = useState<string>("Todos");
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>("Todos");
 
-  // Carrega os lançamentos reais do localStorage para análise dinâmica
-  const lancamentos = useMemo(() => {
-    const saved = localStorage.getItem("risel_lancamentos");
-    const list = saved ? JSON.parse(saved) : DEFAULT_LANCAMENTOS;
-    
-    // Obter data de hoje no formato YYYY-MM-DD
-    const hoje = new Date().toISOString().split("T")[0];
-    let alterado = false;
-    
-    const listAtualizada = list.map((item: any) => {
-      // Se for "Aprovado" e a data de vencimento <= hoje
-      if (item.status === "Aprovado" && item.dataVencimento && item.dataVencimento <= hoje) {
-        alterado = true;
-        return { ...item, status: "Finalizado" };
-      }
-      return item;
-    });
+  // Carrega os lançamentos unificados e sincronizados em tempo real entre todos os usuários
+  const [lancamentos, setLancamentos] = useState<any[]>(() => getLancamentosUnified());
 
-    if (alterado) {
-      localStorage.setItem("risel_lancamentos", JSON.stringify(listAtualizada));
-    }
-    return listAtualizada;
+  useEffect(() => {
+    const unsubscribe = subscribeToLancamentosUnified((updated) => {
+      setLancamentos(updated);
+    });
+    return () => unsubscribe();
   }, []);
 
   // Lista dinâmica de fornecedores e meses para popular os filtros

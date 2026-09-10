@@ -505,6 +505,23 @@ function doPost(e) {
     }
 
     const contents = JSON.parse(e.postData.contents);
+
+    // Envio direto de e-mail usando a conta do Google conectada ao Google Apps Script
+    if (contents.action === "sendEmail") {
+      const emailOptions = {
+        to: contents.to || CONFIG.EMAIL_DESTINOS,
+        subject: contents.subject || "Notificação de Checklist Frota Leve - Risel",
+        htmlBody: contents.html || contents.htmlBody || "",
+        name: contents.fromName || "Checklist Frota Leve - Risel"
+      };
+      if (contents.cc) emailOptions.cc = contents.cc;
+      MailApp.sendEmail(emailOptions);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "E-mail do Checklist enviado com sucesso pelo Google Apps Script (Google MailApp)!"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     let sheetTitle = contents.sheetTitle || "Página1";
     let sheet = ss.getSheetByName(sheetTitle) || ss.getActiveSheet();

@@ -583,7 +583,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 hasVoucher: !!voucherFile || !!selectedRental.hasVoucher,
                 voucherFileName: voucherFile ? voucherFile.fileName : selectedRental.voucherFileName,
                 voucherBase64: voucherFile ? voucherFile.base64 : selectedRental.voucherBase64,
-                voucherUploadDate: voucherFile ? new Date().toISOString() : selectedRental.voucherUploadDate
+                voucherUploadDate: voucherFile ? new Date() : (selectedRental.voucherUploadDate ? new Date(selectedRental.voucherUploadDate) : undefined)
             };
 
             await updateRacRental(selectedRental.id, updatedData);

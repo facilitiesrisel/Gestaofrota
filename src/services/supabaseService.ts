@@ -98,6 +98,7 @@ export interface SupabaseLancamento {
   lancado_por?: string;
   data_aprovacao?: string;
   centro_custo?: string;
+  codigo_lancamento?: string;
   created_at?: string;
 }
 
@@ -171,29 +172,48 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
       return [];
     }
 
-    return (data || []).map(row => ({
-      id: row.id,
-      status: row.status,
-      dataLancamento: row.data_lancamento,
-      dataVencimento: row.data_vencimento,
-      fornecedor: row.fornecedor,
-      doc: row.doc,
-      valor: row.valor,
-      formaPagto: row.forma_pagto,
-      tipo: row.tipo,
-      descricao: row.descricao,
-      cnpj: row.cnpj,
-      estabelecimento: row.estabelecimento,
-      nomeArquivoAnexo: row.nome_arquivo_anexo,
-      arquivoAnexoBase64: row.arquivo_anexo_base64,
-      itemSistema: row.item_sistema,
-      dataEmissao: row.data_emissao,
-      observacao: row.observacao,
-      frequencia: row.frequencia,
-      lancadoPor: row.lancado_por,
-      dataAprovacao: row.data_aprovacao,
-      centroCusto: row.centro_custo || row.centroCusto || "C.C 101 - Operacional"
-    }));
+    return (data || []).map(row => {
+      // Extrai metadados seguros caso estejam embutidos na observação
+      let rawObs = row.observacao || "";
+      let parsedOc = row.codigo_lancamento || row.cod_lancamento_oc || "";
+      let parsedCc = row.centro_custo || "";
+
+      const ocMatch = rawObs.match(/\[OC\/CÓD:\s*([^\]]+)\]/i);
+      if (ocMatch && ocMatch[1]) {
+        if (!parsedOc) parsedOc = ocMatch[1].trim();
+      }
+
+      const ccMatch = rawObs.match(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/i);
+      if (ccMatch && ccMatch[1]) {
+        if (!parsedCc) parsedCc = ccMatch[1].trim();
+      }
+
+      return {
+        id: row.id,
+        status: row.status,
+        dataLancamento: row.data_lancamento,
+        dataVencimento: row.data_vencimento,
+        fornecedor: row.fornecedor,
+        doc: row.doc,
+        valor: row.valor,
+        formaPagto: row.forma_pagto,
+        tipo: row.tipo,
+        descricao: row.descricao,
+        cnpj: row.cnpj,
+        estabelecimento: row.estabelecimento,
+        nomeArquivoAnexo: row.nome_arquivo_anexo,
+        arquivoAnexoBase64: row.arquivo_anexo_base64,
+        itemSistema: row.item_sistema,
+        dataEmissao: row.data_emissao,
+        observacao: row.observacao,
+        frequencia: row.frequencia,
+        lancadoPor: row.lancado_por,
+        dataAprovacao: row.data_aprovacao,
+        centroCusto: parsedCc || "C.C 101 - Operacional",
+        codLancamentoOc: parsedOc || "",
+        codigoLancamento: parsedOc || row.doc || ""
+      };
+    });
   } catch (err) {
     console.error("Erro no fetchLancamentosSupabase:", err);
     return [];
@@ -215,7 +235,20 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       targetId = Date.now();
     }
 
-    const dbRecord: Partial<SupabaseLancamento> = {
+    const codOc = item.codLancamentoOc || item.codigoLancamento || "";
+    const centCusto = item.centroCusto || "C.C 101 - Operacional";
+
+    // Preserva embutido na observação para garantir persistência 100% à prova de falhas de schema
+    let finalObs = item.observacao || "";
+    if (codOc && !finalObs.includes(`[OC/CÓD: ${codOc}]`)) {
+      finalObs = finalObs ? `${finalObs} [OC/CÓD: ${codOc}]` : `[OC/CÓD: ${codOc}]`;
+    }
+    if (centCusto && !finalObs.includes(`[CENTRO DE CUSTO: ${centCusto}]`)) {
+      finalObs = finalObs ? `${finalObs} [CENTRO DE CUSTO: ${centCusto}]` : `[CENTRO DE CUSTO: ${centCusto}]`;
+    }
+
+    // Monta o objeto base
+    const baseRecord: any = {
       id: targetId,
       status: item.status || "Aguardando aprovação",
       data_lancamento: item.dataLancamento || new Date().toISOString().split("T")[0],
@@ -232,22 +265,42 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       arquivo_anexo_base64: item.arquivoAnexoBase64 || "",
       item_sistema: item.itemSistema || "",
       data_emissao: item.dataEmissao || "",
-      observacao: item.observacao || "",
+      observacao: finalObs,
       frequencia: item.frequencia || "Esporádico",
       lancado_por: item.lancadoPor || "Deny",
-      data_aprovacao: item.dataAprovacao || "",
-      centro_custo: item.centroCusto || "C.C 101 - Operacional"
+      data_aprovacao: item.dataAprovacao || ""
     };
 
-    const { error } = await client
-      .from('lancamentos')
-      .upsert(dbRecord, { onConflict: 'id' });
+    // Tenta primeiro com as colunas completas caso já existam na tabela do Supabase
+    const completeRecord = {
+      ...baseRecord,
+      centro_custo: centCusto,
+      codigo_lancamento: codOc
+    };
 
-    if (error) {
-      console.error("Erro ao gravar lançamento no Supabase:", error.message || error);
+    const firstTry = await client
+      .from('lancamentos')
+      .upsert(completeRecord, { onConflict: 'id' });
+
+    if (!firstTry.error) {
+      return true;
+    }
+
+    // Se o erro for de coluna inexistente (PGRST204), tenta sem essas colunas (pois já embutimos na observação)
+    if (firstTry.error && firstTry.error.code === 'PGRST204') {
+      const retry = await client
+        .from('lancamentos')
+        .upsert(baseRecord, { onConflict: 'id' });
+
+      if (!retry.error) {
+        return true;
+      }
+      console.error("Erro no retry ao gravar lançamento no Supabase:", retry.error.message || retry.error);
       return false;
     }
-    return true;
+
+    console.error("Erro ao gravar lançamento no Supabase:", firstTry.error.message || firstTry.error);
+    return false;
   } catch (err) {
     console.error("Erro no saveLancamentoSupabase:", err);
     return false;
@@ -2077,6 +2130,7 @@ CREATE TABLE IF NOT EXISTS public.lancamentos (
 );
 
 ALTER TABLE public.lancamentos ADD COLUMN IF NOT EXISTS centro_custo VARCHAR(255) DEFAULT 'C.C 101 - Operacional';
+ALTER TABLE public.lancamentos ADD COLUMN IF NOT EXISTS codigo_lancamento VARCHAR(255);
 
 -- 1. Políticas Seguras de RLS para Lançamentos (Prevenção contra exclusão indevida e controle de acesso)
 ALTER TABLE public.lancamentos ENABLE ROW LEVEL SECURITY;

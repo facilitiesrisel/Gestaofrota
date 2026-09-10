@@ -1815,7 +1815,7 @@ export function ChecklistRealizados({ checklists, vehicles = [], onDeleteCheckli
                     <div className="space-y-0.5 text-left">
                       <span className="text-[10px] font-black text-slate-400 uppercase">Data Envio</span>
                       <p className="text-xs font-bold text-slate-800">
-                        {selectedChecklist.timestamp || (selectedChecklist.data ? new Date(selectedChecklist.data + "T12:00:00").toLocaleDateString("pt-BR") : "N/D")}
+                        {formatDateRobustly(selectedChecklist.data, selectedChecklist.timestamp)}
                       </p>
                     </div>
                     <div className="space-y-0.5 text-left">
