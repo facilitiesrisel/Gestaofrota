@@ -3,6 +3,8 @@ import { Search, Building2, MapPin, MoreHorizontal, Mail, Phone, Edit2, Trash2, 
 import { cn } from "../../lib/utils";
 import { normalizeCidade } from "../../utils/baseOperacional";
 import { fetchFornecedoresSupabase, saveFornecedorSupabase, deleteFornecedorSupabase } from "../../services/supabaseService";
+import { sincronizarFornecedoresFrequentes } from "../../services/cnpjService";
+import { getLancamentosUnified } from "../../services/lancamentosService";
 
 const DEFAULT_FORNECE_LIST: any[] = [];
 
@@ -137,10 +139,26 @@ export default function Fornecedores() {
 
   useEffect(() => {
     async function syncSupabase() {
-      const dbItems = await fetchFornecedoresSupabase();
-      if (Array.isArray(dbItems)) {
-        setFornecedores(dbItems);
-        localStorage.setItem("risel_fornecedores", JSON.stringify(dbItems));
+      try {
+        const dbItems = await fetchFornecedoresSupabase();
+        if (Array.isArray(dbItems) && dbItems.length > 0) {
+          setFornecedores(dbItems);
+          localStorage.setItem("risel_fornecedores", JSON.stringify(dbItems));
+        }
+
+        // Promove e sincroniza lançamentos mensais ou com mais de 3 registros
+        const lancamentos = getLancamentosUnified();
+        if (lancamentos && lancamentos.length > 0) {
+          const promovidos = await sincronizarFornecedoresFrequentes(lancamentos);
+          if (promovidos > 0) {
+            const savedNow = localStorage.getItem("risel_fornecedores");
+            if (savedNow) {
+              setFornecedores(JSON.parse(savedNow));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Aviso ao sincronizar fornecedores:", err);
       }
     }
     syncSupabase();

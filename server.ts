@@ -1144,6 +1144,117 @@ async function startServer() {
     } catch (e) {}
   }
 
+  // Endpoint de Consulta Pública de CNPJ com Múltiplas Contingências (MinhaReceita, BrasilAPI e ReceitaWS)
+  app.get("/api/cnpj/:cnpj", async (req, res) => {
+    try {
+      const rawCnpj = req.params.cnpj || "";
+      const cleanCnpj = rawCnpj.replace(/\D/g, "");
+
+      if (cleanCnpj.length !== 14) {
+        return res.status(400).json({ success: false, error: "CNPJ deve conter 14 dígitos numéricos." });
+      }
+
+      let cnpjData: any = null;
+      let source = "";
+
+      // 1ª Tentativa: MinhaReceita (Direto na base da Receita Federal)
+      try {
+        const resp1 = await fetch(`https://minhareceita.org/${cleanCnpj}`, {
+          signal: AbortSignal.timeout(4500)
+        });
+        if (resp1.ok) {
+          const json1 = await resp1.json();
+          if (json1 && (json1.razao_social || json1.nome_fantasia)) {
+            cnpjData = json1;
+            source = "MinhaReceita";
+          }
+        }
+      } catch (e) {}
+
+      // 2ª Tentativa: BrasilAPI
+      if (!cnpjData) {
+        try {
+          const resp2 = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cleanCnpj}`, {
+            signal: AbortSignal.timeout(4500)
+          });
+          if (resp2.ok) {
+            const json2 = await resp2.json();
+            if (json2 && (json2.razao_social || json2.nome_fantasia)) {
+              cnpjData = json2;
+              source = "BrasilAPI";
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 3ª Tentativa: ReceitaWS
+      if (!cnpjData) {
+        try {
+          const resp3 = await fetch(`https://receitaws.com.br/v1/cnpj/${cleanCnpj}`, {
+            signal: AbortSignal.timeout(4500)
+          });
+          if (resp3.ok) {
+            const json3 = await resp3.json();
+            if (json3 && json3.status !== "ERROR" && (json3.nome || json3.fantasia)) {
+              cnpjData = {
+                razao_social: json3.nome,
+                nome_fantasia: json3.fantasia,
+                cnae_fiscal_descricao: json3.atividade_principal?.[0]?.text || "",
+                logradouro: json3.logradouro,
+                numero: json3.numero,
+                bairro: json3.bairro,
+                municipio: json3.municipio,
+                uf: json3.uf,
+                cep: json3.cep,
+                ddd_telefone_1: json3.telefone,
+                email: json3.email,
+                descricao_situacao_cadastral: json3.situacao
+              };
+              source = "ReceitaWS";
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (!cnpjData) {
+        return res.status(404).json({
+          success: false,
+          error: "CNPJ não localizado na Receita Federal. Verifique a digitação ou digite a Razão Social manualmente."
+        });
+      }
+
+      const razaoSocial = (cnpjData.razao_social || cnpjData.nome || cnpjData.nome_fantasia || "").trim();
+      const nomeFantasia = (cnpjData.nome_fantasia || cnpjData.fantasia || "").trim();
+      const isRisel = cleanCnpj === "46677860000165" || 
+                      cleanCnpj === "03882880000120" || 
+                      razaoSocial.toUpperCase().includes("RISEL COMBUSTIVEIS");
+
+      return res.json({
+        success: true,
+        source,
+        data: {
+          cnpj: cleanCnpj,
+          razao_social: razaoSocial,
+          nome_fantasia: nomeFantasia,
+          cnae_fiscal_descricao: cnpjData.cnae_fiscal_descricao || "",
+          logradouro: cnpjData.logradouro || "",
+          numero: cnpjData.numero || "",
+          bairro: cnpjData.bairro || "",
+          municipio: cnpjData.municipio || "",
+          uf: cnpjData.uf || "",
+          cep: cnpjData.cep || "",
+          telefone: cnpjData.ddd_telefone_1 || cnpjData.telefone || "",
+          email: cnpjData.email || "",
+          situacao_cadastral: cnpjData.descricao_situacao_cadastral || cnpjData.situacao || "ATIVA"
+        },
+        isRisel
+      });
+    } catch (err: any) {
+      console.error("[Server CNPJ] Erro na consulta:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro ao consultar CNPJ." });
+    }
+  });
+
   // Endpoints para Sincronização em Tempo Real de Lançamentos de Documentos entre Usuários
   app.get("/api/lancamentos", async (req, res) => {
     try {

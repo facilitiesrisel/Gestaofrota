@@ -28,6 +28,13 @@ import {
   normalizeLancamento,
   forceSyncLancamentos
 } from "../../services/lancamentosService";
+import {
+  consultarCnpjReceita,
+  formatarCnpjCpf,
+  avaliarEEnviarFornecedor,
+  sincronizarFornecedoresFrequentes,
+  CnpjSearchResult
+} from "../../services/cnpjService";
 
 export function formatDateDisplay(dateString: string | undefined | null): string {
   if (!dateString) return "---";
@@ -380,36 +387,76 @@ export default function Lancamento() {
     setTimeout(() => setCopiedSql(false), 3000);
   };
 
-  // Estados de busca real do CNPJ na BrasilAPI
+  // Estados e referências de busca avançada de CNPJ na Receita Federal
   const [isSearchingCnpj, setIsSearchingCnpj] = useState(false);
   const [cnpjError, setCnpjError] = useState("");
+  const [cnpjSuccessMsg, setCnpjSuccessMsg] = useState("");
+  const [cnpjWarningRisel, setCnpjWarningRisel] = useState("");
+  const lastCnpjDataRef = useRef<CnpjSearchResult | null>(null);
 
   const searchCnpjReal = async (cnpjClean: string, fillForm = true) => {
     if (cnpjClean.length !== 14) return null;
     setIsSearchingCnpj(true);
     setCnpjError("");
+    setCnpjSuccessMsg("");
+    setCnpjWarningRisel("");
+
+    // 1. Verificação preliminar na base interna de fornecedores cadastrados
     try {
-      const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjClean}`);
-      if (response.ok) {
-        const data = await response.json();
-        const razao = data.razao_social || data.nome_fantasia || "Fornecedor Real";
-        
-        if (fillForm) {
+      const savedForn = localStorage.getItem("risel_fornecedores");
+      if (savedForn) {
+        const listForn = JSON.parse(savedForn);
+        const matchForn = listForn.find((f: any) => (f.cnpj || "").replace(/\D/g, "") === cnpjClean);
+        if (matchForn && fillForm) {
           setFormData(prev => ({
             ...prev,
-            fornecedor: razao,
-            observacao: prev.observacao 
-              ? `${prev.observacao}\n\n[CNPJ Real: ${razao} | Atividade: ${data.cnae_fiscal_descricao || ""} | Endereço: ${data.logradouro || ""}, ${data.numero || ""} - ${data.bairro || ""}, ${data.municipio || ""}-${data.uf || ""}]`
-              : `[CNPJ Real: ${razao} | Atividade: ${data.cnae_fiscal_descricao || ""} | Endereço: ${data.logradouro || ""}, ${data.numero || ""} - ${data.bairro || ""}, ${data.municipio || ""}-${data.uf || ""}]`
+            fornecedor: matchForn.nome,
+            itemSistema: matchForn.codigoItem || prev.itemSistema
           }));
+          setCnpjSuccessMsg(`Fornecedor já cadastrado: ${matchForn.nome}`);
+        }
+      }
+    } catch (e) {}
+
+    try {
+      // 2. Consulta avançada na Receita Federal (Cascata: MinhaReceita -> BrasilAPI -> ReceitaWS)
+      const resultado = await consultarCnpjReceita(cnpjClean);
+      if (resultado && (resultado.razao_social || resultado.nome_fantasia)) {
+        const razao = resultado.razao_social || resultado.nome_fantasia;
+        lastCnpjDataRef.current = resultado;
+
+        // Verifica se é a própria Risel Combustíveis (Tomador do serviço)
+        if (resultado.isRisel) {
+          setCnpjWarningRisel(
+            "⚠️ ATENÇÃO: O CNPJ digitado pertence à própria RISEL COMBUSTIVEIS LTDA (Tomador dos serviços). Para registrar despesas, informe o CNPJ do fornecedor/prestador que emitiu a Nota Fiscal."
+          );
+        } else {
+          setCnpjSuccessMsg(`Receita Federal: ${razao}`);
+        }
+
+        if (fillForm) {
+          setFormData(prev => {
+            let novaObs = prev.observacao || "";
+            const obsSnippet = `[CNPJ Real: ${razao} | Atividade: ${resultado.cnae_fiscal_descricao || ""} | Endereço: ${resultado.logradouro || ""}, ${resultado.numero || ""} - ${resultado.bairro || ""}, ${resultado.municipio || ""}-${resultado.uf || ""}]`;
+            if (!novaObs.includes(razao)) {
+              novaObs = novaObs ? `${novaObs}\n\n${obsSnippet}` : obsSnippet;
+            }
+
+            return {
+              ...prev,
+              fornecedor: razao,
+              observacao: novaObs
+            };
+          });
         }
         return razao;
       } else {
-        console.warn("CNPJ não localizado na BrasilAPI.");
+        setCnpjError("CNPJ não localizado na Receita Federal. Preencha a Razão Social manualmente.");
         return null;
       }
-    } catch (err) {
-      console.error("Erro ao buscar CNPJ na BrasilAPI:", err);
+    } catch (err: any) {
+      console.error("Erro na busca avançada de CNPJ:", err);
+      setCnpjError("Falha ao consultar CNPJ. Digite a Razão Social do fornecedor.");
       return null;
     } finally {
       setIsSearchingCnpj(false);
@@ -425,6 +472,15 @@ export default function Lancamento() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Sincronização e promoção automática: fornecedores Mensais ou com 3+ lançamentos vão para o cadastro
+  useEffect(() => {
+    if (lancamentos && lancamentos.length > 0) {
+      sincronizarFornecedoresFrequentes(lancamentos).catch(err => {
+        console.warn("Aviso ao auto-sincronizar fornecedores frequentes:", err);
+      });
+    }
+  }, [lancamentos.length]);
 
   // Vencimentos dinâmicos derivados diretamente dos lançamentos reais (sem dados fictícios)
   const vencimentosReais = useMemo(() => {
@@ -798,29 +854,18 @@ export default function Lancamento() {
       }
     }
 
-    const matches: Record<string, { nome: string; codigo: string }> = {
-      "12345678000199": { nome: "Postos ABC Locações de Equipamentos de Mineração Ltda", codigo: "SV-0012" },
-      "98765432000111": { nome: "Manutenção XYZ Ltda", codigo: "MN-992" },
-      "55444333000122": { nome: "Serviços Gerais & Limpeza Silva", codigo: "LG-104" },
-      "11222333000144": { nome: "Locadora K Veículos Especiais S.A.", codigo: "FR-015" }
-    };
+    const rawCnpj = raw;
+    setFormData(prev => ({ 
+      ...prev, 
+      cnpj: formatted 
+    }));
 
-    const match = matches[raw];
-    if (match) {
-      setFormData(prev => ({ 
-        ...prev, 
-        cnpj: formatted,
-        fornecedor: match.nome,
-        itemSistema: match.codigo
-      }));
+    if (rawCnpj.length === 14) {
+      searchCnpjReal(rawCnpj, true);
     } else {
-      setFormData(prev => ({ 
-        ...prev, 
-        cnpj: formatted 
-      }));
-      if (raw.length === 14) {
-        searchCnpjReal(raw);
-      }
+      setCnpjError("");
+      setCnpjSuccessMsg("");
+      setCnpjWarningRisel("");
     }
   };
 
@@ -1118,48 +1163,26 @@ export default function Lancamento() {
       await saveLancamentoUnified(savedItem);
     }
 
-    // REGRA DE NEGÓCIO: Se for lançamento com recorrência MENSAL, adiciona/atualiza no Menu de Fornecedores
-    if (data.tipo === "Mensal" || (savedItem && savedItem.frequencia === "Mensal")) {
-      const cleanCnpj = (data.cnpj || "").replace(/\D/g, "");
-      if (cleanCnpj && data.fornecedor) {
-        const formattedCnpj = formatCPFCNPJ(cleanCnpj);
-        const fornRecord = {
-          cnpj: formattedCnpj,
-          nome: data.fornecedor,
-          codigoItem: data.itemSistema || "",
-          cidade: "",
-          uf: "",
-          telefone: "",
-          email: "",
-          status: "Ativo",
-          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(data.fornecedor.charAt(0))}&background=f8fafc`
-        };
-
-        try {
-          const savedForn = localStorage.getItem("risel_fornecedores");
-          let listForn = savedForn ? JSON.parse(savedForn) : [];
-          const idx = listForn.findIndex((f: any) => f.cnpj && f.cnpj.replace(/\D/g, "") === cleanCnpj);
-          if (idx >= 0) {
-            listForn[idx] = { ...listForn[idx], ...fornRecord };
-          } else {
-            listForn.push(fornRecord);
-          }
-          localStorage.setItem("risel_fornecedores", JSON.stringify(listForn));
-        } catch (err) {
-          console.error("Erro ao salvar fornecedor recorrente:", err);
-        }
-
-        saveFornecedorSupabase(fornRecord).catch(e => {
-          console.warn("Aviso ao salvar fornecedor recorrente no Supabase:", e);
-        });
+    // REGRA DE NEGÓCIO OFICIAL:
+    // Se for lançamento MENSAL OU se tiver mais de três lançamentos (mesmo que não seja mensal), envie para a lista de cadastro de Fornecedores!
+    const itemParaAvaliar = savedItem || data;
+    avaliarEEnviarFornecedor(itemParaAvaliar, lancamentos, lastCnpjDataRef.current).then(res => {
+      if (res.qualificado) {
+        console.log(`[Risel ERP] Fornecedor adicionado/atualizado no cadastro (${res.motivo}):`, res.fornecedorCadastrado?.nome);
       }
-    }
+    }).catch(err => {
+      console.warn("Aviso ao avaliar qualificação de fornecedor:", err);
+    });
 
     // Resetar estados e fechar formulários
     setIsFormOpen(false);
     setEditingId(null);
     setFormData(getInitialFormState());
     setDuplicateWarning(null);
+    setCnpjError("");
+    setCnpjSuccessMsg("");
+    setCnpjWarningRisel("");
+    lastCnpjDataRef.current = null;
   };
 
   // Alteração e persistência direta de status na linha da tabela
@@ -1520,8 +1543,79 @@ export default function Lancamento() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-0.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CPF / CNPJ *</label>
-                      <input type="text" name="cnpj" value={formData.cnpj} onChange={handleCnpjChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-mono text-xs text-slate-800 shadow-sm" placeholder="00.000...-00" />
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CPF / CNPJ *</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const raw = (formData.cnpj || "").replace(/\D/g, "");
+                            if (raw.length === 14) {
+                              searchCnpjReal(raw, true);
+                            }
+                          }}
+                          disabled={isSearchingCnpj || (formData.cnpj || "").replace(/\D/g, "").length !== 14}
+                          className="text-[9px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                          title="Consultar Razão Social na Receita Federal"
+                        >
+                          {isSearchingCnpj ? (
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-600" />
+                          ) : (
+                            <Search className="w-2.5 h-2.5 text-emerald-600" />
+                          )}
+                          <span>Buscar na Receita</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input 
+                          type="text" 
+                          name="cnpj" 
+                          value={formData.cnpj} 
+                          onChange={handleCnpjChange}
+                          onBlur={(e) => {
+                            const raw = e.target.value.replace(/\D/g, "");
+                            if (raw.length === 14 && (!formData.fornecedor || cnpjWarningRisel)) {
+                              searchCnpjReal(raw, true);
+                            }
+                          }} 
+                          required 
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-mono text-xs text-slate-800 shadow-sm" 
+                          placeholder="00.000.000/0000-00" 
+                        />
+                        {isSearchingCnpj && (
+                          <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                            <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Feedback de Consulta de CNPJ */}
+                      {isSearchingCnpj && (
+                        <p className="text-[9px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5 animate-pulse">
+                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                          <span>Localizando Razão Social na Receita...</span>
+                        </p>
+                      )}
+                      {cnpjWarningRisel && (
+                        <div className="text-[9.5px] text-amber-900 bg-amber-50 border border-amber-300 p-1.5 rounded-md mt-1 font-medium flex items-start gap-1 leading-snug">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold block">Atenção (CNPJ da Risel):</span>
+                            <span>{cnpjWarningRisel}</span>
+                          </div>
+                        </div>
+                      )}
+                      {!isSearchingCnpj && cnpjSuccessMsg && !cnpjWarningRisel && (
+                        <p className="text-[9.5px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded mt-0.5 font-medium flex items-center gap-1 truncate" title={cnpjSuccessMsg}>
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span className="truncate">{cnpjSuccessMsg}</span>
+                        </p>
+                      )}
+                      {!isSearchingCnpj && cnpjError && (
+                        <p className="text-[9.5px] text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded mt-0.5 font-medium flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                          <span>{cnpjError}</span>
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-0.5">
                       <div className="flex justify-between items-center">
@@ -1680,8 +1774,24 @@ export default function Lancamento() {
                      <h4 className="font-bold text-xs text-slate-700">Dados do Fornecedor</h4>
                   </div>
                   <div className="space-y-0.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Razão Social (Fornecedor) *</label>
-                    <input type="text" name="fornecedor" value={formData.fornecedor} onChange={handleChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm" placeholder="Posto, Locadora, etc." />
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Razão Social (Fornecedor) *</label>
+                      {formData.fornecedor && (
+                        <span className="text-[8.5px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-semibold flex items-center gap-1">
+                          <Building className="w-2.5 h-2.5 text-emerald-600" />
+                          <span>Identificado</span>
+                        </span>
+                      )}
+                    </div>
+                    <input 
+                      type="text" 
+                      name="fornecedor" 
+                      value={formData.fornecedor} 
+                      onChange={handleChange} 
+                      required 
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm" 
+                      placeholder="Nome Empresarial / Fornecedor" 
+                    />
                   </div>
                   <div className="space-y-0.5">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Item de Sistema (Cód. Serviço)</label>
