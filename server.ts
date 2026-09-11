@@ -1800,6 +1800,31 @@ async function startServer() {
               }
             }
 
+            // Tentativa 4: Contingência via Google Apps Script (HTTPS sem restrição de portas)
+            if (storedAppsScriptUrl) {
+              try {
+                console.log("[Risel SMTP Router] Acionando contingência automática via Google Apps Script (HTTPS)...");
+                const gsResult = await sendEmailViaAppsScript({
+                  to: emailTo,
+                  cc: emailCc,
+                  subject: emailSubject,
+                  html: emailHtml,
+                  fromName: fromName || "Risel Combustíveis"
+                });
+                if (gsResult.success) {
+                  return res.json({
+                    success: true,
+                    delivered: true,
+                    provider: "Google Apps Script (Contingência Automática)",
+                    message: `E-mail entregue com sucesso para ${emailTo}!`,
+                    attachmentsCount: mailAttachments.length
+                  });
+                }
+              } catch (gsErr: any) {
+                console.warn("[Risel SMTP Router] Contingência via Google Apps Script falhou:", gsErr.message);
+              }
+            }
+
             const isRender = Boolean(process.env.RENDER === "true" || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
             const errStr = `${err.message || ""} ${retryErr.message || ""}`;
             const isBlockedByFirewall = errStr.includes("ETIMEDOUT") || errStr.includes("ENETUNREACH") || errStr.includes("timeout") || errStr.includes("ECONNREFUSED");

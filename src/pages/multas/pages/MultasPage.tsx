@@ -1807,26 +1807,19 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               }
 
               if (result.delivered || result.success) {
-                  alert(result.message || `E-mail Enviado com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL}!`);
+                  alert(result.message || `✅ E-mail enviado com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL}!`);
               } else {
-                  alert(result.message || "E-mail Enviado!");
+                  alert(result.message || "✅ E-mail enviado com sucesso!");
               }
               setIsEmailModalOpen(false);
               setShowEmailPreviewHtml(false);
           } else { 
               console.warn("[Multas] Envio via servidor não completou:", result); 
-              const isBlocked = result.firewallBlocked || (result.message && (result.message.includes("Bloqueio de portas SMTP") || result.message.includes("Render")));
-              if (isBlocked) {
-                  alert(`Aviso do Servidor: ${result.message}\n\nAbrindo automaticamente sua notificação no Outlook / Webmail com todos os e-mails confirmados e anexos prontos...`);
-                  await handleOpenOutlookOrWebmail();
-              } else {
-                  alert("Erro ao enviar e-mail via servidor: " + (result.message || result.error || "Verifique a conexão ou configurações de SMTP.")); 
-              }
+              alert("Erro ao enviar e-mail: " + (result.message || result.error || "Não foi possível completar o envio."));
           }
       } catch (err: any) {
           console.error("Erro ao enviar e-mail via servidor:", err);
-          alert(`Não foi possível enviar via servidor (${err.message || err}).\n\nAbrindo automaticamente sua notificação no seu Outlook / Webmail com todos os destinatários confirmados...`);
-          await handleOpenOutlookOrWebmail();
+          alert(`Erro ao enviar e-mail via servidor: ${err.message || err}`);
       } finally {
           setSendingEmail(false);
       }
@@ -2128,13 +2121,12 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           <div className="flex flex-col sm:flex-row justify-between items-center gap-2 pt-3 mt-1 border-t border-slate-100 shrink-0">
             <button
               type="button"
-              onClick={handleSendEmail}
+              onClick={handleOpenOutlookOrWebmail}
               disabled={sendingEmail || parsedToList.length === 0}
-              className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3.5 py-2 rounded-xl font-bold transition-all flex items-center cursor-pointer active:scale-95 w-full sm:w-auto justify-center"
-              title="Tentar disparo em segundo plano pelo servidor SMTP corporativo (caso as portas de saída estejam liberadas)"
+              className="text-xs text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3 py-2 rounded-xl font-bold transition-all flex items-center cursor-pointer active:scale-95 w-full sm:w-auto justify-center"
+              title="Abrir no seu aplicativo Outlook / Webmail baixando os anexos (opcional)"
             >
-              {sendingEmail ? <Loader2 size={14} className="animate-spin mr-1.5 text-blue-600"/> : <Send size={14} className="mr-1.5 text-blue-600"/>}
-              {sendingEmail ? 'Enviando pelo servidor...' : 'Disparar em 2º Plano (Servidor)'}
+              <Mail size={14} className="mr-1.5 text-blue-600"/> Abrir no Outlook (Opcional)
             </button>
 
             <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
@@ -2151,14 +2143,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               </button>
               <button 
                 type="button"
-                onClick={handleOpenOutlookOrWebmail} 
+                onClick={handleSendEmail} 
                 disabled={sendingEmail || parsedToList.length === 0} 
-                className={`px-5 py-2.5 bg-emerald-700 text-white rounded-xl shadow-md hover:bg-emerald-800 active:scale-95 flex items-center font-black text-xs transition-all cursor-pointer ${
+                className={`px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl shadow-md active:scale-95 flex items-center font-black text-xs transition-all cursor-pointer ${
                   sendingEmail || parsedToList.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
                 }`}
-                title="Confirmar e abrir no Outlook / Webmail com anexos baixados e texto copiado (sem risco de bloqueios de nuvem)"
+                title="Confirmar destinatários e realizar o envio automático imediato da notificação"
               >
-                <Mail size={15} className="mr-1.5"/> Confirmar e Enviar via Outlook / Webmail
+                {sendingEmail ? <Loader2 size={15} className="animate-spin mr-1.5"/> : <Send size={15} className="mr-1.5"/>} 
+                {sendingEmail ? 'Enviando Notificação...' : `Confirmar e Enviar Direto (${parsedToList.length} Para${parsedCcList.length > 0 ? ` + ${parsedCcList.length} CC` : ''})`}
               </button>
             </div>
           </div>
