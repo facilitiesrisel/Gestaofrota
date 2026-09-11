@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { Search, Building2, MapPin, MoreHorizontal, Mail, Phone, Edit2, Trash2, X, Plus, Save, SlidersHorizontal, Check, ArrowUpDown, Users } from "lucide-react";
+import { Search, Building2, MapPin, MoreHorizontal, Mail, Phone, Edit2, Trash2, X, Plus, Save, SlidersHorizontal, Check, ArrowUpDown, Users, RefreshCw, CheckCircle2, Sparkles } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { normalizeCidade } from "../../utils/baseOperacional";
 import { fetchFornecedoresSupabase, saveFornecedorSupabase, deleteFornecedorSupabase } from "../../services/supabaseService";
-import { sincronizarFornecedoresFrequentes, isRiselCnpjOrName } from "../../services/cnpjService";
+import { sincronizarFornecedoresFrequentes, isRiselCnpjOrName, consultarCnpjReceita, formatarTelefone, enriquecerDadosFornecedor } from "../../services/cnpjService";
 import { getLancamentosUnified } from "../../services/lancamentosService";
 
 const DEFAULT_FORNECE_LIST: any[] = [];
@@ -252,6 +252,97 @@ export default function Fornecedores() {
 
   const [logoSearchOpen, setLogoSearchOpen] = useState(false);
   const [logoCandidates, setLogoCandidates] = useState<any[]>([]);
+  const [isSearchingModalCnpj, setIsSearchingModalCnpj] = useState(false);
+  const [modalCnpjMsg, setModalCnpjMsg] = useState("");
+  const [enrichingCnpj, setEnrichingCnpj] = useState<string | null>(null);
+  const [isEnrichingAll, setIsEnrichingAll] = useState(false);
+
+  const handleBuscarReceitaModal = async (cnpjArg?: string) => {
+    const raw = (cnpjArg || formData.cnpj || "").replace(/\D/g, "");
+    if (raw.length !== 14) return;
+    setIsSearchingModalCnpj(true);
+    setModalCnpjMsg("");
+    try {
+      const res = await consultarCnpjReceita(raw);
+      if (res && (res.razao_social || res.nome_fantasia)) {
+        const nomeFinal = res.razao_social || res.nome_fantasia;
+        const telFinal = formatarTelefone(res.telefone);
+        const emailFinal = (res.email || "").toLowerCase().trim();
+        const cidFinal = res.municipio || "";
+        const ufFinal = (res.uf || "").toUpperCase().trim();
+        const logoUrl = getSupplierLogoUrl(nomeFinal, undefined, emailFinal);
+
+        setFormData(prev => ({
+          ...prev,
+          nome: nomeFinal,
+          cidade: cidFinal,
+          uf: ufFinal,
+          telefone: telFinal || prev.telefone,
+          email: emailFinal || prev.email,
+          avatarUrl: logoUrl
+        }));
+        setModalCnpjMsg(`Receita Federal: ${nomeFinal} (${cidFinal}/${ufFinal})`);
+      } else {
+        setModalCnpjMsg("CNPJ não encontrado na Receita Federal. Preencha manualmente.");
+      }
+    } catch (e) {
+      console.warn("Aviso ao buscar CNPJ na modal de fornecedores:", e);
+    } finally {
+      setIsSearchingModalCnpj(false);
+    }
+  };
+
+  const handleEnrichSingle = async (item: any) => {
+    const rawCnpj = (item.cnpj || "").replace(/\D/g, "");
+    if (rawCnpj.length !== 14) {
+      alert("Para consultar a Receita Federal, o cadastro deve possuir um CNPJ válido com 14 dígitos.");
+      return;
+    }
+    setEnrichingCnpj(item.cnpj);
+    try {
+      const enriched = await enriquecerDadosFornecedor(item);
+      if (enriched) {
+        setFornecedores(prev => prev.map(f => (f.cnpj === item.cnpj || f.id === item.id) ? enriched : f));
+        await saveFornecedorSupabase(enriched);
+      }
+    } catch (e) {
+      console.error("Erro ao enriquecer dados:", e);
+    } finally {
+      setEnrichingCnpj(null);
+    }
+  };
+
+  const handleEnrichAllIncomplete = async () => {
+    const incomplete = fornecedores.filter(f => {
+      const clean = (f.cnpj || "").replace(/\D/g, "");
+      return clean.length === 14 && (!f.telefone || !f.email || !f.cidade || !f.uf);
+    });
+    if (incomplete.length === 0) {
+      alert("Todos os fornecedores com CNPJ já estão com os dados completos (Telefone, E-mail, Cidade, UF)!");
+      return;
+    }
+    if (!confirm(`Deseja consultar a Receita Federal para completar automaticamente os dados de ${incomplete.length} fornecedor(es)?`)) {
+      return;
+    }
+    setIsEnrichingAll(true);
+    let updatedCount = 0;
+    try {
+      for (const item of incomplete) {
+        const enriched = await enriquecerDadosFornecedor(item);
+        if (enriched) {
+          setFornecedores(prev => prev.map(f => (f.cnpj === item.cnpj || f.id === item.id) ? enriched : f));
+          await saveFornecedorSupabase(enriched);
+          updatedCount++;
+        }
+        await new Promise(r => setTimeout(r, 400));
+      }
+      alert(`Sucesso! ${updatedCount} fornecedor(es) atualizado(s) com dados completos da Receita Federal.`);
+    } catch (e) {
+      console.error("Erro no enriquecimento em lote:", e);
+    } finally {
+      setIsEnrichingAll(false);
+    }
+  };
 
   const handleSearchLogos = () => {
     if (!formData.nome && !formData.email) {
@@ -498,6 +589,20 @@ export default function Fornecedores() {
             )}
           </div>
 
+          <button
+            onClick={handleEnrichAllIncomplete}
+            disabled={isEnrichingAll}
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-white text-emerald-800 border border-emerald-200 shadow-2xs hover:bg-emerald-50 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Consultar Receita Federal para completar Telefone, E-mail, Cidade e Estado de fornecedores com dados pendentes"
+          >
+            {isEnrichingAll ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+            )}
+            <span>Completar Dados (Receita)</span>
+          </button>
+
           <button 
             onClick={handleOpenAddModal}
             className="px-4 py-2 rounded-xl text-xs font-bold bg-[#114D38] text-white shadow-sm hover:bg-[#0d3b2b] transition-all flex items-center gap-1.5 cursor-pointer"
@@ -545,7 +650,19 @@ export default function Fornecedores() {
               {sortedFornecedores.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-100/60 transition-colors odd:bg-slate-50/20 even:bg-white border-b border-slate-200/50 last:border-b-0 group">
                   <td className="px-3.5 py-3 text-center border-r border-slate-200/50">
-                    <div className="flex items-center justify-center gap-3 text-slate-400">
+                    <div className="flex items-center justify-center gap-2 text-slate-400">
+                      <button 
+                        onClick={() => handleEnrichSingle(item)} 
+                        disabled={enrichingCnpj === item.cnpj}
+                        className="hover:text-emerald-700 transition-colors p-1.5 hover:bg-emerald-50 rounded cursor-pointer disabled:opacity-40"
+                        title="Consultar Receita Federal e completar dados automaticamente"
+                      >
+                        {enrichingCnpj === item.cnpj ? (
+                          <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5 text-slate-400 hover:text-emerald-600" />
+                        )}
+                      </button>
                       <button 
                         onClick={() => handleOpenEditModal(item)} 
                         className="hover:text-emerald-600 transition-colors p-1.5 hover:bg-slate-100 rounded cursor-pointer"
@@ -663,26 +780,54 @@ export default function Fornecedores() {
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1 col-span-2">
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Razão Social *</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">CPF / CNPJ *</label>
+                    <button
+                      type="button"
+                      onClick={() => handleBuscarReceitaModal()}
+                      disabled={isSearchingModalCnpj || (formData.cnpj || "").replace(/\D/g, "").length !== 14}
+                      className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 disabled:opacity-40 cursor-pointer"
+                      title="Consultar Razão Social, Telefone, E-mail e Endereço na Receita Federal"
+                    >
+                      {isSearchingModalCnpj ? (
+                        <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                      ) : (
+                        <Search className="w-3 h-3 text-emerald-600" />
+                      )}
+                      <span>Buscar na Receita Federal</span>
+                    </button>
+                  </div>
+                  <input 
+                    type="text" 
+                    value={formData.cnpj}
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, "");
+                      setFormData(prev => ({ ...prev, cnpj: clean }));
+                      if (clean.length === 14) {
+                        handleBuscarReceitaModal(clean);
+                      }
+                    }}
+                    maxLength={14}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none text-sm font-mono text-slate-800 shadow-sm"
+                    placeholder="Somente números (11 ou 14 dígitos)"
+                    required
+                  />
+                  {modalCnpjMsg && (
+                    <p className="text-[10.5px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded font-semibold mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                      <span className="truncate">{modalCnpjMsg}</span>
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Razão Social (Fornecedor) *</label>
                   <input 
                     type="text" 
                     value={formData.nome}
                     onChange={(e) => setFormData(prev => ({ ...prev, nome: e.target.value }))}
                     className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none text-sm font-semibold text-slate-800 shadow-sm"
                     placeholder="Ex: Auto Posto Paulínia Ltda"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">CPF/CNPJ *</label>
-                  <input 
-                    type="text" 
-                    value={formData.cnpj}
-                    onChange={(e) => setFormData(prev => ({ ...prev, cnpj: e.target.value.replace(/\D/g, "") }))}
-                    maxLength={14}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none text-sm font-mono text-slate-800 shadow-sm"
-                    placeholder="Somente números (11 ou 14 dígitos)"
                     required
                   />
                 </div>

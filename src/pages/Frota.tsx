@@ -45,7 +45,10 @@ import {
   fetchContratosSupabase,
   saveContratoSupabase,
   saveBatchContratosSupabase,
-  deleteContratoSupabase
+  deleteContratoSupabase,
+  fetchReservasSupabase,
+  saveBatchReservasSupabase,
+  saveChecklistSupabase
 } from "../services/supabaseService";
 import { VEICULOS_REAIS } from "../data/veiculos_reais";
 import { 
@@ -1591,7 +1594,7 @@ export default function Frota() {
       setChecklists(parsedCheck);
     }
 
-    // 3. Reservas
+    // 3. Reservas (Local + Sincronização Supabase Cloud)
     const savedRes = localStorage.getItem("risel_frota_reservas");
     let parsedRes: Reserva[] = [];
     if (savedRes) {
@@ -1609,6 +1612,14 @@ export default function Frota() {
     } else {
       setReservas(parsedRes);
     }
+
+    // Hidratação de reservas direto da nuvem (Supabase) para garantia entre múltiplos computadores
+    fetchReservasSupabase().then(cloudRes => {
+      if (cloudRes && cloudRes.length > 0) {
+        setReservas(cloudRes);
+        localStorage.setItem("risel_frota_reservas", JSON.stringify(cloudRes));
+      }
+    }).catch(e => console.warn("Aviso ao carregar reservas do Supabase:", e));
 
     // 4. Multas (Inicia zerado para receber dados reais)
     const savedFines = localStorage.getItem("risel_frota_multas");
@@ -1969,11 +1980,15 @@ export default function Frota() {
   const saveChecklists = (data: Checklist[]) => {
     setChecklists(data);
     localStorage.setItem("risel_frota_checklists", JSON.stringify(data));
+    if (data && data.length > 0) {
+      saveChecklistSupabase(data[0]).catch(e => console.warn("Aviso ao salvar checklist no Supabase:", e));
+    }
   };
 
   const saveReservas = (data: Reserva[]) => {
     setReservas(data);
     localStorage.setItem("risel_frota_reservas", JSON.stringify(data));
+    saveBatchReservasSupabase(data).catch(e => console.warn("Aviso ao salvar reservas no Supabase:", e));
   };
 
   const saveMultas = (data: Multa[]) => {

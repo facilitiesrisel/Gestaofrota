@@ -85,7 +85,7 @@ export async function consultarCnpjReceita(cnpjRaw: string): Promise<CnpjSearchR
           municipio: d2.municipio || "",
           uf: d2.uf || "",
           cep: d2.cep || "",
-          telefone: d2.ddd_telefone_1 || "",
+          telefone: d2.ddd_telefone_1 || d2.ddd_telefone_2 || d2.telefone || "",
           email: d2.email || "",
           situacao_cadastral: d2.descricao_situacao_cadastral || "ATIVA",
           isRisel,
@@ -116,7 +116,7 @@ export async function consultarCnpjReceita(cnpjRaw: string): Promise<CnpjSearchR
           municipio: d1.municipio || "",
           uf: d1.uf || "",
           cep: d1.cep || "",
-          telefone: d1.ddd_telefone_1 || "",
+          telefone: d1.ddd_telefone_1 || d1.ddd_telefone_2 || d1.telefone || "",
           email: d1.email || "",
           situacao_cadastral: d1.descricao_situacao_cadastral || "ATIVA",
           isRisel,
@@ -145,8 +145,31 @@ export function formatarCnpjCpf(valor: string): string {
 }
 
 /**
+ * Formata telefone brasileiro (10 ou 11 dígitos, com suporte a múltiplos números separados por barra/vírgula)
+ */
+export function formatarTelefone(telRaw?: string): string {
+  if (!telRaw) return "";
+  const firstPart = telRaw.split(/[\/,;]/)[0]?.trim() || telRaw;
+  const clean = firstPart.replace(/\D/g, "");
+  if (clean.length === 11) {
+    return `(${clean.slice(0, 2)}) ${clean.slice(2, 7)}-${clean.slice(7, 11)}`;
+  }
+  if (clean.length === 10) {
+    return `(${clean.slice(0, 2)}) ${clean.slice(2, 6)}-${clean.slice(6, 10)}`;
+  }
+  if (clean.length === 9) {
+    return `${clean.slice(0, 5)}-${clean.slice(5)}`;
+  }
+  if (clean.length === 8) {
+    return `${clean.slice(0, 4)}-${clean.slice(4)}`;
+  }
+  return telRaw.trim();
+}
+
+/**
  * Regra de Negócio:
  * "quando for um lançamento mensal, ou tiver mais de três lançamentos, mesmo que não seja mensal, envie para a lista de cadastro de Fornecedores"
+ * Completa automaticamente todos os dados disponíveis: Telefone, E-mail, Cidade, Estado (UF), Endereço e Código do Item
  */
 export async function avaliarEEnviarFornecedor(
   novoOuEditadoLancamento: any,
@@ -199,17 +222,62 @@ export async function avaliarEEnviarFornecedor(
       };
     }
 
-    const formattedCnpj = cleanCnpj ? formatarCnpjCpf(cleanCnpj) : "";
+    // Obter dados complementares completos (Telefone, E-mail, Cidade, UF, etc.)
+    let complementares: Partial<CnpjSearchResult> | null = dadosCnpjComplementares || null;
+    const faltaDados = !complementares || !complementares.municipio || !complementares.telefone || !complementares.email;
+    if (cleanCnpj.length === 14 && faltaDados) {
+      try {
+        const liveSearch = await consultarCnpjReceita(cleanCnpj);
+        if (liveSearch) {
+          complementares = {
+            ...complementares,
+            ...liveSearch
+          };
+        }
+      } catch (e) {
+        console.warn("Aviso ao buscar dados cadastrais da Receita para fornecedor:", e);
+      }
+    }
+
+    // Recupera cadastro existente caso já conste no banco local
+    let existingForn: any = null;
+    try {
+      const savedForn = localStorage.getItem("risel_fornecedores");
+      if (savedForn) {
+        const listForn = JSON.parse(savedForn);
+        if (Array.isArray(listForn)) {
+          existingForn = listForn.find((f: any) => {
+            const fc = (f.cnpj || "").replace(/\D/g, "");
+            return (cleanCnpj && fc === cleanCnpj) || (f.nome && f.nome.toUpperCase() === nomeFornecedor.toUpperCase());
+          });
+        }
+      }
+    } catch (e) {}
+
+    const formattedCnpj = cleanCnpj ? formatarCnpjCpf(cleanCnpj) : (novoOuEditadoLancamento.cnpj || "");
+    const cidadeFinal = (complementares?.municipio || novoOuEditadoLancamento.cidade || existingForn?.cidade || "").trim();
+    const ufFinal = (complementares?.uf || novoOuEditadoLancamento.uf || existingForn?.uf || "").toUpperCase().trim();
+    const telRaw = complementares?.telefone || novoOuEditadoLancamento.telefone || existingForn?.telefone || "";
+    const telFinal = formatarTelefone(telRaw);
+    const emailFinal = (complementares?.email || novoOuEditadoLancamento.email || existingForn?.email || "").toLowerCase().trim();
+    const codigoItemFinal = novoOuEditadoLancamento.itemSistema || existingForn?.codigoItem || complementares?.cnae_fiscal_descricao?.slice(0, 30) || "";
+
     const fornRecord = {
-      cnpj: formattedCnpj,
+      id: existingForn?.id || Date.now(),
+      cnpj: cleanCnpj || formattedCnpj,
+      cnpjFormatado: formattedCnpj,
       nome: nomeFornecedor,
-      codigoItem: novoOuEditadoLancamento.itemSistema || dadosCnpjComplementares?.cnae_fiscal_descricao?.slice(0, 20) || "",
-      cidade: dadosCnpjComplementares?.municipio || novoOuEditadoLancamento.cidade || "",
-      uf: dadosCnpjComplementares?.uf || novoOuEditadoLancamento.uf || "",
-      telefone: dadosCnpjComplementares?.telefone || novoOuEditadoLancamento.telefone || "",
-      email: dadosCnpjComplementares?.email || novoOuEditadoLancamento.email || "",
-      status: "Ativo",
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(nomeFornecedor.charAt(0) || "F")}&background=f8fafc`
+      codigoItem: codigoItemFinal,
+      cidade: cidadeFinal,
+      uf: ufFinal,
+      telefone: telFinal,
+      email: emailFinal,
+      logradouro: complementares?.logradouro || existingForn?.logradouro || "",
+      numero: complementares?.numero || existingForn?.numero || "",
+      bairro: complementares?.bairro || existingForn?.bairro || "",
+      cep: complementares?.cep || existingForn?.cep || "",
+      status: existingForn?.status || "Ativo",
+      avatar: existingForn?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(nomeFornecedor.charAt(0) || "F")}&background=114D38&color=fff&bold=true`
     };
 
     // Atualiza no localStorage e garante que Risel não esteja na lista
@@ -256,6 +324,43 @@ export async function avaliarEEnviarFornecedor(
   } catch (err) {
     console.error("Erro ao avaliar e promover fornecedor:", err);
     return { qualificado: false };
+  }
+}
+
+/**
+ * Enriquece um fornecedor existente com dados completos da Receita Federal (Telefone, E-mail, Cidade, UF, Endereço)
+ */
+export async function enriquecerDadosFornecedor(fornecedor: any): Promise<any> {
+  if (!fornecedor) return fornecedor;
+  const cleanCnpj = (fornecedor.cnpj || "").replace(/\D/g, "");
+  if (cleanCnpj.length !== 14) return fornecedor;
+
+  try {
+    const res = await consultarCnpjReceita(cleanCnpj);
+    if (!res) return fornecedor;
+
+    const telRaw = res.telefone || fornecedor.telefone || "";
+    const telFinal = formatarTelefone(telRaw);
+    const emailFinal = (res.email || fornecedor.email || "").toLowerCase().trim();
+    const cidadeFinal = (res.municipio || fornecedor.cidade || "").trim();
+    const ufFinal = (res.uf || fornecedor.uf || "").toUpperCase().trim();
+
+    return {
+      ...fornecedor,
+      nome: fornecedor.nome || res.razao_social,
+      cidade: cidadeFinal,
+      uf: ufFinal,
+      telefone: telFinal,
+      email: emailFinal,
+      logradouro: res.logradouro || fornecedor.logradouro || "",
+      numero: res.numero || fornecedor.numero || "",
+      bairro: res.bairro || fornecedor.bairro || "",
+      cep: res.cep || fornecedor.cep || "",
+      codigoItem: fornecedor.codigoItem || res.cnae_fiscal_descricao?.slice(0, 30) || "",
+    };
+  } catch (e) {
+    console.warn("Erro ao enriquecer dados do fornecedor:", e);
+    return fornecedor;
   }
 }
 

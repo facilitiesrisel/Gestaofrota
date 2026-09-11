@@ -31,6 +31,7 @@ import {
 import {
   consultarCnpjReceita,
   formatarCnpjCpf,
+  formatarTelefone,
   avaliarEEnviarFornecedor,
   sincronizarFornecedoresFrequentes,
   isRiselCnpjOrName,
@@ -174,6 +175,10 @@ const INITIAL_FORM_STATE = {
   nomeArquivoAnexo: "",
   arquivoAnexoBase64: "",
   centroCusto: "C.C 101 - Operacional",
+  cidade: "",
+  uf: "",
+  telefone: "",
+  email: ""
 };
 
 export default function Lancamento() {
@@ -433,7 +438,11 @@ export default function Lancamento() {
             setFormData(prev => ({
               ...prev,
               fornecedor: matchForn.nome,
-              itemSistema: matchForn.codigoItem || prev.itemSistema
+              itemSistema: matchForn.codigoItem || prev.itemSistema,
+              cidade: matchForn.cidade || prev.cidade,
+              uf: (matchForn.uf || prev.uf || "").toUpperCase(),
+              telefone: matchForn.telefone || prev.telefone,
+              email: (matchForn.email || prev.email || "").toLowerCase()
             }));
             setCnpjSuccessMsg(`Fornecedor já cadastrado: ${matchForn.nome}`);
           }
@@ -479,6 +488,10 @@ export default function Lancamento() {
             return {
               ...prev,
               fornecedor: razao,
+              cidade: resultado.municipio || prev.cidade,
+              uf: (resultado.uf || prev.uf || "").toUpperCase(),
+              telefone: formatarTelefone(resultado.telefone) || prev.telefone,
+              email: (resultado.email || prev.email || "").toLowerCase(),
               observacao: novaObs
             };
           });
@@ -1165,7 +1178,11 @@ export default function Lancamento() {
         dataAprovacao: dataAprovacao,
         centroCusto: data.centroCusto || "C.C 101 - Operacional",
         codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
-        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || ""
+        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || "",
+        cidade: data.cidade || lastCnpjDataRef.current?.municipio || existing?.cidade || "",
+        uf: (data.uf || lastCnpjDataRef.current?.uf || existing?.uf || "").toUpperCase(),
+        telefone: data.telefone || lastCnpjDataRef.current?.telefone || existing?.telefone || "",
+        email: (data.email || lastCnpjDataRef.current?.email || existing?.email || "").toLowerCase()
       };
 
       await saveLancamentoUnified(savedItem);
@@ -1196,7 +1213,11 @@ export default function Lancamento() {
         dataAprovacao: isNowApproved ? new Date().toLocaleDateString('pt-BR') : "",
         centroCusto: data.centroCusto || "C.C 101 - Operacional",
         codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
-        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || ""
+        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || "",
+        cidade: data.cidade || lastCnpjDataRef.current?.municipio || "",
+        uf: (data.uf || lastCnpjDataRef.current?.uf || "").toUpperCase(),
+        telefone: data.telefone || lastCnpjDataRef.current?.telefone || "",
+        email: (data.email || lastCnpjDataRef.current?.email || "").toLowerCase()
       };
 
       await saveLancamentoUnified(savedItem);
@@ -1256,6 +1277,20 @@ export default function Lancamento() {
     const numVal = parseCurrencyToNumber(item.valor || "");
     const valClean = numVal > 0 ? numVal.toFixed(2).replace(".", ",") : "";
 
+    // Tenta obter dados cadastrais do item ou da base de fornecedores
+    let matchedForn: any = null;
+    try {
+      const savedForn = localStorage.getItem("risel_fornecedores");
+      if (savedForn) {
+        const listForn = JSON.parse(savedForn);
+        const cleanCnpj = (item.cnpj || "").replace(/\D/g, "");
+        matchedForn = listForn.find((f: any) => {
+          const fc = (f.cnpj || "").replace(/\D/g, "");
+          return (cleanCnpj && fc === cleanCnpj) || (f.nome && f.nome.toUpperCase() === (item.fornecedor || "").toUpperCase());
+        });
+      }
+    } catch (e) {}
+
     setEditingId(item.id);
     setFormData({
       ...getInitialFormState(),
@@ -1285,7 +1320,11 @@ export default function Lancamento() {
       multaGravidade: "Média",
       nomeArquivoAnexo: item.nomeArquivoAnexo || "",
       arquivoAnexoBase64: item.arquivoAnexoBase64 || "",
-      centroCusto: item.centroCusto || "C.C 101 - Operacional"
+      centroCusto: item.centroCusto || "C.C 101 - Operacional",
+      cidade: item.cidade || matchedForn?.cidade || "",
+      uf: (item.uf || matchedForn?.uf || "").toUpperCase(),
+      telefone: item.telefone || matchedForn?.telefone || "",
+      email: (item.email || matchedForn?.email || "").toLowerCase()
     });
     setIsFormOpen(true);
   };
@@ -1575,6 +1614,72 @@ export default function Lancamento() {
                         className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm" 
                         placeholder="Nome Empresarial / Fornecedor" 
                       />
+                    </div>
+
+                    {/* Dados Cadastrais Automáticos (Telefone, E-mail, Cidade, UF) */}
+                    <div className="pt-1.5 pb-1 border-y border-slate-200/80 space-y-1.5 bg-white/60 p-2 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-slate-600 uppercase tracking-wider flex items-center gap-1">
+                          <span>📍 Localização & Contatos</span>
+                        </span>
+                        {(formData.cidade || formData.telefone || formData.email) && (
+                          <span className="text-[8px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 flex items-center gap-0.5">
+                            <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                            <span>Auto-completado</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <div className="col-span-2 space-y-0.5">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Cidade</label>
+                          <input 
+                            type="text" 
+                            name="cidade" 
+                            value={formData.cidade} 
+                            onChange={handleChange} 
+                            className="w-full px-2 py-1 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none text-xs text-slate-800 shadow-sm" 
+                            placeholder="Ex: São Paulo" 
+                          />
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">UF</label>
+                          <input 
+                            type="text" 
+                            name="uf" 
+                            value={formData.uf} 
+                            maxLength={2}
+                            onChange={(e) => setFormData(prev => ({ ...prev, uf: e.target.value.toUpperCase() }))} 
+                            className="w-full px-2 py-1 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none text-xs uppercase font-bold text-slate-800 shadow-sm" 
+                            placeholder="SP" 
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Telefone</label>
+                          <input 
+                            type="text" 
+                            name="telefone" 
+                            value={formData.telefone} 
+                            onChange={handleChange} 
+                            className="w-full px-2 py-1 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none text-xs text-slate-800 shadow-sm" 
+                            placeholder="(00) 00000-0000" 
+                          />
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">E-mail</label>
+                          <input 
+                            type="email" 
+                            name="email" 
+                            value={formData.email} 
+                            onChange={handleChange} 
+                            className="w-full px-2 py-1 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none text-xs text-slate-800 shadow-sm" 
+                            placeholder="contato@empresa.com" 
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     {/* Terceiro campo: Item de Sistema */}

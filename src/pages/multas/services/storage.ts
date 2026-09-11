@@ -3,7 +3,14 @@ import { Veiculo, Motorista, CodigoMulta, Multa } from '../types';
 import { mockVeiculos, mockMotoristas, mockCodigosMulta, mockMultas } from './mockData';
 import { VEICULOS_REAIS } from '../../../data/veiculos_reais';
 import { idbGetAll, idbPut, idbDelete, idbBulkPut } from './db';
-import { fetchMultasSupabase, saveMultaSupabase, deleteMultaSupabase, clearAllMultasSupabase } from '../../../services/supabaseService';
+import { 
+  fetchMultasSupabase, 
+  saveMultaSupabase, 
+  deleteMultaSupabase, 
+  clearAllMultasSupabase,
+  fetchEmailMappingsSupabase,
+  saveEmailMappingsSupabase
+} from '../../../services/supabaseService';
 
 const API_URL_KEY = 'risel_api_url';
 const DRIVE_FOLDER_KEY = 'risel_drive_folder_id';
@@ -54,16 +61,29 @@ export const DEFAULT_EMAIL_MAPPINGS: Record<string, { to: string; cc: string }> 
 export const DEFAULT_CC_EMAILS = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
 
 export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
+    let localParsed: Record<string, { to: string; cc: string }> = {};
     const local = localStorage.getItem('risel_placa_email_mappings');
     if (local) {
         try {
-            const parsed = JSON.parse(local);
-            return parsed;
+            localParsed = JSON.parse(local);
         } catch (e) {
-            console.error("Erro ao carregar e-mails por placa:", e);
+            console.error("Erro ao carregar e-mails por placa locais:", e);
         }
     }
-    return {};
+
+    // Consulta na nuvem oficial Supabase
+    try {
+        const cloudMappings = await fetchEmailMappingsSupabase('placa');
+        if (cloudMappings && typeof cloudMappings === 'object' && Object.keys(cloudMappings).length > 0) {
+            const merged = { ...cloudMappings, ...localParsed };
+            localStorage.setItem('risel_placa_email_mappings', JSON.stringify(merged));
+            return merged;
+        }
+    } catch (e) {
+        console.warn("Aviso ao buscar mapeamento de e-mails da placa no Supabase:", e);
+    }
+
+    return localParsed;
 };
 
 export const savePlacaEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
@@ -80,19 +100,32 @@ export const savePlacaEmailMappings = async (mappings: Record<string, { to: stri
     });
 
     localStorage.setItem('risel_placa_email_mappings', JSON.stringify(sanitized));
+    saveEmailMappingsSupabase('placa', sanitized).catch(e => console.warn("Aviso ao salvar mapeamento no Supabase:", e));
     return { success: true };
 };
 
 export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
+    let baseMap: Record<string, { to: string; cc: string }> = DEFAULT_EMAIL_MAPPINGS;
     const local = localStorage.getItem('risel_base_email_mappings');
     if (local) {
-        try { return JSON.parse(local); } catch (e) {}
+        try { baseMap = { ...DEFAULT_EMAIL_MAPPINGS, ...JSON.parse(local) }; } catch (e) {}
     }
-    return DEFAULT_EMAIL_MAPPINGS;
+
+    // Consulta na nuvem oficial Supabase
+    try {
+        const cloudBase = await fetchEmailMappingsSupabase('base');
+        if (cloudBase && typeof cloudBase === 'object') {
+            baseMap = { ...baseMap, ...cloudBase };
+            localStorage.setItem('risel_base_email_mappings', JSON.stringify(baseMap));
+        }
+    } catch (e) {}
+
+    return baseMap;
 };
 
 export const saveBaseEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
     localStorage.setItem('risel_base_email_mappings', JSON.stringify(mappings));
+    saveEmailMappingsSupabase('base', mappings).catch(e => console.warn("Aviso ao salvar mapeamento de base no Supabase:", e));
     return { success: true };
 };
 

@@ -1,11 +1,11 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchAllData, saveMulta, deleteMulta, cleanString, uploadFileToDrive, generateAuthPdfDocs, getDriveFolderId, getDocsTemplateId, formatInputText, saveCodigo, fetchBaseEmailMappings, fetchPlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, deleteDriveFiles } from '../services/storage';
+import { fetchAllData, saveMulta, deleteMulta, cleanString, uploadFileToDrive, generateAuthPdfDocs, getDriveFolderId, getDocsTemplateId, formatInputText, saveCodigo, fetchBaseEmailMappings, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, deleteDriveFiles } from '../services/storage';
 import { generateAutorizacaoDescontoPdf, openTermoInNewTab } from '../services/pdfGenerator';
 import { VEICULOS_REAIS } from '../../../data/veiculos_reais';
 import { parseLocalDate } from '../services/dateUtils';
 import { Multa, StatusMulta, TipoMulta, Veiculo, Motorista, CodigoMulta } from '../types';
-import { Plus, Search, FileText, Download, Save, Send, AlertTriangle, Calendar, DollarSign, Clock, User, LayoutGrid, List as ListIcon, Edit2, Car, ArrowRight, Info, MapPin, Trash2, UploadCloud, Eye, Loader2, HelpCircle, X, Mail, ArrowLeft, Map as MapIcon, Layers, Paperclip, FileCheck, RectangleHorizontal, Filter, ChevronDown, ChevronUp, FileSpreadsheet, ArrowUpDown, CheckCircle2, MessageSquare, AlertCircle, Radio, Navigation } from 'lucide-react';
+import { Plus, Search, FileText, Download, Save, Send, AlertTriangle, Calendar, DollarSign, Clock, User, LayoutGrid, List as ListIcon, Edit2, Edit3, Car, ArrowRight, Info, MapPin, Trash2, UploadCloud, Eye, Loader2, HelpCircle, X, Mail, ArrowLeft, Map as MapIcon, Layers, Paperclip, FileCheck, RectangleHorizontal, Filter, ChevronDown, ChevronUp, FileSpreadsheet, ArrowUpDown, CheckCircle2, MessageSquare, AlertCircle, Radio, Navigation } from 'lucide-react';
 import Loading from '../components/Loading';
 import { PdfViewerModal } from '../components/PdfViewerModal';
 import { mapQuotaService } from '../../../services/mapQuotaService';
@@ -640,6 +640,10 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const [showEmailPreviewHtml, setShowEmailPreviewHtml] = useState(false);
   const [emailTo, setEmailTo] = useState('');
   const [emailCc, setEmailCc] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailCustomMessage, setEmailCustomMessage] = useState('');
+  const [saveToPlateMapping, setSaveToPlateMapping] = useState(false);
+  const [emailOriginInfo, setEmailOriginInfo] = useState('');
   const [baseMappings, setBaseMappings] = useState<Record<string, { to: string; cc: string }>>(DEFAULT_EMAIL_MAPPINGS);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [mapMulta, setMapMulta] = useState<Multa | null>(null);
@@ -1308,7 +1312,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       }
   };
 
-  const generateEmailHTML = (data: Partial<Multa>) => {
+  const generateEmailHTML = (data: Partial<Multa> & { customMessage?: string }) => {
       const fmtMoney = (val?: number) => val ? val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : "R$ 0,00";
       const fmtDate = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') : "-";
       const fmtDateTime = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') + ' às ' + new Date(val).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "-";
@@ -1330,6 +1334,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 </ul>
             </div>`;
       }
+
+      const customMessageHtml = data.customMessage && data.customMessage.trim() ? `
+        <div style="background-color: #fffbeb; padding: 14px 18px; border-radius: 10px; margin-bottom: 18px; border: 1px solid #fef3c7; border-left: 5px solid #f59e0b; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 800; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">📌 Observação / Orientação do Gestor:</p>
+          <p style="margin: 0; font-size: 13px; color: #78350f; font-weight: 600; line-height: 1.5;">${String(data.customMessage).replace(/\n/g, '<br/>')}</p>
+        </div>
+      ` : '';
 
       return `
         <!DOCTYPE html>
@@ -1372,6 +1383,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 Informamos que foi registrada uma autuação de trânsito vinculada ao veículo sob sua condução/responsabilidade na data especificada abaixo.<br/>
                 <strong style="color: #0f172a;">Solicitamos providenciar a cópia da CNH e a assinatura no Termo de Desconto anexo.</strong>
               </p>
+              ${customMessageHtml}
               
               <!-- Tabela Estruturada de Informações -->
               <table style="width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
@@ -1466,12 +1478,14 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       const placaMappings = await fetchPlacaEmailMappings();
       let toEmail = '';
       let ccEmail = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
+      let origin = '';
 
       // 1. Prioridade: Buscar no campo E-mail da Placa do Controle de Frota Leve (Lista em memória, LocalStorage ou VEICULOS_REAIS)
       if (placaClean) {
           const veiculoLocal = veiculos.find(v => cleanString(v.placa) === placaClean);
           if (veiculoLocal && (veiculoLocal as any).email) {
               toEmail = (veiculoLocal as any).email.trim();
+              origin = `Controle de Frotas (Placa ${placaClean})`;
           }
 
           if (!toEmail) {
@@ -1482,6 +1496,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                       const lv = list.find((item: any) => cleanString(item.placa) === placaClean);
                       if (lv && lv.email) {
                           toEmail = lv.email.trim();
+                          origin = `Controle de Frotas Local (Placa ${placaClean})`;
                       }
                   }
               } catch (e) {}
@@ -1491,6 +1506,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               const vr = VEICULOS_REAIS.find(v => cleanString(v.placa) === placaClean);
               if (vr && vr.email) {
                   toEmail = vr.email.trim();
+                  origin = `Frota de Veículos Reais (Placa ${placaClean})`;
               }
           }
       }
@@ -1498,6 +1514,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       // 2. Se não encontrou no veículo da frota, verificar mapeamento específico de placa
       if (!toEmail && placaClean && placaMappings[placaClean] && placaMappings[placaClean].to) {
           toEmail = placaMappings[placaClean].to.trim();
+          origin = `Mapeamento Salvo para a Placa ${placaClean}`;
           if (placaMappings[placaClean].cc) {
               ccEmail = placaMappings[placaClean].cc.trim();
           }
@@ -1509,8 +1526,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           const matchedKey = Object.keys(baseMappings).find(k => baseUpper.includes(k.toUpperCase()) || k.toUpperCase().includes(baseUpper));
           if (matchedKey && baseMappings[matchedKey]) {
               toEmail = baseMappings[matchedKey].to || '';
+              origin = `Mapeamento da Base / Filial (${normalizedData.base || 'Geral'})`;
               if (baseMappings[matchedKey].cc) ccEmail = `${baseMappings[matchedKey].cc}; ${ccEmail}`;
           }
+      }
+
+      if (!origin) {
+          origin = toEmail ? 'Configuração do Sistema' : 'Nenhum e-mail prévio encontrado (preencha abaixo)';
       }
 
       // 4. Sempre garantir Lorena e Deny em CC
@@ -1521,8 +1543,29 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           ccEmail = `${ccEmail}; deny.goncalves@risel.com.br`;
       }
 
+      const getFormattedSubjectDate = (dateStr?: string) => {
+          if (!dateStr) return '';
+          try {
+              const isoDate = dateStr.split('T')[0];
+              if (isoDate.includes('-')) {
+                  const parts = isoDate.split('-');
+                  if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
+              }
+          } catch(e) {}
+          const d = new Date(dateStr);
+          if (isNaN(d.getTime())) return '';
+          return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+      };
+
+      const dataFormatada = getFormattedSubjectDate(normalizedData.dataHoraInfracao);
+      const defaultSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedData.placa || 'S/P'} - FROTA: ${normalizedData.frota || normalizedData.placa || 'S/F'} - BASE: ${normalizedData.base || '-'} - DATA ${dataFormatada}`;
+
       setEmailTo(toEmail);
       setEmailCc(ccEmail);
+      setEmailSubject(defaultSubject);
+      setEmailCustomMessage('');
+      setSaveToPlateMapping(false);
+      setEmailOriginInfo(origin);
       setShowEmailPreviewHtml(false);
       setIsEmailModalOpen(true);
   };
@@ -1566,7 +1609,22 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       });
 
       // 2. Copiar tabela HTML rica e texto formatado para a área de transferência
-      const htmlContent = generateEmailHTML({ ...currentMulta, linkAuth: authLink });
+      if (saveToPlateMapping && currentMulta.placa) {
+          try {
+              const pClean = cleanString(currentMulta.placa);
+              const curMap = await fetchPlacaEmailMappings();
+              await savePlacaEmailMappings({
+                  ...curMap,
+                  [pClean]: { to: emailTo.trim(), cc: emailCc.trim() }
+              });
+          } catch (e) {}
+      }
+
+      const htmlContent = generateEmailHTML({ 
+          ...currentMulta, 
+          linkAuth: authLink,
+          customMessage: emailCustomMessage 
+      });
       try {
           if (navigator.clipboard && window.ClipboardItem) {
               const blobHtml = new Blob([htmlContent], { type: 'text/html' });
@@ -1580,9 +1638,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
       // 3. Abrir o cliente de e-mail padrão (Outlook / Webmail) pré-preenchido
       const dataFormatada = currentMulta.dataHoraInfracao ? currentMulta.dataHoraInfracao.split('T')[0] : '';
-      const subject = encodeURIComponent(`NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`);
+      const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`;
+      const finalSubject = emailSubject.trim() || fallbackSubject;
+      const subject = encodeURIComponent(finalSubject);
       
-      const bodyPlainText = `Prezados(as),\n\nSeguem as informações da Notificação de Infração de Trânsito para providências:\n\n` +
+      let bodyPlainText = `Prezados(as),\n\nSeguem as informações da Notificação de Infração de Trânsito para providências:\n\n` +
           `• Motorista / Condutor: ${currentMulta.responsavelNome || '-'}\n` +
           `• Auto de Infração (AIT): ${currentMulta.ait || '-'}\n` +
           `• Placa do Veículo: ${currentMulta.placa || '-'}\n` +
@@ -1592,8 +1652,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           `• Valor Líquido com Desconto: ${(currentMulta.valorComDesconto || currentMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\n` +
           `• Pontuação CNH: ${currentMulta.pontosCnh || 0} Pontos\n` +
           `• Prazo Limite para Indicação: ${currentMulta.prazoIndicacao || '-'}\n` +
-          `• Observações: ${currentMulta.obs || 'Nenhuma'}\n\n` +
-          `[DICA: A formatação visual completa e elegante foi copiada para sua área de transferência (Ctrl+V)].\n\n` +
+          `• Observações: ${currentMulta.obs || 'Nenhuma'}\n\n`;
+
+      if (emailCustomMessage && emailCustomMessage.trim()) {
+          bodyPlainText += `[OBSERVAÇÃO / ORIENTAÇÃO ADICIONAL]:\n${emailCustomMessage.trim()}\n\n`;
+      }
+
+      bodyPlainText += `[DICA: A formatação visual completa e elegante foi copiada para sua área de transferência (Ctrl+V)].\n\n` +
           `Atenciosamente,\nGestão Integrada de Frotas • Risel Combustíveis Ltda`;
 
       const body = encodeURIComponent(bodyPlainText);
@@ -1613,12 +1678,32 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           alert("Por favor, selecione ou preencha os dados da multa antes de enviar a notificação."); 
           return; 
       }
-      setSendingEmail(true);
       
       // Parse main recipients list
       const toRecipientsList = emailTo.split(/[;,]+/)
           .map(e => e.trim())
           .filter(e => e.length > 0 && e.includes('@'));
+
+      if (toRecipientsList.length === 0) {
+          alert("Por favor, informe ao menos um e-mail válido no campo 'Destinatário Principal (Para)'.");
+          return;
+      }
+
+      setSendingEmail(true);
+
+      // Salva mapeamento permanente se solicitado
+      if (saveToPlateMapping && currentMulta.placa) {
+          try {
+              const pClean = cleanString(currentMulta.placa);
+              const curMap = await fetchPlacaEmailMappings();
+              await savePlacaEmailMappings({
+                  ...curMap,
+                  [pClean]: { to: emailTo.trim(), cc: emailCc.trim() }
+              });
+          } catch (e) {
+              console.warn("Aviso ao salvar mapeamento da placa:", e);
+          }
+      }
       
       // Parse CC recipients list
       const ccRecipientsList = emailCc.split(/[;,]+/)
@@ -1641,7 +1726,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       };
 
       const dataFormatada = getFormattedSubjectDate(currentMulta.dataHoraInfracao);
-      const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`;
+      const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`;
+      const finalSubject = emailSubject.trim() || fallbackSubject;
       
       // Coleta todos os anexos (AITs anexados + Autorização de Desconto em PDF)
       const aitLinks = parseLinks(currentMulta.linkAit);
@@ -1690,8 +1776,12 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   brevoApiKey,
                   to: toRecipientsList.join(', ') || ADMIN_EMAIL,
                   cc: ccRecipientsList.join(', '),
-                  subject,
-                  html: generateEmailHTML({ ...currentMulta, linkAuth: authLink }),
+                  subject: finalSubject,
+                  html: generateEmailHTML({ 
+                      ...currentMulta, 
+                      linkAuth: authLink,
+                      customMessage: emailCustomMessage 
+                  }),
                   driveUrls
               })
           });
@@ -1741,6 +1831,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     const activeMulta: Partial<Multa> = emailModalMulta || formData;
     const modalAttachments = parseLinks(activeMulta.linkAit);
 
+    const parsedToList = emailTo.split(/[;,]+/).map(e => e.trim()).filter(e => e.length > 0 && e.includes('@'));
+    const parsedCcList = emailCc.split(/[;,]+/).map(e => e.trim()).filter(e => e.length > 0 && e.includes('@'));
+
     const formatModalDate = (val?: string) => {
       if (!val) return '-';
       try {
@@ -1764,8 +1857,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     };
 
     return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4 overflow-y-auto">
-        <div className="bg-white rounded-3xl shadow-2xl p-5 sm:p-7 w-full max-w-2xl my-auto animate-in zoom-in-95 duration-200 border border-slate-100 max-h-[92vh] flex flex-col">
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+        <div className="bg-white rounded-3xl shadow-2xl p-5 sm:p-6 w-full max-w-2xl my-auto animate-in zoom-in-95 duration-200 border border-slate-100 max-h-[92vh] flex flex-col">
           {/* Top Header */}
           <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 shrink-0">
             <div className="flex items-center space-x-3">
@@ -1774,10 +1867,10 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               </div>
               <div>
                 <h3 className="text-base sm:text-lg font-black text-slate-800 tracking-tight">
-                  Enviar Notificação de Infração
+                  Revisar e Enviar Notificação de Infração
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
-                  Auto de Infração: <strong className="text-emerald-800 font-mono">{activeMulta.ait || 'Não informado'}</strong> • Placa: <strong className="text-slate-800">{activeMulta.placa || '-'}</strong> {activeMulta.frota ? `• Frota: ${activeMulta.frota}` : ''}
+                  AIT: <strong className="text-emerald-800 font-mono">{activeMulta.ait || 'Não informado'}</strong> • Placa: <strong className="text-slate-800">{activeMulta.placa || '-'}</strong> {activeMulta.frota ? `• Frota: ${activeMulta.frota}` : ''}
                 </p>
               </div>
             </div>
@@ -1796,11 +1889,119 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           {/* Scrollable Content */}
           <div className="overflow-y-auto custom-scrollbar pr-1 py-3 space-y-3.5 flex-1 text-xs">
             
-            {/* CARD EXECUTIVO: DADOS COMPLETOS DO LANÇAMENTO */}
-            <div className="bg-gradient-to-br from-slate-50 to-emerald-50/30 rounded-2xl p-3.5 border border-slate-200 shadow-2xs">
+            {/* SEÇÃO 1: DESTINATÁRIOS & CONFIGURAÇÃO DO ENVIO (EM PRIMEIRO LUGAR) */}
+            <div className="bg-emerald-50/40 border-2 border-emerald-200/80 rounded-2xl p-4 shadow-xs space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-1.5 pb-2 border-b border-emerald-200/60">
+                <span className="text-[11px] font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                  <Edit3 size={13} className="text-emerald-700" /> 1. Destinatários & Configuração de Envio
+                </span>
+                {emailOriginInfo && (
+                  <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Origem: {emailOriginInfo}
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700 uppercase tracking-wide">
+                    Destinatário Principal (Para): <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-normal">Pode inserir múltiplos e-mails separados por ponto e vírgula (;)</span>
+                </div>
+                <input 
+                  type="text" 
+                  className="w-full border-2 border-slate-200 focus:border-emerald-600 rounded-xl p-2.5 bg-white focus:ring-2 focus:ring-emerald-500/20 focus:outline-none text-xs font-semibold text-slate-800 transition-all" 
+                  value={emailTo} 
+                  onChange={e => setEmailTo(e.target.value)} 
+                  placeholder="motorista@risel.com.br; gestor@risel.com.br" 
+                />
+                
+                {/* Visual Pill Tags for Parsed Recipients */}
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {parsedToList.length > 0 ? (
+                    parsedToList.map((email, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                        <CheckCircle2 size={10} className="text-emerald-600" /> {email}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[10px] font-bold text-rose-600 flex items-center gap-1">
+                      <AlertCircle size={11} /> Digite ao menos um endereço de e-mail válido para o envio.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700 uppercase tracking-wide">
+                    Cópia Automática de Segurança (CC):
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-normal">RH e Gestão de Frotas</span>
+                </div>
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-300 focus:border-emerald-600 rounded-xl p-2 bg-white focus:ring-2 focus:ring-emerald-500/20 focus:outline-none text-xs font-medium text-slate-700 transition-all" 
+                  value={emailCc} 
+                  onChange={e => setEmailCc(e.target.value)} 
+                  placeholder="lorena.padilha@risel.com.br; deny.goncalves@risel.com.br" 
+                />
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {parsedCcList.map((email, idx) => (
+                    <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                      {email}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1 block">
+                  Assunto do E-mail:
+                </label>
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-300 focus:border-emerald-600 rounded-xl p-2 bg-white focus:ring-2 focus:ring-emerald-500/20 focus:outline-none text-xs font-semibold text-slate-800 transition-all" 
+                  value={emailSubject} 
+                  onChange={e => setEmailSubject(e.target.value)} 
+                  placeholder="NOTIFICAÇÃO DE MULTA..." 
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1 block">
+                  Instrução / Orientação Específica ao Condutor (Opcional):
+                </label>
+                <textarea 
+                  rows={2}
+                  className="w-full border border-slate-300 focus:border-emerald-600 rounded-xl p-2 bg-white focus:ring-2 focus:ring-emerald-500/20 focus:outline-none text-xs text-slate-800 transition-all resize-none" 
+                  value={emailCustomMessage} 
+                  onChange={e => setEmailCustomMessage(e.target.value)} 
+                  placeholder="Ex: Favor imprimir e assinar a Autorização de Desconto em anexo e entregar no setor pessoal até a data limite indicada." 
+                />
+              </div>
+
+              {activeMulta.placa && (
+                <label className="flex items-center gap-2 p-2 rounded-xl bg-white border border-emerald-200 cursor-pointer select-none hover:bg-emerald-50/50 transition-colors">
+                  <input 
+                    type="checkbox" 
+                    checked={saveToPlateMapping} 
+                    onChange={e => setSaveToPlateMapping(e.target.checked)} 
+                    className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <span className="text-[11px] font-bold text-slate-700">
+                    Salvar estes e-mails permanentemente para a placa <strong className="text-emerald-800">{activeMulta.placa}</strong> nos próximos lançamentos
+                  </span>
+                </label>
+              )}
+            </div>
+
+            {/* SEÇÃO 2: DADOS DO LANÇAMENTO DA NOTIFICAÇÃO (RESUMO) */}
+            <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 shadow-2xs">
               <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80">
-                <span className="text-[11px] font-black uppercase tracking-wider text-[#114D38] flex items-center gap-1.5">
-                  <FileText size={13} className="text-emerald-700" /> Dados do Lançamento da Notificação
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <FileText size={13} className="text-emerald-700" /> 2. Resumo da Autuação Vinculada
                 </span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                   {activeMulta.status || 'Lançado'}
@@ -1851,78 +2052,10 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     {(activeMulta.valorComDesconto || activeMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </span>
                 </div>
-                {activeMulta.base && (
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Base / Filial</span>
-                    <span className="font-bold text-slate-700 text-xs">{activeMulta.base}</span>
-                  </div>
-                )}
-                {activeMulta.pontosCnh !== undefined && Number(activeMulta.pontosCnh) > 0 && (
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Pontuação CNH</span>
-                    <span className="font-bold text-slate-700 text-xs">{activeMulta.pontosCnh} Pontos</span>
-                  </div>
-                )}
               </div>
             </div>
 
-            {/* EXPANDABLE EMAIL PREVIEW */}
-            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setShowEmailPreviewHtml(!showEmailPreviewHtml)}
-                className="w-full px-3.5 py-2.5 flex items-center justify-between text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-2">
-                  <Eye size={14} className="text-emerald-700" />
-                  <span>Visualizar modelo do e-mail oficial (Risel)</span>
-                </span>
-                <span className="text-[11px] text-emerald-700 font-extrabold">
-                  {showEmailPreviewHtml ? 'Ocultar Prévia ▲' : 'Expandir Prévia Visual ▼'}
-                </span>
-              </button>
-              {showEmailPreviewHtml && (
-                <div className="p-3 bg-slate-50 border-t border-slate-200 max-h-56 overflow-y-auto custom-scrollbar">
-                  <div 
-                    className="bg-white p-3 rounded-xl shadow-2xs border border-slate-200 text-xs"
-                    dangerouslySetInnerHTML={{ __html: generateEmailHTML(activeMulta) }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* DESTINATÁRIOS */}
-            <div className="space-y-2.5">
-              <div>
-                <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1 block">
-                  Destinatário Principal (Para):
-                </label>
-                <input 
-                  type="text" 
-                  className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none text-xs font-semibold" 
-                  value={emailTo} 
-                  onChange={e => setEmailTo(e.target.value)} 
-                  placeholder="exemplo@risel.com.br; outro@risel.com.br" 
-                />
-                <p className="text-[10px] text-slate-400 mt-0.5">Preenchido automaticamente pelo cadastro da placa e base.</p>
-              </div>
-
-              <div>
-                <label className="text-xs font-black text-slate-700 uppercase tracking-wide mb-1 block">
-                  Cópia Automática (CC):
-                </label>
-                <input 
-                  type="text" 
-                  className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none text-xs font-semibold" 
-                  value={emailCc} 
-                  onChange={e => setEmailCc(e.target.value)} 
-                  placeholder="copia@risel.com.br" 
-                />
-                <p className="text-[10px] text-slate-400 mt-0.5">Garante cópia de segurança para a Gestão de Frotas e RH Risel.</p>
-              </div>
-            </div>
-
-            {/* ANEXOS */}
+            {/* SEÇÃO 3: ANEXOS & PRÉVIA */}
             <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
               <p className="text-xs font-black text-slate-700 mb-1.5 flex items-center">
                 <Paperclip size={14} className="mr-1.5 text-emerald-700"/> Arquivos anexos do e-mail:
@@ -1944,6 +2077,36 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 )}
               </ul>
             </div>
+
+            {/* EXPANDABLE EMAIL PREVIEW */}
+            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setShowEmailPreviewHtml(!showEmailPreviewHtml)}
+                className="w-full px-3.5 py-2.5 flex items-center justify-between text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <Eye size={14} className="text-emerald-700" />
+                  <span>Visualizar modelo do e-mail oficial (Risel)</span>
+                </span>
+                <span className="text-[11px] text-emerald-700 font-extrabold">
+                  {showEmailPreviewHtml ? 'Ocultar Prévia ▲' : 'Expandir Prévia Visual ▼'}
+                </span>
+              </button>
+              {showEmailPreviewHtml && (
+                <div className="p-3 bg-slate-50 border-t border-slate-200 max-h-56 overflow-y-auto custom-scrollbar">
+                  <div 
+                    className="bg-white p-3 rounded-xl shadow-2xs border border-slate-200 text-xs"
+                    dangerouslySetInnerHTML={{ 
+                      __html: generateEmailHTML({ 
+                        ...activeMulta, 
+                        customMessage: emailCustomMessage 
+                      }) 
+                    }}
+                  />
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Modal Footer Actions */}
@@ -1951,7 +2114,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
             <button
               type="button"
               onClick={handleOpenOutlookOrWebmail}
-              className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3.5 py-2 rounded-xl font-bold transition-all flex items-center cursor-pointer active:scale-95"
+              className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3.5 py-2 rounded-xl font-bold transition-all flex items-center cursor-pointer active:scale-95 w-full sm:w-auto justify-center"
               title="Baixar anexos, copiar formato visual e abrir no seu Outlook / Webmail"
             >
               <Mail size={14} className="mr-1.5 text-blue-600"/> Abrir no Outlook / Webmail
@@ -1972,13 +2135,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               <button 
                 type="button"
                 onClick={handleSendEmail} 
-                disabled={sendingEmail} 
+                disabled={sendingEmail || parsedToList.length === 0} 
                 className={`px-5 py-2 bg-emerald-700 text-white rounded-xl shadow-md hover:bg-emerald-800 active:scale-95 flex items-center font-black text-xs transition-all cursor-pointer ${
-                  sendingEmail ? 'opacity-70 cursor-not-allowed' : ''
+                  sendingEmail || parsedToList.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
                 }`}
               >
                 {sendingEmail ? <Loader2 size={15} className="animate-spin mr-1.5"/> : <Send size={15} className="mr-1.5"/>} 
-                {sendingEmail ? 'Enviando e-mail...' : 'Confirmar e Disparar E-mail'}
+                {sendingEmail ? 'Enviando...' : `Confirmar e Disparar (${parsedToList.length} Para${parsedCcList.length > 0 ? ` + ${parsedCcList.length} CC` : ''})`}
               </button>
             </div>
           </div>

@@ -1473,7 +1473,11 @@ export async function fetchFornecedoresSupabase(): Promise<any[]> {
       telefone: row.telefone || "",
       email: row.email || "",
       status: row.status || "Ativo",
-      avatar: row.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(row.nome?.charAt(0) || "F")}&background=f8fafc`
+      avatar: row.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(row.nome?.charAt(0) || "F")}&background=f8fafc`,
+      logradouro: row.logradouro || "",
+      numero: row.numero || "",
+      bairro: row.bairro || "",
+      cep: row.cep || ""
     }));
   } catch (err) {
     console.error("Erro no fetchFornecedoresSupabase:", err);
@@ -1485,7 +1489,7 @@ export async function saveFornecedorSupabase(item: any): Promise<boolean> {
   try {
     const client = getSupabaseClient();
     const cleanCnpj = (item.cnpj || "").replace(/\D/g, "") || item.cnpj;
-    const dbRecord = {
+    const baseRecord: any = {
       cnpj: cleanCnpj,
       nome: item.nome || "Fornecedor sem nome",
       codigo_item: item.codigoItem || "",
@@ -1497,15 +1501,32 @@ export async function saveFornecedorSupabase(item: any): Promise<boolean> {
       avatar: item.avatar || ""
     };
 
-    const { error } = await client
-      .from('fornecedores')
-      .upsert(dbRecord, { onConflict: 'cnpj' });
+    const completeRecord = {
+      ...baseRecord,
+      logradouro: item.logradouro || "",
+      numero: item.numero || "",
+      bairro: item.bairro || "",
+      cep: item.cep || ""
+    };
 
-    if (error) {
-      console.error("Erro ao gravar fornecedor no Supabase:", error);
-      return false;
+    const firstTry = await client
+      .from('fornecedores')
+      .upsert(completeRecord, { onConflict: 'cnpj' });
+
+    if (!firstTry.error) {
+      return true;
     }
-    return true;
+
+    // Se falhar por ausência de colunas adicionais, tenta salvar com as colunas base
+    if (firstTry.error && (firstTry.error.code === 'PGRST204' || firstTry.error.message?.includes('column'))) {
+      const retry = await client
+        .from('fornecedores')
+        .upsert(baseRecord, { onConflict: 'cnpj' });
+      return !retry.error;
+    }
+
+    console.error("Erro ao gravar fornecedor no Supabase:", firstTry.error);
+    return false;
   } catch (err) {
     console.error("Erro no saveFornecedorSupabase:", err);
     return false;
@@ -2100,7 +2121,186 @@ export async function saveBatchManutencoesSupabase(items: any[]): Promise<{ coun
   return { count, success: count > 0 };
 }
 
-// 13. Script SQL de Criação das Tabelas do Risel ERP no Supabase
+// 13. RESERVAS DE VEÍCULOS (FROTA LEVE)
+export async function fetchReservasSupabase(): Promise<any[]> {
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('reservas')
+      .select('*')
+      .order('de', { ascending: false });
+
+    if (error) {
+      console.warn("Aviso ao buscar reservas no Supabase:", error.message);
+      return [];
+    }
+
+    return (data || []).map(row => ({
+      id: row.id,
+      placa: row.placa,
+      condutor: row.condutor,
+      de: row.de,
+      ate: row.ate,
+      destino: row.destino || "",
+      status: row.status || "Confirmada",
+      observacoes: row.observacoes || ""
+    }));
+  } catch (err) {
+    console.error("Erro no fetchReservasSupabase:", err);
+    return [];
+  }
+}
+
+export async function saveReservaSupabase(reserva: any): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const dbRecord = {
+      id: String(reserva.id || `res_${Date.now()}`),
+      placa: String(reserva.placa || "").toUpperCase().trim(),
+      condutor: reserva.condutor || "Disponível",
+      de: reserva.de || new Date().toISOString(),
+      ate: reserva.ate || new Date().toISOString(),
+      destino: reserva.destino || "",
+      status: reserva.status || "Confirmada",
+      observacoes: reserva.observacoes || ""
+    };
+
+    const { error } = await client
+      .from('reservas')
+      .upsert(dbRecord, { onConflict: 'id' });
+
+    if (error) {
+      console.warn("Aviso ao salvar reserva no Supabase:", error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Erro no saveReservaSupabase:", err);
+    return false;
+  }
+}
+
+export async function saveBatchReservasSupabase(items: any[]): Promise<{ count: number; success: boolean }> {
+  if (!items || items.length === 0) return { count: 0, success: true };
+  let count = 0;
+  for (const item of items) {
+    const ok = await saveReservaSupabase(item);
+    if (ok) count++;
+  }
+  return { count, success: count > 0 };
+}
+
+export async function deleteReservaSupabase(id: string): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const { error } = await client
+      .from('reservas')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.warn("Aviso ao deletar reserva no Supabase:", error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Erro no deleteReservaSupabase:", err);
+    return false;
+  }
+}
+
+// 14. CHECKLISTS DE VEÍCULOS
+export async function fetchChecklistsSupabase(): Promise<any[]> {
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('checklists')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return [];
+    }
+
+    return (data || []).map(row => ({
+      id: row.id,
+      placa: row.placa,
+      condutor: row.condutor,
+      data: row.data,
+      odometro: Number(row.odometro || 0),
+      status: row.status,
+      observacoes: row.observacoes || "",
+      itens: row.itens || {},
+      email: row.email,
+      tipo: row.tipo || "Saída"
+    }));
+  } catch (err) {
+    return [];
+  }
+}
+
+export async function saveChecklistSupabase(checklist: any): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const dbRecord = {
+      id: String(checklist.id || `chk_${Date.now()}`),
+      placa: String(checklist.placa || "").toUpperCase().trim(),
+      condutor: checklist.condutor || "",
+      data: checklist.data || new Date().toISOString(),
+      odometro: Number(checklist.odometro || 0),
+      status: checklist.status || "Aprovado",
+      observacoes: checklist.observacoes || "",
+      itens: checklist.itens || {},
+      email: checklist.email || "",
+      tipo: checklist.tipo || "Saída"
+    };
+
+    const { error } = await client
+      .from('checklists')
+      .upsert(dbRecord, { onConflict: 'id' });
+
+    return !error;
+  } catch (err) {
+    return false;
+  }
+}
+
+// 15. MAPEAMENTOS DE E-MAIL (CONFIGURAÇÕES DE MULTAS & FROTA)
+export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base'): Promise<any | null> {
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('email_mappings')
+      .select('mappings')
+      .eq('tipo', tipo)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return data.mappings;
+  } catch (err) {
+    return null;
+  }
+}
+
+export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base', mappings: any): Promise<boolean> {
+  try {
+    const client = getSupabaseClient();
+    const { error } = await client
+      .from('email_mappings')
+      .upsert({
+        id: `map_${tipo}`,
+        tipo,
+        mappings,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' });
+
+    return !error;
+  } catch (err) {
+    return false;
+  }
+}
+
+// 16. Script SQL de Criação das Tabelas do Risel ERP no Supabase
 export const SUPABASE_SQL_SCHEMA = `-- Script Completo do Banco de Dados Real - Risel ERP (Supabase Oficial: https://ihowbxlqfcjzzzleasqq.supabase.co)
 
 -- 1. TABELA DE LANÇAMENTOS DE DOCUMENTOS
@@ -2226,8 +2426,17 @@ CREATE TABLE IF NOT EXISTS public.fornecedores (
     email VARCHAR(255),
     status VARCHAR(50) DEFAULT 'Ativo',
     avatar TEXT,
+    logradouro TEXT,
+    numero VARCHAR(50),
+    bairro VARCHAR(100),
+    cep VARCHAR(20),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+ALTER TABLE public.fornecedores ADD COLUMN IF NOT EXISTS logradouro TEXT;
+ALTER TABLE public.fornecedores ADD COLUMN IF NOT EXISTS numero VARCHAR(50);
+ALTER TABLE public.fornecedores ADD COLUMN IF NOT EXISTS bairro VARCHAR(100);
+ALTER TABLE public.fornecedores ADD COLUMN IF NOT EXISTS cep VARCHAR(20);
 
 ALTER TABLE public.fornecedores ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Fornecedores" ON public.fornecedores;
@@ -2455,5 +2664,64 @@ DROP POLICY IF EXISTS "Leitura Usuarios" ON public.usuarios;
 DROP POLICY IF EXISTS "Modificacao Usuarios" ON public.usuarios;
 CREATE POLICY "Leitura Usuarios" ON public.usuarios FOR SELECT USING (true);
 CREATE POLICY "Modificacao Usuarios" ON public.usuarios FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- 10. TABELA DE RESERVAS DE VEÍCULOS (FROTA LEVE)
+CREATE TABLE IF NOT EXISTS public.reservas (
+    id TEXT PRIMARY KEY,
+    placa VARCHAR(20) NOT NULL,
+    condutor VARCHAR(255) NOT NULL,
+    de VARCHAR(50) NOT NULL,
+    ate VARCHAR(50) NOT NULL,
+    destino TEXT,
+    status VARCHAR(50) DEFAULT 'Confirmada',
+    observacoes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.reservas ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Acesso Total Reservas" ON public.reservas;
+DROP POLICY IF EXISTS "Leitura Reservas" ON public.reservas;
+DROP POLICY IF EXISTS "Gravacao Reservas" ON public.reservas;
+DROP POLICY IF EXISTS "Atualizacao Reservas" ON public.reservas;
+DROP POLICY IF EXISTS "Exclusao Restrita Reservas" ON public.reservas;
+CREATE POLICY "Leitura Reservas" ON public.reservas FOR SELECT USING (true);
+CREATE POLICY "Gravacao Reservas" ON public.reservas FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualizacao Reservas" ON public.reservas FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Exclusao Restrita Reservas" ON public.reservas FOR DELETE TO authenticated USING (true);
+
+-- 11. TABELA DE CHECKLISTS DE VEÍCULOS (FROTA LEVE)
+CREATE TABLE IF NOT EXISTS public.checklists (
+    id TEXT PRIMARY KEY,
+    placa VARCHAR(20) NOT NULL,
+    condutor VARCHAR(255) NOT NULL,
+    data VARCHAR(50),
+    odometro NUMERIC(10,2) DEFAULT 0,
+    status VARCHAR(50) DEFAULT 'Aprovado',
+    observacoes TEXT,
+    itens JSONB,
+    email VARCHAR(255),
+    tipo VARCHAR(50) DEFAULT 'Saída',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.checklists ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Acesso Total Checklists" ON public.checklists;
+DROP POLICY IF EXISTS "Leitura Checklists" ON public.checklists;
+DROP POLICY IF EXISTS "Gravacao Checklists" ON public.checklists;
+CREATE POLICY "Leitura Checklists" ON public.checklists FOR SELECT USING (true);
+CREATE POLICY "Gravacao Checklists" ON public.checklists FOR ALL USING (true) WITH CHECK (true);
+
+-- 12. TABELA DE MAPEAMENTOS DE E-MAIL (CONFIGURAÇÃO DE DISPAROS DE MULTAS E FROTAS)
+CREATE TABLE IF NOT EXISTS public.email_mappings (
+    id TEXT PRIMARY KEY,
+    tipo VARCHAR(50) NOT NULL,
+    mappings JSONB NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.email_mappings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Acesso Total Email Mappings" ON public.email_mappings;
+CREATE POLICY "Leitura Email Mappings" ON public.email_mappings FOR SELECT USING (true);
+CREATE POLICY "Gravacao Email Mappings" ON public.email_mappings FOR ALL USING (true) WITH CHECK (true);
 `;
 

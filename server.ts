@@ -1321,7 +1321,7 @@ async function startServer() {
           municipio: cnpjData.municipio || "",
           uf: cnpjData.uf || "",
           cep: cnpjData.cep || "",
-          telefone: cnpjData.ddd_telefone_1 || cnpjData.telefone || "",
+          telefone: cnpjData.ddd_telefone_1 || cnpjData.ddd_telefone_2 || cnpjData.telefone || "",
           email: cnpjData.email || "",
           situacao_cadastral: cnpjData.descricao_situacao_cadastral || cnpjData.situacao || "ATIVA"
         },
