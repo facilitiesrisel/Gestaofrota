@@ -205,7 +205,28 @@ async function sendEmailViaResend(options: SendHttpEmailOptions, apiKey: string)
 
   const resData = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`Resend API HTTP (${response.status}): ${resData.message || JSON.stringify(resData)}`);
+    const errorMsg = resData.message || JSON.stringify(resData);
+    if ((errorMsg.toLowerCase().includes("domain") || errorMsg.toLowerCase().includes("verify") || errorMsg.toLowerCase().includes("from")) && payload.from !== `"Risel Combustíveis" <onboarding@resend.dev>`) {
+      console.warn(`[Resend API] Domínio customizado requer verificação no Resend. Tentando envio pelo canal sandbox de alta entrega (onboarding@resend.dev)...`);
+      payload.from = `"Risel Combustíveis" <onboarding@resend.dev>`;
+      payload.reply_to = fromEmail;
+
+      const retryResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey.trim()}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const retryData = await retryResponse.json().catch(() => ({}));
+      if (retryResponse.ok) {
+        console.log(`[Resend API] E-mail entregue com sucesso via sandbox Resend (ID: ${retryData.id})`);
+        return { provider: "Resend Sandbox (HTTPS / Porta 443)", id: retryData.id };
+      }
+    }
+    throw new Error(`Resend API HTTP (${response.status}): ${errorMsg}`);
   }
   return { provider: "Resend (HTTPS / Porta 443)", id: resData.id };
 }
@@ -275,6 +296,24 @@ const ONEDRIVE_CONFIG_FILE = path.join(DATA_DIR, "onedrive_config.json");
 const ONEDRIVE_LOGS_FILE = path.join(DATA_DIR, "onedrive_logs.json");
 const LANCAMENTOS_FILE = path.join(DATA_DIR, "lancamentos.json");
 const LANCAMENTOS_DELETED_FILE = path.join(DATA_DIR, "lancamentos_deleted_ids.json");
+const EMAIL_KEYS_FILE = path.join(DATA_DIR, "email_api_keys.json");
+
+let storedResendApiKey = (process.env.RESEND_API_KEY || "").trim();
+let storedBrevoApiKey = (process.env.BREVO_API_KEY || "").trim();
+
+try {
+  if (fs.existsSync(EMAIL_KEYS_FILE)) {
+    const rawKeys = JSON.parse(fs.readFileSync(EMAIL_KEYS_FILE, "utf-8"));
+    if (rawKeys.resendApiKey && !storedResendApiKey) {
+      storedResendApiKey = String(rawKeys.resendApiKey).trim();
+    }
+    if (rawKeys.brevoApiKey && !storedBrevoApiKey) {
+      storedBrevoApiKey = String(rawKeys.brevoApiKey).trim();
+    }
+  }
+} catch (e) {
+  console.warn("Aviso ao carregar chaves de e-mail API salvas:", e);
+}
 
 const DEFAULT_APPS_SCRIPT_URL = process.env.GOOGLE_APPS_SCRIPT_URL || 
   process.env.APPS_SCRIPT_URL || 
@@ -970,6 +1009,44 @@ async function startServer() {
     }
   });
 
+  // Salvar chaves de API HTTP de e-mail (Resend / Brevo) diretamente no cofre do servidor
+  app.post("/api/admin/save-email-keys", (req, res) => {
+    try {
+      const { resendApiKey, brevoApiKey } = req.body || {};
+      if (resendApiKey !== undefined) storedResendApiKey = String(resendApiKey).trim();
+      if (brevoApiKey !== undefined) storedBrevoApiKey = String(brevoApiKey).trim();
+
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+
+      fs.writeFileSync(EMAIL_KEYS_FILE, JSON.stringify({
+        resendApiKey: storedResendApiKey,
+        brevoApiKey: storedBrevoApiKey,
+        updatedAt: new Date().toISOString()
+      }, null, 2), "utf-8");
+
+      return res.json({
+        success: true,
+        message: "Chaves de API de e-mail salvas com sucesso no servidor!",
+        hasResend: Boolean(storedResendApiKey),
+        hasBrevo: Boolean(storedBrevoApiKey)
+      });
+    } catch (err: any) {
+      console.error("Erro ao salvar chaves de e-mail:", err);
+      return res.status(500).json({ error: err.message || "Erro ao salvar chaves de e-mail" });
+    }
+  });
+
+  app.get("/api/admin/get-email-keys", (req, res) => {
+    return res.json({
+      hasResend: Boolean(storedResendApiKey || process.env.RESEND_API_KEY),
+      hasBrevo: Boolean(storedBrevoApiKey || process.env.BREVO_API_KEY),
+      resendConfigured: Boolean(storedResendApiKey || process.env.RESEND_API_KEY),
+      brevoConfigured: Boolean(storedBrevoApiKey || process.env.BREVO_API_KEY)
+    });
+  });
+
   // Diagnóstico aprofundado de rede (portas 587/465, IPv4/IPv6, bloqueios do Render e APIs HTTP)
   app.get("/api/email-diagnostic", async (req, res) => {
     try {
@@ -980,8 +1057,8 @@ async function startServer() {
       ]);
 
       const resolvedIpv4 = await resolveIpv4Address("smtp.office365.com");
-      const hasResend = Boolean(process.env.RESEND_API_KEY && process.env.RESEND_API_KEY.trim().length > 0);
-      const hasBrevo = Boolean(process.env.BREVO_API_KEY && process.env.BREVO_API_KEY.trim().length > 0);
+      const hasResend = Boolean(storedResendApiKey || (process.env.RESEND_API_KEY && process.env.RESEND_API_KEY.trim().length > 0));
+      const hasBrevo = Boolean(storedBrevoApiKey || (process.env.BREVO_API_KEY && process.env.BREVO_API_KEY.trim().length > 0));
       const isRender = Boolean(process.env.RENDER === "true" || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
 
       const portBlocked = !probeOffice587.reachable && !probeOffice465.reachable;
@@ -1157,31 +1234,31 @@ async function startServer() {
       let cnpjData: any = null;
       let source = "";
 
-      // 1ª Tentativa: MinhaReceita (Direto na base da Receita Federal)
+      // 1ª Tentativa: BrasilAPI (extremamente rápida ~100ms e base completa da Receita Federal)
       try {
-        const resp1 = await fetch(`https://minhareceita.org/${cleanCnpj}`, {
-          signal: AbortSignal.timeout(4500)
+        const resp1 = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cleanCnpj}`, {
+          signal: AbortSignal.timeout(3500)
         });
         if (resp1.ok) {
           const json1 = await resp1.json();
           if (json1 && (json1.razao_social || json1.nome_fantasia)) {
             cnpjData = json1;
-            source = "MinhaReceita";
+            source = "BrasilAPI";
           }
         }
       } catch (e) {}
 
-      // 2ª Tentativa: BrasilAPI
+      // 2ª Tentativa: MinhaReceita
       if (!cnpjData) {
         try {
-          const resp2 = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cleanCnpj}`, {
-            signal: AbortSignal.timeout(4500)
+          const resp2 = await fetch(`https://minhareceita.org/${cleanCnpj}`, {
+            signal: AbortSignal.timeout(4000)
           });
           if (resp2.ok) {
             const json2 = await resp2.json();
             if (json2 && (json2.razao_social || json2.nome_fantasia)) {
               cnpjData = json2;
-              source = "BrasilAPI";
+              source = "MinhaReceita";
             }
           }
         } catch (e) {}
@@ -1225,9 +1302,10 @@ async function startServer() {
 
       const razaoSocial = (cnpjData.razao_social || cnpjData.nome || cnpjData.nome_fantasia || "").trim();
       const nomeFantasia = (cnpjData.nome_fantasia || cnpjData.fantasia || "").trim();
-      const isRisel = cleanCnpj === "46677860000165" || 
-                      cleanCnpj === "03882880000120" || 
-                      razaoSocial.toUpperCase().includes("RISEL COMBUSTIVEIS");
+      const isRisel = cleanCnpj.startsWith("46677860") || 
+                      cleanCnpj.startsWith("03882880") || 
+                      razaoSocial.toUpperCase().includes("RISEL COMBUSTIVEIS") ||
+                      nomeFantasia.toUpperCase().includes("RISEL");
 
       return res.json({
         success: true,
@@ -1399,6 +1477,8 @@ async function startServer() {
       smtpPort, 
       smtpEmail, 
       smtpPassword, 
+      resendApiKey: clientResendKey,
+      brevoApiKey: clientBrevoKey,
       destinatarios, 
       lancamentosPendentes, 
       introText,
@@ -1555,6 +1635,64 @@ async function startServer() {
 
       console.log(`[Risel SMTP Vault] Processando envio para: ${emailTo} (CC: ${emailCc}) | Host: ${smtpConfig.host}:${smtpConfig.port} | Remetente: ${smtpConfig.user}`);
 
+      const isRender = Boolean(process.env.RENDER === "true" || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
+      const effectiveResendKey = (clientResendKey || storedResendApiKey || process.env.RESEND_API_KEY || "").trim();
+      const effectiveBrevoKey = (clientBrevoKey || storedBrevoApiKey || process.env.BREVO_API_KEY || "").trim();
+
+      // PRIORIDADE RENDER CLOUD: Se estiver em nuvem (Render) e houver chave HTTP (Porta 443) disponível, dispara de imediato
+      // sem sujeitar a requisição aos 24s de timeout das portas 587/465 bloqueadas no plano gratuito!
+      if (isRender && (effectiveResendKey || effectiveBrevoKey)) {
+        if (effectiveResendKey) {
+          try {
+            console.log("[Risel SMTP] Ambiente em nuvem (Render) com Resend configurado. Disparando via HTTPS (Porta 443)...");
+            const resendResult = await sendEmailViaResend({
+              to: emailTo,
+              cc: emailCc,
+              subject: emailSubject,
+              html: emailHtml,
+              fromName,
+              attachments: mailAttachments
+            }, effectiveResendKey);
+
+            return res.json({
+              success: true,
+              delivered: true,
+              provider: "Resend HTTP API (Porta 443)",
+              message: `E-mail entregue com sucesso via Resend HTTP API (Porta 443) para ${emailTo}!`,
+              attachmentsCount: mailAttachments.length,
+              details: resendResult
+            });
+          } catch (resendPrioritaryErr: any) {
+            console.warn("[Risel SMTP] Envio prioritário via Resend falhou, tentando alternativas:", resendPrioritaryErr.message);
+          }
+        }
+
+        if (effectiveBrevoKey) {
+          try {
+            console.log("[Risel SMTP] Ambiente em nuvem (Render) com Brevo configurado. Disparando via HTTPS (Porta 443)...");
+            const brevoResult = await sendEmailViaBrevo({
+              to: emailTo,
+              cc: emailCc,
+              subject: emailSubject,
+              html: emailHtml,
+              fromName,
+              attachments: mailAttachments
+            }, effectiveBrevoKey);
+
+            return res.json({
+              success: true,
+              delivered: true,
+              provider: "Brevo HTTP API (Porta 443)",
+              message: `E-mail entregue com sucesso via Brevo HTTP API (Porta 443) para ${emailTo}!`,
+              attachmentsCount: mailAttachments.length,
+              details: brevoResult
+            });
+          } catch (brevoPrioritaryErr: any) {
+            console.warn("[Risel SMTP] Envio prioritário via Brevo falhou, tentando alternativas:", brevoPrioritaryErr.message);
+          }
+        }
+      }
+
       if (smtpConfig.pass && smtpConfig.pass.length > 0) {
         try {
           const transporter = await createSafeTransporter(smtpConfig);
@@ -1609,8 +1747,8 @@ async function startServer() {
             console.warn("[Risel SMTP] Ambas as tentativas de envio direto via SMTP falharam:", retryErr.message);
 
             // Tentativa 3: Se houver chave de API HTTP configurada (Resend ou Brevo), dispara via HTTPS (Porta 443)
-            const resendKey = (process.env.RESEND_API_KEY || "").trim();
-            const brevoKey = (process.env.BREVO_API_KEY || "").trim();
+            const resendKey = effectiveResendKey;
+            const brevoKey = effectiveBrevoKey;
 
             if (resendKey) {
               try {
@@ -1816,14 +1954,65 @@ async function startServer() {
         </html>
       `;
 
-      await transporter.sendMail({
-        from: `"Risel Combustíveis" <${smtpConfig.user}>`,
-        to: targetRecipients.join(", "),
-        subject: emailSubject,
-        html: htmlContent,
-      });
+      try {
+        await transporter.sendMail({
+          from: `"Risel Combustíveis" <${smtpConfig.user}>`,
+          to: targetRecipients.join(", "),
+          subject: emailSubject,
+          html: htmlContent,
+        });
 
-      return res.json({ success: true, host: smtpConfig.host });
+        return res.json({ success: true, host: smtpConfig.host });
+      } catch (smtpErr: any) {
+        console.warn("[Risel SMTP] Envio direto do relatório consolidado falhou, tentando fallback HTTP API:", smtpErr.message);
+
+        const effectiveResendKey = (clientResendKey || storedResendApiKey || process.env.RESEND_API_KEY || "").trim();
+        const effectiveBrevoKey = (clientBrevoKey || storedBrevoApiKey || process.env.BREVO_API_KEY || "").trim();
+
+        if (effectiveResendKey) {
+          try {
+            const resendResult = await sendEmailViaResend({
+              to: targetRecipients,
+              subject: emailSubject,
+              html: htmlContent,
+              fromName: "Risel Combustíveis"
+            }, effectiveResendKey);
+
+            return res.json({ 
+              success: true, 
+              delivered: true, 
+              provider: "Resend HTTP API (Porta 443)", 
+              host: "api.resend.com",
+              details: resendResult 
+            });
+          } catch (resendErr: any) {
+            console.error("[Risel SMTP] Falha no fallback Resend:", resendErr.message);
+          }
+        }
+
+        if (effectiveBrevoKey) {
+          try {
+            const brevoResult = await sendEmailViaBrevo({
+              to: targetRecipients,
+              subject: emailSubject,
+              html: htmlContent,
+              fromName: "Risel Combustíveis"
+            }, effectiveBrevoKey);
+
+            return res.json({ 
+              success: true, 
+              delivered: true, 
+              provider: "Brevo HTTP API (Porta 443)", 
+              host: "api.brevo.com",
+              details: brevoResult 
+            });
+          } catch (brevoErr: any) {
+            console.error("[Risel SMTP] Falha no fallback Brevo:", brevoErr.message);
+          }
+        }
+
+        throw smtpErr;
+      }
     } catch (error: any) {
       console.error("Erro no envio de e-mail:", error);
       return res.status(500).json({ error: error.message || "Erro desconhecido ao enviar o e-mail pelo servidor SMTP." });

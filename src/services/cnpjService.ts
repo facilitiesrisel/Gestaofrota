@@ -19,9 +19,26 @@ export interface CnpjSearchResult {
 }
 
 /**
+ * Verifica se um CNPJ ou Razão Social pertence à própria Risel Combustíveis (Tomador/Destinatário)
+ */
+export function isRiselCnpjOrName(cnpjRaw?: string, nameRaw?: string): boolean {
+  const clean = (cnpjRaw || "").replace(/\D/g, "");
+  const upper = (nameRaw || "").toUpperCase();
+
+  if (clean.startsWith("46677860") || clean.startsWith("03882880")) {
+    return true;
+  }
+  if (upper.includes("RISEL COMBUSTIVEIS") || upper.includes("RISEL COMBUSTÍVEIS") || upper === "RISEL") {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Consulta informações de CNPJ com múltiplas contingências
- * 1. Backend proxy /api/cnpj/:cnpj (MinhaReceita -> BrasilAPI -> ReceitaWS)
- * 2. Fallback direto no client se o servidor local estiver inacessível
+ * 1. Backend proxy /api/cnpj/:cnpj (BrasilAPI -> MinhaReceita -> ReceitaWS)
+ * 2. Fallback direto no client via BrasilAPI (aberta com CORS e ultra-rápida)
+ * 3. Fallback adicional via MinhaReceita
  */
 export async function consultarCnpjReceita(cnpjRaw: string): Promise<CnpjSearchResult | null> {
   const cleanCnpj = (cnpjRaw || "").replace(/\D/g, "");
@@ -35,9 +52,11 @@ export async function consultarCnpjReceita(cnpjRaw: string): Promise<CnpjSearchR
     if (res.ok) {
       const json = await res.json();
       if (json && json.success && json.data) {
+        const razao = (json.data.razao_social || json.data.nome_fantasia || "").trim();
+        const isRisel = json.isRisel || isRiselCnpjOrName(cleanCnpj, razao);
         return {
           ...json.data,
-          isRisel: json.isRisel || cleanCnpj === "46677860000165" || cleanCnpj === "03882880000120"
+          isRisel
         };
       }
     }
@@ -45,40 +64,7 @@ export async function consultarCnpjReceita(cnpjRaw: string): Promise<CnpjSearchR
     console.warn("[CNPJ] Falha ao consultar endpoint interno /api/cnpj, tentando fallback externo:", err);
   }
 
-  // 2ª Tentativa: MinhaReceita direto no cliente
-  try {
-    const res1 = await fetch(`https://minhareceita.org/${cleanCnpj}`, {
-      signal: AbortSignal.timeout(4500)
-    });
-    if (res1.ok) {
-      const d1 = await res1.json();
-      const razao = (d1.razao_social || d1.nome_fantasia || "").trim();
-      if (razao) {
-        const isRisel = cleanCnpj === "46677860000165" || 
-                        cleanCnpj === "03882880000120" || 
-                        razao.toUpperCase().includes("RISEL COMBUSTIVEIS");
-        return {
-          cnpj: cleanCnpj,
-          razao_social: razao,
-          nome_fantasia: (d1.nome_fantasia || "").trim(),
-          cnae_fiscal_descricao: d1.cnae_fiscal_descricao || "",
-          logradouro: d1.logradouro || "",
-          numero: d1.numero || "",
-          bairro: d1.bairro || "",
-          municipio: d1.municipio || "",
-          uf: d1.uf || "",
-          cep: d1.cep || "",
-          telefone: d1.ddd_telefone_1 || "",
-          email: d1.email || "",
-          situacao_cadastral: d1.descricao_situacao_cadastral || "ATIVA",
-          isRisel,
-          source: "MinhaReceita Client"
-        };
-      }
-    }
-  } catch (err) {}
-
-  // 3ª Tentativa: BrasilAPI direto no cliente
+  // 2ª Tentativa: BrasilAPI direto no cliente (CORS liberado, resposta em ~100ms)
   try {
     const res2 = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cleanCnpj}`, {
       signal: AbortSignal.timeout(4500)
@@ -87,9 +73,7 @@ export async function consultarCnpjReceita(cnpjRaw: string): Promise<CnpjSearchR
       const d2 = await res2.json();
       const razao = (d2.razao_social || d2.nome_fantasia || "").trim();
       if (razao) {
-        const isRisel = cleanCnpj === "46677860000165" || 
-                        cleanCnpj === "03882880000120" || 
-                        razao.toUpperCase().includes("RISEL COMBUSTIVEIS");
+        const isRisel = isRiselCnpjOrName(cleanCnpj, razao) || isRiselCnpjOrName(cleanCnpj, d2.nome_fantasia);
         return {
           cnpj: cleanCnpj,
           razao_social: razao,
@@ -106,6 +90,37 @@ export async function consultarCnpjReceita(cnpjRaw: string): Promise<CnpjSearchR
           situacao_cadastral: d2.descricao_situacao_cadastral || "ATIVA",
           isRisel,
           source: "BrasilAPI Client"
+        };
+      }
+    }
+  } catch (err) {}
+
+  // 3ª Tentativa: MinhaReceita direto no cliente
+  try {
+    const res1 = await fetch(`https://minhareceita.org/${cleanCnpj}`, {
+      signal: AbortSignal.timeout(4500)
+    });
+    if (res1.ok) {
+      const d1 = await res1.json();
+      const razao = (d1.razao_social || d1.nome_fantasia || "").trim();
+      if (razao) {
+        const isRisel = isRiselCnpjOrName(cleanCnpj, razao) || isRiselCnpjOrName(cleanCnpj, d1.nome_fantasia);
+        return {
+          cnpj: cleanCnpj,
+          razao_social: razao,
+          nome_fantasia: (d1.nome_fantasia || "").trim(),
+          cnae_fiscal_descricao: d1.cnae_fiscal_descricao || "",
+          logradouro: d1.logradouro || "",
+          numero: d1.numero || "",
+          bairro: d1.bairro || "",
+          municipio: d1.municipio || "",
+          uf: d1.uf || "",
+          cep: d1.cep || "",
+          telefone: d1.ddd_telefone_1 || "",
+          email: d1.email || "",
+          situacao_cadastral: d1.descricao_situacao_cadastral || "ATIVA",
+          isRisel,
+          source: "MinhaReceita Client"
         };
       }
     }
@@ -147,8 +162,8 @@ export async function avaliarEEnviarFornecedor(
       return { qualificado: false };
     }
 
-    // Ignora se for a própria Risel Combustíveis
-    if (cleanCnpj === "46677860000165" || cleanCnpj === "03882880000120" || nomeFornecedor.toUpperCase().includes("RISEL COMBUSTIVEIS")) {
+    // Ignora se for a própria Risel Combustíveis (Tomador dos serviços)
+    if (isRiselCnpjOrName(cleanCnpj, nomeFornecedor)) {
       return { qualificado: false, motivo: "CNPJ/Razão pertence à própria Risel (tomador)." };
     }
 
@@ -197,10 +212,13 @@ export async function avaliarEEnviarFornecedor(
       avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(nomeFornecedor.charAt(0) || "F")}&background=f8fafc`
     };
 
-    // Atualiza no localStorage
+    // Atualiza no localStorage e garante que Risel não esteja na lista
     try {
       const savedForn = localStorage.getItem("risel_fornecedores");
       let listForn: any[] = savedForn ? JSON.parse(savedForn) : [];
+      // Remove qualquer registro indevido da própria Risel
+      listForn = listForn.filter((f: any) => !isRiselCnpjOrName(f.cnpj, f.nome));
+
       const idx = listForn.findIndex((f: any) => {
         const fc = (f.cnpj || "").replace(/\D/g, "");
         return (cleanCnpj && fc === cleanCnpj) || (f.nome && f.nome.toUpperCase() === nomeFornecedor.toUpperCase());
@@ -212,6 +230,11 @@ export async function avaliarEEnviarFornecedor(
         listForn.push(fornRecord);
       }
       localStorage.setItem("risel_fornecedores", JSON.stringify(listForn));
+
+      // Notifica todos os módulos abertos sobre a atualização no cadastro de Fornecedores
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("risel_fornecedores_sync_event", { detail: listForn }));
+      }
     } catch (e) {
       console.warn("Erro ao salvar no storage de fornecedores:", e);
     }
@@ -253,7 +276,7 @@ export async function sincronizarFornecedoresFrequentes(lancamentos: any[]): Pro
     if (!cleanCnpj && !nome) return;
 
     // Ignora Risel
-    if (cleanCnpj === "46677860000165" || cleanCnpj === "03882880000120" || nome.toUpperCase().includes("RISEL COMBUSTIVEIS")) {
+    if (isRiselCnpjOrName(cleanCnpj, nome)) {
       return;
     }
 

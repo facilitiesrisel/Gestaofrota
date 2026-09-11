@@ -3,7 +3,7 @@ import { Search, Building2, MapPin, MoreHorizontal, Mail, Phone, Edit2, Trash2, 
 import { cn } from "../../lib/utils";
 import { normalizeCidade } from "../../utils/baseOperacional";
 import { fetchFornecedoresSupabase, saveFornecedorSupabase, deleteFornecedorSupabase } from "../../services/supabaseService";
-import { sincronizarFornecedoresFrequentes } from "../../services/cnpjService";
+import { sincronizarFornecedoresFrequentes, isRiselCnpjOrName } from "../../services/cnpjService";
 import { getLancamentosUnified } from "../../services/lancamentosService";
 
 const DEFAULT_FORNECE_LIST: any[] = [];
@@ -126,12 +126,16 @@ export default function Fornecedores() {
     if (!saved) return DEFAULT_FORNECE_LIST;
     try {
       const parsed = JSON.parse(saved);
-      // Limpa dados legados fictícios
-      if (Array.isArray(parsed) && parsed.some((x: any) => x.cnpj === "12345678000199" || x.nome?.includes("Postos ABC Locações"))) {
-        localStorage.setItem("risel_fornecedores", JSON.stringify([]));
-        return [];
+      // Limpa dados legados fictícios e registros indevidos da própria Risel
+      if (Array.isArray(parsed)) {
+        const cleanList = parsed.filter((x: any) => 
+          x.cnpj !== "12345678000199" && 
+          !x.nome?.includes("Postos ABC Locações") &&
+          !isRiselCnpjOrName(x.cnpj, x.nome)
+        );
+        return cleanList;
       }
-      return parsed;
+      return DEFAULT_FORNECE_LIST;
     } catch (e) {
       return DEFAULT_FORNECE_LIST;
     }
@@ -142,8 +146,9 @@ export default function Fornecedores() {
       try {
         const dbItems = await fetchFornecedoresSupabase();
         if (Array.isArray(dbItems) && dbItems.length > 0) {
-          setFornecedores(dbItems);
-          localStorage.setItem("risel_fornecedores", JSON.stringify(dbItems));
+          const filteredDb = dbItems.filter((x: any) => !isRiselCnpjOrName(x.cnpj, x.nome));
+          setFornecedores(filteredDb);
+          localStorage.setItem("risel_fornecedores", JSON.stringify(filteredDb));
         }
 
         // Promove e sincroniza lançamentos mensais ou com mais de 3 registros
@@ -153,7 +158,8 @@ export default function Fornecedores() {
           if (promovidos > 0) {
             const savedNow = localStorage.getItem("risel_fornecedores");
             if (savedNow) {
-              setFornecedores(JSON.parse(savedNow));
+              const parsed = JSON.parse(savedNow);
+              setFornecedores(parsed.filter((x: any) => !isRiselCnpjOrName(x.cnpj, x.nome)));
             }
           }
         }
@@ -162,10 +168,32 @@ export default function Fornecedores() {
       }
     }
     syncSupabase();
+
+    // Ouve notificações em tempo real de novos fornecedores promovidos via Lançamentos
+    const handleSyncEvent = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setFornecedores(e.detail.filter((x: any) => !isRiselCnpjOrName(x.cnpj, x.nome)));
+      } else {
+        const saved = localStorage.getItem("risel_fornecedores");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            setFornecedores(parsed.filter((x: any) => !isRiselCnpjOrName(x.cnpj, x.nome)));
+          } catch (err) {}
+        }
+      }
+    };
+
+    window.addEventListener("risel_fornecedores_sync_event", handleSyncEvent);
+    return () => {
+      window.removeEventListener("risel_fornecedores_sync_event", handleSyncEvent);
+    };
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("risel_fornecedores", JSON.stringify(fornecedores));
+    // Garante que só persistimos listas higienizadas sem a Risel
+    const cleanList = fornecedores.filter((x: any) => !isRiselCnpjOrName(x.cnpj, x.nome));
+    localStorage.setItem("risel_fornecedores", JSON.stringify(cleanList));
   }, [fornecedores]);
 
   const [search, setSearch] = useState("");

@@ -1672,6 +1672,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       const smtpPort = localStorage.getItem("risel_smtp_port") || undefined;
       const smtpEmail = localStorage.getItem("risel_smtp_email") || undefined;
       const smtpPassword = localStorage.getItem("risel_smtp_password") || undefined;
+      const resendApiKey = localStorage.getItem("risel_resend_api_key") || undefined;
+      const brevoApiKey = localStorage.getItem("risel_brevo_api_key") || undefined;
 
       try {
           const response = await fetch('/api/send-email', {
@@ -1684,6 +1686,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   smtpPort,
                   smtpEmail,
                   smtpPassword,
+                  resendApiKey,
+                  brevoApiKey,
                   to: toRecipientsList.join(', ') || ADMIN_EMAIL,
                   cc: ccRecipientsList.join(', '),
                   subject,
@@ -1701,7 +1705,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               }
 
               if (result.delivered || result.success) {
-                  alert(`E-mail Enviado com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL}!`);
+                  alert(result.message || `E-mail Enviado com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL}!`);
               } else {
                   alert(result.message || "E-mail Enviado!");
               }
@@ -1709,7 +1713,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               setShowEmailPreviewHtml(false);
           } else { 
               console.error(result); 
-              alert("Erro ao enviar e-mail: " + (result.message || result.error || "Verifique a conexão ou configurações de SMTP.")); 
+              if (result.help) {
+                  alert(`${result.message}\n\n💡 ORIENTAÇÃO:\n${result.help}\n\n👉 Para disparar este e-mail agora mesmo sem bloqueios, clique no botão cinza "Abrir no Outlook / Webmail" abaixo!`);
+              } else {
+                  alert("Erro ao enviar e-mail: " + (result.message || result.error || "Verifique a conexão ou configurações de SMTP.")); 
+              }
           }
       } catch (err: any) {
           console.error("Erro ao enviar e-mail:", err);

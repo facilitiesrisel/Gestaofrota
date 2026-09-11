@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth, UserPermissions, normalizePermissions } from "../../context/AuthContext";
-import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap, Bot, BookOpen, Layers, Car, Navigation, Siren } from "lucide-react";
+import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap, Bot, BookOpen, Layers, Car, Navigation, Siren, Activity } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "../../lib/utils";
 import { AdminAiAssistant } from "../../components/AdminAiAssistant";
@@ -66,6 +66,18 @@ export default function Usuarios() {
   const [isPreviewReportOpen, setIsPreviewReportOpen] = useState(false);
   const [isSendingReport, setIsSendingReport] = useState(false);
   const [reportSuccess, setReportSuccess] = useState("");
+
+  // Chaves de API HTTP (Porta 443 / HTTPS) para ambientes de nuvem como Render Free
+  const [resendApiKey, setResendApiKey] = useState(() => {
+    return localStorage.getItem("risel_resend_api_key") || "";
+  });
+  const [brevoApiKey, setBrevoApiKey] = useState(() => {
+    return localStorage.getItem("risel_brevo_api_key") || "";
+  });
+  const [showResendKey, setShowResendKey] = useState(false);
+  const [showBrevoKey, setShowBrevoKey] = useState(false);
+  const [isDiagnosingNetwork, setIsDiagnosingNetwork] = useState(false);
+  const [networkDiagnosticResult, setNetworkDiagnosticResult] = useState<any>(null);
 
   // Aba ativa do Painel Administrativo Master: Usuários, Assistente de IA ou Documentação
   const [adminActiveTab, setAdminActiveTab] = useState<"usuarios" | "ia_assistant" | "documentacao">("usuarios");
@@ -219,7 +231,7 @@ export default function Usuarios() {
     return reportType === "completo" ? lancamentosPendentes : lancamentosVencendo5Dias;
   }, [reportType, lancamentosPendentes, lancamentosVencendo5Dias]);
 
-  const handleSaveSmtp = (e: React.FormEvent) => {
+  const handleSaveSmtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingSmtp(true);
     setSmtpSuccess("");
@@ -227,10 +239,40 @@ export default function Usuarios() {
     localStorage.setItem("risel_smtp_port", smtpPort);
     localStorage.setItem("risel_smtp_email", smtpEmail);
     localStorage.setItem("risel_smtp_password", smtpPassword);
+    localStorage.setItem("risel_resend_api_key", resendApiKey.trim());
+    localStorage.setItem("risel_brevo_api_key", brevoApiKey.trim());
+
+    try {
+      await fetch("/api/admin/save-email-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resendApiKey: resendApiKey.trim(),
+          brevoApiKey: brevoApiKey.trim()
+        })
+      });
+    } catch (err) {
+      console.warn("Aviso ao salvar chaves no servidor:", err);
+    }
+
     setTimeout(() => {
       setIsSavingSmtp(false);
-      setSmtpSuccess("Configurações do servidor SMTP salvas e conectadas com sucesso!");
-    }, 1000);
+      setSmtpSuccess("Configurações do servidor SMTP e chaves de API HTTP salvas e sincronizadas com sucesso!");
+    }, 600);
+  };
+
+  const handleRunNetworkDiagnostic = async () => {
+    setIsDiagnosingNetwork(true);
+    setNetworkDiagnosticResult(null);
+    try {
+      const res = await fetch("/api/email-diagnostic");
+      const data = await res.json();
+      setNetworkDiagnosticResult(data);
+    } catch (e: any) {
+      setNetworkDiagnosticResult({ error: e.message || String(e) });
+    } finally {
+      setIsDiagnosingNetwork(false);
+    }
   };
 
   const handleSendReportTest = async () => {
@@ -255,6 +297,8 @@ export default function Usuarios() {
           smtpPort,
           smtpEmail,
           smtpPassword,
+          resendApiKey: resendApiKey.trim() || undefined,
+          brevoApiKey: brevoApiKey.trim() || undefined,
           destinatarios: usersList.filter(u => u.role === "admin" || u.permissions.admin || u.permissions.usuarios).map(u => u.email),
           lancamentosPendentes: lancamentosAtivosNoRelatorio,
           subject: reportSubject,
@@ -1300,6 +1344,97 @@ export default function Usuarios() {
               </div>
             </div>
 
+            {/* SEÇÃO HTTP API: Contingência Imune ao Bloqueio de Portas SMTP do Render Free */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 space-y-2.5 text-left">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black text-slate-700 flex items-center gap-1.5 uppercase tracking-wide">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  Envio em Nuvem (Render / Docker / Porta 443)
+                </span>
+                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                  HTTPS / Sem Bloqueio
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                No plano <strong>Free do Render</strong>, as portas SMTP (25, 465, 587) são bloqueadas por firewall. Cadastre abaixo sua chave gratuita do <strong>Resend</strong> ou <strong>Brevo</strong> para envio garantido via HTTPS (Porta 443).
+              </p>
+
+              <div className="space-y-1">
+                <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider block">
+                  Chave API Resend (<a href="https://resend.com" target="_blank" rel="noreferrer" className="text-emerald-600 underline">resend.com</a>)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showResendKey ? "text" : "password"}
+                    value={resendApiKey}
+                    onChange={(e) => setResendApiKey(e.target.value)}
+                    placeholder="re_123456789..."
+                    className="w-full pl-2.5 pr-8 py-1 rounded-lg border border-slate-200 bg-white font-mono text-xs text-slate-800 outline-none focus:border-emerald-600 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResendKey(!showResendKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-700 cursor-pointer"
+                  >
+                    {showResendKey ? <EyeOff size={12} /> : <Eye size={12} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] font-bold text-slate-600 uppercase tracking-wider block">
+                  Chave API Brevo (<a href="https://brevo.com" target="_blank" rel="noreferrer" className="text-emerald-600 underline">brevo.com</a>)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showBrevoKey ? "text" : "password"}
+                    value={brevoApiKey}
+                    onChange={(e) => setBrevoApiKey(e.target.value)}
+                    placeholder="xkeysib-..."
+                    className="w-full pl-2.5 pr-8 py-1 rounded-lg border border-slate-200 bg-white font-mono text-xs text-slate-800 outline-none focus:border-emerald-600 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowBrevoKey(!showBrevoKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-700 cursor-pointer"
+                  >
+                    {showBrevoKey ? <EyeOff size={12} /> : <Eye size={12} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-1 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleRunNetworkDiagnostic}
+                  disabled={isDiagnosingNetwork}
+                  className="text-[10px] font-bold text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                >
+                  <Activity size={12} className={isDiagnosingNetwork ? "animate-spin text-emerald-600" : "text-emerald-600"} />
+                  {isDiagnosingNetwork ? "Diagnosticando Rede..." : "Diagnóstico de Rede Render"}
+                </button>
+                {(resendApiKey || brevoApiKey) && (
+                  <span className="text-[10px] font-bold text-emerald-700">✓ Chave HTTP ativa</span>
+                )}
+              </div>
+
+              {networkDiagnosticResult && (
+                <div className="mt-2 p-2 bg-white rounded-lg border border-slate-200 text-[10px] space-y-1 font-mono text-slate-700">
+                  <div className="font-bold text-slate-900">Resultado do Diagnóstico:</div>
+                  <div>Ambiente: {networkDiagnosticResult.environment}</div>
+                  <div>Porta 587 (STARTTLS): {networkDiagnosticResult.smtpPortTests?.["smtp.office365.com:587 (STARTTLS)"]?.reachable ? " Aberta" : "❌ Bloqueada pelo firewall"}</div>
+                  <div>Porta 465 (SSL): {networkDiagnosticResult.smtpPortTests?.["smtp.office365.com:465 (SSL)"]?.reachable ? " Aberta" : "❌ Bloqueada pelo firewall"}</div>
+                  <div>API HTTP Resend: {networkDiagnosticResult.httpApiAvailable?.resend ? " Configurada" : " Não configurada"}</div>
+                  <div>API HTTP Brevo: {networkDiagnosticResult.httpApiAvailable?.brevo ? " Configurada" : " Não configurada"}</div>
+                  {networkDiagnosticResult.recommendation && (
+                    <div className="text-amber-800 bg-amber-50 p-1.5 rounded font-sans text-[10px] mt-1">
+                      {networkDiagnosticResult.recommendation}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
@@ -1314,7 +1449,7 @@ export default function Usuarios() {
                 ) : (
                   <>
                     <Save className="w-3.5 h-3.5" />
-                    <span>Salvar e Sincronizar SMTP</span>
+                    <span>Salvar e Sincronizar Servidor</span>
                   </>
                 )}
               </button>

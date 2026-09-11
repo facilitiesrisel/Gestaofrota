@@ -33,6 +33,7 @@ import {
   formatarCnpjCpf,
   avaliarEEnviarFornecedor,
   sincronizarFornecedoresFrequentes,
+  isRiselCnpjOrName,
   CnpjSearchResult
 } from "../../services/cnpjService";
 
@@ -393,13 +394,33 @@ export default function Lancamento() {
   const [cnpjSuccessMsg, setCnpjSuccessMsg] = useState("");
   const [cnpjWarningRisel, setCnpjWarningRisel] = useState("");
   const lastCnpjDataRef = useRef<CnpjSearchResult | null>(null);
+  const cnpjSearchRequestIdRef = useRef(0);
 
   const searchCnpjReal = async (cnpjClean: string, fillForm = true) => {
     if (cnpjClean.length !== 14) return null;
+    const reqId = ++cnpjSearchRequestIdRef.current;
     setIsSearchingCnpj(true);
     setCnpjError("");
     setCnpjSuccessMsg("");
     setCnpjWarningRisel("");
+
+    // Verificação preventiva: CNPJ pertencente à Risel Combustíveis (Tomador dos serviços)
+    if (isRiselCnpjOrName(cnpjClean)) {
+      if (reqId === cnpjSearchRequestIdRef.current) {
+        setCnpjWarningRisel(
+          "⚠️ ATENÇÃO: O CNPJ digitado pertence à própria RISEL COMBUSTÍVEIS LTDA (Tomador/Destinatário). Para registrar o lançamento de despesa, informe o CNPJ do fornecedor/prestador que emitiu a Nota Fiscal."
+        );
+        setCnpjSuccessMsg("");
+        if (fillForm) {
+          setFormData(prev => ({
+            ...prev,
+            fornecedor: (prev.fornecedor && isRiselCnpjOrName(undefined, prev.fornecedor)) ? "" : prev.fornecedor
+          }));
+        }
+        setIsSearchingCnpj(false);
+      }
+      return null;
+    }
 
     // 1. Verificação preliminar na base interna de fornecedores cadastrados
     try {
@@ -407,37 +428,50 @@ export default function Lancamento() {
       if (savedForn) {
         const listForn = JSON.parse(savedForn);
         const matchForn = listForn.find((f: any) => (f.cnpj || "").replace(/\D/g, "") === cnpjClean);
-        if (matchForn && fillForm) {
-          setFormData(prev => ({
-            ...prev,
-            fornecedor: matchForn.nome,
-            itemSistema: matchForn.codigoItem || prev.itemSistema
-          }));
-          setCnpjSuccessMsg(`Fornecedor já cadastrado: ${matchForn.nome}`);
+        if (matchForn && !isRiselCnpjOrName(matchForn.cnpj, matchForn.nome) && fillForm) {
+          if (reqId === cnpjSearchRequestIdRef.current) {
+            setFormData(prev => ({
+              ...prev,
+              fornecedor: matchForn.nome,
+              itemSistema: matchForn.codigoItem || prev.itemSistema
+            }));
+            setCnpjSuccessMsg(`Fornecedor já cadastrado: ${matchForn.nome}`);
+          }
         }
       }
     } catch (e) {}
 
     try {
-      // 2. Consulta avançada na Receita Federal (Cascata: MinhaReceita -> BrasilAPI -> ReceitaWS)
+      // 2. Consulta avançada na Receita Federal (BrasilAPI -> MinhaReceita -> ReceitaWS)
       const resultado = await consultarCnpjReceita(cnpjClean);
+      if (reqId !== cnpjSearchRequestIdRef.current) return null;
+
       if (resultado && (resultado.razao_social || resultado.nome_fantasia)) {
         const razao = resultado.razao_social || resultado.nome_fantasia;
         lastCnpjDataRef.current = resultado;
 
-        // Verifica se é a própria Risel Combustíveis (Tomador do serviço)
-        if (resultado.isRisel) {
+        // Se a API indicar Risel (filial ou razão)
+        if (resultado.isRisel || isRiselCnpjOrName(cnpjClean, razao)) {
           setCnpjWarningRisel(
-            "⚠️ ATENÇÃO: O CNPJ digitado pertence à própria RISEL COMBUSTIVEIS LTDA (Tomador dos serviços). Para registrar despesas, informe o CNPJ do fornecedor/prestador que emitiu a Nota Fiscal."
+            "⚠️ ATENÇÃO: O CNPJ digitado pertence à própria RISEL COMBUSTÍVEIS LTDA (Tomador dos serviços). Para registrar despesas, informe o CNPJ do fornecedor/prestador que emitiu a Nota Fiscal."
           );
-        } else {
-          setCnpjSuccessMsg(`Receita Federal: ${razao}`);
+          setCnpjSuccessMsg("");
+          if (fillForm) {
+            setFormData(prev => ({
+              ...prev,
+              fornecedor: (prev.fornecedor && isRiselCnpjOrName(undefined, prev.fornecedor)) ? "" : prev.fornecedor
+            }));
+          }
+          return null;
         }
+
+        setCnpjWarningRisel("");
+        setCnpjSuccessMsg(`Receita Federal: ${razao}`);
 
         if (fillForm) {
           setFormData(prev => {
             let novaObs = prev.observacao || "";
-            const obsSnippet = `[CNPJ Real: ${razao} | Atividade: ${resultado.cnae_fiscal_descricao || ""} | Endereço: ${resultado.logradouro || ""}, ${resultado.numero || ""} - ${resultado.bairro || ""}, ${resultado.municipio || ""}-${resultado.uf || ""}]`;
+            const obsSnippet = `[CNPJ: ${resultado.cnpj || cnpjClean} - ${razao} | Atividade: ${resultado.cnae_fiscal_descricao || ""} | Endereço: ${resultado.logradouro || ""}, ${resultado.numero || ""} - ${resultado.bairro || ""}, ${resultado.municipio || ""}-${resultado.uf || ""}]`;
             if (!novaObs.includes(razao)) {
               novaObs = novaObs ? `${novaObs}\n\n${obsSnippet}` : obsSnippet;
             }
@@ -455,11 +489,15 @@ export default function Lancamento() {
         return null;
       }
     } catch (err: any) {
-      console.error("Erro na busca avançada de CNPJ:", err);
-      setCnpjError("Falha ao consultar CNPJ. Digite a Razão Social do fornecedor.");
+      if (reqId === cnpjSearchRequestIdRef.current) {
+        console.error("Erro na busca avançada de CNPJ:", err);
+        setCnpjError("Falha ao consultar CNPJ. Digite a Razão Social do fornecedor.");
+      }
       return null;
     } finally {
-      setIsSearchingCnpj(false);
+      if (reqId === cnpjSearchRequestIdRef.current) {
+        setIsSearchingCnpj(false);
+      }
     }
   };
 
@@ -857,7 +895,8 @@ export default function Lancamento() {
     const rawCnpj = raw;
     setFormData(prev => ({ 
       ...prev, 
-      cnpj: formatted 
+      cnpj: formatted,
+      fornecedor: (prev.fornecedor && isRiselCnpjOrName(undefined, prev.fornecedor)) ? "" : prev.fornecedor
     }));
 
     if (rawCnpj.length === 14) {
@@ -1429,7 +1468,155 @@ export default function Lancamento() {
               </div>
               
               <div className="p-3 grid lg:grid-cols-3 gap-3">
-                {/* Sec 1: Básicos */}
+                {/* Sec 1: Dados do Fornecedor (Primeiro card, com CNPJ como primeiro campo) */}
+                <div className="space-y-2 bg-slate-50/50 border border-slate-100 rounded-[12px] p-3 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-slate-200">
+                       <div className="w-6 h-6 rounded-full bg-[#114D38]/10 flex items-center justify-center">
+                         <span className="text-[#114D38] text-xs">🏢</span>
+                       </div>
+                       <h4 className="font-bold text-xs text-slate-700">Dados do Fornecedor</h4>
+                    </div>
+
+                    {/* Primeiro campo: CPF / CNPJ com busca na Receita Federal */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CPF / CNPJ *</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const raw = (formData.cnpj || "").replace(/\D/g, "");
+                            if (raw.length === 14) {
+                              searchCnpjReal(raw, true);
+                            }
+                          }}
+                          disabled={isSearchingCnpj || (formData.cnpj || "").replace(/\D/g, "").length !== 14}
+                          className="text-[9px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                          title="Consultar Razão Social na Receita Federal"
+                        >
+                          {isSearchingCnpj ? (
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-600" />
+                          ) : (
+                            <Search className="w-2.5 h-2.5 text-emerald-600" />
+                          )}
+                          <span>Buscar na Receita</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input 
+                          type="text" 
+                          name="cnpj" 
+                          value={formData.cnpj} 
+                          onChange={handleCnpjChange}
+                          onBlur={(e) => {
+                            const raw = e.target.value.replace(/\D/g, "");
+                            if (raw.length === 14 && (!formData.fornecedor || isRiselCnpjOrName(undefined, formData.fornecedor) || cnpjWarningRisel)) {
+                              searchCnpjReal(raw, true);
+                            }
+                          }} 
+                          required 
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-mono text-xs text-slate-800 shadow-sm" 
+                          placeholder="00.000.000/0000-00" 
+                        />
+                        {isSearchingCnpj && (
+                          <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                            <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Feedback de Consulta de CNPJ */}
+                      {isSearchingCnpj && (
+                        <p className="text-[9px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5 animate-pulse">
+                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                          <span>Localizando Razão Social na Receita...</span>
+                        </p>
+                      )}
+                      {cnpjWarningRisel && (
+                        <div className="text-[9.5px] text-amber-900 bg-amber-50 border border-amber-300 p-1.5 rounded-md mt-1 font-medium flex items-start gap-1 leading-snug">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold block">Atenção (CNPJ da Risel):</span>
+                            <span>{cnpjWarningRisel}</span>
+                          </div>
+                        </div>
+                      )}
+                      {!isSearchingCnpj && cnpjSuccessMsg && !cnpjWarningRisel && (
+                        <p className="text-[9.5px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded mt-0.5 font-medium flex items-center gap-1 truncate" title={cnpjSuccessMsg}>
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span className="truncate">{cnpjSuccessMsg}</span>
+                        </p>
+                      )}
+                      {!isSearchingCnpj && cnpjError && (
+                        <p className="text-[9.5px] text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded mt-0.5 font-medium flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                          <span>{cnpjError}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Segundo campo: Razão Social */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Razão Social (Fornecedor) *</label>
+                        {formData.fornecedor && (
+                          <span className="text-[8.5px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-semibold flex items-center gap-1">
+                            <Building className="w-2.5 h-2.5 text-emerald-600" />
+                            <span>Identificado</span>
+                          </span>
+                        )}
+                      </div>
+                      <input 
+                        type="text" 
+                        name="fornecedor" 
+                        value={formData.fornecedor} 
+                        onChange={handleChange} 
+                        required 
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm" 
+                        placeholder="Nome Empresarial / Fornecedor" 
+                      />
+                    </div>
+
+                    {/* Terceiro campo: Item de Sistema */}
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Item de Sistema (Cód. Serviço)</label>
+                      <input type="text" name="itemSistema" value={formData.itemSistema} onChange={handleChange} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm" placeholder="Ex: MN-992, LG-104" />
+                    </div>
+
+                    {/* Quarto campo: Descrição do Serviço */}
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Descrição do Serviço *</label>
+                      <textarea 
+                        name="descricao" 
+                        value={formData.descricao} 
+                        onChange={handleChange} 
+                        required 
+                        rows={5} 
+                        className="w-full min-h-[130px] p-2.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm leading-relaxed resize-y" 
+                        placeholder="Detalhamento técnico completo do serviço prestado..." 
+                      />
+                    </div>
+                    {formData.itemSistema && SUGESTOES_DESCRICAO[formData.itemSistema] && (
+                      <div className="p-2 bg-emerald-50/40 rounded-lg border border-emerald-100 space-y-1">
+                        <span className="text-[8px] font-black text-[#114D38] uppercase tracking-wide">Sugestões de Descrição Risel:</span>
+                        <div className="flex flex-col gap-0.5">
+                          {SUGESTOES_DESCRICAO[formData.itemSistema].map(sug => (
+                            <button
+                              key={sug}
+                              type="button"
+                              onClick={() => setFormData(prev => ({ ...prev, descricao: sug }))}
+                              className="text-left text-[10px] text-slate-600 hover:text-emerald-700 font-semibold hover:bg-white p-0.5 rounded transition-colors truncate"
+                            >
+                              💡 {sug}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Sec 2: Dados Básicos */}
                 <div className="space-y-2 bg-slate-50/50 border border-slate-100 rounded-[12px] p-3">
                   <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-slate-200">
                      <div className="w-6 h-6 rounded-full bg-[#114D38]/10 flex items-center justify-center">
@@ -1523,100 +1710,11 @@ export default function Lancamento() {
                   </div>
 
                   <div className="space-y-0.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
-                      <span>Cód. Lançamento / Nº OC</span>
-                      <span className="text-[8.5px] font-normal text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Reflete para todos</span>
-                    </label>
-                    <input 
-                      type="text" 
-                      name="codLancamentoOc" 
-                      value={formData.codLancamentoOc || ""} 
-                      onChange={handleChange} 
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50/20 focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-emerald-950 shadow-sm" 
-                      placeholder="Ex: OC-84920 / LAN-104" 
-                    />
-                  </div>
-
-                  <div className="space-y-0.5">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Lançado por *</label>
                     <input type="text" name="lancadoPor" value={formData.lancadoPor} onChange={handleChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm" placeholder="Primeiro Nome" />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CPF / CNPJ *</label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const raw = (formData.cnpj || "").replace(/\D/g, "");
-                            if (raw.length === 14) {
-                              searchCnpjReal(raw, true);
-                            }
-                          }}
-                          disabled={isSearchingCnpj || (formData.cnpj || "").replace(/\D/g, "").length !== 14}
-                          className="text-[9px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                          title="Consultar Razão Social na Receita Federal"
-                        >
-                          {isSearchingCnpj ? (
-                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-600" />
-                          ) : (
-                            <Search className="w-2.5 h-2.5 text-emerald-600" />
-                          )}
-                          <span>Buscar na Receita</span>
-                        </button>
-                      </div>
-                      <div className="relative">
-                        <input 
-                          type="text" 
-                          name="cnpj" 
-                          value={formData.cnpj} 
-                          onChange={handleCnpjChange}
-                          onBlur={(e) => {
-                            const raw = e.target.value.replace(/\D/g, "");
-                            if (raw.length === 14 && (!formData.fornecedor || cnpjWarningRisel)) {
-                              searchCnpjReal(raw, true);
-                            }
-                          }} 
-                          required 
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-mono text-xs text-slate-800 shadow-sm" 
-                          placeholder="00.000.000/0000-00" 
-                        />
-                        {isSearchingCnpj && (
-                          <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
-                            <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
-                          </div>
-                        )}
-                      </div>
 
-                      {/* Feedback de Consulta de CNPJ */}
-                      {isSearchingCnpj && (
-                        <p className="text-[9px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5 animate-pulse">
-                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                          <span>Localizando Razão Social na Receita...</span>
-                        </p>
-                      )}
-                      {cnpjWarningRisel && (
-                        <div className="text-[9.5px] text-amber-900 bg-amber-50 border border-amber-300 p-1.5 rounded-md mt-1 font-medium flex items-start gap-1 leading-snug">
-                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                          <div>
-                            <span className="font-bold block">Atenção (CNPJ da Risel):</span>
-                            <span>{cnpjWarningRisel}</span>
-                          </div>
-                        </div>
-                      )}
-                      {!isSearchingCnpj && cnpjSuccessMsg && !cnpjWarningRisel && (
-                        <p className="text-[9.5px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded mt-0.5 font-medium flex items-center gap-1 truncate" title={cnpjSuccessMsg}>
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                          <span className="truncate">{cnpjSuccessMsg}</span>
-                        </p>
-                      )}
-                      {!isSearchingCnpj && cnpjError && (
-                        <p className="text-[9.5px] text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded mt-0.5 font-medium flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
-                          <span>{cnpjError}</span>
-                        </p>
-                      )}
-                    </div>
+                  <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-0.5">
                       <div className="flex justify-between items-center">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Base/Filial</label>
@@ -1652,8 +1750,7 @@ export default function Lancamento() {
                         </select>
                       )}
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
+
                     <div className="space-y-0.5">
                       <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tipo</label>
                       <select name="tipoDocumento" value={formData.tipoDocumento} onChange={handleChange} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
@@ -1661,13 +1758,14 @@ export default function Lancamento() {
                         {TIPOS_DOCUMENTO.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </div>
-                    <div className="space-y-0.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Frequência</label>
-                      <select name="tipo" value={formData.tipo} onChange={(e) => setFormData(prev => ({...prev, tipo: e.target.value}))} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
-                        <option value="Esporádico">Esporádico</option>
-                        <option value="Mensal">Mensal</option>
-                      </select>
-                    </div>
+                  </div>
+
+                  <div className="space-y-0.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Frequência</label>
+                    <select name="tipo" value={formData.tipo} onChange={(e) => setFormData(prev => ({...prev, tipo: e.target.value}))} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
+                      <option value="Esporádico">Esporádico</option>
+                      <option value="Mensal">Mensal</option>
+                    </select>
                   </div>
 
                   {/* Campo de Centro de Custo Principal */}
@@ -1765,69 +1863,6 @@ export default function Lancamento() {
                   )}
                 </div>
 
-                {/* Sec 2: Fornecedor */}
-                <div className="space-y-2 bg-slate-50/50 border border-slate-100 rounded-[12px] p-3">
-                  <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-slate-200">
-                     <div className="w-6 h-6 rounded-full bg-[#114D38]/10 flex items-center justify-center">
-                       <span className="text-[#114D38] text-xs">🏢</span>
-                     </div>
-                     <h4 className="font-bold text-xs text-slate-700">Dados do Fornecedor</h4>
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Razão Social (Fornecedor) *</label>
-                      {formData.fornecedor && (
-                        <span className="text-[8.5px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-semibold flex items-center gap-1">
-                          <Building className="w-2.5 h-2.5 text-emerald-600" />
-                          <span>Identificado</span>
-                        </span>
-                      )}
-                    </div>
-                    <input 
-                      type="text" 
-                      name="fornecedor" 
-                      value={formData.fornecedor} 
-                      onChange={handleChange} 
-                      required 
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm" 
-                      placeholder="Nome Empresarial / Fornecedor" 
-                    />
-                  </div>
-                  <div className="space-y-0.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Item de Sistema (Cód. Serviço)</label>
-                    <input type="text" name="itemSistema" value={formData.itemSistema} onChange={handleChange} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm" placeholder="Ex: MN-992, LG-104" />
-                  </div>
-                  <div className="space-y-0.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Descrição do Serviço *</label>
-                    <textarea 
-                      name="descricao" 
-                      value={formData.descricao} 
-                      onChange={handleChange} 
-                      required 
-                      rows={6} 
-                      className="w-full min-h-[160px] p-3 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm leading-relaxed resize-y" 
-                      placeholder="Detalhamento técnico completo do serviço prestado..." 
-                    />
-                  </div>
-                  {formData.itemSistema && SUGESTOES_DESCRICAO[formData.itemSistema] && (
-                    <div className="p-2 bg-emerald-50/40 rounded-lg border border-emerald-100 space-y-1">
-                      <span className="text-[8px] font-black text-[#114D38] uppercase tracking-wide">Sugestões de Descrição Risel:</span>
-                      <div className="flex flex-col gap-0.5">
-                        {SUGESTOES_DESCRICAO[formData.itemSistema].map(sug => (
-                          <button
-                            key={sug}
-                            type="button"
-                            onClick={() => setFormData(prev => ({ ...prev, descricao: sug }))}
-                            className="text-left text-[10px] text-slate-600 hover:text-emerald-700 font-semibold hover:bg-white p-0.5 rounded transition-colors truncate"
-                          >
-                            💡 {sug}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 {/* Sec 3: Valores e datas */}
                 <div className="space-y-2 bg-slate-50/50 border border-slate-100 rounded-[12px] p-3 flex flex-col justify-between">
                   <div>
@@ -1878,6 +1913,22 @@ export default function Lancamento() {
                       </div>
                     </div>
 
+                    {/* Cód. Lançamento / Nº OC antes de Status */}
+                    <div className="space-y-0.5 mt-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                        <span>Cód. Lançamento / Nº OC</span>
+                        <span className="text-[8.5px] font-normal text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Reflete para todos</span>
+                      </label>
+                      <input 
+                        type="text" 
+                        name="codLancamentoOc" 
+                        value={formData.codLancamentoOc || ""} 
+                        onChange={handleChange} 
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50/20 focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-emerald-950 shadow-sm" 
+                        placeholder="Ex: OC-84920 / LAN-104" 
+                      />
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2 mt-2">
                       <div className="space-y-0.5">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</label>
@@ -1915,7 +1966,7 @@ export default function Lancamento() {
                       value={formData.observacao} 
                       onChange={handleChange} 
                       rows={5} 
-                      className="w-full min-h-[120px] p-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-700 font-medium focus:ring-2 focus:ring-[#114D38]/20 outline-none leading-relaxed resize-y shadow-sm" 
+                      className="w-full min-h-[110px] p-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-700 font-medium focus:ring-2 focus:ring-[#114D38]/20 outline-none leading-relaxed resize-y shadow-sm" 
                       placeholder="Informações adicionais, histórico de observações ou anotações internas..." 
                     />
                   </div>

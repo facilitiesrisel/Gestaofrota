@@ -280,16 +280,20 @@ export const sendEmail = async (
         return;
     }
 
-    // Lê eventuais preferências SMTP salvas pelo usuário no painel de configurações
+    // Lê eventuais preferências SMTP e Chaves de API HTTP salvas pelo usuário no painel de configurações
     const rawHost = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_host") : null;
     const rawPort = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_port") : null;
     const rawEmail = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_email") : null;
     const rawPassword = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_password") : null;
+    const rawResendKey = typeof window !== 'undefined' ? localStorage.getItem("risel_resend_api_key") : null;
+    const rawBrevoKey = typeof window !== 'undefined' ? localStorage.getItem("risel_brevo_api_key") : null;
 
     const smtpHost = rawHost?.trim() || undefined;
     const smtpPort = rawPort?.trim() || undefined;
     const smtpEmail = rawEmail?.trim() || undefined;
     const smtpPassword = rawPassword?.trim() || undefined;
+    const resendApiKey = rawResendKey?.trim() || undefined;
+    const brevoApiKey = rawBrevoKey?.trim() || undefined;
 
     const response = await fetch('/api/send-email', {
       method: 'POST',
@@ -306,7 +310,9 @@ export const sendEmail = async (
         smtpHost,
         smtpPort,
         smtpEmail,
-        smtpPassword
+        smtpPassword,
+        resendApiKey,
+        brevoApiKey
       }),
     });
 
