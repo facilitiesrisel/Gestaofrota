@@ -1572,6 +1572,16 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
   const handleOpenOutlookOrWebmail = async () => {
       const currentMulta: Partial<Multa> = emailModalMulta || formData;
+      
+      const toRecipientsList = emailTo.split(/[;,]+/)
+          .map(e => e.trim())
+          .filter(e => e.length > 0 && e.includes('@'));
+
+      if (toRecipientsList.length === 0) {
+          alert("Por favor, informe ao menos um e-mail válido no campo 'Destinatário Principal (Para)'.");
+          return;
+      }
+
       // 1. Garantir que os arquivos anexos estejam baixados localmente para anexar no Outlook/Webmail
       const aitLinks = parseLinks(currentMulta.linkAit);
       let authLink = currentMulta.linkAuth;
@@ -1669,7 +1679,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       mailLink.click();
       setTimeout(() => { try { document.body.removeChild(mailLink); } catch (e) {} }, 300);
 
-      alert("1. Os arquivos anexos (AIT e Termo em PDF) foram salvos na sua pasta de Downloads.\n2. O corpo do e-mail formatado foi copiado (basta colar no corpo da mensagem se desejar a tabela colorida).\n3. Seu cliente de e-mail (Outlook / Webmail) foi aberto!");
+      setIsEmailModalOpen(false);
+      setShowEmailPreviewHtml(false);
+      alert("✅ Destinatários e notificação confirmados com sucesso!\n\n1. Os arquivos anexos (AIT e Termo em PDF) foram salvos na sua pasta de Downloads.\n2. O corpo do e-mail formatado foi copiado para a sua área de transferência (basta dar Ctrl+V).\n3. Seu cliente de e-mail (Outlook / Webmail) foi aberto com os destinatários preenchidos!");
   };
 
   const handleSendEmail = async () => {
@@ -1786,7 +1798,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               })
           });
 
-          const result = await response.json();
+          const result = await response.json().catch(() => ({}));
           if (response.ok && result.success) { 
               // Se os arquivos eram links remotos temporários do Drive, remove
               const driveRemoteUrls = driveUrls.filter(u => u.url.startsWith('http')).map(u => u.url);
@@ -1802,16 +1814,19 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               setIsEmailModalOpen(false);
               setShowEmailPreviewHtml(false);
           } else { 
-              console.error(result); 
-              if (result.help) {
-                  alert(`${result.message}\n\n💡 ORIENTAÇÃO:\n${result.help}\n\n👉 Para disparar este e-mail agora mesmo sem bloqueios, clique no botão cinza "Abrir no Outlook / Webmail" abaixo!`);
+              console.warn("[Multas] Envio via servidor não completou:", result); 
+              const isBlocked = result.firewallBlocked || (result.message && (result.message.includes("Bloqueio de portas SMTP") || result.message.includes("Render")));
+              if (isBlocked) {
+                  alert(`Aviso do Servidor: ${result.message}\n\nAbrindo automaticamente sua notificação no Outlook / Webmail com todos os e-mails confirmados e anexos prontos...`);
+                  await handleOpenOutlookOrWebmail();
               } else {
-                  alert("Erro ao enviar e-mail: " + (result.message || result.error || "Verifique a conexão ou configurações de SMTP.")); 
+                  alert("Erro ao enviar e-mail via servidor: " + (result.message || result.error || "Verifique a conexão ou configurações de SMTP.")); 
               }
           }
       } catch (err: any) {
-          console.error("Erro ao enviar e-mail:", err);
-          alert(`Não foi possível enviar o e-mail via servidor: ${err.message || err}\n\nVocê pode utilizar o botão "Abrir no Outlook / Webmail" para disparar diretamente pelo seu e-mail pessoal/corporativo.`);
+          console.error("Erro ao enviar e-mail via servidor:", err);
+          alert(`Não foi possível enviar via servidor (${err.message || err}).\n\nAbrindo automaticamente sua notificação no seu Outlook / Webmail com todos os destinatários confirmados...`);
+          await handleOpenOutlookOrWebmail();
       } finally {
           setSendingEmail(false);
       }
@@ -2113,11 +2128,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           <div className="flex flex-col sm:flex-row justify-between items-center gap-2 pt-3 mt-1 border-t border-slate-100 shrink-0">
             <button
               type="button"
-              onClick={handleOpenOutlookOrWebmail}
+              onClick={handleSendEmail}
+              disabled={sendingEmail || parsedToList.length === 0}
               className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3.5 py-2 rounded-xl font-bold transition-all flex items-center cursor-pointer active:scale-95 w-full sm:w-auto justify-center"
-              title="Baixar anexos, copiar formato visual e abrir no seu Outlook / Webmail"
+              title="Tentar disparo em segundo plano pelo servidor SMTP corporativo (caso as portas de saída estejam liberadas)"
             >
-              <Mail size={14} className="mr-1.5 text-blue-600"/> Abrir no Outlook / Webmail
+              {sendingEmail ? <Loader2 size={14} className="animate-spin mr-1.5 text-blue-600"/> : <Send size={14} className="mr-1.5 text-blue-600"/>}
+              {sendingEmail ? 'Enviando pelo servidor...' : 'Disparar em 2º Plano (Servidor)'}
             </button>
 
             <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
@@ -2134,14 +2151,14 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               </button>
               <button 
                 type="button"
-                onClick={handleSendEmail} 
+                onClick={handleOpenOutlookOrWebmail} 
                 disabled={sendingEmail || parsedToList.length === 0} 
-                className={`px-5 py-2 bg-emerald-700 text-white rounded-xl shadow-md hover:bg-emerald-800 active:scale-95 flex items-center font-black text-xs transition-all cursor-pointer ${
+                className={`px-5 py-2.5 bg-emerald-700 text-white rounded-xl shadow-md hover:bg-emerald-800 active:scale-95 flex items-center font-black text-xs transition-all cursor-pointer ${
                   sendingEmail || parsedToList.length === 0 ? 'opacity-70 cursor-not-allowed' : ''
                 }`}
+                title="Confirmar e abrir no Outlook / Webmail com anexos baixados e texto copiado (sem risco de bloqueios de nuvem)"
               >
-                {sendingEmail ? <Loader2 size={15} className="animate-spin mr-1.5"/> : <Send size={15} className="mr-1.5"/>} 
-                {sendingEmail ? 'Enviando...' : `Confirmar e Disparar (${parsedToList.length} Para${parsedCcList.length > 0 ? ` + ${parsedCcList.length} CC` : ''})`}
+                <Mail size={15} className="mr-1.5"/> Confirmar e Enviar via Outlook / Webmail
               </button>
             </div>
           </div>

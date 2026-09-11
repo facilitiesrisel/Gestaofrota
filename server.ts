@@ -1815,6 +1815,8 @@ async function startServer() {
             return res.status(500).json({ 
               success: false, 
               delivered: false, 
+              firewallBlocked: isBlockedByFirewall,
+              renderFree: isRender,
               error: retryErr.message || err.message,
               primaryError: err.message,
               fallbackError: retryErr.message,
