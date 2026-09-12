@@ -81,11 +81,8 @@ async function createSafeTransporter(smtpConfig: any) {
   const originalHost = (smtpConfig.host || "smtp.office365.com").trim();
   const targetPort = Number(smtpConfig.port) || (isPort465 ? 465 : 587);
 
-  // Resolução explícita de IP IPv4 para contêineres de nuvem (Render)
-  const resolvedHostIp = await resolveIpv4Address(originalHost);
-
   return nodemailer.createTransport({
-    host: resolvedHostIp,
+    host: originalHost,
     port: targetPort,
     secure: isPort465, // true para porta 465 (SSL direto), false para porta 587 (STARTTLS)
     auth: {
@@ -99,10 +96,9 @@ async function createSafeTransporter(smtpConfig: any) {
     },
     requireTLS: !isPort465,
     family: 4, // Força conexão IPv4 direta
-    lookup: strictIpv4Lookup,
-    connectionTimeout: 12000, // Falha rapidamente caso a porta esteja bloqueada no provedor (ex: Render Free)
-    greetingTimeout: 8000,
-    socketTimeout: 15000,
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
   } as any);
 }
 
@@ -365,7 +361,12 @@ async function sendEmailViaAppsScript(options: {
     const text = await res.text();
     let data: any = {};
     try { data = JSON.parse(text); } catch (e) { data = { message: text }; }
-    return { success: res.ok, message: data.message || text };
+    const isOk = res.ok && data.status !== "error" && data.success !== false;
+    return { 
+      success: isOk, 
+      message: data.message || text, 
+      error: !isOk ? (data.message || data.error || text) : undefined 
+    };
   } catch (err: any) {
     return { success: false, error: err.message || String(err) };
   }
@@ -1623,10 +1624,15 @@ async function startServer() {
             const parsed = parseBase64Attachment(item.url, fname, 'application/pdf');
             if (parsed) mailAttachments.push(parsed);
           } else if (typeof item.url === 'string' && isValidSafeHttpsUrl(item.url)) {
-            mailAttachments.push({
-              filename: fname,
-              path: item.url
-            });
+            const isDirectFile = /\.(pdf|png|jpe?g|webp|gif|txt|csv)$/i.test(item.url);
+            if (isDirectFile) {
+              mailAttachments.push({
+                filename: fname,
+                path: item.url
+              });
+            } else {
+              console.log(`[Risel SMTP] Anexo remoto é link web (${item.url}), link preservado no corpo do e-mail.`);
+            }
           } else {
             console.warn(`[Segurança Risel SMTP] URL de anexo bloqueada por segurança: ${item.url}`);
           }

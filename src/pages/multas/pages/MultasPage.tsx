@@ -1195,6 +1195,44 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     setLoading(false);
   };
 
+  const handleSaveAndNotify = async () => {
+    if (!validateForm()) { alert("Por favor, preencha os campos obrigatórios antes de prosseguir."); return; }
+    setLoading(true);
+
+    const enquadramentoUpper = (formData.enquadramento || '').toUpperCase().trim();
+    if (enquadramentoUpper) {
+        const exists = codigos.some(c => c && c.codigo && c.codigo.toString().toUpperCase().trim() === enquadramentoUpper);
+        if (!exists) {
+            try {
+                await saveCodigo({
+                    codigo: enquadramentoUpper,
+                    baseLegal: formData.artigoCtb || '',
+                    descricao: formData.descricaoInfracao || '',
+                    pontos: formData.pontosCnh || 0,
+                    valor: formData.valor || 0,
+                    desconto: formData.desconto || 0
+                });
+            } catch (err) {
+                console.error("Falha ao salvar novo código customizado", err);
+            }
+        }
+    }
+
+    const savedMulta = { ...formData, id: formData.id || formData.ait || `multa-${Date.now()}` } as Multa;
+    await saveMulta(savedMulta);
+
+    setFilters(prev => ({ ...prev, mes: '', dataInicio: '', dataFim: '', placa: '', base: '', status: '', responsabilidade: '', descontar: '' }));
+    setSearchTerm('');
+    await loadData(true);
+    setView('LIST');
+    setFormData(initialMulta);
+    setErrors({});
+    setLoading(false);
+
+    // Abre o modal de confirmação dos destinatários antes do disparo
+    handleOpenEmailModal(savedMulta);
+  };
+
   const handleDelete = async (id: string) => {
       if (confirm('Excluir multa?')) {
           setLoading(true);
@@ -2476,9 +2514,18 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 <button 
                     type="button"
                     onClick={handleSave} 
-                    className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
+                    className="px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
+                    title="Salvar registro sem enviar e-mail"
                 >
                     <Save size={13} className="mr-1.5"/> Salvar Registro
+                </button>
+                <button 
+                    type="button"
+                    onClick={handleSaveAndNotify} 
+                    className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
+                    title="Salvar registro e abrir confirmação de destinatários para disparo"
+                >
+                    <Send size={13} className="mr-1.5"/> Salvar e Confirmar Notificação
                 </button>
             </div>
         </div>
