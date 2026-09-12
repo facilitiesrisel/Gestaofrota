@@ -1844,11 +1844,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   deleteDriveFiles(driveRemoteUrls).catch(e => console.warn(e));
               }
 
-              if (result.delivered || result.success) {
-                  alert(result.message || `✅ E-mail enviado com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL}!`);
-              } else {
-                  alert(result.message || "✅ E-mail enviado com sucesso!");
-              }
+              const providerInfo = result.provider ? `\n\nProvedor: ${result.provider}` : '';
+              alert((result.message || `✅ E-mail enviado com sucesso para ${toRecipientsList.join(', ') || ADMIN_EMAIL}!`) + providerInfo);
               setIsEmailModalOpen(false);
               setShowEmailPreviewHtml(false);
           } else { 

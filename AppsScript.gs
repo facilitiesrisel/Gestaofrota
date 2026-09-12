@@ -515,10 +515,25 @@ function doPost(e) {
         name: contents.fromName || "Checklist Frota Leve - Risel"
       };
       if (contents.cc) emailOptions.cc = contents.cc;
+
+      if (contents.attachments && Array.isArray(contents.attachments)) {
+        const mailAtts = [];
+        for (let i = 0; i < contents.attachments.length; i++) {
+          const a = contents.attachments[i];
+          if (a && a.content) {
+            const rawBase64 = a.content.includes("base64,") ? a.content.split("base64,")[1] : a.content;
+            const decoded = Utilities.base64Decode(rawBase64);
+            const blob = Utilities.newBlob(decoded, a.contentType || "application/pdf", a.filename || ("anexo_" + (i + 1) + ".pdf"));
+            mailAtts.push(blob);
+          }
+        }
+        if (mailAtts.length > 0) emailOptions.attachments = mailAtts;
+      }
+
       MailApp.sendEmail(emailOptions);
       return ContentService.createTextOutput(JSON.stringify({
         status: "success",
-        message: "E-mail do Checklist enviado com sucesso pelo Google Apps Script (Google MailApp)!"
+        message: "E-mail enviado com sucesso pelo Google Apps Script (Google MailApp)!"
       })).setMimeType(ContentService.MimeType.JSON);
     }
 

@@ -361,6 +361,20 @@ async function sendEmailViaAppsScript(options: {
     const text = await res.text();
     let data: any = {};
     try { data = JSON.parse(text); } catch (e) { data = { message: text }; }
+    
+    // Se a resposta retornou 'rowsAdded' ou mensagem de planilha, o Apps Script implantado no Drive é versão antiga
+    const isSpreadsheetFallback = data.rowsAdded !== undefined || (typeof data.message === 'string' && data.message.includes('planilha'));
+    const isExplicitEmailSuccess = typeof data.message === 'string' && (data.message.toLowerCase().includes('e-mail') || data.message.toLowerCase().includes('email'));
+    
+    if (isSpreadsheetFallback && !isExplicitEmailSuccess) {
+      console.warn("[Risel AppsScript] Endpoint retornou inserção de planilha em vez de envio de e-mail:", data.message);
+      return {
+        success: false,
+        error: "O Google Apps Script implantado no Google Drive precisa ser atualizado com a nova versão do AppsScript.gs para suportar envio de e-mails.",
+        message: data.message
+      };
+    }
+
     const isOk = res.ok && data.status !== "error" && data.success !== false;
     return { 
       success: isOk, 
@@ -1535,7 +1549,7 @@ async function startServer() {
           return val.filter(Boolean).map(s => String(s).trim()).filter(s => s.length > 0).join(", ");
         }
         if (typeof val === 'string') {
-          return val.trim();
+          return val.split(/[;,]+/).map(s => s.trim()).filter(Boolean).join(", ");
         }
         return "";
       };
@@ -1718,8 +1732,9 @@ async function startServer() {
           return res.json({ 
             success: true, 
             delivered: true, 
+            provider: "Microsoft 365 / Azure SMTP Direto",
             host: smtpConfig.host,
-            message: `E-mail enviado com sucesso para ${emailTo}!`,
+            message: `E-mail enviado com sucesso via Microsoft 365 para ${emailTo}!`,
             attachmentsCount: mailAttachments.length 
           });
         } catch (err: any) {
