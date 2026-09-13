@@ -28,7 +28,7 @@ if (dns && typeof (dns as any).setDefaultResultOrder === "function") {
  * conecte obrigatoriamente através de IPv4, eliminando o erro connect ENETUNREACH [2603:1036:...].
  */
 async function resolveIpv4Address(hostname: string): Promise<string> {
-  if (!hostname) return "smtp.office365.com";
+  if (!hostname) return "52.96.189.2";
   // Se já for um endereço IP IPv4 direto
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)) {
     return hostname;
@@ -51,6 +51,10 @@ async function resolveIpv4Address(hostname: string): Promise<string> {
   } catch (e: any) {
     console.warn(`[Risel SMTP DNS] Falha em lookup('${hostname}'): ${e.message}`);
   }
+  // Se for o host corporativo Microsoft 365 e a resolução local falhar, usa IP IPv4 do cluster do Outlook
+  if (hostname.toLowerCase().includes("office365") || hostname.toLowerCase().includes("outlook")) {
+    return "52.96.189.2";
+  }
   return hostname;
 }
 
@@ -63,12 +67,15 @@ const strictIpv4Lookup = (hostname: string, options: any, callback: any) => {
     options = {};
   }
   dns.lookup(hostname, { family: 4, all: false }, (err, address, family) => {
-    if (err) {
+    if (err || !address || family !== 4) {
       dns.resolve4(hostname, (err2, addresses) => {
         if (!err2 && addresses && addresses.length > 0) {
           return callback(null, addresses[0], 4);
         }
-        return callback(err || err2, address, family || 4);
+        if (hostname.toLowerCase().includes("office365") || hostname.toLowerCase().includes("outlook")) {
+          return callback(null, "52.96.189.2", 4);
+        }
+        return callback(err || err2, address, 4);
       });
       return;
     }
@@ -81,8 +88,16 @@ async function createSafeTransporter(smtpConfig: any) {
   const originalHost = (smtpConfig.host || "smtp.office365.com").trim();
   const targetPort = Number(smtpConfig.port) || (isPort465 ? 465 : 587);
 
+  // Resolve explicitamente para IPv4 direto para contornar connect ENETUNREACH [2603:1036:...] em nuvens sem IPv6
+  let targetHost = originalHost;
+  try {
+    targetHost = await resolveIpv4Address(originalHost);
+  } catch (e: any) {
+    console.warn(`[Risel SMTP] Falha ao resolver IPv4 para ${originalHost}:`, e.message);
+  }
+
   return nodemailer.createTransport({
-    host: originalHost,
+    host: targetHost,
     port: targetPort,
     secure: isPort465, // true para porta 465 (SSL direto), false para porta 587 (STARTTLS)
     auth: {
@@ -96,6 +111,7 @@ async function createSafeTransporter(smtpConfig: any) {
     },
     requireTLS: !isPort465,
     family: 4, // Força conexão IPv4 direta
+    lookup: strictIpv4Lookup,
     connectionTimeout: 15000,
     greetingTimeout: 10000,
     socketTimeout: 20000,
@@ -105,7 +121,12 @@ async function createSafeTransporter(smtpConfig: any) {
 /**
  * Utilitário de diagnóstico TCP para testar se uma porta externa está aberta ou bloqueada pelo firewall do provedor.
  */
-function probeTcpPort(host: string, port: number, timeoutMs = 3500): Promise<{ reachable: boolean; latencyMs?: number; error?: string }> {
+async function probeTcpPort(host: string, port: number, timeoutMs = 3500): Promise<{ reachable: boolean; latencyMs?: number; error?: string }> {
+  let targetIp = host;
+  try {
+    targetIp = await resolveIpv4Address(host);
+  } catch (e) {}
+
   return new Promise((resolve) => {
     const start = Date.now();
     const socket = new net.Socket();
@@ -113,7 +134,7 @@ function probeTcpPort(host: string, port: number, timeoutMs = 3500): Promise<{ r
 
     socket.setTimeout(timeoutMs);
 
-    socket.connect(port, host, () => {
+    socket.connect(port, targetIp, () => {
       if (!isSettled) {
         isSettled = true;
         const latencyMs = Date.now() - start;
