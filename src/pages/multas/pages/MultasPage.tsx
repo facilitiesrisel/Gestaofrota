@@ -1229,8 +1229,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     setErrors({});
     setLoading(false);
 
-    // Abre o modal de confirmação dos destinatários antes do disparo
-    handleOpenEmailModal(savedMulta);
+    // Dispara diretamente para o e-mail cadastrado da placa/base
+    await handleSendDirectEmail(savedMulta);
   };
 
   const handleDelete = async (id: string) => {
@@ -1476,6 +1476,203 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         </html>`;
   };
 
+  // Helper para resolver automaticamente destinatários cadastrados (Placa -> Frota -> Base -> Fallback)
+  const resolveEmailRecipients = async (targetMulta: Partial<Multa>) => {
+      const placaClean = cleanString(targetMulta.placa || '');
+      const placaMappings = await fetchPlacaEmailMappings();
+      let toEmail = '';
+      let ccEmail = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
+      let origin = '';
+
+      // 1. Prioridade: Buscar no campo E-mail da Placa do Controle de Frota Leve
+      if (placaClean) {
+          const veiculoLocal = veiculos.find(v => cleanString(v.placa) === placaClean);
+          if (veiculoLocal && (veiculoLocal as any).email) {
+              toEmail = (veiculoLocal as any).email.trim();
+              origin = `Controle de Frotas (Placa ${placaClean})`;
+          }
+
+          if (!toEmail) {
+              try {
+                  const storedV = localStorage.getItem("risel_frota_veiculos_v2");
+                  if (storedV) {
+                      const list = JSON.parse(storedV);
+                      const lv = list.find((item: any) => cleanString(item.placa) === placaClean);
+                      if (lv && lv.email) {
+                          toEmail = lv.email.trim();
+                          origin = `Controle de Frotas Local (Placa ${placaClean})`;
+                      }
+                  }
+              } catch (e) {}
+          }
+
+          if (!toEmail && Array.isArray(VEICULOS_REAIS)) {
+              const vr = VEICULOS_REAIS.find(v => cleanString(v.placa) === placaClean);
+              if (vr && vr.email) {
+                  toEmail = vr.email.trim();
+                  origin = `Frota de Veículos Reais (Placa ${placaClean})`;
+              }
+          }
+      }
+
+      // 2. Se não encontrou no veículo, verificar mapeamento específico salvo da placa
+      if (!toEmail && placaClean && placaMappings[placaClean] && placaMappings[placaClean].to) {
+          toEmail = placaMappings[placaClean].to.trim();
+          origin = `Mapeamento Salvo para a Placa ${placaClean}`;
+          if (placaMappings[placaClean].cc) {
+              ccEmail = placaMappings[placaClean].cc.trim();
+          }
+      }
+
+      // 3. Fallback: Mapeamento de e-mail por Base/Filial
+      if (!toEmail) {
+          const baseUpper = targetMulta.base ? targetMulta.base.toUpperCase().trim() : '';
+          const matchedKey = Object.keys(baseMappings).find(k => baseUpper.includes(k.toUpperCase()) || k.toUpperCase().includes(baseUpper));
+          if (matchedKey && baseMappings[matchedKey]) {
+              toEmail = baseMappings[matchedKey].to || '';
+              origin = `Mapeamento da Base / Filial (${targetMulta.base || 'Geral'})`;
+              if (baseMappings[matchedKey].cc) ccEmail = `${baseMappings[matchedKey].cc}; ${ccEmail}`;
+          }
+      }
+
+      // 4. Se ainda assim não encontrar, usa ADMIN_EMAIL como segurança
+      if (!toEmail) {
+          toEmail = ADMIN_EMAIL;
+          origin = 'E-mail Padrão da Administração';
+      }
+
+      // 5. Garantir Lorena e Deny em cópia CC
+      if (!ccEmail.toLowerCase().includes('lorena.padilha@risel.com.br')) {
+          ccEmail = `${ccEmail}; lorena.padilha@risel.com.br`;
+      }
+      if (!ccEmail.toLowerCase().includes('deny.goncalves@risel.com.br')) {
+          ccEmail = `${ccEmail}; deny.goncalves@risel.com.br`;
+      }
+
+      return { toEmail, ccEmail, origin };
+  };
+
+  // Envio Direto Automático de Notificação (dispara diretamente para o e-mail cadastrado da placa/base)
+  const handleSendDirectEmail = async (targetMulta: Partial<Multa>) => {
+      const normalizedMulta = {
+          ...targetMulta,
+          id: targetMulta.id || (targetMulta as any).idsistema || (targetMulta as any).codigo || '',
+          ait: String(targetMulta.ait || (targetMulta as any).numeroAit || (targetMulta as any).numDocumento || (targetMulta as any).aitDigitado || '').trim(),
+          placa: cleanString(targetMulta.placa || (targetMulta as any).placaVeiculo || ''),
+          frota: String(targetMulta.frota || (targetMulta as any).veiculo || '').trim(),
+          responsavelNome: String(targetMulta.responsavelNome || (targetMulta as any).motorista || (targetMulta as any).condutor || '').trim(),
+          descricaoInfracao: String(targetMulta.descricaoInfracao || targetMulta.enquadramento || (targetMulta as any).infracao || '').trim(),
+          base: String(targetMulta.base || (targetMulta as any).filial || (targetMulta as any).unidade || '').trim(),
+          valor: typeof targetMulta.valor === 'number' ? targetMulta.valor : parseFloat(String(targetMulta.valor || 0).replace(',', '.')),
+          valorComDesconto: typeof targetMulta.valorComDesconto === 'number' ? targetMulta.valorComDesconto : (targetMulta.valor ? Number(targetMulta.valor) * 0.8 : 0),
+          prazoIndicacao: targetMulta.prazoIndicacao || '',
+          dataHoraInfracao: targetMulta.dataHoraInfracao || '',
+          status: targetMulta.status || StatusMulta.AGUARDANDO_BOLETO,
+          linkAit: targetMulta.linkAit || '',
+          linkAuth: targetMulta.linkAuth || '',
+          pontosCnh: targetMulta.pontosCnh !== undefined ? targetMulta.pontosCnh : 0,
+          obs: targetMulta.obs || ''
+      };
+
+      setSendingEmail(true);
+      const { toEmail, ccEmail } = await resolveEmailRecipients(normalizedMulta);
+
+      const toRecipientsList = toEmail.split(/[;,]+/).map(e => e.trim()).filter(e => e.length > 0 && e.includes('@'));
+      const ccRecipientsList = ccEmail.split(/[;,]+/).map(e => e.trim()).filter(e => e.length > 0 && e.includes('@'));
+
+      // Gerar PDF do Termo se ainda não existir
+      let authLink = normalizedMulta.linkAuth;
+      if (!authLink && normalizedMulta.placa) {
+          try {
+              const pdfRes = await generateAutorizacaoDescontoPdf(normalizedMulta);
+              if (pdfRes) authLink = pdfRes.dataUrl;
+          } catch (e) {}
+      }
+
+      const aitLinks = parseLinks(normalizedMulta.linkAit);
+      const driveUrls: Array<{ name: string; url: string }> = [...aitLinks];
+      if (authLink) {
+          driveUrls.push({
+              name: `Autorizacao_Desconto_${normalizedMulta.placa || 'MULTA'}`,
+              url: authLink
+          });
+      }
+
+      const getFormattedSubjectDate = (dateStr?: string) => {
+          if (!dateStr) return '';
+          try {
+              const isoDate = dateStr.split('T')[0];
+              if (isoDate.includes('-')) {
+                  const parts = isoDate.split('-');
+                  if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
+              }
+          } catch(e) {}
+          const d = new Date(dateStr);
+          if (isNaN(d.getTime())) return '';
+          return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+      };
+
+      const dataFormatada = getFormattedSubjectDate(normalizedMulta.dataHoraInfracao);
+      const finalSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedMulta.placa || 'S/P'} - FROTA: ${normalizedMulta.frota || normalizedMulta.placa || 'S/F'} - BASE: ${normalizedMulta.base || '-'} - DATA ${dataFormatada}`;
+
+      const smtpHost = localStorage.getItem("risel_smtp_host") || undefined;
+      const smtpPort = localStorage.getItem("risel_smtp_port") || undefined;
+      const smtpEmail = localStorage.getItem("risel_smtp_email") || undefined;
+      const smtpPassword = localStorage.getItem("risel_smtp_password") || undefined;
+      const resendApiKey = localStorage.getItem("risel_resend_api_key") || undefined;
+      const brevoApiKey = localStorage.getItem("risel_brevo_api_key") || undefined;
+
+      try {
+          const response = await fetch('/api/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  smtpHost,
+                  smtpPort,
+                  smtpEmail,
+                  smtpPassword,
+                  resendApiKey,
+                  brevoApiKey,
+                  to: toRecipientsList.join(', ') || ADMIN_EMAIL,
+                  cc: ccRecipientsList.join(', '),
+                  subject: finalSubject,
+                  html: generateEmailHTML({ ...normalizedMulta, linkAuth: authLink }),
+                  driveUrls
+              })
+          });
+
+          const result = await response.json().catch(() => ({}));
+          if (response.ok && result.success) {
+              const driveRemoteUrls = driveUrls.filter(u => u.url.startsWith('http')).map(u => u.url);
+              if (driveRemoteUrls.length > 0) {
+                  deleteDriveFiles(driveRemoteUrls).catch(e => console.warn(e));
+              }
+              const providerInfo = result.provider ? ` (${result.provider})` : '';
+              alert(`✅ Notificação enviada com sucesso para os e-mails cadastrados:\n\nPara: ${toRecipientsList.join(', ')}\nCC: ${ccRecipientsList.join(', ')}${providerInfo}`);
+          } else {
+              const isRenderBlock = result.firewallBlocked || result.renderFree || (result.message && (result.message.includes("Render") || result.message.includes("SMTP")));
+              if (isRenderBlock) {
+                  const goToOutlook = window.confirm(
+                      `⚠️ Bloqueio do Render (Plano Free):\n${result.message}\n\nDeseja abrir a notificação agora no Outlook com destinatários (${toRecipientsList.join(', ')}) e anexos prontos?`
+                  );
+                  if (goToOutlook) {
+                      setEmailModalMulta(normalizedMulta);
+                      setEmailTo(toRecipientsList.join('; '));
+                      setEmailCc(ccRecipientsList.join('; '));
+                      handleOpenOutlookOrWebmail();
+                  }
+              } else {
+                  alert("Erro ao enviar e-mail: " + (result.message || result.error || "Não foi possível completar o envio direto."));
+              }
+          }
+      } catch (err: any) {
+          console.error("Erro no disparo direto de e-mail:", err);
+          alert(`Erro no envio: ${err.message || err}`);
+      } finally {
+          setSendingEmail(false);
+      }
+  };
+
   const handleOpenEmailModal = async (targetMulta?: Partial<Multa> | React.MouseEvent) => {
       // Garante que se a função for chamada via onClick de botão, o SyntheticEvent não seja interpretado como dados da Multa
       const isMultaObject = Boolean(
@@ -1512,74 +1709,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       if (isMultaObject) {
           setFormData(normalizedData);
       }
-      const placaClean = cleanString(normalizedData.placa || '');
-      const placaMappings = await fetchPlacaEmailMappings();
-      let toEmail = '';
-      let ccEmail = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
-      let origin = '';
 
-      // 1. Prioridade: Buscar no campo E-mail da Placa do Controle de Frota Leve (Lista em memória, LocalStorage ou VEICULOS_REAIS)
-      if (placaClean) {
-          const veiculoLocal = veiculos.find(v => cleanString(v.placa) === placaClean);
-          if (veiculoLocal && (veiculoLocal as any).email) {
-              toEmail = (veiculoLocal as any).email.trim();
-              origin = `Controle de Frotas (Placa ${placaClean})`;
-          }
-
-          if (!toEmail) {
-              try {
-                  const storedV = localStorage.getItem("risel_frota_veiculos_v2");
-                  if (storedV) {
-                      const list = JSON.parse(storedV);
-                      const lv = list.find((item: any) => cleanString(item.placa) === placaClean);
-                      if (lv && lv.email) {
-                          toEmail = lv.email.trim();
-                          origin = `Controle de Frotas Local (Placa ${placaClean})`;
-                      }
-                  }
-              } catch (e) {}
-          }
-
-          if (!toEmail && Array.isArray(VEICULOS_REAIS)) {
-              const vr = VEICULOS_REAIS.find(v => cleanString(v.placa) === placaClean);
-              if (vr && vr.email) {
-                  toEmail = vr.email.trim();
-                  origin = `Frota de Veículos Reais (Placa ${placaClean})`;
-              }
-          }
-      }
-
-      // 2. Se não encontrou no veículo da frota, verificar mapeamento específico de placa
-      if (!toEmail && placaClean && placaMappings[placaClean] && placaMappings[placaClean].to) {
-          toEmail = placaMappings[placaClean].to.trim();
-          origin = `Mapeamento Salvo para a Placa ${placaClean}`;
-          if (placaMappings[placaClean].cc) {
-              ccEmail = placaMappings[placaClean].cc.trim();
-          }
-      }
-
-      // 3. Fallback: Mapeamento de e-mail por Base/Filial
-      if (!toEmail) {
-          const baseUpper = normalizedData.base ? normalizedData.base.toUpperCase().trim() : '';
-          const matchedKey = Object.keys(baseMappings).find(k => baseUpper.includes(k.toUpperCase()) || k.toUpperCase().includes(baseUpper));
-          if (matchedKey && baseMappings[matchedKey]) {
-              toEmail = baseMappings[matchedKey].to || '';
-              origin = `Mapeamento da Base / Filial (${normalizedData.base || 'Geral'})`;
-              if (baseMappings[matchedKey].cc) ccEmail = `${baseMappings[matchedKey].cc}; ${ccEmail}`;
-          }
-      }
-
-      if (!origin) {
-          origin = toEmail ? 'Configuração do Sistema' : 'Nenhum e-mail prévio encontrado (preencha abaixo)';
-      }
-
-      // 4. Sempre garantir Lorena e Deny em CC
-      if (!ccEmail.toLowerCase().includes('lorena.padilha@risel.com.br')) {
-          ccEmail = `${ccEmail}; lorena.padilha@risel.com.br`;
-      }
-      if (!ccEmail.toLowerCase().includes('deny.goncalves@risel.com.br')) {
-          ccEmail = `${ccEmail}; deny.goncalves@risel.com.br`;
-      }
+      const { toEmail, ccEmail, origin } = await resolveEmailRecipients(normalizedData);
 
       const getFormattedSubjectDate = (dateStr?: string) => {
           if (!dateStr) return '';
@@ -1850,7 +1981,19 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               setShowEmailPreviewHtml(false);
           } else { 
               console.warn("[Multas] Envio via servidor não completou:", result); 
-              alert("Erro ao enviar e-mail: " + (result.message || result.error || "Não foi possível completar o envio."));
+              const isRenderBlock = result.firewallBlocked || result.renderFree || (result.message && (result.message.includes("Render") || result.message.includes("SMTP")));
+              if (isRenderBlock) {
+                  const goToOutlook = window.confirm(
+                      `⚠️ Bloqueio do Render (Plano Free):\n${result.message}\n\n${result.help ? result.help + '\n\n' : ''}Deseja abrir a notificação agora no seu Outlook / Webmail com todos os destinatários, dados da multa e anexos prontos para envio?`
+                  );
+                  if (goToOutlook) {
+                      handleOpenOutlookOrWebmail();
+                      return;
+                  }
+              } else {
+                  const helpText = result.help ? `\n\nOrientação: ${result.help}` : '';
+                  alert("Erro ao enviar e-mail: " + (result.message || result.error || "Não foi possível completar o envio.") + helpText);
+              }
           }
       } catch (err: any) {
           console.error("Erro ao enviar e-mail via servidor:", err);
@@ -2365,7 +2508,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             <td className="px-2 py-2 text-center border-r border-gray-200/50 align-middle">
                                                 <div className="flex justify-center space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
                                                     <button onClick={(e) => { e.stopPropagation(); setFormData(multa); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleOpenEmailModal(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Enviar Notificação por E-mail"><Send size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleSendDirectEmail(multa); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Enviar Notificação Direto (E-mail Cadastrado)"><Send size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleOpenEmailModal(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Confirmar / Editar Destinatários antes do envio"><Mail size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-full transition-all relative" title="Localizar no Mapa & Rastreador GPS">
                                                         <MapPin size={14} />
                                                     </button>
@@ -2491,14 +2635,24 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     {formData.id ? `Registro ID: ${formData.id}` : 'Novo Registro'}
                 </div>
                 
-                {/* Botão de Enviar E-mail no Topo - Sempre visível e discreto */}
+                {/* Botão de Envio Direto (sem modal) */}
+                <button 
+                    type="button"
+                    onClick={() => handleSendDirectEmail(formData)} 
+                    className="px-3 py-1.5 text-xs font-bold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
+                    title="Disparar e-mail diretamente para os endereços cadastrados da placa/base"
+                >
+                    <Send size={13} className="mr-1.5 text-emerald-700"/> Enviar Direto
+                </button>
+
+                {/* Botão de Confirmar Destinatários */}
                 <button 
                     type="button"
                     onClick={() => handleOpenEmailModal()} 
                     className="px-3 py-1.5 text-xs font-bold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
-                    title="Disparar notificação por e-mail para os responsáveis"
+                    title="Visualizar ou editar os destinatários antes de enviar"
                 >
-                    <Send size={13} className="mr-1.5 text-blue-600"/> Enviar Notificação
+                    <Mail size={13} className="mr-1.5 text-blue-600"/> Revisar E-mail
                 </button>
 
                 <button 
@@ -2520,9 +2674,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     type="button"
                     onClick={handleSaveAndNotify} 
                     className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
-                    title="Salvar registro e abrir confirmação de destinatários para disparo"
+                    title="Salvar registro e enviar notificação direta aos e-mails cadastrados"
                 >
-                    <Send size={13} className="mr-1.5"/> Salvar e Confirmar Notificação
+                    <Send size={13} className="mr-1.5"/> Salvar e Enviar Direto
                 </button>
             </div>
         </div>
