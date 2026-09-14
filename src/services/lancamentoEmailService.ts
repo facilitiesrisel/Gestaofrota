@@ -80,7 +80,8 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
   const filialBase = data.estabelecimento || "100 - Paulínia";
   const centroCusto = data.centroCusto || "C.C 101 - Operacional";
   const aprovadores = data.aprovadores || "Deny e Gerência";
-  const statusAtual = data.status || "Aguardando aprovação";
+  const rawStatus = data.status || "Aguardando Aprovação";
+  const statusAtual = rawStatus === "Aguardando aprovação" ? "Aguardando Aprovação" : rawStatus;
   const lancadoPor = data.lancadoPor || "Colaborador Risel";
   const codOc = data.codLancamentoOc || data.codigoLancamento || "-";
   const observacoes = data.observacao?.trim() || "";

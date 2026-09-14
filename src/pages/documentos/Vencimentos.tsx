@@ -36,7 +36,7 @@ export default function Vencimentos() {
           doc: item.doc || (item.codLancamentoOc ? `DOC-${item.codLancamentoOc}` : `DOC-${item.id}`),
           valor: item.valor || "R$ 0,00",
           vencimento: item.dataVencimento,
-          status: item.status || "Aguardando aprovação",
+          status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
           dias: vencCalc.days,
           avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(item.fornecedor || 'F')}&background=0d4a36&color=ffffff`
         };

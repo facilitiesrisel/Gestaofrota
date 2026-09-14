@@ -485,6 +485,7 @@ export default function Dashboard() {
     const colors: Record<string, string> = {
       "Aprovado": "#10b981",
       "Finalizado": "#059669",
+      "Aguardando Aprovação": "#f59e0b",
       "Aguardando aprovação": "#f59e0b",
       "Aguardando lançamento": "#3b82f6",
       "Aguardando Boleto": "#f59e0b",

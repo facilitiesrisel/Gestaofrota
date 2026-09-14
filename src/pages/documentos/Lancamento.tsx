@@ -121,7 +121,7 @@ export function calcularDiasAteVencimento(dataVencStr: string, status: string) {
 
 const TIPOS_DOCUMENTO = ["Fatura", "Multa", "NF-e", "NFS-e", "Nota de Débito", "Outros", "Recibo"];
 const FORMAS_PAGAMENTO = ["Boleto", "Depósito", "Outros", "PIX", "Transferência"];
-const STATUS_LANCAMENTO = ["Aguardando aprovação", "Aguardando lançamento", "Aprovado", "Em Contestação", "Finalizado", "Lançado", "Lançado aguardando Aprovação Petroshow"];
+const STATUS_LANCAMENTO = ["Aguardando Aprovação", "Aguardando lançamento", "Aprovado", "Em Contestação", "Finalizado", "Lançado", "Lançado aguardando Aprovação Petroshow"];
 
 const SUGESTOES_DESCRICAO: Record<string, string[]> = {
   "SV-0012": [
@@ -182,7 +182,7 @@ const INITIAL_FORM_STATE = {
   formaPagamento: "",
   dataVencimento: "",
   moduloPetroshow: "",
-  status: "Aguardando aprovação",
+  status: "Aguardando Aprovação",
   aprovadores: "",
   codigoLancamento: "",
   codLancamentoOc: "",
@@ -243,7 +243,7 @@ export default function Lancamento() {
               codigoLancamento: docCode,
               dataEmissao: found.dataEmissao || "",
               dataVencimento: found.dataVencimento || "",
-              status: found.status || "Aguardando aprovação",
+              status: found.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (found.status || "Aguardando Aprovação"),
               observacao: found.observacao || "",
               tipo: found.frequencia || "Esporádico",
               itemSistema: found.itemSistema || "",
@@ -1024,7 +1024,7 @@ export default function Lancamento() {
             nomeArquivoAnexo: ocrData.doc,
             formaPagamento: "Boleto",
             tipo: "Esporádico",
-            status: "Aguardando aprovação"
+            status: "Aguardando Aprovação"
           });
           setIsFormOpen(true);
         }
@@ -1338,7 +1338,7 @@ export default function Lancamento() {
           formaPagamento: formaPg, // Iniciado em branco como solicitado
           dataVencimento: "", // Iniciado em branco para o usuário selecionar e controlar
           moduloPetroshow: "Não aplicável",
-          status: "Aguardando aprovação", 
+          status: "Aguardando Aprovação", 
           aprovadores: "Deny e Gerência",
           codigoLancamento: numDoc, // Preenche o número real da nota
           dataAprovacao: "",
@@ -1457,7 +1457,7 @@ export default function Lancamento() {
 
       savedItem = {
         id: Number(editingId),
-        status: data.status || "Aguardando aprovação",
+        status: (data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status,
         dataLancamento: existing?.dataLancamento || new Date().toLocaleDateString('pt-BR'),
         dataVencimento: formatVencimiento,
         fornecedor: data.fornecedor,
@@ -1493,7 +1493,7 @@ export default function Lancamento() {
       const isNowApproved = data.status === "Aprovado";
       savedItem = {
         id: newId,
-        status: data.status || "Aguardando aprovação",
+        status: (data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status,
         dataLancamento: new Date().toLocaleDateString('pt-BR'),
         dataVencimento: formatVencimiento,
         fornecedor: data.fornecedor,
@@ -1683,7 +1683,7 @@ export default function Lancamento() {
       formaPagamento: item.formaPagto || "Boleto",
       dataVencimento: item.dataVencimento || "",
       moduloPetroshow: "",
-      status: item.status || "Aguardando aprovação",
+      status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
       aprovadores: item.aprovadores || "",
       codigoLancamento: docCode,
       codLancamentoOc: item.codLancamentoOc || item.codigoLancamento || "",
@@ -2254,7 +2254,7 @@ export default function Lancamento() {
                                 formaPagto: formData.formaPagamento || "",
                                 itemSistema: formData.itemSistema || "",
                                 lancadoPor: formData.lancadoPor || "",
-                                status: formData.status || "Aguardando aprovação",
+                                status: formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (formData.status || "Aguardando Aprovação"),
                                 frequencia: formData.tipo || "Esporádico",
                                 dataEmissao: formData.dataEmissao || "",
                                 dataVencimento: formData.dataVencimento || "",
@@ -2542,11 +2542,11 @@ export default function Lancamento() {
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</label>
                         <select 
                           name="status" 
-                          value={formData.status} 
+                          value={formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : formData.status} 
                           onChange={handleChange} 
                           className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 font-bold text-xs text-slate-800 shadow-sm text-[#114D38]"
                         >
-                          <option value="Aguardando aprovação">Aguardando aprovação</option>
+                          <option value="Aguardando Aprovação">Aguardando Aprovação</option>
                           <option value="Aprovado">Aprovado</option>
                           <option value="Em Contestação">Em Contestação</option>
                           <option value="Finalizado">Finalizado</option>
@@ -2555,7 +2555,7 @@ export default function Lancamento() {
                       </div>
                       <div className="space-y-0.5 flex flex-col justify-end">
                         <span className="text-[8.5px] text-slate-400 font-semibold leading-tight">
-                          {formData.status === "Aguardando aprovação" 
+                          {formData.status === "Aguardando Aprovação" || formData.status === "Aguardando aprovação"
                             ? "⚠️ Inicia como Aguardando Aprovação."
                             : formData.status === "Em Contestação"
                             ? "🟣 Em contestação junto ao fornecedor/emissor."
@@ -2852,7 +2852,8 @@ export default function Lancamento() {
                         if (!visibleCols[colKey]) return null;
                         
                         if (colKey === "status") {
-                          const currentStatus = item.status || "Aguardando aprovação";
+                          const rawStatus = item.status || "Aguardando Aprovação";
+                          const currentStatus = rawStatus === "Aguardando aprovação" ? "Aguardando Aprovação" : rawStatus;
                           const isApproved = currentStatus === "Aprovado" || currentStatus === "Finalizado" || currentStatus === "Lançado";
                           const isContested = currentStatus === "Em Contestação" || currentStatus === "Em contestação";
                           const isPending = currentStatus.includes("Aguardando");
@@ -2872,7 +2873,7 @@ export default function Lancamento() {
                                   "bg-slate-50 text-slate-700 border-slate-300/80 hover:bg-slate-100"
                                 )}
                               >
-                                <option value="Aguardando aprovação">Aguardando aprovação</option>
+                                <option value="Aguardando Aprovação">Aguardando Aprovação</option>
                                 <option value="Aprovado">Aprovado</option>
                                 <option value="Em Contestação">Em Contestação</option>
                                 <option value="Finalizado">Finalizado</option>

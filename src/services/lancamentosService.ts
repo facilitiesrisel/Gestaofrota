@@ -97,7 +97,7 @@ export function normalizeLancamento(item: any): any {
     centroCusto: centCusto,
     aprovadores: alcada || item.aprovadores || "Deny e Gerência",
     estabelecimento: baseFilial || item.estabelecimento || "100 - Paulínia",
-    status: item.status || "Aguardando aprovação",
+    status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
     doc: item.doc || (codOc ? `DOC-${codOc}` : `DOC-${cleanId}`),
     fornecedor: item.fornecedor || "Fornecedor Não Informado"
   };

@@ -287,7 +287,8 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
   const dataEmissaoDisplay = formatBrDate(documento.dataEmissao);
   const dataVencimentoDisplay = formatBrDate(documento.dataVencimento);
   const valorDisplay = formatValorDisplay(documento.valor);
-  const statusDisplay = documento.status || "Aguardando aprovação";
+  const statusRaw = documento.status || "Aguardando Aprovação";
+  const statusDisplay = statusRaw === "Aguardando aprovação" ? "Aguardando Aprovação" : statusRaw;
 
   const handleDownload = () => {
     try {
@@ -602,7 +603,7 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
                         <span className={cn(
                           "px-2.5 py-0.5 text-[10px] font-extrabold uppercase rounded-md border",
                           statusDisplay === 'Aprovado' ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-                          statusDisplay === 'Aguardando aprovação' ? "bg-amber-50 border-amber-200 text-amber-700" :
+                          (statusDisplay === 'Aguardando Aprovação' || statusDisplay === 'Aguardando aprovação') ? "bg-amber-50 border-amber-200 text-amber-700" :
                           statusDisplay === 'Programado' ? "bg-sky-50 border-sky-200 text-sky-700" :
                           statusDisplay === 'Pago' ? "bg-blue-50 border-blue-200 text-blue-700" :
                           "bg-slate-100 border-slate-200 text-slate-700"
