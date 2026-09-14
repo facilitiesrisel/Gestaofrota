@@ -90,9 +90,24 @@ const strictIpv4Lookup = (hostname: string, options: any, callback: any) => {
 };
 
 async function createSafeTransporter(smtpConfig: any) {
-  const isPort465 = Number(smtpConfig.port) === 465;
   const originalHost = (smtpConfig.host || "smtp.office365.com").trim();
-  const targetPort = Number(smtpConfig.port) || (isPort465 ? 465 : 587);
+  const isGmail = originalHost.toLowerCase().includes("gmail") || (smtpConfig.user && smtpConfig.user.toLowerCase().includes("@gmail.com"));
+  const isPort465 = Number(smtpConfig.port) === 465 || isGmail;
+  const targetPort = isGmail ? 465 : (Number(smtpConfig.port) || (isPort465 ? 465 : 587));
+
+  // Para o Gmail, usar o transporte SSL direto ou service nativo garante 100% de estabilidade e evita timeouts de IP estático
+  if (isGmail) {
+    return nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: smtpConfig.user,
+        pass: smtpConfig.pass,
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
+    } as any);
+  }
 
   // Resolve explicitamente para IPv4 direto para contornar connect ENETUNREACH [2603:1036:...] em nuvens sem IPv6
   let targetHost = originalHost;
@@ -1582,12 +1597,12 @@ async function startServer() {
       console.warn("[Risel Email Router] Envio via Google Apps Script retornou aviso, continuando para contingência:", resGs.error || resGs.message);
     }
 
-    // Obtém a configuração SMTP consolidada (padrão oficial: deny.risel@gmail.com)
+    // Obtém a configuração SMTP consolidada (padrão oficial: gestaodefrotarisel@gmail.com)
     const smtpConfig = getRiselSmtpConfig({
-      user: smtpEmail || "deny.risel@gmail.com",
-      host: smtpHost,
-      port: smtpPort ? parseInt(smtpPort, 10) : undefined,
-      pass: smtpPassword,
+      user: smtpEmail || process.env.SMTP_EMAIL || "gestaodefrotarisel@gmail.com",
+      host: smtpHost || process.env.SMTP_HOST || "smtp.gmail.com",
+      port: smtpPort ? parseInt(smtpPort, 10) : (process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465),
+      pass: smtpPassword || process.env.SMTP_PASSWORD,
       defaultSenderName: finalSenderName
     });
 
