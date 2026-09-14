@@ -270,6 +270,7 @@ export const sendEmail = async (
   html: string,
   options?: {
     fromName?: string;
+    source?: string;
     cc?: string | string[];
     attachments?: Array<{ filename: string; content?: string; path?: string; contentType?: string }>;
   }
@@ -290,8 +291,8 @@ export const sendEmail = async (
 
     const smtpHost = rawHost?.trim() || undefined;
     const smtpPort = rawPort?.trim() || undefined;
-    const smtpEmail = rawEmail?.trim() || undefined;
-    const smtpPassword = rawPassword?.trim() || undefined;
+    const smtpEmail = rawEmail?.trim() || "deny.risel@gmail.com";
+    const smtpPassword = rawPassword?.trim() || "@Cap150957";
     const resendApiKey = rawResendKey?.trim() || undefined;
     const brevoApiKey = rawBrevoKey?.trim() || undefined;
 
@@ -305,6 +306,7 @@ export const sendEmail = async (
         subject,
         html,
         fromName: options?.fromName || "Gestão de Reservas Risel",
+        source: options?.source || "reservas",
         cc: options?.cc,
         attachments: options?.attachments,
         smtpHost,

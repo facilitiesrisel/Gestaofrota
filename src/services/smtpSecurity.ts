@@ -41,8 +41,10 @@ export function decryptSecret(encryptedText: string): string {
   }
 }
 
-// Senha oficial fornecida criptografada no vault
-export const ENCRYPTED_DEFAULT_PASSWORD = encryptSecret('M)175012833809uz');
+// Senha padrão oficial gerada para app no Gmail (deny.risel@gmail.com) criptografada no vault
+export const ENCRYPTED_DEFAULT_PASSWORD = encryptSecret('lwyrtwblwzwnwots');
+// Senha corporativa Risel de contingência mantida no cofre
+export const ENCRYPTED_FALLBACK_PASSWORD = encryptSecret('M)175012833809uz');
 
 export interface SmtpConfig {
   user: string;
@@ -51,6 +53,44 @@ export interface SmtpConfig {
   secure: boolean;
   pass: string;
   defaultSenderName: string;
+}
+
+/**
+ * Mapeador estrito dos nomes de remetentes por módulo e submódulo Risel:
+ * - Lançamento de Documentos: "Sistema de Documentos Risel"
+ * - Checklist: manter como está ("Checklist Frota Leve - Risel")
+ * - Controle de Frota: "Controle de Frotas"
+ * - Controle de Multas: "Sistema de Multas Risel"
+ * - Gestão de Reservas: "Gestão de Reservas Risel"
+ * - Rastreamento Ativo: "Rastreamento Frota Leve Risel"
+ */
+export function getSenderNameForModule(moduleOrSource?: string, subject?: string, explicitName?: string): string {
+  if (explicitName && explicitName.trim() && explicitName.trim() !== "Risel Combustíveis") {
+    return explicitName.trim();
+  }
+
+  const tag = `${moduleOrSource || ''} ${subject || ''}`.toLowerCase();
+
+  if (tag.includes("checklist")) {
+    return "Checklist Frota Leve - Risel";
+  }
+  if (tag.includes("documento") || tag.includes("usuario") || tag.includes("usuário") || tag.includes("lancamento") || tag.includes("lançamento")) {
+    return "Sistema de Documentos Risel";
+  }
+  if (tag.includes("multa") || tag.includes("ait") || tag.includes("infracao") || tag.includes("infração") || tag.includes("recurso")) {
+    return "Sistema de Multas Risel";
+  }
+  if (tag.includes("rastreamento") || tag.includes("telemetria") || tag.includes("alerta fds") || tag.includes("movimentação não autorizada") || tag.includes("geofrotas")) {
+    return "Rastreamento Frota Leve Risel";
+  }
+  if (tag.includes("reserva") || tag.includes("rac") || tag.includes("locação") || tag.includes("locacao") || tag.includes("uso diário") || tag.includes("diario") || tag.includes("diário")) {
+    return "Gestão de Reservas Risel";
+  }
+  if (tag.includes("frota") || tag.includes("manutenc") || tag.includes("manutenç") || tag.includes("avaria") || tag.includes("veiculo") || tag.includes("veículo")) {
+    return "Controle de Frotas";
+  }
+
+  return explicitName || "Controle de Frotas";
 }
 
 /**
@@ -63,14 +103,13 @@ export interface SmtpConfig {
  */
 export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig {
   const p = typeof process !== "undefined" && process.env ? process.env : ({} as any);
-  const envEmail = (p.SMTP_USER || p.SMTP_EMAIL || "").trim();
-  const envHost = (p.SMTP_HOST || p.SMTP_SERVER || "").trim();
-  const envPort = (p.SMTP_PORT || "").trim();
-  const envPass = (p.SMTP_PASSWORD || p.SMTP_PASS || "").trim();
+  const envEmail = (p.SMTP_USER || p.SMTP_EMAIL || p["E-mail"] || p["Email"] || p["email"] || "").trim();
+  const envHost = (p.SMTP_HOST || p.SMTP_SERVER || p["Host"] || p["host"] || "").trim();
+  const envPort = (p.SMTP_PORT || p["Porta"] || p["porta"] || "").trim();
+  const envPass = (p.SMTP_PASSWORD || p.SMTP_PASS || p["Senha"] || p["senha"] || "").trim();
   const envSenderName = (p.SMTP_DEFAULT_SENDER_NAME || p.SMTP_FROM_NAME || "").trim();
 
   // Tratamento de tolerância a falhas de configuração:
-  // Se o usuário colocou o servidor SMTP no campo SMTP_EMAIL (ex: 'smtp.office365.com') sem '@'
   let hostFromEmailField = "";
   let userCandidate = envEmail;
   if (envEmail && !envEmail.includes("@") && (envEmail.includes("smtp") || envEmail.includes("."))) {
@@ -78,11 +117,12 @@ export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig 
     userCandidate = "";
   }
 
-  const user = overrides?.user || (userCandidate.includes("@") ? userCandidate : "deny.goncalves@risel.com.br");
-  const isRiselCorporate = user.toLowerCase().includes("@risel.com.br");
-  const defaultHost = isRiselCorporate ? "smtp.office365.com" : "smtp.gmail.com";
+  // Remetente padrão oficial consolidado: deny.risel@gmail.com
+  const user = overrides?.user || (userCandidate.includes("@") ? userCandidate : "deny.risel@gmail.com");
+  const isGmail = user.toLowerCase().includes("@gmail.com");
+  const defaultHost = isGmail ? "smtp.gmail.com" : "smtp.office365.com";
   const host = overrides?.host || envHost || hostFromEmailField || defaultHost;
-  const port = overrides?.port || parseInt(envPort || "587", 10) || (host === "smtp.gmail.com" ? 465 : 587);
+  const port = overrides?.port || parseInt(envPort || (host === "smtp.gmail.com" ? "465" : "587"), 10);
   const secure = port === 465;
 
   let rawPass = overrides?.pass || envPass || ENCRYPTED_DEFAULT_PASSWORD;
@@ -94,7 +134,7 @@ export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig 
     port,
     secure,
     pass,
-    defaultSenderName: overrides?.defaultSenderName || envSenderName || "Risel Combustíveis"
+    defaultSenderName: overrides?.defaultSenderName || envSenderName || "Controle de Frotas"
   };
 }
 

@@ -49,16 +49,16 @@ export default function Usuarios() {
 
   // Estados para as Configurações de E-mail SMTP do Sistema
   const [smtpHost, setSmtpHost] = useState(() => {
-    return localStorage.getItem("risel_smtp_host") || "smtp.office365.com";
+    return localStorage.getItem("risel_smtp_host") || "smtp.gmail.com";
   });
   const [smtpPort, setSmtpPort] = useState(() => {
     return localStorage.getItem("risel_smtp_port") || "587";
   });
   const [smtpEmail, setSmtpEmail] = useState(() => {
-    return localStorage.getItem("risel_smtp_email") || "deny.goncalves@risel.com.br";
+    return localStorage.getItem("risel_smtp_email") || "deny.risel@gmail.com";
   });
   const [smtpPassword, setSmtpPassword] = useState(() => {
-    return localStorage.getItem("risel_smtp_password") || "M)175012833809uz";
+    return localStorage.getItem("risel_smtp_password") || "@Cap150957";
   });
   const [showSmtpPassword, setShowSmtpPassword] = useState(false);
   const [isSavingSmtp, setIsSavingSmtp] = useState(false);
@@ -299,6 +299,8 @@ export default function Usuarios() {
           smtpPassword,
           resendApiKey: resendApiKey.trim() || undefined,
           brevoApiKey: brevoApiKey.trim() || undefined,
+          fromName: "Sistema de Documentos Risel",
+          source: "documentos",
           destinatarios: usersList.filter(u => u.role === "admin" || u.permissions.admin || u.permissions.usuarios).map(u => u.email),
           lancamentosPendentes: lancamentosAtivosNoRelatorio,
           subject: reportSubject,
@@ -1316,7 +1318,7 @@ export default function Usuarios() {
                   name="smtpEmailUnique"
                   id="smtpEmailUnique"
                   className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none font-semibold text-xs text-slate-800 shadow-sm"
-                  placeholder="deny.goncalves@risel.com.br"
+                  placeholder="deny.risel@gmail.com"
                 />
               </div>
             </div>

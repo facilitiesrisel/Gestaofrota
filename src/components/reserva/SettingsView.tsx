@@ -56,20 +56,22 @@ const SettingsView: React.FC = () => {
                 body: JSON.stringify({
                     to: testEmailRecipient,
                     subject: "Risel Frota - Teste de Conexão SMTP Segura",
+                    fromName: "Controle de Frotas",
+                    source: "frota",
                     html: `
                         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                             <div style="background-color: #15803d; color: white; padding: 20px; text-align: center;">
                                 <h1 style="margin: 0; font-size: 24px;">Risel Combustíveis</h1>
-                                <p style="margin: 5px 0 0 0; opacity: 0.9;">Teste de Conexão SMTP do Sistema de Frota</p>
+                                <p style="margin: 5px 0 0 0; opacity: 0.9;">Teste de Conexão SMTP - Controle de Frotas</p>
                             </div>
                             <div style="padding: 24px; color: #333; line-height: 1.6;">
                                 <h2 style="color: #15803d; margin-top: 0;">Parabéns! Conexão realizada com sucesso.</h2>
-                                <p>Este é um e-mail de teste automático enviado pelo sistema <strong>Risel Frota</strong> para certificar que as credenciais e configurações de envio de e-mail do seu domínio estão ativas e funcionais.</p>
+                                <p>Este é um e-mail de teste automático enviado pelo sistema <strong>Controle de Frotas</strong> para certificar que as credenciais e configurações de envio de e-mail do seu domínio estão ativas e funcionais.</p>
                                 
                                 <div style="background-color: #f0fdf4; border-left: 4px solid #15803d; padding: 15px; margin: 20px 0; border-radius: 4px;">
                                     <strong>Detalhes do Envio:</strong>
                                     <ul style="margin: 5px 0 0 0; padding-left: 20px;">
-                                        <li><strong>Remetente:</strong> deny.goncalves@risel.com.br</li>
+                                        <li><strong>Remetente:</strong> deny.risel@gmail.com (Controle de Frotas)</li>
                                         <li><strong>Destinatário:</strong> ${testEmailRecipient}</li>
                                         <li><strong>Data/Hora do Envio:</strong> ${new Date().toLocaleString('pt-BR')}</li>
                                         <li><strong>Status:</strong> Ativo &amp; Criptografado</li>

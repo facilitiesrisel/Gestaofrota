@@ -212,7 +212,8 @@ const ReservationsView: React.FC = () => {
 
         try {
           await sendEmail(recipients, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
-            fromName: "Gestão de Frotas Risel"
+            fromName: "Gestão de Reservas Risel",
+            source: "reservas"
           });
           showToast("Reserva aprovada e notificações enviadas com sucesso!", 'success');
         } catch (emailErr) {
@@ -287,7 +288,10 @@ const ReservationsView: React.FC = () => {
         recipients.push(resSnapshot.email);
       }
       try {
-        await sendEmail(recipients, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml);
+        await sendEmail(recipients, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml, {
+          fromName: "Gestão de Reservas Risel",
+          source: "reservas"
+        });
         showToast("Reserva rejeitada e e-mail enviado com sucesso.", 'success');
       } catch (errEmail) {
         showToast("Reserva rejeitada. (Aviso: falha temporária no disparo do e-mail)", 'warning');
@@ -324,7 +328,10 @@ const ReservationsView: React.FC = () => {
                 if (reservation.email && !recipients.includes(reservation.email)) {
                   recipients.push(reservation.email);
                 }
-                await sendEmail(recipients, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml);
+                await sendEmail(recipients, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml, {
+                  fromName: "Gestão de Reservas Risel",
+                  source: "reservas"
+                });
               } catch (mailErr) {
                 console.warn("Aviso ao enviar e-mail de cancelamento:", mailErr);
               }
@@ -420,7 +427,10 @@ const ReservationsView: React.FC = () => {
             recipients.push(recipientEmail);
           }
 
-          await sendEmail(recipients, `Atualização de Reserva - ${updatedData.requesterName || selectedReservation.requesterName}`, emailHtml);
+          await sendEmail(recipients, `Atualização de Reserva - ${updatedData.requesterName || selectedReservation.requesterName}`, emailHtml, {
+            fromName: "Gestão de Reservas Risel",
+            source: "reservas"
+          });
           showToast("Reserva atualizada e e-mails enviados com sucesso.", 'success');
         } catch (err) {
           console.error("Erro ao salvar edição de reserva:", err);

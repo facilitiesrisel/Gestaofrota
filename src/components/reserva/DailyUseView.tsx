@@ -273,7 +273,10 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                 "Viagem iniciada pelo painel administrativo."
             );
             // Envia para admins
-            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${addFormData.driverName}`, emailHtml);
+            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${addFormData.driverName}`, emailHtml, {
+                fromName: "Gestão de Reservas Risel",
+                source: "reservas"
+            });
             // --------------------------------------
 
             setIsAddModalOpen(false);
@@ -349,7 +352,10 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                     undefined,
                     "Viagem finalizada pelo painel administrativo."
                 );
-                await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${selectedTrip.driverName}`, emailHtml);
+                await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${selectedTrip.driverName}`, emailHtml, {
+                    fromName: "Gestão de Reservas Risel",
+                    source: "reservas"
+                });
                 // --------------------------------------
 
                 setIsReturnModalOpen(false);

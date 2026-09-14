@@ -269,7 +269,10 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
              "O veículo atingiu os parâmetros de alerta para manutenção preventiva."
          );
          
-         sendEmail(ADMIN_EMAIL_RECIPIENTS, subject, emailHtml).catch(err => console.error("Failed to send maintenance alert", err));
+         sendEmail(ADMIN_EMAIL_RECIPIENTS, subject, emailHtml, {
+           fromName: "Controle de Frotas",
+           source: "frota"
+         }).catch(err => console.error("Failed to send maintenance alert", err));
      }
   };
 

@@ -252,7 +252,10 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation,
             mapUrl // Passando a URL da imagem do mapa
         );
 
-        await sendEmail(ADMIN_EMAIL_RECIPIENTS, `🚨 ALERTA FDS: Movimentação não autorizada - ${vehicle.plate}`, emailHtml);
+        await sendEmail(ADMIN_EMAIL_RECIPIENTS, `🚨 ALERTA FDS: Movimentação não autorizada - ${vehicle.plate}`, emailHtml, {
+            fromName: "Rastreamento Frota Leve Risel",
+            source: "rastreamento"
+        });
         console.log(`Alerta de fim de semana enviado para ${vehicle.plate}`);
     };
 

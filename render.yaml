@@ -13,11 +13,11 @@ services:
       - key: PORT
         value: "3000"
       - key: SMTP_EMAIL
-        value: deny.goncalves@risel.com.br
+        value: deny.risel@gmail.com
       - key: SMTP_HOST
-        value: smtp.office365.com
+        value: smtp.gmail.com
       - key: SMTP_PORT
-        value: "587"
+        value: "465"
       - key: VITE_SUPABASE_URL
         value: https://ihowbxlqfcjzzzleasqq.supabase.co
       - key: SMTP_PASSWORD
@@ -25,4 +25,6 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: RESEND_API_KEY
         sync: false

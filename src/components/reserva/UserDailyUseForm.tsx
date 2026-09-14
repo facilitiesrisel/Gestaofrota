@@ -238,7 +238,10 @@ const UserDailyUseForm: React.FC = () => {
                 undefined,
                 "Nova viagem iniciada via formulário público."
             );
-            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${startFormData.driverName}`, emailHtml);
+            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${startFormData.driverName}`, emailHtml, {
+                fromName: "Gestão de Reservas Risel",
+                source: "reservas"
+            });
 
             localStorage.setItem('activeDailyTripId', newTripId);
             setActiveTripId(newTripId);
@@ -349,7 +352,10 @@ const UserDailyUseForm: React.FC = () => {
                 undefined,
                 "Viagem finalizada via formulário público."
             );
-            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${activeTrip.driverName}`, emailHtml);
+            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${activeTrip.driverName}`, emailHtml, {
+                fromName: "Gestão de Reservas Risel",
+                source: "reservas"
+            });
 
             localStorage.removeItem('activeDailyTripId');
             setActiveTripId(null);

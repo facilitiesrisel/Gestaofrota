@@ -499,7 +499,8 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         `Nova Solicitação de Reserva de Veículo - ${formData.requesterName}`, 
         emailHtml,
         {
-          fromName: "Gestão de Reservas Risel"
+          fromName: "Gestão de Reservas Risel",
+          source: "reservas"
         }
       );
     } catch (emailErr) {

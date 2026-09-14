@@ -276,6 +276,8 @@ export const TermoAvariaViewerModal: React.FC<TermoAvariaViewerModalProps> = ({
         body: JSON.stringify({
           to: emailDestinatario.trim(),
           cc: emailCC.trim() || undefined,
+          fromName: "Controle de Frotas",
+          source: "frota",
           subject: `Autorização de Desconto em Folha por Avaria - Veículo ${manutencao.placa} - Risel Combustíveis`,
           html: htmlEmail,
           attachments: attachmentsPayload

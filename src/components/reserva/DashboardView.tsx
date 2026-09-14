@@ -511,7 +511,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
         `;
 
         try {
-            await sendEmail(accessEmail.trim(), emailSubject, emailHtml);
+            await sendEmail(accessEmail.trim(), emailSubject, emailHtml, {
+                fromName: "Gestão de Reservas Risel",
+                source: "reservas"
+            });
         } catch (emailErr) {
             console.warn("Failed to send welcome email, but account was successfully created:", emailErr);
         }
