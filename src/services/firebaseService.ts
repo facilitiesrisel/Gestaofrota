@@ -303,14 +303,20 @@ export const sendEmail = async (
     const rawResendKey = typeof window !== 'undefined' ? localStorage.getItem("risel_resend_api_key") : null;
     const rawBrevoKey = typeof window !== 'undefined' ? localStorage.getItem("risel_brevo_api_key") : null;
 
+    // Filtra para não enviar senhas antigas de texto plano ou e-mails de teste que possam quebrar a autenticação
+    const isValidCustomEmail = rawEmail && rawEmail.includes('@') && rawEmail.trim() !== "deny.risel@gmail.com";
+    const isValidCustomPass = rawPassword && rawPassword.trim().length >= 8 && rawPassword.trim() !== "@Cap150957";
+
     const smtpHost = rawHost?.trim() || undefined;
     const smtpPort = rawPort?.trim() || undefined;
-    const smtpEmail = rawEmail?.trim() || "deny.risel@gmail.com";
-    const smtpPassword = rawPassword?.trim() || "@Cap150957";
+    const smtpEmail = isValidCustomEmail ? rawEmail!.trim() : undefined;
+    const smtpPassword = isValidCustomPass ? rawPassword!.trim() : undefined;
     const resendApiKey = rawResendKey?.trim() || undefined;
     const brevoApiKey = rawBrevoKey?.trim() || undefined;
 
-    const response = await fetch('/api/send-email', {
+    const endpoint = typeof window !== 'undefined' ? '/api/send-email' : 'http://localhost:3000/api/send-email';
+
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -47,13 +47,31 @@ export function sanitizeRequestBody(req: Request, res: Response, next: NextFunct
   next();
 }
 
+// Campos que contêm dados brutos, base64 ou binários que NUNCA devem sofrer sanitização de HTML para não corromper anexos
+const BINARY_AND_RAW_KEYS = new Set([
+  'content', 'dataurl', 'data_url', 'arquivoanexobase64', 'arquivo_anexo_base64', 
+  'cnhbase64', 'voucherbase64', 'base64', 'pdfbase64', 'fotobase64', 
+  'signaturebase64', 'filecontent', 'file_content', 'csvcontent', 'jsoncontent',
+  'path', 'url', 'anexourl', 'comprovanteurl', 'voucherurl', 'cnhurl', 'driveurl'
+]);
+
 function sanitizeObject(obj: any) {
   for (const key of Object.keys(obj)) {
+    const lowerKey = key.toLowerCase();
     const val = obj[key];
+    
+    // Pula sanitização de campos binários/base64 para garantir integridade absoluta de anexos PDF/imagens
+    if (BINARY_AND_RAW_KEYS.has(lowerKey)) {
+      continue;
+    }
+
     if (typeof val === 'string') {
       // Se for campo de html mantemos tags permitidas, senão limpamos tags perigosas como <script>
-      if (key === 'html' || key === 'htmlContent') {
+      if (lowerKey === 'html' || lowerKey === 'htmlcontent') {
         obj[key] = cleanHtmlContent(val);
+      } else if (val.startsWith('data:') && val.includes(';base64,')) {
+        // Preserva data URLs sem alterar
+        continue;
       } else {
         // Remove tags HTML de campos normais (ex: subject, names, emails)
         obj[key] = sanitizeHtml(val, { allowedTags: [], allowedAttributes: {} });

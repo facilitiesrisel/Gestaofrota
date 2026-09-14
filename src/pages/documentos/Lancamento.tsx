@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building } from "lucide-react";
+import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -14,8 +14,12 @@ import {
   saveFornecedorSupabase,
   fetchCentrosCustoSupabase,
   saveCentroCustoSupabase,
+  deleteCentroCustoSupabase,
+  updateCentroCustoSupabase,
   fetchBasesSupabase,
   saveBaseSupabase,
+  deleteBaseSupabase,
+  updateBaseSupabase,
   testSupabaseConnection, 
   pingSupabaseKeepAlive, 
   getSupabaseConfig, 
@@ -297,7 +301,15 @@ export default function Lancamento() {
   const [activeVencTab, setActiveVencTab] = useState("Próximos");
   const [emailSentNotice, setEmailSentNotice] = useState<{ title: string; desc: string } | null>(null);
 
-  // Estados para Gestão de Centros de Custo (C.C)
+  // Estados para Gestão Completa de Bases / Filiais
+  const [isManageBasesModalOpen, setIsManageBasesModalOpen] = useState(false);
+  const [newBaseCodigo, setNewBaseCodigo] = useState("");
+  const [newBaseNome, setNewBaseNome] = useState("");
+  const [editingBaseOldName, setEditingBaseOldName] = useState<string | null>(null);
+  const [editingBaseNewName, setEditingBaseNewName] = useState("");
+  const [baseFeedbackMsg, setBaseFeedbackMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Estados para Gestão Completa de Centros de Custo (C.C)
   const [centrosCustoList, setCentrosCustoList] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem("risel_centros_custo");
@@ -311,6 +323,10 @@ export default function Lancamento() {
   const [isNewCcModalOpen, setIsNewCcModalOpen] = useState(false);
   const [newCcCodigo, setNewCcCodigo] = useState("");
   const [newCcNome, setNewCcNome] = useState("");
+  const [editingCcOldName, setEditingCcOldName] = useState<string | null>(null);
+  const [editingCcCodigo, setEditingCcCodigo] = useState("");
+  const [editingCcNome, setEditingCcNome] = useState("");
+  const [ccFeedbackMsg, setCcFeedbackMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     // 1. Carrega Centros de Custo do banco de dados Supabase e Firestore
@@ -352,6 +368,69 @@ export default function Lancamento() {
     }
   };
 
+  // Cadastrar nova Base pelo modal de gerenciamento
+  const handleAddNovaBaseModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBaseNome.trim()) return;
+
+    let formattedBase = newBaseNome.trim();
+    if (newBaseCodigo.trim()) {
+      formattedBase = `${newBaseCodigo.trim()} - ${newBaseNome.trim()}`;
+    }
+
+    if (!estabelecimentos.includes(formattedBase)) {
+      const updated = Array.from(new Set([...estabelecimentos, formattedBase])).filter(Boolean);
+      updated.sort();
+      setEstabelecimentos(updated);
+      await saveBaseSupabase(formattedBase);
+    }
+
+    setFormData(prev => ({ ...prev, estabelecimento: formattedBase }));
+    setNewBaseCodigo("");
+    setNewBaseNome("");
+    setBaseFeedbackMsg({ type: "success", text: `Base "${formattedBase}" cadastrada e salva com sucesso!` });
+    setTimeout(() => setBaseFeedbackMsg(null), 4000);
+  };
+
+  // Salvar Edição de Base Existente
+  const handleSaveEditBase = async (oldName: string) => {
+    const cleanNew = editingBaseNewName.trim();
+    if (!cleanNew || cleanNew === oldName) {
+      setEditingBaseOldName(null);
+      return;
+    }
+
+    const updated = estabelecimentos.map(b => b === oldName ? cleanNew : b);
+    updated.sort();
+    setEstabelecimentos(updated);
+    
+    if (formData.estabelecimento === oldName) {
+      setFormData(prev => ({ ...prev, estabelecimento: cleanNew }));
+    }
+
+    setEditingBaseOldName(null);
+    await updateBaseSupabase(oldName, cleanNew);
+    setBaseFeedbackMsg({ type: "success", text: `Base alterada para "${cleanNew}" com sucesso!` });
+    setTimeout(() => setBaseFeedbackMsg(null), 4000);
+  };
+
+  // Excluir Base
+  const handleDeleteBase = async (baseName: string) => {
+    if (!window.confirm(`Deseja realmente remover a base "${baseName}"?`)) return;
+
+    const updated = estabelecimentos.filter(b => b !== baseName);
+    setEstabelecimentos(updated);
+
+    if (formData.estabelecimento === baseName) {
+      setFormData(prev => ({ ...prev, estabelecimento: updated[0] || "" }));
+    }
+
+    await deleteBaseSupabase(baseName);
+    setBaseFeedbackMsg({ type: "success", text: `Base "${baseName}" removida com sucesso!` });
+    setTimeout(() => setBaseFeedbackMsg(null), 4000);
+  };
+
+  // Cadastrar Novo Centro de Custo
   const handleAddNovoCentroCusto = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCcNome.trim()) return;
@@ -373,7 +452,66 @@ export default function Lancamento() {
     setFormData(prev => ({ ...prev, centroCusto: formattedName }));
     setNewCcCodigo("");
     setNewCcNome("");
-    setIsNewCcModalOpen(false);
+    setCcFeedbackMsg({ type: "success", text: `Centro de Custo "${formattedName}" cadastrado e salvo!` });
+    setTimeout(() => setCcFeedbackMsg(null), 4000);
+  };
+
+  // Iniciar Edição de Centro de Custo
+  const handleStartEditCentroCusto = (ccString: string) => {
+    setEditingCcOldName(ccString);
+    const match = ccString.match(/C\.C\s*([^-]+)-\s*(.+)/i);
+    if (match) {
+      setEditingCcCodigo(match[1].trim());
+      setEditingCcNome(match[2].trim());
+    } else {
+      setEditingCcCodigo("");
+      setEditingCcNome(ccString.replace(/^C\.C\s*-\s*/i, "").trim());
+    }
+  };
+
+  // Salvar Edição de Centro de Custo
+  const handleSaveEditCentroCusto = async (oldName: string) => {
+    if (!editingCcNome.trim()) {
+      setEditingCcOldName(null);
+      return;
+    }
+
+    let formattedNew = editingCcNome.trim();
+    if (editingCcCodigo.trim()) {
+      formattedNew = `C.C ${editingCcCodigo.trim()} - ${editingCcNome.trim()}`;
+    } else if (!formattedNew.toLowerCase().startsWith("c.c")) {
+      formattedNew = `C.C - ${formattedNew}`;
+    }
+
+    const updatedList = centrosCustoList.map(item => item === oldName ? formattedNew : item);
+    setCentrosCustoList(updatedList);
+    localStorage.setItem("risel_centros_custo", JSON.stringify(updatedList));
+
+    if (formData.centroCusto === oldName) {
+      setFormData(prev => ({ ...prev, centroCusto: formattedNew }));
+    }
+
+    setEditingCcOldName(null);
+    await updateCentroCustoSupabase(oldName, formattedNew, editingCcCodigo.trim(), editingCcNome.trim());
+    setCcFeedbackMsg({ type: "success", text: `Centro de Custo alterado para "${formattedNew}" com sucesso!` });
+    setTimeout(() => setCcFeedbackMsg(null), 4000);
+  };
+
+  // Excluir Centro de Custo
+  const handleDeleteCentroCusto = async (ccName: string) => {
+    if (!window.confirm(`Deseja realmente remover o Centro de Custo "${ccName}"?`)) return;
+
+    const updatedList = centrosCustoList.filter(item => item !== ccName);
+    setCentrosCustoList(updatedList);
+    localStorage.setItem("risel_centros_custo", JSON.stringify(updatedList));
+
+    if (formData.centroCusto === ccName) {
+      setFormData(prev => ({ ...prev, centroCusto: updatedList[0] || "" }));
+    }
+
+    await deleteCentroCustoSupabase(ccName);
+    setCcFeedbackMsg({ type: "success", text: `Centro de Custo "${ccName}" removido com sucesso!` });
+    setTimeout(() => setCcFeedbackMsg(null), 4000);
   };
 
   // Estados e Configurações para o Banco de Dados Real no Supabase
@@ -1310,7 +1448,7 @@ export default function Lancamento() {
         if (sent) {
           setEmailSentNotice({
             title: "E-mail de Aprovação Enviado",
-            desc: `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br.`
+            desc: `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
           });
           setTimeout(() => setEmailSentNotice(null), 8000);
         }
@@ -1340,6 +1478,31 @@ export default function Lancamento() {
     lastCnpjDataRef.current = null;
   };
 
+  // Estado para rastrear envio individual de e-mail de aprovação
+  const [sendingEmailId, setSendingEmailId] = useState<number | string | null>(null);
+
+  // Disparo / Reenvio manual do e-mail de aprovação com anexo
+  const handleManualSendEmail = async (item: any) => {
+    setSendingEmailId(item.id);
+    try {
+      const sent = await sendLancamentoAprovacaoEmail(item);
+      if (sent) {
+        setEmailSentNotice({
+          title: "E-mail de Aprovação Enviado",
+          desc: `E-mail com anexo e tabela formatada encaminhado com sucesso para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
+        });
+        setTimeout(() => setEmailSentNotice(null), 8000);
+      } else {
+        alert("Falha ao enviar e-mail de aprovação. Verifique a conexão com o servidor de e-mail.");
+      }
+    } catch (err: any) {
+      console.error("Erro ao disparar e-mail de aprovação:", err);
+      alert("Erro ao disparar e-mail: " + (err.message || "Falha na comunicação com o servidor"));
+    } finally {
+      setSendingEmailId(null);
+    }
+  };
+
   // Alteração e persistência direta de status na linha da tabela
   const handleInlineStatusChange = async (id: number, newStatus: string) => {
     const existing = lancamentos.find(item => Number(item.id) === Number(id));
@@ -1362,6 +1525,21 @@ export default function Lancamento() {
     };
 
     await saveLancamentoUnified(updatedItem);
+
+    // Se o status for alterado para Aguardando aprovação, dispara o e-mail oficial
+    if (newStatus.toLowerCase().includes("aguardando")) {
+      sendLancamentoAprovacaoEmail(updatedItem).then(sent => {
+        if (sent) {
+          setEmailSentNotice({
+            title: "E-mail de Aprovação Enviado",
+            desc: `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
+          });
+          setTimeout(() => setEmailSentNotice(null), 8000);
+        }
+      }).catch(err => {
+        console.warn("Falha no disparo de e-mail ao alterar status:", err);
+      });
+    }
   };
 
   // Abrir o formulário de edição de Lançamento
@@ -1944,13 +2122,25 @@ export default function Lancamento() {
                     <div className="space-y-0.5">
                       <div className="flex justify-between items-center">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Base/Filial</label>
-                        <button 
-                          type="button" 
-                          onClick={() => setShowNewFilialInput(!showNewFilialInput)} 
-                          className="text-[9px] text-emerald-600 hover:text-emerald-700 font-bold transition-all underline cursor-pointer"
-                        >
-                          {showNewFilialInput ? "Voltar" : "+ Nova"}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button 
+                            type="button" 
+                            onClick={() => setIsManageBasesModalOpen(true)} 
+                            className="text-[9px] text-[#114D38] hover:text-emerald-700 font-bold transition-all flex items-center gap-0.5 hover:underline cursor-pointer"
+                            title="Gerenciar e Editar todas as Bases/Filiais"
+                          >
+                            <Settings className="w-2.5 h-2.5" />
+                            <span>Gerenciar</span>
+                          </button>
+                          <span className="text-slate-300 text-[9px]">•</span>
+                          <button 
+                            type="button" 
+                            onClick={() => setShowNewFilialInput(!showNewFilialInput)} 
+                            className="text-[9px] text-emerald-600 hover:text-emerald-700 font-bold transition-all underline cursor-pointer"
+                          >
+                            {showNewFilialInput ? "Voltar" : "+ Nova"}
+                          </button>
+                        </div>
                       </div>
                       {showNewFilialInput ? (
                         <div className="flex gap-1">
@@ -2004,9 +2194,10 @@ export default function Lancamento() {
                         type="button"
                         onClick={() => setIsNewCcModalOpen(true)}
                         className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+                        title="Gerenciar e Editar Centros de Custo"
                       >
-                        <Plus className="w-3 h-3 text-emerald-600" />
-                        <span>Criar Novo C.C</span>
+                        <Layers className="w-3 h-3 text-emerald-600" />
+                        <span>Gerenciar / Novo C.C</span>
                       </button>
                     </div>
                     <div className="relative">
@@ -2141,9 +2332,8 @@ export default function Lancamento() {
 
                     {/* Cód. Lançamento / Nº OC antes de Status */}
                     <div className="space-y-0.5 mt-2">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
-                        <span>Cód. Lançamento / Nº OC</span>
-                        <span className="text-[8.5px] font-normal text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Reflete para todos</span>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        Cód. Lançamento / Nº OC
                       </label>
                       <input 
                         type="text" 
@@ -2445,18 +2635,30 @@ export default function Lancamento() {
                   
                   return (
                     <tr key={item.id} className="hover:bg-slate-100/50 transition-colors odd:bg-slate-50/15 even:bg-white border-b border-slate-200/50 last:border-b-0 group">
-                      <td className="px-4 py-3 text-slate-400 w-16 text-center border-r border-slate-200/50">
-                        <div className="flex items-center justify-center gap-2">
+                      <td className="px-3 py-3 text-slate-400 w-20 text-center border-r border-slate-200/50">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button 
+                            onClick={() => handleManualSendEmail(item)}
+                            disabled={sendingEmailId === item.id}
+                            className="hover:text-blue-600 transition-colors p-1 rounded hover:bg-blue-50 cursor-pointer disabled:opacity-50 text-slate-500"
+                            title="Disparar/Reenviar E-mail de Aprovação com Anexo"
+                          >
+                            {sendingEmailId === item.id ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                            ) : (
+                              <Mail className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                           <button 
                             onClick={() => handleEditLancamento(item)} 
-                            className="hover:text-emerald-600 transition-colors p-1 rounded hover:bg-slate-150 cursor-pointer"
+                            className="hover:text-emerald-600 transition-colors p-1 rounded hover:bg-slate-150 cursor-pointer text-slate-500"
                             title="Editar Lançamento"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button 
                             onClick={() => handleDeleteLancamento(item.id)} 
-                            className="hover:text-rose-600 transition-colors p-1 rounded hover:bg-slate-150 cursor-pointer"
+                            className="hover:text-rose-600 transition-colors p-1 rounded hover:bg-slate-150 cursor-pointer text-slate-500"
                             title="Excluir Lançamento"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -2945,68 +3147,359 @@ export default function Lancamento() {
         documento={viewingAnexo}
       />
 
-      {/* Modal de Criação de Novo Centro de Custo */}
-      {isNewCcModalOpen && (
+      {/* Modal de Gestão e Edição Completa de Bases / Filiais */}
+      {isManageBasesModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white rounded-2xl p-5 max-w-md w-full shadow-2xl border border-slate-200 space-y-4"
+            className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-5 max-h-[90vh] flex flex-col"
           >
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-display font-extrabold text-base text-slate-800 flex items-center gap-2">
-                <Building className="w-4.5 h-4.5 text-[#114D38]" />
-                <span>Cadastrar Novo Centro de Custo</span>
-              </h3>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-[#114D38]">
+                  <Building className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-extrabold text-base text-slate-800">
+                    Gerenciamento de Bases / Filiais
+                  </h3>
+                  <p className="text-xs text-slate-500">Cadastre, edite ou remova estabelecimentos do sistema</p>
+                </div>
+              </div>
               <button 
                 type="button" 
-                onClick={() => setIsNewCcModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                onClick={() => {
+                  setIsManageBasesModalOpen(false);
+                  setEditingBaseOldName(null);
+                  setBaseFeedbackMsg(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg cursor-pointer hover:bg-slate-100"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleAddNovoCentroCusto} className="space-y-3">
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Código (Opcional, ex: 111)</label>
-                <input 
-                  type="text" 
-                  value={newCcCodigo} 
-                  onChange={(e) => setNewCcCodigo(e.target.value)} 
-                  placeholder="Ex: 111" 
-                  className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold mt-0.5 focus:border-[#114D38] outline-none"
-                />
+            {baseFeedbackMsg && (
+              <div className={cn(
+                "p-3 rounded-lg text-xs font-semibold flex items-center gap-2",
+                baseFeedbackMsg.type === "success" ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-rose-50 text-rose-800 border border-rose-200"
+              )}>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{baseFeedbackMsg.text}</span>
               </div>
+            )}
 
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Nome do Centro de Custo *</label>
-                <input 
-                  type="text" 
-                  required 
-                  value={newCcNome} 
-                  onChange={(e) => setNewCcNome(e.target.value)} 
-                  placeholder="Ex: Almoxarifado / Suprimentos" 
-                  className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold mt-0.5 focus:border-[#114D38] outline-none"
-                />
+            {/* Formulário de Cadastro Rápido de Nova Base */}
+            <form onSubmit={handleAddNovaBaseModal} className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200/80 space-y-3">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Adicionar Nova Base</span>
+              </h4>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Cód. (ex: 200)</label>
+                  <input 
+                    type="text" 
+                    value={newBaseCodigo} 
+                    onChange={(e) => setNewBaseCodigo(e.target.value)} 
+                    placeholder="200" 
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold mt-0.5 bg-white focus:border-[#114D38] outline-none"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Nome da Base *</label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={newBaseNome} 
+                    onChange={(e) => setNewBaseNome(e.target.value)} 
+                    placeholder="Ex: Santos / Cubatão" 
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold mt-0.5 bg-white focus:border-[#114D38] outline-none"
+                  />
+                </div>
               </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button 
-                  type="button" 
-                  onClick={() => setIsNewCcModalOpen(false)}
-                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                >
-                  Cancelar
-                </button>
+              <div className="flex justify-end">
                 <button 
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-bold text-white bg-[#114D38] hover:bg-[#0d3d2c] rounded-lg shadow-sm cursor-pointer"
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#114D38] hover:bg-[#0d3d2c] rounded-lg shadow-sm cursor-pointer flex items-center gap-1.5 transition-all"
                 >
-                  Cadastrar C.C
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cadastrar e Salvar Base</span>
                 </button>
               </div>
             </form>
+
+            {/* Lista de Bases Cadastradas com Edição Inline */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[160px]">
+              <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 px-1">
+                <span>Bases Ativas no Sistema ({estabelecimentos.length})</span>
+                <span className="text-[10px] font-normal text-slate-400">Clique no lápis para editar</span>
+              </div>
+
+              {estabelecimentos.map((base) => {
+                const isEditing = editingBaseOldName === base;
+
+                return (
+                  <div 
+                    key={base} 
+                    className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-xl hover:border-emerald-200 transition-all group shadow-2xs"
+                  >
+                    {isEditing ? (
+                      <div className="flex items-center gap-2 w-full">
+                        <input 
+                          type="text" 
+                          value={editingBaseNewName}
+                          onChange={(e) => setEditingBaseNewName(e.target.value)}
+                          className="flex-1 px-2.5 py-1 text-xs font-bold border border-emerald-400 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 bg-emerald-50/20 text-slate-800"
+                          autoFocus
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => handleSaveEditBase(base)}
+                          className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                          title="Salvar alterações"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setEditingBaseOldName(null)}
+                          className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-lg cursor-pointer"
+                          title="Cancelar"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span className="text-xs font-bold text-slate-700 truncate">{base}</span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setEditingBaseOldName(base);
+                              setEditingBaseNewName(base);
+                            }}
+                            className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-md cursor-pointer transition-colors"
+                            title="Editar Base"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => handleDeleteBase(base)}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md cursor-pointer transition-colors"
+                            title="Excluir Base"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setIsManageBasesModalOpen(false);
+                  setEditingBaseOldName(null);
+                  setBaseFeedbackMsg(null);
+                }}
+                className="px-4 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+              >
+                Concluir
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal de Gestão e Edição Completa de Centros de Custo */}
+      {isNewCcModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-5 max-h-[90vh] flex flex-col"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-[#114D38]">
+                  <Layers className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-extrabold text-base text-slate-800">
+                    Gerenciamento de Centros de Custo (C.C)
+                  </h3>
+                  <p className="text-xs text-slate-500">Cadastre, edite códigos ou remova Centros de Custo</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setIsNewCcModalOpen(false);
+                  setEditingCcOldName(null);
+                  setCcFeedbackMsg(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg cursor-pointer hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {ccFeedbackMsg && (
+              <div className={cn(
+                "p-3 rounded-lg text-xs font-semibold flex items-center gap-2",
+                ccFeedbackMsg.type === "success" ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-rose-50 text-rose-800 border border-rose-200"
+              )}>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{ccFeedbackMsg.text}</span>
+              </div>
+            )}
+
+            {/* Formulário de Cadastro de Novo C.C */}
+            <form onSubmit={handleAddNovoCentroCusto} className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200/80 space-y-3">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Adicionar Novo Centro de Custo</span>
+              </h4>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Cód. (ex: 111)</label>
+                  <input 
+                    type="text" 
+                    value={newCcCodigo} 
+                    onChange={(e) => setNewCcCodigo(e.target.value)} 
+                    placeholder="111" 
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold mt-0.5 bg-white focus:border-[#114D38] outline-none"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Nome / Descrição *</label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={newCcNome} 
+                    onChange={(e) => setNewCcNome(e.target.value)} 
+                    placeholder="Ex: Almoxarifado / Suprimentos" 
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold mt-0.5 bg-white focus:border-[#114D38] outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <button 
+                  type="submit"
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#114D38] hover:bg-[#0d3d2c] rounded-lg shadow-sm cursor-pointer flex items-center gap-1.5 transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cadastrar e Salvar C.C</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Lista de Centros de Custo Cadastrados com Edição */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[160px]">
+              <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 px-1">
+                <span>Centros de Custo Ativos ({centrosCustoList.length})</span>
+                <span className="text-[10px] font-normal text-slate-400">Clique no lápis para editar</span>
+              </div>
+
+              {centrosCustoList.map((cc) => {
+                const isEditing = editingCcOldName === cc;
+
+                return (
+                  <div 
+                    key={cc} 
+                    className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-xl hover:border-emerald-200 transition-all group shadow-2xs"
+                  >
+                    {isEditing ? (
+                      <div className="flex items-center gap-1.5 w-full">
+                        <input 
+                          type="text" 
+                          placeholder="Cód."
+                          value={editingCcCodigo}
+                          onChange={(e) => setEditingCcCodigo(e.target.value)}
+                          className="w-20 px-2 py-1 text-xs font-bold border border-emerald-400 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 bg-white text-slate-800"
+                        />
+                        <input 
+                          type="text" 
+                          placeholder="Nome do Centro de Custo"
+                          value={editingCcNome}
+                          onChange={(e) => setEditingCcNome(e.target.value)}
+                          className="flex-1 px-2 py-1 text-xs font-bold border border-emerald-400 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 bg-white text-slate-800"
+                          autoFocus
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => handleSaveEditCentroCusto(cc)}
+                          className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                          title="Salvar alterações"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setEditingCcOldName(null)}
+                          className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-lg cursor-pointer"
+                          title="Cancelar"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 text-[10px] font-black border border-emerald-200">
+                            C.C
+                          </span>
+                          <span className="text-xs font-bold text-slate-700 truncate">{cc}</span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button 
+                            type="button"
+                            onClick={() => handleStartEditCentroCusto(cc)}
+                            className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-md cursor-pointer transition-colors"
+                            title="Editar Centro de Custo"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => handleDeleteCentroCusto(cc)}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md cursor-pointer transition-colors"
+                            title="Excluir Centro de Custo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setIsNewCcModalOpen(false);
+                  setEditingCcOldName(null);
+                  setCcFeedbackMsg(null);
+                }}
+                className="px-4 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+              >
+                Concluir
+              </button>
+            </div>
           </motion.div>
         </div>
       )}

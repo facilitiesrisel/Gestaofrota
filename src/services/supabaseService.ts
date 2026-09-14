@@ -1680,6 +1680,43 @@ export async function saveCentroCustoSupabase(nome: string, codigo?: string, des
   }
 }
 
+export async function deleteCentroCustoSupabase(nome: string): Promise<boolean> {
+  try {
+    const cleanName = nome.trim();
+    if (!cleanName) return false;
+
+    // 1. Remove do Supabase
+    try {
+      const client = getSupabaseClient();
+      await client.from('centros_custo').delete().eq('nome', cleanName);
+    } catch (sbErr) {}
+
+    // 2. Remove do Firestore
+    try {
+      const { db } = await import("../firebaseConfig");
+      const docKey = cleanName.replace(/[/\\?%*:|"<>]/g, '_');
+      await db.collection("centros_custo").doc(docKey).delete();
+    } catch (fErr) {}
+
+    return true;
+  } catch (err) {
+    console.error("Erro no deleteCentroCustoSupabase:", err);
+    return false;
+  }
+}
+
+export async function updateCentroCustoSupabase(oldNome: string, newNome: string, codigo?: string, descricao?: string): Promise<boolean> {
+  try {
+    if (oldNome !== newNome) {
+      await deleteCentroCustoSupabase(oldNome);
+    }
+    return await saveCentroCustoSupabase(newNome, codigo, descricao);
+  } catch (err) {
+    console.error("Erro no updateCentroCustoSupabase:", err);
+    return false;
+  }
+}
+
 // 10.B. Funções para Persistência de Bases (Estabelecimentos / Filiais)
 export async function fetchBasesSupabase(): Promise<string[]> {
   const resultList = new Set<string>();
@@ -1750,6 +1787,43 @@ export async function saveBaseSupabase(nome: string): Promise<boolean> {
     return true;
   } catch (err) {
     console.error("Erro no saveBaseSupabase:", err);
+    return false;
+  }
+}
+
+export async function deleteBaseSupabase(nome: string): Promise<boolean> {
+  try {
+    const cleanName = nome.trim();
+    if (!cleanName) return false;
+
+    // 1. Remove do Supabase
+    try {
+      const client = getSupabaseClient();
+      await client.from('bases').delete().eq('nome', cleanName);
+    } catch (sbErr) {}
+
+    // 2. Remove do Firestore
+    try {
+      const { db } = await import("../firebaseConfig");
+      const docKey = cleanName.replace(/[/\\?%*:|"<>]/g, '_');
+      await db.collection("bases_filiais").doc(docKey).delete();
+    } catch (fErr) {}
+
+    return true;
+  } catch (err) {
+    console.error("Erro no deleteBaseSupabase:", err);
+    return false;
+  }
+}
+
+export async function updateBaseSupabase(oldNome: string, newNome: string): Promise<boolean> {
+  try {
+    if (oldNome !== newNome) {
+      await deleteBaseSupabase(oldNome);
+    }
+    return await saveBaseSupabase(newNome);
+  } catch (err) {
+    console.error("Erro no updateBaseSupabase:", err);
     return false;
   }
 }

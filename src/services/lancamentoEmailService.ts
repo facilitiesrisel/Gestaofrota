@@ -219,27 +219,40 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
 }
 
 /**
- * Envia o e-mail de aprovação com anexo automático para lorena.padilha@risel.com.br
+ * Envia o e-mail de aprovação com anexo automático para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br
  */
 export async function sendLancamentoAprovacaoEmail(data: LancamentoEmailData): Promise<boolean> {
-  const DESTINATARIO_OFICIAL = "lorena.padilha@risel.com.br";
+  const DESTINATARIOS_OFICIAIS = ["lorena.padilha@risel.com.br", "deny.goncalves@risel.com.br"];
   
   try {
     const { subject, html } = generateLancamentoAprovacaoEmailHtml(data);
 
-    const attachments: Array<{ filename: string; content?: string; dataUrl?: string; contentType?: string }> = [];
+    const attachments: Array<{ filename: string; content?: string; dataUrl?: string; contentType?: string; path?: string }> = [];
 
-    if (data.nomeArquivoAnexo && data.arquivoAnexoBase64) {
+    // Suporta todas as variações de propriedades onde o anexo pode estar no objeto
+    const anyData = data as any;
+    const nomeAnexo = data.nomeArquivoAnexo || anyData.nomeArquivo || anyData.fileName || anyData.name || "Documento_Fiscal.pdf";
+    const base64Data = data.arquivoAnexoBase64 || anyData.arquivo_anexo_base64 || anyData.base64 || anyData.dataUrl || anyData.fileBase64;
+    const urlAnexo = anyData.anexoUrl || anyData.comprovanteUrl || anyData.url || anyData.driveUrl;
+
+    if (base64Data && typeof base64Data === 'string' && base64Data.trim().length > 0) {
       attachments.push({
-        filename: data.nomeArquivoAnexo,
-        content: data.arquivoAnexoBase64,
-        dataUrl: data.arquivoAnexoBase64
+        filename: nomeAnexo,
+        content: base64Data,
+        dataUrl: base64Data
       });
+      console.log(`[Risel Email] Anexo detectado para envio: ${nomeAnexo} (${Math.round(base64Data.length / 1024)} KB)`);
+    } else if (urlAnexo && typeof urlAnexo === 'string' && urlAnexo.startsWith('http')) {
+      attachments.push({
+        filename: nomeAnexo,
+        path: urlAnexo
+      });
+      console.log(`[Risel Email] Anexo por URL detectado para envio: ${nomeAnexo} -> ${urlAnexo}`);
     }
 
-    console.log(`[Risel Email] Disparando e-mail de aprovação para ${DESTINATARIO_OFICIAL}: "${subject}"`);
+    console.log(`[Risel Email] Disparando e-mail de aprovação para [${DESTINATARIOS_OFICIAIS.join(', ')}]: "${subject}" | Anexos: ${attachments.length}`);
 
-    await sendEmail(DESTINATARIO_OFICIAL, subject, html, {
+    await sendEmail(DESTINATARIOS_OFICIAIS, subject, html, {
       fromName: "Sistema de Documentos Risel",
       source: "documentos",
       attachments: attachments.length > 0 ? attachments : undefined
