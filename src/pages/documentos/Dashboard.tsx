@@ -91,7 +91,57 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, []);
 
-  // Lista dinâmica de fornecedores e meses para popular os filtros
+  // Helper robusto para extrair a Data de Emissão do documento (no formato YYYY-MM-DD)
+  const extrairDataEmissao = (l: any): string => {
+    if (l.dataEmissao) {
+      if (l.dataEmissao.includes("-")) {
+        const parts = l.dataEmissao.split("-");
+        if (parts.length === 3) {
+          // Se ano estiver no começo: YYYY-MM-DD
+          if (parts[0].length === 4) return l.dataEmissao;
+          // Se dia estiver no começo: DD-MM-YYYY
+          return `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+      }
+      if (l.dataEmissao.includes("/")) {
+        const parts = l.dataEmissao.split("/");
+        if (parts.length === 3) {
+          // DD/MM/YYYY -> YYYY-MM-DD
+          return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+    }
+    
+    // Fallback secundário para data de lançamento
+    if (l.dataLancamento) {
+      if (l.dataLancamento.includes("/")) {
+        const parts = l.dataLancamento.split("/");
+        if (parts.length === 3) {
+          return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+      if (l.dataLancamento.includes("-")) {
+        return l.dataLancamento;
+      }
+    }
+
+    // Fallback terciário para data de vencimento
+    return l.dataVencimento || "2026-02-12";
+  };
+
+  // Label amigável do mês/ano de emissão (MM/AAAA)
+  const getMesAnoEmissaoLabel = (l: any): string => {
+    const dt = extrairDataEmissao(l);
+    if (dt && dt.includes("-")) {
+      const parts = dt.split("-");
+      if (parts.length >= 2) {
+        return `${parts[1].padStart(2, '0')}/${parts[0]}`; // MM/AAAA
+      }
+    }
+    return "02/2026";
+  };
+
+  // Lista dinâmica de fornecedores e meses de emissão para popular os filtros
   const fornecedoresUnicos = useMemo<string[]>(() => {
     const list = lancamentos.map(l => String(l.fornecedor || "")).filter(Boolean);
     return ["Todos", ...(Array.from(new Set(list)) as string[])];
@@ -102,12 +152,13 @@ export default function Dashboard() {
     const seen = new Set<string>();
 
     lancamentos.forEach(l => {
-      if (l.dataVencimento && l.dataVencimento.includes("-")) {
-        const parts = l.dataVencimento.split("-");
+      const dtEmissao = extrairDataEmissao(l);
+      if (dtEmissao && dtEmissao.includes("-")) {
+        const parts = dtEmissao.split("-");
         if (parts.length >= 2) {
           const ano = parseInt(parts[0], 10);
           const mes = parseInt(parts[1], 10);
-          const label = `${parts[1]}/${parts[0]}`; // MM/AAAA
+          const label = `${String(mes).padStart(2, '0')}/${ano}`; // MM/AAAA
           if (!seen.has(label)) {
             seen.add(label);
             temp.push({ ano, mes, label });
@@ -125,7 +176,7 @@ export default function Dashboard() {
     return ["Todos", ...temp.map(t => t.label)];
   }, [lancamentos]);
 
-  // Filtragem Dinâmica dos Dados de BI baseado estritamente na Data de Emissão para os períodos
+  // Filtragem Dinâmica dos Dados de BI baseado estritamente na Data de Emissão do Documento
   const lancamentosFiltrados = useMemo(() => {
     return lancamentos.filter(l => {
       // Filtro de fornecedor
@@ -133,19 +184,10 @@ export default function Dashboard() {
         return false;
       }
 
-      // Filtro de período (Mês/Ano do Vencimento) baseado na Data de Vencimento
+      // Filtro de período baseado na Data de Emissão do documento (MM/AAAA)
       if (filtroMes !== "Todos") {
-        if (l.dataVencimento && l.dataVencimento.includes("-")) {
-          const parts = l.dataVencimento.split("-");
-          if (parts.length >= 2) {
-            const label = `${parts[1]}/${parts[0]}`; // MM/AAAA
-            if (label !== filtroMes) return false;
-          } else {
-            return false;
-          }
-        } else {
-          return false;
-        }
+        const labelEmissao = getMesAnoEmissaoLabel(l);
+        if (labelEmissao !== filtroMes) return false;
       }
 
       return true;
@@ -179,7 +221,7 @@ export default function Dashboard() {
     let total = 0;
     
     aprovadas.forEach(l => {
-      const dtLanc = parseDate(l.dataLancamento || l.dataEmissao);
+      const dtLanc = parseDate(l.dataEmissao || l.dataLancamento);
       const dtAprov = parseDate(l.dataAprovacao);
       if (dtLanc && dtAprov) {
         const diffTime = Math.abs(dtAprov.getTime() - dtLanc.getTime());
@@ -200,31 +242,6 @@ export default function Dashboard() {
     }, 0);
   };
 
-  // Extração de data de faturamento/emissão
-  const extrairDataEmissao = (l: any) => {
-    if (l.dataEmissao && l.dataEmissao.includes("-")) {
-      return l.dataEmissao;
-    }
-    if (l.dataLancamento && l.dataLancamento.includes("/")) {
-      const parts = l.dataLancamento.split("/");
-      if (parts.length === 3) {
-        return `${parts[2]}-${parts[1]}-${parts[0]}`;
-      }
-    }
-    return l.dataVencimento || "2026-02-12";
-  };
-
-  // Label amigável do mês/ano de vencimento
-  const getMesAnoLabel = (l: any) => {
-    if (l.dataVencimento && l.dataVencimento.includes("-")) {
-      const parts = l.dataVencimento.split("-");
-      if (parts.length >= 2) {
-        return `${parts[1]}/${parts[0]}`; // MM/AAAA
-      }
-    }
-    return "02/2026";
-  };
-
   // Calculation of previous month
   const getMesAnteriorLabel = (label: string) => {
     if (!label || label === "Todos") return "Todos";
@@ -239,15 +256,16 @@ export default function Dashboard() {
     }
   };
 
-  // Determinar o mês ativo de referência no BI
+  // Determinar o mês ativo de referência no BI (baseado na Data de Emissão)
   const mesReferenciaAtivo = useMemo(() => {
     if (filtroMes !== "Todos") return filtroMes;
     if (lancamentos.length === 0) return "02/2026";
     const ordenados = [...lancamentos]
-      .filter(l => l.dataVencimento)
-      .sort((a, b) => a.dataVencimento.localeCompare(b.dataVencimento));
+      .map(l => ({ item: l, dt: extrairDataEmissao(l) }))
+      .filter(x => x.dt)
+      .sort((a, b) => a.dt.localeCompare(b.dt));
     if (ordenados.length === 0) return "02/2026";
-    return getMesAnoLabel(ordenados[ordenados.length - 1]);
+    return getMesAnoEmissaoLabel(ordenados[ordenados.length - 1].item);
   }, [filtroMes, lancamentos]);
 
   // Determinar o mês anterior de comparação
@@ -255,18 +273,18 @@ export default function Dashboard() {
     return getMesAnteriorLabel(mesReferenciaAtivo);
   }, [mesReferenciaAtivo]);
 
-  // Lançamentos filtrados para o mês ativo e anterior
+  // Lançamentos filtrados para o mês ativo e anterior por Data de Emissão
   const lancamentosAtivosParaTrend = useMemo(() => {
     return lancamentos.filter(l => {
       if (filtroFornecedor !== "Todos" && l.fornecedor !== filtroFornecedor) return false;
-      return getMesAnoLabel(l) === mesReferenciaAtivo;
+      return getMesAnoEmissaoLabel(l) === mesReferenciaAtivo;
     });
   }, [lancamentos, filtroFornecedor, mesReferenciaAtivo]);
 
   const lancamentosAnterioresParaTrend = useMemo(() => {
     return lancamentos.filter(l => {
       if (filtroFornecedor !== "Todos" && l.fornecedor !== filtroFornecedor) return false;
-      return getMesAnoLabel(l) === mesReferenciaAnterior;
+      return getMesAnoEmissaoLabel(l) === mesReferenciaAnterior;
     });
   }, [lancamentos, filtroFornecedor, mesReferenciaAnterior]);
 
@@ -662,13 +680,14 @@ export default function Dashboard() {
               <span>Filtros:</span>
             </div>
             
-            {/* Filtro Dinâmico de Período (Mês de Vencimento) */}
+            {/* Filtro Dinâmico de Período (Mês de Emissão do Documento) */}
             <select 
               value={filtroMes}
               onChange={(e) => setFiltroMes(e.target.value)}
               className="bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 py-1.5 px-3 rounded-lg cursor-pointer outline-none border border-slate-200"
+              title="Filtrar por Mês/Ano de Emissão do Documento"
             >
-              <option value="Todos">📅 Todos os Períodos</option>
+              <option value="Todos">📅 Todos os Períodos (Emissão)</option>
               {mesesDisponiveis.filter(m => m !== "Todos").map(m => (
                 <option key={m} value={m}>{m}</option>
               ))}

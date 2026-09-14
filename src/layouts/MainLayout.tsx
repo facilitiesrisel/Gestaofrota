@@ -46,65 +46,90 @@ export function MainLayout({ children }: { children: ReactNode }) {
     setVencimentosAlerta(prev => prev.filter(v => String(v.id) !== String(id)));
   };
 
-  // Carregar os alertas com base no localStorage de faturas reais não concluídas
+  // Carregar os alertas com base no localStorage de faturas reais com status Aguardando Aprovação que vencem em até 7 dias
   useEffect(() => {
-    const savedLanc = localStorage.getItem("risel_lancamentos");
-    const lidasSaved = localStorage.getItem("risel_notificacoes_lidas");
-    const lidasIds: string[] = lidasSaved ? JSON.parse(lidasSaved) : [];
+    const loadAlertas = () => {
+      const savedLanc = localStorage.getItem("risel_lancamentos");
+      const lidasSaved = localStorage.getItem("risel_notificacoes_lidas");
+      const lidasIds: string[] = lidasSaved ? JSON.parse(lidasSaved) : [];
 
-    if (savedLanc) {
-      try {
-        const todos = JSON.parse(savedLanc);
-        const hoje = new Date();
-        hoje.setHours(0, 0, 0, 0);
+      if (savedLanc) {
+        try {
+          const todos = JSON.parse(savedLanc);
+          const hoje = new Date();
+          hoje.setHours(0, 0, 0, 0);
 
-        const alertas = todos
-          .filter((item: any) => {
-            // Se já foi lida, não exibe no sininho
-            const isLida = lidasIds.includes(String(item.id));
-            if (isLida) return false;
+          const alertas = todos
+            .filter((item: any) => {
+              // Se já foi lida, não exibe no sininho
+              const isLida = lidasIds.includes(String(item.id));
+              if (isLida) return false;
 
-            // Filtrar lançamentos não concluídos/pagos
-            const st = (item.status || "").toLowerCase();
-            const isNaoFinalizado = st !== "pago" && st !== "lançado" && st !== "finalizado" && st !== "concluído";
-            return isNaoFinalizado;
-          })
-          .map((item: any) => {
-            let dias = 0;
-            if (item.dataVencimento) {
-              const dateStr = String(item.dataVencimento).trim();
-              const dataVenc = dateStr.includes("T") ? new Date(dateStr) : new Date(dateStr + "T12:00:00");
-              if (!isNaN(dataVenc.getTime())) {
-                const diffTime = dataVenc.getTime() - hoje.getTime();
-                dias = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              // REGRA ESTRITA: Apenas status "Aguardando aprovação"
+              const st = (item.status || "").toLowerCase().trim();
+              const isAguardando = st === "aguardando aprovação" || st === "aguardando aprovacao" || st === "aguardando";
+              if (!isAguardando) return false;
+
+              // Calcular dias para vencimento
+              let dias = 0;
+              if (item.dataVencimento) {
+                const dateStr = String(item.dataVencimento).trim();
+                const dataVenc = dateStr.includes("T") ? new Date(dateStr) : new Date(dateStr + "T12:00:00");
+                if (!isNaN(dataVenc.getTime())) {
+                  const diffTime = dataVenc.getTime() - hoje.getTime();
+                  dias = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                }
               }
-            }
-            return {
-              id: item.id,
-              fornecedor: item.fornecedor,
-              doc: item.doc || `NFe-${item.idSys || item.id}`,
-              valor: item.valor,
-              vencimento: item.dataVencimento,
-              status: item.status,
-              dias: dias,
-              nomeArquivoAnexo: item.nomeArquivoAnexo || "",
-              arquivoAnexoBase64: item.arquivoAnexoBase64 || ""
-            };
-          })
-          .sort((a: any, b: any) => a.dias - b.dias);
 
-        setVencimentosAlerta(alertas);
-      } catch (e) {
+              // REGRA ESTRITA: Vencimentos a partir de 7 dias (vencem em até 7 dias ou vencidos)
+              return dias <= 7;
+            })
+            .map((item: any) => {
+              const hoje = new Date();
+              hoje.setHours(0, 0, 0, 0);
+              let dias = 0;
+              if (item.dataVencimento) {
+                const dateStr = String(item.dataVencimento).trim();
+                const dataVenc = dateStr.includes("T") ? new Date(dateStr) : new Date(dateStr + "T12:00:00");
+                if (!isNaN(dataVenc.getTime())) {
+                  const diffTime = dataVenc.getTime() - hoje.getTime();
+                  dias = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                }
+              }
+              return {
+                id: item.id,
+                fornecedor: item.fornecedor,
+                doc: item.doc || `NFe-${item.idSys || item.id}`,
+                valor: item.valor,
+                vencimento: item.dataVencimento,
+                status: item.status,
+                dias: dias,
+                nomeArquivoAnexo: item.nomeArquivoAnexo || "",
+                arquivoAnexoBase64: item.arquivoAnexoBase64 || ""
+              };
+            })
+            .sort((a: any, b: any) => a.dias - b.dias);
+
+          setVencimentosAlerta(alertas);
+        } catch (e) {
+          setVencimentosAlerta([]);
+        }
+      } else {
         setVencimentosAlerta([]);
       }
-    } else {
-      // Mock inicial de segurança
-      setVencimentosAlerta([
-        { id: "mock-1", fornecedor: "Postos ABC Locações", doc: "Fatura 1902", valor: "R$ 4.500,00", vencimento: "2026-07-04", status: "Aguardando aprovação", dias: 5 },
-        { id: "mock-2", fornecedor: "Manutenção XYZ Ltda", doc: "NF-e 8839", valor: "R$ 1.250,00", vencimento: "2026-07-02", status: "Aguardando aprovação", dias: 3 },
-        { id: "mock-3", fornecedor: "Limpeza & Cia Silva", doc: "NFS-e 492", valor: "R$ 800,00", vencimento: "2026-06-25", status: "Atrasado", dias: -4 },
-      ].filter(item => !lidasIds.includes(String(item.id))));
-    }
+    };
+
+    loadAlertas();
+
+    window.addEventListener("risel_lancamentos_updated", loadAlertas);
+    window.addEventListener("storage", loadAlertas);
+    const interval = setInterval(loadAlertas, 20000);
+
+    return () => {
+      window.removeEventListener("risel_lancamentos_updated", loadAlertas);
+      window.removeEventListener("storage", loadAlertas);
+      clearInterval(interval);
+    };
   }, [isNotificationsOpen]);
 
   const isFrota = location.pathname.startsWith("/frota");

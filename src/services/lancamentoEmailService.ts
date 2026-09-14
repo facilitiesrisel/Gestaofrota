@@ -23,8 +23,12 @@ export interface LancamentoEmailData {
   status?: string;
   observacao?: string;
   lancadoPor?: string;
+  prazo?: string;
+  itemSistema?: string;
   nomeArquivoAnexo?: string;
   arquivoAnexoBase64?: string;
+  columnOrder?: string[];
+  visibleCols?: Record<string, boolean>;
 }
 
 /**
@@ -61,13 +65,14 @@ export function formatDataParaBrasileiro(dataStr?: string): string {
 
 /**
  * Gera o corpo HTML elegante no padrão corporativo Risel para o e-mail de aprovação de lançamento
- * Tabela Horizontal (padrão tela de Lançamentos) com fonte estrita Aptos Narrow 11
+ * Tabela Horizontal seguindo a ordem de colunas do usuário com fonte estrita Aptos Narrow 11
  */
 export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData): { subject: string; html: string } {
   const fornecedorNome = data.fornecedor || "Fornecedor Não Informado";
   const descricaoServico = data.descricao?.trim() || "Prestação de serviços operacionais / corporativos";
   const vencimentoBr = formatDataParaBrasileiro(data.dataVencimento);
   const emissaoBr = formatDataParaBrasileiro(data.dataEmissao);
+  const lancamentoBr = formatDataParaBrasileiro(data.dataLancamento || new Date().toISOString().split("T")[0]);
   const docNumero = data.doc || data.codigoLancamento || "S/N";
   const formaPagto = data.formaPagto || data.formaPagamento || "Boleto";
   const tipoDoc = data.tipo || data.tipoDocumento || "NF-e";
@@ -80,6 +85,210 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
   const codOc = data.codLancamentoOc || data.codigoLancamento || "-";
   const observacoes = data.observacao?.trim() || "";
   const valorFormatado = data.valor || "R$ 0,00";
+
+  // Ordem padrão caso não seja fornecida
+  const defaultOrder = [
+    "status",
+    "vencimento",
+    "codLancamento",
+    "fornecedor",
+    "cnpj",
+    "estabelecimento",
+    "tipoDocumento",
+    "pagamento",
+    "centroCusto",
+    "valor"
+  ];
+
+  const colsToRender = (data.columnOrder && data.columnOrder.length > 0)
+    ? data.columnOrder.filter(colKey => {
+        if (data.visibleCols && typeof data.visibleCols[colKey] === "boolean") {
+          return data.visibleCols[colKey];
+        }
+        return true;
+      })
+    : defaultOrder;
+
+  // Dicionário com cabeçalhos e células HTML de cada coluna
+  const columnDefs: Record<string, { label: string; align?: string; renderCell: () => string }> = {
+    status: {
+      label: "STATUS",
+      renderCell: () => `
+        <span style="background-color: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 800; font-size: 9pt; text-transform: uppercase; display: inline-block;">
+          ⏳ ${statusAtual}
+        </span>
+      `
+    },
+    vencimento: {
+      label: "VENCIMENTO",
+      renderCell: () => `
+        <span style="font-weight: 800; color: #b45309; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${vencimentoBr}
+        </span>
+      `
+    },
+    codLancamento: {
+      label: "CÓD. / OC",
+      renderCell: () => `
+        <span style="font-weight: 700; color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${codOc}
+        </span>
+      `
+    },
+    lancamento: {
+      label: "LANÇAMENTO",
+      renderCell: () => `
+        <span style="color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${lancamentoBr}
+        </span>
+      `
+    },
+    prazo: {
+      label: "PRAZO BOLETO",
+      renderCell: () => `
+        <span style="color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${data.prazo || "-"}
+        </span>
+      `
+    },
+    fornecedor: {
+      label: "FORNECEDOR",
+      renderCell: () => `
+        <span style="font-weight: 800; color: #0f172a; font-size: 10.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${fornecedorNome}
+        </span>
+      `
+    },
+    centroCusto: {
+      label: "C.C (CENTRO CUSTO)",
+      renderCell: () => `
+        <span style="background-color: #ecfdf5; color: #065f46; padding: 4px 8px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 800; font-size: 9.5pt; display: inline-block;">
+          ${centroCusto}
+        </span>
+      `
+    },
+    cnpj: {
+      label: "CPF / CNPJ",
+      renderCell: () => `
+        <span style="color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${data.cnpj || "-"}
+        </span>
+      `
+    },
+    estabelecimento: {
+      label: "FILIAL",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${filialBase}
+        </span>
+      `
+    },
+    tipoDocumento: {
+      label: "TIPO DOC",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${tipoDoc}
+        </span>
+      `
+    },
+    frequencia: {
+      label: "FREQUÊNCIA",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${frequencia}
+        </span>
+      `
+    },
+    itemSistema: {
+      label: "ITEM SISTEMA",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${data.itemSistema || "-"}
+        </span>
+      `
+    },
+    lancadoPor: {
+      label: "LANÇADO POR",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${lancadoPor}
+        </span>
+      `
+    },
+    descricao: {
+      label: "DESCRIÇÃO",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${descricaoServico}
+        </span>
+      `
+    },
+    documento: {
+      label: "DOCUMENTO",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          <strong>${tipoDoc}</strong> ${docNumero}
+        </span>
+      `
+    },
+    dataEmissao: {
+      label: "DATA EMISSÃO",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${emissaoBr}
+        </span>
+      `
+    },
+    pagamento: {
+      label: "FORMA PAGTO",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${formaPagto}
+        </span>
+      `
+    },
+    aprovadores: {
+      label: "APROVADORES",
+      renderCell: () => `
+        <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${aprovadores}
+        </span>
+      `
+    },
+    observacao: {
+      label: "OBSERVAÇÕES",
+      renderCell: () => `
+        <span style="color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${observacoes || "-"}
+        </span>
+      `
+    },
+    valor: {
+      label: "VALOR",
+      align: "right",
+      renderCell: () => `
+        <span style="font-weight: 900; color: #065f46; font-size: 12pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+          ${valorFormatado}
+        </span>
+      `
+    }
+  };
+
+  // Gerar o HTML dos headers (<th ...>)
+  const headersHtml = colsToRender.map(key => {
+    const def = columnDefs[key];
+    if (!def) return "";
+    const align = def.align === "right" ? "text-align: right;" : "text-align: left;";
+    return `<th style="padding: 10px 12px; ${align} font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">${def.label}</th>`;
+  }).join("\n");
+
+  // Gerar o HTML das células (<td ...>)
+  const cellsHtml = colsToRender.map(key => {
+    const def = columnDefs[key];
+    if (!def) return "";
+    const align = def.align === "right" ? "text-align: right;" : "text-align: left;";
+    return `<td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; ${align} white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">${def.renderCell()}</td>`;
+  }).join("\n");
 
   // Assunto exigido: Aprovação - Nome do Fornecedor - Vencimento
   const subject = `Aprovação - ${fornecedorNome} - ${vencimentoBr}`;
@@ -155,54 +364,12 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                 <thead>
                   <tr bgcolor="#114D38" style="background-color: #114D38; color: #ffffff;">
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">STATUS</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">VENCIMENTO</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">CÓD. / OC</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15);">FORNECEDOR</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">CNPJ / CPF</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">FILIAL</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">TIPO / DOC</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">FORMA PAGTO</th>
-                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">C.C (CENTRO CUSTO)</th>
-                    <th style="padding: 10px 12px; text-align: right; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; white-space: nowrap;">VALOR</th>
+                    ${headersHtml}
                   </tr>
                 </thead>
                 <tbody>
                   <tr bgcolor="#ffffff" style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0;">
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      <span style="background-color: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 800; font-size: 9pt; text-transform: uppercase; display: inline-block;">
-                        ⏳ ${statusAtual}
-                      </span>
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-weight: 800; color: #b45309; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      ${vencimentoBr}
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-weight: 700; color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      ${codOc}
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; font-weight: 800; color: #0f172a; font-size: 10.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      ${fornecedorNome}
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      ${data.cnpj || "-"}
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      ${filialBase}
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      <strong>${tipoDoc}</strong> ${docNumero}
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      ${formaPagto}
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      <span style="background-color: #ecfdf5; color: #065f46; padding: 4px 8px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 800; font-size: 9.5pt; display: inline-block;">
-                        ${centroCusto}
-                      </span>
-                    </td>
-                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; text-align: right; white-space: nowrap; font-weight: 900; color: #065f46; font-size: 12pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                      ${valorFormatado}
-                    </td>
+                    ${cellsHtml}
                   </tr>
                 </tbody>
               </table>

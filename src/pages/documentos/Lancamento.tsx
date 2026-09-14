@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers } from "lucide-react";
+import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -812,78 +812,159 @@ export default function Lancamento() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
   // Controle discreto de Visibilidade de Colunas (Configurável por usuário)
+  // Chave de identificação do usuário logado para persistência personalizada de preferências
+  const userKey = useMemo(() => {
+    if (user?.email) return user.email.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    return "default_user";
+  }, [user?.email]);
+
+  const DEFAULT_COLUMN_ORDER = [
+    "status",
+    "vencimento",
+    "codLancamento",
+    "lancamento",
+    "prazo",
+    "fornecedor",
+    "centroCusto",
+    "cnpj",
+    "estabelecimento",
+    "tipoDocumento",
+    "frequencia",
+    "itemSistema",
+    "lancadoPor",
+    "descricao",
+    "documento",
+    "dataEmissao",
+    "pagamento",
+    "aprovadores",
+    "observacao",
+    "valor"
+  ];
+
+  const DEFAULT_VISIBLE_COLS: Record<string, boolean> = {
+    status: true,
+    vencimento: true,
+    codLancamento: true,
+    lancamento: true,
+    prazo: true,
+    fornecedor: true,
+    centroCusto: true,
+    cnpj: false,
+    estabelecimento: true,
+    tipoDocumento: false,
+    frequencia: false,
+    itemSistema: true,
+    lancadoPor: true,
+    descricao: true,
+    documento: true,
+    dataEmissao: false,
+    pagamento: true,
+    aprovadores: false,
+    observacao: false,
+    valor: true
+  };
+
   const [visibleCols, setVisibleCols] = useState<Record<string, boolean>>(() => {
-    const saved = localStorage.getItem("risel_lanc_cols_v2");
+    const userSaved = localStorage.getItem(`risel_lanc_cols_${userKey}`);
+    const globalSaved = localStorage.getItem("risel_lanc_cols_v2");
+    const saved = userSaved || globalSaved;
     const parsed = saved ? JSON.parse(saved) : {};
     
-    const defaultCols = {
-      status: true,
-      vencimento: true,
-      codLancamento: true,
-      lancamento: true,
-      prazo: true,
-      fornecedor: true,
-      centroCusto: true,
-      cnpj: false,
-      estabelecimento: true,
-      tipoDocumento: false,
-      frequencia: false,
-      itemSistema: true,
-      lancadoPor: true,
-      descricao: true,
-      documento: true,
-      dataEmissao: false,
-      pagamento: true,
-      aprovadores: false,
-      observacao: false,
-      valor: true
-    };
-    
-    const merged = { ...defaultCols };
+    const merged = { ...DEFAULT_VISIBLE_COLS };
     Object.keys(parsed).forEach(key => {
-      if (key in defaultCols) {
+      if (key in DEFAULT_VISIBLE_COLS) {
         merged[key] = parsed[key];
       }
     });
     return merged;
   });
 
-  // Estado para armazenar a ordem de exibição das colunas
+  // Estado para armazenar a ordem de exibição das colunas (salva por usuário)
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
-    const saved = localStorage.getItem("risel_lanc_col_order_v1");
+    const userSaved = localStorage.getItem(`risel_lanc_col_order_${userKey}`);
+    const globalSaved = localStorage.getItem("risel_lanc_col_order_v1");
+    const saved = userSaved || globalSaved;
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       } catch (e) {}
     }
-    return [
-      "status",
-      "vencimento",
-      "codLancamento",
-      "lancamento",
-      "prazo",
-      "fornecedor",
-      "centroCusto",
-      "cnpj",
-      "estabelecimento",
-      "tipoDocumento",
-      "frequencia",
-      "itemSistema",
-      "lancadoPor",
-      "descricao",
-      "documento",
-      "dataEmissao",
-      "pagamento",
-      "aprovadores",
-      "observacao",
-      "valor"
-    ];
+    return DEFAULT_COLUMN_ORDER;
   });
 
+  // Carregar preferências específicas quando o usuário mudar
   useEffect(() => {
+    const userSavedCols = localStorage.getItem(`risel_lanc_cols_${userKey}`);
+    if (userSavedCols) {
+      try {
+        const parsed = JSON.parse(userSavedCols);
+        setVisibleCols(prev => ({ ...DEFAULT_VISIBLE_COLS, ...parsed }));
+      } catch (e) {}
+    }
+
+    const userSavedOrder = localStorage.getItem(`risel_lanc_col_order_${userKey}`);
+    if (userSavedOrder) {
+      try {
+        const parsed = JSON.parse(userSavedOrder);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setColumnOrder(parsed);
+        }
+      } catch (e) {}
+    }
+  }, [userKey]);
+
+  // Salvar ordem das colunas por usuário
+  useEffect(() => {
+    localStorage.setItem(`risel_lanc_col_order_${userKey}`, JSON.stringify(columnOrder));
     localStorage.setItem("risel_lanc_col_order_v1", JSON.stringify(columnOrder));
-  }, [columnOrder]);
+  }, [columnOrder, userKey]);
+
+  // Salvar visibilidade das colunas por usuário
+  useEffect(() => {
+    localStorage.setItem(`risel_lanc_cols_${userKey}`, JSON.stringify(visibleCols));
+    localStorage.setItem("risel_lanc_cols_v2", JSON.stringify(visibleCols));
+  }, [visibleCols, userKey]);
+
+  // Estados de Drag & Drop para reordenar colunas
+  const [draggedCol, setDraggedCol] = useState<string | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+
+  const handleHeaderDragStart = (e: React.DragEvent, colKey: string) => {
+    e.dataTransfer.setData("text/plain", colKey);
+    e.dataTransfer.effectAllowed = "move";
+    setDraggedCol(colKey);
+  };
+
+  const handleHeaderDragOver = (e: React.DragEvent, colKey: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverCol !== colKey) {
+      setDragOverCol(colKey);
+    }
+  };
+
+  const handleHeaderDrop = (e: React.DragEvent, targetColKey: string) => {
+    e.preventDefault();
+    const sourceColKey = e.dataTransfer.getData("text/plain") || draggedCol;
+    if (sourceColKey && sourceColKey !== targetColKey) {
+      const oldIndex = columnOrder.indexOf(sourceColKey);
+      const newIndex = columnOrder.indexOf(targetColKey);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const newOrder = [...columnOrder];
+        const [removed] = newOrder.splice(oldIndex, 1);
+        newOrder.splice(newIndex, 0, removed);
+        setColumnOrder(newOrder);
+      }
+    }
+    setDraggedCol(null);
+    setDragOverCol(null);
+  };
+
+  const handleHeaderDragEnd = () => {
+    setDraggedCol(null);
+    setDragOverCol(null);
+  };
 
   const moveColumn = (col: string, direction: "up" | "down") => {
     const index = columnOrder.indexOf(col);
@@ -897,6 +978,11 @@ export default function Lancamento() {
       newOrder[index + 1] = col;
     }
     setColumnOrder(newOrder);
+  };
+
+  const resetColumnOrder = () => {
+    setColumnOrder(DEFAULT_COLUMN_ORDER);
+    setVisibleCols(DEFAULT_VISIBLE_COLS);
   };
 
   const [showColSelector, setShowColSelector] = useState(false);
@@ -1440,11 +1526,16 @@ export default function Lancamento() {
     }
 
     // REGRA DE NEGÓCIO OFICIAL:
-    // O e-mail para Lorena deve ser enviado uma vez, ao salvar o documento com Status Aguardando Aprovação
+    // O e-mail para aprovação deve ser enviado uma vez, ao salvar o documento com Status Aguardando Aprovação
+    // Usando a mesma ordem de colunas configurada pelo usuário
     const isStatusAguardandoAprovacao = (savedItem?.status || "").toLowerCase().includes("aguardando");
     
     if (isStatusAguardandoAprovacao) {
-      sendLancamentoAprovacaoEmail(savedItem).then(sent => {
+      sendLancamentoAprovacaoEmail({
+        ...savedItem,
+        columnOrder,
+        visibleCols
+      }).then(sent => {
         if (sent) {
           setEmailSentNotice({
             title: "E-mail de Aprovação Enviado",
@@ -1456,6 +1547,9 @@ export default function Lancamento() {
         console.warn("Falha no disparo de e-mail de aprovação:", err);
       });
     }
+
+    // Notificar o sistema para atualizar notificações em tempo real
+    window.dispatchEvent(new Event("risel_lancamentos_updated"));
 
     // Se for lançamento MENSAL OU se tiver mais de três lançamentos, envie para a lista de cadastro de Fornecedores
     const itemParaAvaliar = savedItem || data;
@@ -1481,11 +1575,15 @@ export default function Lancamento() {
   // Estado para rastrear envio individual de e-mail de aprovação
   const [sendingEmailId, setSendingEmailId] = useState<number | string | null>(null);
 
-  // Disparo / Reenvio manual do e-mail de aprovação com anexo
+  // Disparo / Reenvio manual do e-mail de aprovação com anexo (respeitando a ordem de colunas do usuário)
   const handleManualSendEmail = async (item: any) => {
     setSendingEmailId(item.id);
     try {
-      const sent = await sendLancamentoAprovacaoEmail(item);
+      const sent = await sendLancamentoAprovacaoEmail({
+        ...item,
+        columnOrder,
+        visibleCols
+      });
       if (sent) {
         setEmailSentNotice({
           title: "E-mail de Aprovação Enviado",
@@ -1521,14 +1619,19 @@ export default function Lancamento() {
     const updatedItem = {
       ...existing,
       status: newStatus,
-      dataAprovacao
+      dataAprovacao: dataAprovacao
     };
 
     await saveLancamentoUnified(updatedItem);
+    window.dispatchEvent(new Event("risel_lancamentos_updated"));
 
     // Se o status for alterado para Aguardando aprovação, dispara o e-mail oficial
     if (newStatus.toLowerCase().includes("aguardando")) {
-      sendLancamentoAprovacaoEmail(updatedItem).then(sent => {
+      sendLancamentoAprovacaoEmail({
+        ...updatedItem,
+        columnOrder,
+        visibleCols
+      }).then(sent => {
         if (sent) {
           setEmailSentNotice({
             title: "E-mail de Aprovação Enviado",
@@ -1605,6 +1708,7 @@ export default function Lancamento() {
   const handleDeleteLancamento = async (id: number | string) => {
     if (confirm("Tem certeza que deseja excluir permanentemente este lançamento? Essa exclusão será sincronizada para todos os usuários.")) {
       await deleteLancamentoUnified(id);
+      window.dispatchEvent(new Event("risel_lancamentos_updated"));
     }
   };
 
@@ -1695,24 +1799,41 @@ export default function Lancamento() {
               <span>Vencimentos</span>
             </button>
 
-            {/* Seletor Discreto de Colunas */}
+            {/* Seletor Discreto de Colunas e Reordenação Personalizada */}
             <div className="relative" ref={colSelectorRef}>
               <button 
                 onClick={() => setShowColSelector(!showColSelector)}
                 className="px-3 py-2 rounded-xl text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
-                title="Configurar Colunas Visíveis"
+                title="Configurar Ordem e Visibilidade das Colunas"
               >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
                 <span>Colunas</span>
               </button>
 
               {showColSelector && (
-                <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-3 z-30 animate-in fade-in zoom-in-95 duration-200">
-                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2 border-b border-slate-100 pb-1.5 text-left">
-                    Visualização da Tabela
-                  </span>
-                  <div className="space-y-1">
-                    {Object.keys(visibleCols).map(col => {
+                <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 p-3.5 z-40 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
+                    <div>
+                      <span className="text-[11px] font-extrabold text-slate-800 uppercase tracking-wider block text-left">
+                        Configurar Colunas
+                      </span>
+                      <span className="text-[9px] text-slate-400 font-semibold block text-left">
+                        Arraste os cabeçalhos ou use as setas para ordenar
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={resetColumnOrder}
+                      className="text-[10px] font-bold text-slate-500 hover:text-emerald-700 flex items-center gap-1 bg-slate-50 hover:bg-emerald-50 px-2 py-1 rounded-md transition-colors border border-slate-200"
+                      title="Restaurar visualização padrão"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Padrão</span>
+                    </button>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                    {columnOrder.map((col, idx) => {
                       const labelMap: Record<string, string> = {
                         status: "Status do Fluxo",
                         vencimento: "Vencimento",
@@ -1720,6 +1841,7 @@ export default function Lancamento() {
                         lancamento: "Data de Lançamento",
                         prazo: "Prazo do Boleto",
                         fornecedor: "Fornecedor / Emitente",
+                        centroCusto: "Centro de Custo",
                         cnpj: "CPF / CNPJ do Emitente",
                         estabelecimento: "Filial / Estabelecimento",
                         tipoDocumento: "Tipo de Documento",
@@ -1729,26 +1851,94 @@ export default function Lancamento() {
                         descricao: "Descrição do Serviço",
                         documento: "Nº do Documento",
                         dataEmissao: "Data de Emissão",
-                        pagamento: "Forma de Pagto",
+                        pagamento: "Forma de Pagamento",
                         aprovadores: "Aprovadores / Alçada",
                         observacao: "Observações",
-                        valor: "Valor Total"
+                        valor: "Valor Total (R$)"
                       };
+
+                      const isVisible = visibleCols[col] ?? true;
+
                       return (
-                        <button
+                        <div
                           key={col}
-                          onClick={() => toggleColumnVisibility(col)}
-                          className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 flex items-center justify-between"
-                        >
-                          <span>{labelMap[col] || col}</span>
-                          {visibleCols[col] ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" />
-                          ) : (
-                            <span className="w-3.5 h-3.5 rounded border border-slate-300 block" />
+                          draggable
+                          onDragStart={(e) => handleHeaderDragStart(e, col)}
+                          onDragOver={(e) => handleHeaderDragOver(e, col)}
+                          onDrop={(e) => handleHeaderDrop(e, col)}
+                          onDragEnd={handleHeaderDragEnd}
+                          className={cn(
+                            "flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all border",
+                            dragOverCol === col
+                              ? "bg-emerald-50 border-emerald-400 ring-2 ring-emerald-400/20"
+                              : isVisible
+                              ? "bg-slate-50/70 border-slate-150 hover:bg-slate-100/70 text-slate-800"
+                              : "bg-white border-transparent text-slate-400 hover:bg-slate-50"
                           )}
-                        </button>
+                        >
+                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                            <span 
+                              className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 shrink-0 p-0.5"
+                              title="Arraste para reordenar"
+                            >
+                              <GripVertical className="w-3.5 h-3.5" />
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleColumnVisibility(col)}
+                              className="flex items-center gap-1.5 flex-1 text-left truncate cursor-pointer"
+                            >
+                              <span className={cn("truncate text-[11px]", isVisible ? "font-bold text-slate-700" : "font-medium text-slate-400")}>
+                                {labelMap[col] || col}
+                              </span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => moveColumn(col, "up")}
+                              className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer"
+                              title="Mover para cima"
+                            >
+                              <ArrowUp className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === columnOrder.length - 1}
+                              onClick={() => moveColumn(col, "down")}
+                              className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer"
+                              title="Mover para baixo"
+                            >
+                              <ArrowDown className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleColumnVisibility(col)}
+                              className="p-1 rounded text-slate-500 hover:text-emerald-700 cursor-pointer ml-0.5"
+                            >
+                              {isVisible ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" />
+                              ) : (
+                                <span className="w-3.5 h-3.5 rounded border border-slate-300 block" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
                       );
                     })}
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                    <span>💡 Salvo automaticamente no seu perfil</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowColSelector(false)}
+                      className="text-emerald-700 font-bold hover:underline"
+                    >
+                      Fechar
+                    </button>
                   </div>
                 </div>
               )}
@@ -2118,11 +2308,11 @@ export default function Lancamento() {
                     <input type="text" name="lancadoPor" value={formData.lancadoPor} onChange={handleChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm" placeholder="Primeiro Nome" />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Base/Filial</label>
-                        <div className="flex items-center gap-1.5">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex justify-between items-center gap-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">Base/Filial</label>
+                        <div className="flex items-center gap-1 shrink-0">
                           <button 
                             type="button" 
                             onClick={() => setIsManageBasesModalOpen(true)} 
@@ -2143,33 +2333,35 @@ export default function Lancamento() {
                         </div>
                       </div>
                       {showNewFilialInput ? (
-                        <div className="flex gap-1">
+                        <div className="flex items-center gap-1 w-full min-w-0">
                           <input 
                             type="text" 
                             placeholder="Ex: 200 - Santos" 
                             value={newFilialName} 
                             onChange={(e) => setNewFilialName(e.target.value)} 
-                            className="flex-1 px-2 py-1 rounded border border-slate-200 text-[11px] font-semibold outline-none focus:ring-1 focus:ring-emerald-500/25 bg-white"
+                            className="min-w-0 flex-1 w-full px-2 py-1.5 rounded-lg border border-emerald-400 text-xs font-semibold outline-none focus:ring-2 focus:ring-emerald-500/20 bg-white"
+                            autoFocus
                           />
                           <button 
                             type="button" 
                             onClick={handleAddNewFilial} 
-                            className="bg-emerald-600 text-white px-2 py-1 rounded text-[11px] font-bold hover:bg-emerald-700 transition-colors shrink-0"
+                            className="bg-[#114D38] hover:bg-[#0d3d2c] text-white p-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 flex items-center justify-center cursor-pointer shadow-xs"
+                            title="Salvar e Selecionar Base"
                           >
-                            Add
+                            <Check className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ) : (
-                        <select name="estabelecimento" value={formData.estabelecimento} onChange={handleChange} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
+                        <select name="estabelecimento" value={formData.estabelecimento} onChange={handleChange} className="w-full min-w-0 truncate px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
                           <option value="">Selecione...</option>
                           {estabelecimentos.map(e => <option key={e} value={e}>{e}</option>)}
                         </select>
                       )}
                     </div>
 
-                    <div className="space-y-0.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tipo</label>
-                      <select name="tipoDocumento" value={formData.tipoDocumento} onChange={handleChange} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
+                    <div className="space-y-0.5 min-w-0">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Tipo</label>
+                      <select name="tipoDocumento" value={formData.tipoDocumento} onChange={handleChange} className="w-full min-w-0 truncate px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
                         <option value="">Selecione...</option>
                         {TIPOS_DOCUMENTO.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
@@ -2559,71 +2751,62 @@ export default function Lancamento() {
             {/* Tabela de Lançamentos Redesenhada - Layout moderno com densidade otimizada de dados de acordo com a imagem modelo */}
             <table className="w-full font-aptos text-[10px] text-left border-collapse border border-slate-200/70">
               <thead>
-                <tr className="bg-[#114D38] text-white text-[10px] font-black uppercase tracking-wider">
+                <tr className="bg-[#114D38] text-white text-[10px] font-black uppercase tracking-wider select-none">
                   <th className="px-4 py-3 w-16 text-center sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">AÇÕES</th>
                   {columnOrder.map(colKey => {
                     if (!visibleCols[colKey]) return null;
-                    if (colKey === "status") {
-                      return <th key="status" onClick={() => handleSort("status")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">STATUS {getSortIcon("status")}</th>;
-                    }
-                    if (colKey === "vencimento") {
-                      return <th key="vencimento" onClick={() => handleSort("dataVencimento")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">VENCIMENTO {getSortIcon("dataVencimento")}</th>;
-                    }
-                    if (colKey === "codLancamento") {
-                      return <th key="codLancamento" onClick={() => handleSort("codLancamentoOc")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">CÓD. LANÇAMENTO / Nº OC {getSortIcon("codLancamentoOc")}</th>;
-                    }
-                    if (colKey === "lancamento") {
-                      return <th key="lancamento" onClick={() => handleSort("dataLancamento")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">LANÇAMENTO {getSortIcon("dataLancamento")}</th>;
-                    }
-                    if (colKey === "prazo") {
-                      return <th key="prazo" className="px-4 py-3 whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">PRAZO DO BOLETO</th>;
-                    }
-                    if (colKey === "fornecedor") {
-                      return <th key="fornecedor" onClick={() => handleSort("fornecedor")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">FORNECEDOR {getSortIcon("fornecedor")}</th>;
-                    }
-                    if (colKey === "centroCusto") {
-                      return <th key="centroCusto" onClick={() => handleSort("centroCusto")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">C.C (CENTRO DE CUSTO) {getSortIcon("centroCusto")}</th>;
-                    }
-                    if (colKey === "cnpj") {
-                      return <th key="cnpj" onClick={() => handleSort("cnpj")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">CPF / CNPJ {getSortIcon("cnpj")}</th>;
-                    }
-                    if (colKey === "estabelecimento") {
-                      return <th key="estabelecimento" onClick={() => handleSort("estabelecimento")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">FILIAL {getSortIcon("estabelecimento")}</th>;
-                    }
-                    if (colKey === "tipoDocumento") {
-                      return <th key="tipoDocumento" onClick={() => handleSort("tipoDocumento")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">TIPO DOC {getSortIcon("tipoDocumento")}</th>;
-                    }
-                    if (colKey === "frequencia") {
-                      return <th key="frequencia" onClick={() => handleSort("frequencia")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">FREQUÊNCIA {getSortIcon("frequencia")}</th>;
-                    }
-                    if (colKey === "itemSistema") {
-                      return <th key="itemSistema" onClick={() => handleSort("itemSistema")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">ITEM SISTEMA {getSortIcon("itemSistema")}</th>;
-                    }
-                    if (colKey === "lancadoPor") {
-                      return <th key="lancadoPor" onClick={() => handleSort("lancadoPor")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">LANÇADO POR {getSortIcon("lancadoPor")}</th>;
-                    }
-                    if (colKey === "descricao") {
-                      return <th key="descricao" onClick={() => handleSort("descricao")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">DESCRIÇÃO {getSortIcon("descricao")}</th>;
-                    }
-                    if (colKey === "documento") {
-                      return <th key="documento" onClick={() => handleSort("doc")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">DOCUMENTO {getSortIcon("doc")}</th>;
-                    }
-                    if (colKey === "dataEmissao") {
-                      return <th key="dataEmissao" onClick={() => handleSort("dataEmissao")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">DATA EMISSÃO {getSortIcon("dataEmissao")}</th>;
-                    }
-                    if (colKey === "pagamento") {
-                      return <th key="pagamento" onClick={() => handleSort("formaPagto")} className="px-4 py-3 cursor-pointer hover:bg-[#0c3728] transition-colors whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">PAGAMENTO {getSortIcon("formaPagto")}</th>;
-                    }
-                    if (colKey === "aprovadores") {
-                      return <th key="aprovadores" className="px-4 py-3 whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">APROVADORES</th>;
-                    }
-                    if (colKey === "observacao") {
-                      return <th key="observacao" className="px-4 py-3 whitespace-nowrap sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">OBSERVAÇÕES</th>;
-                    }
-                    if (colKey === "valor") {
-                      return <th key="valor" onClick={() => handleSort("valor")} className="px-4 py-3 text-right cursor-pointer hover:bg-[#00b263] transition-colors whitespace-nowrap sticky top-0 bg-[#00CA71] z-20 border-b border-slate-200/20">VALOR {getSortIcon("valor")}</th>;
-                    }
-                    return null;
+
+                    const colMap: Record<string, { label: string; sortKey?: string; isGreen?: boolean; isRight?: boolean }> = {
+                      status: { label: "STATUS", sortKey: "status" },
+                      vencimento: { label: "VENCIMENTO", sortKey: "dataVencimento" },
+                      codLancamento: { label: "CÓD. LANÇAMENTO / Nº OC", sortKey: "codLancamentoOc" },
+                      lancamento: { label: "LANÇAMENTO", sortKey: "dataLancamento" },
+                      prazo: { label: "PRAZO DO BOLETO" },
+                      fornecedor: { label: "FORNECEDOR", sortKey: "fornecedor" },
+                      centroCusto: { label: "C.C (CENTRO DE CUSTO)", sortKey: "centroCusto" },
+                      cnpj: { label: "CPF / CNPJ", sortKey: "cnpj" },
+                      estabelecimento: { label: "FILIAL", sortKey: "estabelecimento" },
+                      tipoDocumento: { label: "TIPO DOC", sortKey: "tipoDocumento" },
+                      frequencia: { label: "FREQUÊNCIA", sortKey: "frequencia" },
+                      itemSistema: { label: "ITEM SISTEMA", sortKey: "itemSistema" },
+                      lancadoPor: { label: "LANÇADO POR", sortKey: "lancadoPor" },
+                      descricao: { label: "DESCRIÇÃO", sortKey: "descricao" },
+                      documento: { label: "DOCUMENTO", sortKey: "doc" },
+                      dataEmissao: { label: "DATA EMISSÃO", sortKey: "dataEmissao" },
+                      pagamento: { label: "PAGAMENTO", sortKey: "formaPagto" },
+                      aprovadores: { label: "APROVADORES" },
+                      observacao: { label: "OBSERVAÇÕES" },
+                      valor: { label: "VALOR", sortKey: "valor", isGreen: true, isRight: true }
+                    };
+
+                    const config = colMap[colKey] || { label: colKey.toUpperCase() };
+                    const isDragging = draggedCol === colKey;
+                    const isOver = dragOverCol === colKey;
+
+                    return (
+                      <th
+                        key={colKey}
+                        draggable
+                        onDragStart={(e) => handleHeaderDragStart(e, colKey)}
+                        onDragOver={(e) => handleHeaderDragOver(e, colKey)}
+                        onDrop={(e) => handleHeaderDrop(e, colKey)}
+                        onDragEnd={handleHeaderDragEnd}
+                        onClick={() => {
+                          if (config.sortKey) handleSort(config.sortKey);
+                        }}
+                        title="Arraste para reordenar a coluna ou clique para ordenar os dados"
+                        className={cn(
+                          "px-4 py-3 whitespace-nowrap sticky top-0 z-20 border-r border-b border-slate-200/20 transition-colors cursor-pointer",
+                          config.isGreen ? "bg-[#00CA71] hover:bg-[#00b263]" : "bg-[#114D38] hover:bg-[#0c3728]",
+                          config.isRight ? "text-right" : "text-left",
+                          isDragging && "opacity-40 cursor-grabbing",
+                          isOver && "border-l-4 border-l-amber-300 bg-[#092a1e]",
+                          "cursor-grab active:cursor-grabbing"
+                        )}
+                      >
+                        {config.label} {config.sortKey && getSortIcon(config.sortKey)}
+                      </th>
+                    );
                   })}
                 </tr>
               </thead>
