@@ -55,6 +55,49 @@ export interface SmtpConfig {
   defaultSenderName: string;
 }
 
+export const RISEL_LOGO_URL = "https://risel.com.br/wp-content/uploads/2024/07/RISEL.png";
+
+/**
+ * Gera uma assinatura corporativa de e-mail minimalista e elegante,
+ * contendo estritamente o nome do remetente do módulo, o logotipo transparente oficial e o site da Risel.
+ */
+export function generateModuleEmailSignature(moduleName: string): string {
+  return `
+  <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <tr>
+      <td style="vertical-align: middle; padding-right: 16px; border-right: 2px solid #e2e8f0;">
+        <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="text-decoration: none; display: block;">
+          <img src="${RISEL_LOGO_URL}" alt="Risel Combustíveis" style="max-height: 40px; width: auto; display: block; border: 0;" />
+        </a>
+      </td>
+      <td style="vertical-align: middle; padding-left: 16px;">
+        <div style="font-size: 15px; font-weight: 700; color: #1e293b; letter-spacing: -0.2px; line-height: 1.2;">
+          ${moduleName}
+        </div>
+        <div style="font-size: 12px; margin-top: 4px; line-height: 1.2;">
+          <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: none; font-weight: 500;">
+            www.risel.com.br
+          </a>
+        </div>
+      </td>
+    </tr>
+  </table>
+  `;
+}
+
+/**
+ * Anexa a assinatura oficial com logotipo transparente da Risel ao corpo HTML do e-mail,
+ * caso o e-mail ainda não possua uma assinatura formatada.
+ */
+export function appendRiselSignatureToHtml(html: string, moduleName: string): string {
+  if (!html) return generateModuleEmailSignature(moduleName);
+  // Evita duplicar se o e-mail já contiver o logotipo da Risel
+  if (html.includes("risel.com.br/wp-content/uploads/2024/07/RISEL.png") || html.includes("Risel Combustíveis")) {
+    return html;
+  }
+  return `${html}<br/>${generateModuleEmailSignature(moduleName)}`;
+}
+
 /**
  * Mapeador estrito dos nomes de remetentes por módulo e submódulo Risel:
  * - Lançamento de Documentos: "Sistema de Documentos Risel"

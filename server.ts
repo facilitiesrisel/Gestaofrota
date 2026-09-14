@@ -12,7 +12,7 @@ import rateLimit from "express-rate-limit";
 import firebase from "firebase/compat/app";
 import "firebase/compat/auth";
 import "firebase/compat/firestore";
-import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret, getSenderNameForModule, ENCRYPTED_FALLBACK_PASSWORD } from "./src/services/smtpSecurity";
+import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret, getSenderNameForModule, ENCRYPTED_FALLBACK_PASSWORD, appendRiselSignatureToHtml } from "./src/services/smtpSecurity";
 import { sanitizeRequestBody, cleanHtmlContent, validateAppsScriptUrl, validateOneDriveUrl, isValidSafeHttpsUrl } from "./src/services/securityMiddleware";
 
 // Forçar resolução IPv4 prioritária no Node.js para evitar ENETUNREACH em contêineres de nuvem (Render, Docker, Cloud Run)
@@ -185,8 +185,8 @@ async function sendEmailViaResend(options: SendHttpEmailOptions, apiKey: string)
   const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : undefined;
   
   // Resend aceita remetente oficial se o domínio estiver verificado ou onboarding@resend.dev em sandbox
-  const fromEmail = options.fromEmail || "deny.goncalves@risel.com.br";
-  const fromAddress = `"${options.fromName || 'Risel Frota'}" <${fromEmail}>`;
+  const fromEmail = options.fromEmail || process.env.SMTP_EMAIL || "deny.risel@gmail.com";
+  const fromAddress = `"${options.fromName || 'Risel Combustíveis'}" <${fromEmail}>`;
 
   const payload: any = {
     from: fromAddress,
@@ -261,10 +261,11 @@ async function sendEmailViaBrevo(options: SendHttpEmailOptions, apiKey: string) 
   const toList = (Array.isArray(options.to) ? options.to : [options.to]).map(e => ({ email: e }));
   const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]).map(e => ({ email: e })) : undefined;
 
+  const fromEmail = (options.fromEmail || process.env.SMTP_EMAIL || "deny.risel@gmail.com").trim();
   const payload: any = {
     sender: {
-      name: options.fromName || "Risel Frota",
-      email: options.fromEmail || "deny.goncalves@risel.com.br"
+      name: options.fromName || "Risel Combustíveis",
+      email: fromEmail
     },
     to: toList,
     subject: options.subject,
@@ -1593,10 +1594,11 @@ async function startServer() {
         return "";
       };
 
-      const emailTo = formatRecipients(to) || formatRecipients(destinatarios) || "deny.goncalves@risel.com.br";
+      const emailTo = formatRecipients(to) || formatRecipients(destinatarios) || "deny.risel@gmail.com";
       const emailCc = formatRecipients(cc);
       const emailSubject = subject || "Notificação Risel Combustíveis";
-      const emailHtml = html || "<p>Notificação automática do Sistema Risel.</p>";
+      const rawHtml = html || "<p>Notificação automática do Sistema Risel.</p>";
+      const emailHtml = appendRiselSignatureToHtml(rawHtml, finalSenderName);
 
       // Processar Anexos com decodificação limpa e segura (PDF, Imagens, Data URLs, Base64 e Arquivos de Drive)
       const mailAttachments: Array<{ filename: string; content?: Buffer; path?: string; contentType?: string }> = [];
@@ -1710,6 +1712,7 @@ async function startServer() {
               subject: emailSubject,
               html: emailHtml,
               fromName,
+              fromEmail: smtpConfig.user || "deny.risel@gmail.com",
               attachments: mailAttachments
             }, effectiveResendKey);
 
@@ -1735,6 +1738,7 @@ async function startServer() {
               subject: emailSubject,
               html: emailHtml,
               fromName,
+              fromEmail: smtpConfig.user || "deny.risel@gmail.com",
               attachments: mailAttachments
             }, effectiveBrevoKey);
 
@@ -1825,6 +1829,7 @@ async function startServer() {
                   subject: emailSubject,
                   html: emailHtml,
                   fromName,
+                  fromEmail: smtpConfig.user || "deny.risel@gmail.com",
                   attachments: mailAttachments
                 }, resendKey);
 
@@ -1850,6 +1855,7 @@ async function startServer() {
                   subject: emailSubject,
                   html: emailHtml,
                   fromName,
+                  fromEmail: smtpConfig.user || "deny.risel@gmail.com",
                   attachments: mailAttachments
                 }, brevoKey);
 
@@ -2069,7 +2075,8 @@ async function startServer() {
               to: targetRecipients,
               subject: emailSubject,
               html: htmlContent,
-              fromName: "Sistema de Documentos Risel"
+              fromName: "Sistema de Documentos Risel",
+              fromEmail: smtpConfig.user || "deny.risel@gmail.com"
             }, effectiveResendKey);
 
             return res.json({ 
@@ -2090,7 +2097,8 @@ async function startServer() {
               to: targetRecipients,
               subject: emailSubject,
               html: htmlContent,
-              fromName: "Sistema de Documentos Risel"
+              fromName: "Sistema de Documentos Risel",
+              fromEmail: smtpConfig.user || "deny.risel@gmail.com"
             }, effectiveBrevoKey);
 
             return res.json({ 
