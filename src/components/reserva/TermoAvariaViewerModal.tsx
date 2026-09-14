@@ -249,11 +249,12 @@ export const TermoAvariaViewerModal: React.FC<TermoAvariaViewerModalProps> = ({
       setIsSendingEmail(true);
       setEmailStatusMessage(null);
 
-      // Gera o PDF oficial em memória para anexar
+      // Gera o PDF oficial da Autorização de Desconto (com as fotos de avarias integradas internamente)
       const pdfResult = await generateTermoAvariaPdf(manutencao, autorizacao, currentAnexos);
       const htmlEmail = generateTermoAvariaEmailHtml(manutencao, autorizacao, RISEL_LOGO_URL);
 
-      const attachmentsPayload = [
+      // Anexo 1 Principal: Autorização de Desconto em PDF (já contém fotos no próprio documento)
+      const attachmentsPayload: Array<{ filename: string; dataUrl?: string; content?: string; contentType: string }> = [
         {
           filename: pdfResult.fileName,
           dataUrl: pdfResult.dataUrl,
@@ -261,12 +262,20 @@ export const TermoAvariaViewerModal: React.FC<TermoAvariaViewerModalProps> = ({
         }
       ];
 
-      // Adiciona fotos às mensagens se houver
-      fotosAvarias.slice(0, 4).forEach((foto, i) => {
+      // Quando for outro arquivo em formato PDF (ex: laudos, NF-e, orçamentos), envia em anexo separado
+      const outrosPdfs = currentAnexos.filter(
+        a => a && a.dataUrl && (
+          a.tipo === 'application/pdf' ||
+          a.dataUrl.startsWith('data:application/pdf') ||
+          /\.pdf$/i.test(a.nome || '')
+        )
+      );
+
+      outrosPdfs.forEach((pdfAnexo, i) => {
         attachmentsPayload.push({
-          filename: foto.nome || `Avaria_Foto_${i + 1}.jpg`,
-          dataUrl: foto.dataUrl,
-          contentType: foto.tipo || 'image/jpeg'
+          filename: pdfAnexo.nome || `Anexo_Documento_${i + 1}.pdf`,
+          dataUrl: pdfAnexo.dataUrl,
+          contentType: 'application/pdf'
         });
       });
 

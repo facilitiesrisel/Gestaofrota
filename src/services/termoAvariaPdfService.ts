@@ -1,7 +1,6 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PDFDocument } from 'pdf-lib';
-import { RISEL_LOGO_URL } from '../pages/multas/services/pdfGenerator';
 
 export interface ServicoManutencaoItem {
   id: string;
@@ -71,35 +70,133 @@ export interface GeneratedAvariaPdfResult {
   download: () => void;
 }
 
+// URL oficial da logomarca Risel
+export const RISEL_LOGO_URL = 'https://risel.com.br/wp-content/uploads/2024/07/RISEL.png';
+export const RISEL_LOGO_ALT_URL = 'https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg';
+
+// Helper para desenhar o logotipo Risel estilizado em alta definição caso a rede esteja indisponível
+const generateFallbackLogoCanvas = (): string => {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 300;
+    canvas.height = 300;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+
+    // Fundo Branco
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, 300, 300);
+
+    // Emblema Risel
+    ctx.fillStyle = '#114D38';
+    ctx.beginPath();
+    ctx.arc(150, 150, 135, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Aro Dourado / Verde Acento
+    ctx.strokeStyle = '#00A859';
+    ctx.lineWidth = 10;
+    ctx.stroke();
+
+    // Texto RISEL
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 54px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('RISEL', 150, 135);
+
+    // Subtítulo
+    ctx.fillStyle = '#A7F3D0';
+    ctx.font = 'bold 20px Arial, sans-serif';
+    ctx.fillText('COMBUSTÍVEIS', 150, 185);
+
+    return canvas.toDataURL('image/jpeg', 0.95);
+  } catch {
+    return '';
+  }
+};
+
 // Carregador de Logo em Base64 para o jsPDF
-const loadLogoBase64 = async (url: string): Promise<string | null> => {
+const loadLogoBase64 = async (url: string = RISEL_LOGO_URL): Promise<string | null> => {
   return new Promise((resolve) => {
-    try {
-      const img = new Image();
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth || img.width || 120;
-          canvas.height = img.naturalHeight || img.height || 120;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(null);
-            return;
+    let resolved = false;
+
+    // Timeout de segurança para nunca travar a geração do PDF
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve(generateFallbackLogoCanvas());
+      }
+    }, 1800);
+
+    const tryLoad = (srcUrl: string, onFail?: () => void) => {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+          if (resolved) return;
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width || 160;
+            canvas.height = img.naturalHeight || img.height || 160;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              if (onFail) onFail();
+              else {
+                resolved = true;
+                clearTimeout(timer);
+                resolve(generateFallbackLogoCanvas());
+              }
+              return;
+            }
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            resolved = true;
+            clearTimeout(timer);
+            resolve(canvas.toDataURL('image/jpeg', 0.95));
+          } catch {
+            if (onFail) onFail();
+            else {
+              resolved = true;
+              clearTimeout(timer);
+              resolve(generateFallbackLogoCanvas());
+            }
           }
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0);
-          resolve(canvas.toDataURL('image/jpeg', 0.95));
-        } catch (err) {
-          resolve(null);
+        };
+        img.onerror = () => {
+          if (onFail) onFail();
+          else {
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timer);
+              resolve(generateFallbackLogoCanvas());
+            }
+          }
+        };
+        img.src = srcUrl;
+      } catch {
+        if (onFail) onFail();
+        else {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timer);
+            resolve(generateFallbackLogoCanvas());
+          }
         }
-      };
-      img.onerror = () => resolve(null);
-      img.src = url;
-    } catch (e) {
-      resolve(null);
-    }
+      }
+    };
+
+    // Tenta primeiro a URL principal, se falhar tenta a secundária, se falhar usa o canvas fallback
+    tryLoad(url, () => {
+      tryLoad(RISEL_LOGO_ALT_URL, () => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          resolve(generateFallbackLogoCanvas());
+        }
+      });
+    });
   });
 };
 
@@ -501,7 +598,7 @@ export const generateTermoAvariaPdf = async (
   doc.text(infoAssinante, 60, currentY + 7.5, { align: 'center' });
   // Nota: O texto "Gestão de Frotas / Recursos Humanos" foi removido da assinatura a pedido
 
-  // Seção 6: Registro Fotográfico Direto no PDF (todas as fotos anexadas)
+  // Seção 6: Registro Fotográfico Direto no PDF (todas as fotos de avaria anexadas)
   const allAnexos = (anexos && anexos.length > 0) ? anexos : (maint.anexos || []);
   const imageAttachments = allAnexos.filter(
     a => a && a.dataUrl && (
@@ -524,19 +621,30 @@ export const generateTermoAvariaPdf = async (
       if (indexOnPage === 0) {
         doc.addPage('a4', 'portrait');
 
-        // Cabeçalho da página fotográfica
+        // Cabeçalho da página fotográfica com Logo Risel
         doc.setFillColor(...primaryColor);
-        doc.rect(0, 0, 210, 20, 'F');
+        doc.rect(0, 0, 210, 22, 'F');
         doc.setFillColor(...accentColor);
-        doc.rect(0, 20, 210, 2, 'F');
+        doc.rect(0, 22, 210, 2, 'F');
+
+        // Logotipo Risel no topo fotográfico
+        if (logoDataUrl) {
+          try {
+            doc.setFillColor(255, 255, 255);
+            doc.roundedRect(12, 3, 16, 16, 2, 2, 'F');
+            doc.addImage(logoDataUrl, 'JPEG', 13, 4, 14, 14);
+          } catch (e) {
+            console.warn('Aviso logo foto:', e);
+          }
+        }
 
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(11);
         doc.setTextColor(255, 255, 255);
-        doc.text('RISEL COMBUSTÍVEIS LTDA', 105, 9, { align: 'center' });
+        doc.text('RISEL COMBUSTÍVEIS LTDA', logoDataUrl ? 112 : 105, 9.5, { align: 'center' });
         doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
-        doc.text(`REGISTRO FOTOGRÁFICO DE AVARIAS - VEÍCULO: ${placa} (${modelo})`, 105, 15, { align: 'center' });
+        doc.text(`REGISTRO FOTOGRÁFICO DE AVARIAS - VEÍCULO: ${placa} (${modelo})`, logoDataUrl ? 112 : 105, 16, { align: 'center' });
 
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(8.5);
@@ -546,7 +654,7 @@ export const generateTermoAvariaPdf = async (
             ? '6. REGISTRO FOTOGRÁFICO DAS AVARIAS E PEÇAS DANIFICADAS'
             : `6. REGISTRO FOTOGRÁFICO DAS AVARIAS (CONTINUAÇÃO - PÁGINA ${pageIndex + 1})`,
           14,
-          30
+          31
         );
       }
 
@@ -554,7 +662,7 @@ export const generateTermoAvariaPdf = async (
       const col = indexOnPage % 2;
       const row = Math.floor(indexOnPage / 2);
       const posX = 14 + col * (photoWidth + gapX);
-      const posY = 35 + row * (photoHeight + gapY);
+      const posY = 36 + row * (photoHeight + gapY);
 
       try {
         // Moldura fotográfica elegante
@@ -583,54 +691,14 @@ export const generateTermoAvariaPdf = async (
     }
   }
 
-  // Seção 7: Arquivos em PDF Anexados -> União em um Único Arquivo Consolidado via pdf-lib
-  const pdfAttachments = allAnexos.filter(
-    a => a && a.dataUrl && (
-      a.tipo === 'application/pdf' ||
-      a.dataUrl.startsWith('data:application/pdf') ||
-      /\.pdf$/i.test(a.nome || '')
-    )
-  );
-
+  // Gera o PDF consolidado da Autorização de Desconto (com as fotos integradas diretamente)
   const jsPdfArrayBuffer = doc.output('arraybuffer');
-  let finalPdfBytes: Uint8Array;
-
-  if (pdfAttachments.length > 0) {
-    try {
-      const mergedDoc = await PDFDocument.load(jsPdfArrayBuffer);
-
-      for (const anexoPdf of pdfAttachments) {
-        try {
-          let donorBytes: Uint8Array;
-          if (anexoPdf.dataUrl.startsWith('data:')) {
-            donorBytes = dataUrlToUint8Array(anexoPdf.dataUrl);
-          } else {
-            const resp = await fetch(anexoPdf.dataUrl);
-            const buf = await resp.arrayBuffer();
-            donorBytes = new Uint8Array(buf);
-          }
-
-          const donorDoc = await PDFDocument.load(donorBytes);
-          const copiedPages = await mergedDoc.copyPages(donorDoc, donorDoc.getPageIndices());
-          copiedPages.forEach((page) => mergedDoc.addPage(page));
-        } catch (donorErr) {
-          console.error(`Falha ao mesclar páginas do anexo PDF "${anexoPdf.nome}":`, donorErr);
-        }
-      }
-
-      finalPdfBytes = await mergedDoc.save();
-    } catch (mergeErr) {
-      console.error('Erro ao unir documentos PDF:', mergeErr);
-      finalPdfBytes = new Uint8Array(jsPdfArrayBuffer);
-    }
-  } else {
-    finalPdfBytes = new Uint8Array(jsPdfArrayBuffer);
-  }
+  const finalPdfBytes = new Uint8Array(jsPdfArrayBuffer);
 
   const pdfBlob = new Blob([finalPdfBytes], { type: 'application/pdf' });
   const pdfDataUrl = `data:application/pdf;base64,${uint8ArrayToBase64(finalPdfBytes)}`;
   const cleanPlate = placa.replace(/[^A-Z0-9]/g, '');
-  const fileName = `Termo_Autorizacao_Avaria_${cleanPlate}_${Date.now().toString().slice(-4)}.pdf`;
+  const fileName = `Autorizacao_Desconto_Avaria_${cleanPlate}_${Date.now().toString().slice(-4)}.pdf`;
 
   return {
     dataUrl: pdfDataUrl,
@@ -681,12 +749,12 @@ export const generateTermoAvariaEmailHtml = (
   const servicosRows = servicos
     .map(
       (s, idx) => `
-      <tr style="border-bottom: 1px solid #e2e8f0; font-size: 12px;">
-        <td style="padding: 8px 10px; text-align: center; color: #64748b;">${idx + 1}</td>
-        <td style="padding: 8px 10px; color: #1e293b; font-weight: 600;">${s.descricao}</td>
-        <td style="padding: 8px 10px; text-align: center; color: #475569;">${s.tipo}</td>
-        <td style="padding: 8px 10px; text-align: center; color: #475569;">${s.quantidade}</td>
-        <td style="padding: 8px 10px; text-align: right; color: #1e293b; font-weight: 700;">${fmtMoney(s.valorTotal)}</td>
+      <tr style="border-bottom: 1px solid #e2e8f0; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+        <td style="padding: 8px 10px; text-align: center; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">${idx + 1}</td>
+        <td style="padding: 8px 10px; color: #1e293b; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">${s.descricao}</td>
+        <td style="padding: 8px 10px; text-align: center; color: #475569; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">${s.tipo}</td>
+        <td style="padding: 8px 10px; text-align: center; color: #475569; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">${s.quantidade}</td>
+        <td style="padding: 8px 10px; text-align: right; color: #1e293b; font-weight: 700; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">${fmtMoney(s.valorTotal)}</td>
       </tr>`
     )
     .join('');
@@ -698,23 +766,25 @@ export const generateTermoAvariaEmailHtml = (
   <meta charset="utf-8">
   <title>Autorização de Desconto em Folha por Avaria - Risel Combustíveis</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f1f5f9; padding: 24px 12px;">
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt; line-height: 1.4; color: #1e293b;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f1f5f9; padding: 24px 12px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
     <tr>
-      <td align="center">
-        <table width="650" cellpadding="0" cellspacing="0" style="max-width: 650px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+      <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
+        <table width="650" cellpadding="0" cellspacing="0" style="max-width: 650px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
           
-          <!-- Topo Institucional Timbrado Risel -->
+          <!-- Topo Institucional Timbrado Risel com Logotipo -->
           <tr>
-            <td style="background-color: #114D38; border-bottom: 3px solid #00A859; padding: 20px 24px;">
+            <td style="background-color: #114D38; border-bottom: 3px solid #00A859; padding: 18px 24px;">
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
-                  <td width="60" valign="middle">
-                    <img src="${logoUrl}" alt="Risel" width="52" height="52" style="display: block; border-radius: 8px; background: #ffffff; padding: 2px;" />
+                  <td width="65" valign="middle" align="center" style="padding-right: 14px;">
+                    <div style="background-color: #ffffff; border-radius: 8px; padding: 4px; display: inline-block; border: 1px solid rgba(255,255,255,0.4);">
+                      <img src="${logoUrl}" alt="Risel Combustíveis" width="56" height="56" style="display: block; max-height: 56px; width: auto; object-contain: contain;" />
+                    </div>
                   </td>
-                  <td style="padding-left: 16px; color: #ffffff;" valign="middle">
-                    <h1 style="margin: 0; font-size: 16px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase;">RISEL COMBUSTÍVEIS LTDA</h1>
-                    <p style="margin: 3px 0 0 0; font-size: 12px; color: #a7f3d0; font-weight: 500;">TERMO DE AUTORIZAÇÃO DE DESCONTO EM FOLHA POR AVARIA DE VEÍCULO</p>
+                  <td style="color: #ffffff; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;" valign="middle">
+                    <h1 style="margin: 0; font-size: 15pt; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; color: #ffffff;">RISEL COMBUSTÍVEIS LTDA</h1>
+                    <p style="margin: 3px 0 0 0; font-size: 11pt; color: #a7f3d0; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">TERMO DE AUTORIZAÇÃO DE DESCONTO EM FOLHA POR AVARIA DE VEÍCULO</p>
                   </td>
                 </tr>
               </table>
@@ -723,41 +793,41 @@ export const generateTermoAvariaEmailHtml = (
 
           <!-- Corpo do E-mail -->
           <tr>
-            <td style="padding: 24px 28px;">
-              <p style="font-size: 14px; margin-top: 0; color: #334155; line-height: 1.5;">
+            <td style="padding: 24px 28px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
+              <p style="font-size: 11pt; margin-top: 0; color: #334155; line-height: 1.5; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
                 Prezado(a) <strong>${colaborador}</strong>,
               </p>
-              <p style="font-size: 13px; color: #475569; line-height: 1.6; margin-bottom: 20px;">
-                Informamos que foi formalizado o registro da <strong>Ordem de Serviço (${osNum})</strong> referente aos reparos de avarias ocorridos no veículo <strong>${placa} (${modelo})</strong>, alocado na base <strong>${base}</strong>.
+              <p style="font-size: 11pt; color: #475569; line-height: 1.5; margin-bottom: 20px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                Informamos que foi formalizado o registro da <strong>Ordem de Serviço (${osNum})</strong> referente aos reparos de avarias ocorridos no veículo <strong>${placa} (${modelo})</strong>, alocado na base operacional <strong>${base}</strong>.
               </p>
 
-              <!-- Card de Resumo Rápido -->
-              <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 22px;">
+              <!-- Card de Resumo Rápido da Ocorrência -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 22px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
                 <tr>
                   <td style="padding: 14px 18px;">
-                    <table width="100%" cellpadding="0" cellspacing="0">
+                    <table width="100%" cellpadding="0" cellspacing="0" style="font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
                       <tr>
-                        <td width="50%" style="font-size: 12px; color: #64748b; padding-bottom: 6px;">
-                          <strong>Placa do Veículo:</strong> <span style="color: #0f172a; font-weight: 800; font-family: monospace;">${placa}</span>
+                        <td width="50%" style="font-size: 11pt; color: #64748b; padding-bottom: 8px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                          <strong>Placa do Veículo:</strong> <span style="color: #0f172a; font-weight: 800; font-family: monospace; font-size: 11pt;">${placa}</span>
                         </td>
-                        <td width="50%" style="font-size: 12px; color: #64748b; padding-bottom: 6px;">
-                          <strong>Modelo:</strong> <span style="color: #0f172a; font-weight: 600;">${modelo}</span>
+                        <td width="50%" style="font-size: 11pt; color: #64748b; padding-bottom: 8px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                          <strong>Modelo:</strong> <span style="color: #0f172a; font-weight: 600; font-size: 11pt;">${modelo}</span>
                         </td>
                       </tr>
                       <tr>
-                        <td width="50%" style="font-size: 12px; color: #64748b; padding-bottom: 6px;">
-                          <strong>Colaborador Responsável:</strong> <span style="color: #0f172a; font-weight: 600;">${colaborador}</span>
+                        <td width="50%" style="font-size: 11pt; color: #64748b; padding-bottom: 8px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                          <strong>Colaborador Responsável:</strong> <span style="color: #0f172a; font-weight: 600; font-size: 11pt;">${colaborador}</span>
                         </td>
-                        <td width="50%" style="font-size: 12px; color: #64748b; padding-bottom: 6px;">
-                          <strong>Base Operacional:</strong> <span style="color: #0f172a; font-weight: 600;">${base}</span>
+                        <td width="50%" style="font-size: 11pt; color: #64748b; padding-bottom: 8px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                          <strong>Base Operacional:</strong> <span style="color: #0f172a; font-weight: 600; font-size: 11pt;">${base}</span>
                         </td>
                       </tr>
                       <tr>
-                        <td width="50%" style="font-size: 12px; color: #64748b;">
-                          <strong>Condição de Desconto:</strong> <span style="color: #b91c1c; font-weight: 700;">${parcelas === 1 ? '1 parcela única' : `${parcelas}x de ${fmtMoney(valorParcela)}`}</span>
+                        <td width="50%" style="font-size: 11pt; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                          <strong>Condição de Desconto:</strong> <span style="color: #b91c1c; font-weight: 700; font-size: 11pt;">${parcelas === 1 ? '1 parcela única' : `${parcelas}x de ${fmtMoney(valorParcela)}`}</span>
                         </td>
-                        <td width="50%" style="font-size: 12px; color: #64748b;">
-                          <strong>Valor Total a Descontar:</strong> <span style="color: #b91c1c; font-weight: 800; font-size: 14px;">${fmtMoney(valorDesconto)}</span>
+                        <td width="50%" style="font-size: 11pt; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                          <strong>Valor Total a Descontar:</strong> <span style="color: #b91c1c; font-weight: 800; font-size: 12pt;">${fmtMoney(valorDesconto)}</span>
                         </td>
                       </tr>
                     </table>
@@ -765,18 +835,25 @@ export const generateTermoAvariaEmailHtml = (
                 </tr>
               </table>
 
-              <!-- Tabela de Serviços e Produtos -->
-              <h3 style="font-size: 13px; font-weight: 800; color: #114D38; text-transform: uppercase; margin: 0 0 8px 0; letter-spacing: 0.3px;">
-                Serviços e Peças Discriminadas
-              </h3>
-              <table width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; margin-bottom: 22px;">
+              <!-- Tabela de Serviços e Peças com Logotipo e Aptos Narrow 11 -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 8px;">
+                <tr>
+                  <td>
+                    <h3 style="font-size: 11pt; font-weight: 800; color: #114D38; text-transform: uppercase; margin: 0; letter-spacing: 0.3px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                      Discriminação dos Serviços e Peças Danificadas
+                    </h3>
+                  </td>
+                </tr>
+              </table>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; margin-bottom: 22px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
                 <thead>
-                  <tr style="background-color: #114D38; color: #ffffff; font-size: 11px; text-transform: uppercase; font-weight: 700;">
-                    <th style="padding: 8px 10px; text-align: center; width: 40px;">#</th>
-                    <th style="padding: 8px 10px; text-align: left;">Descrição do Serviço / Peça</th>
-                    <th style="padding: 8px 10px; text-align: center; width: 90px;">Categoria</th>
-                    <th style="padding: 8px 10px; text-align: center; width: 50px;">Qtd</th>
-                    <th style="padding: 8px 10px; text-align: right; width: 100px;">Subtotal</th>
+                  <tr style="background-color: #114D38; color: #ffffff; font-size: 11pt; text-transform: uppercase; font-weight: 700; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                    <th style="padding: 8px 10px; text-align: center; width: 40px; font-size: 11pt;">#</th>
+                    <th style="padding: 8px 10px; text-align: left; font-size: 11pt;">Descrição do Serviço / Peça</th>
+                    <th style="padding: 8px 10px; text-align: center; width: 100px; font-size: 11pt;">Categoria</th>
+                    <th style="padding: 8px 10px; text-align: center; width: 50px; font-size: 11pt;">Qtd</th>
+                    <th style="padding: 8px 10px; text-align: right; width: 110px; font-size: 11pt;">Subtotal</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -785,26 +862,26 @@ export const generateTermoAvariaEmailHtml = (
               </table>
 
               <!-- Notificação Legal CLT -->
-              <div style="background-color: #ecfdf5; border-left: 4px solid #114D38; padding: 12px 16px; border-radius: 4px; margin-bottom: 24px;">
-                <p style="margin: 0; font-size: 11.5px; color: #064e3b; line-height: 1.5;">
-                  <strong>Fundamento Legal:</strong> Conforme preceitua o <em>Artigo 462, § 1º da Consolidação das Leis do Trabalho (CLT)</em>, o termo de autorização em anexo formaliza a ciência e anuência do colaborador para o respectivo desconto em folha.
+              <div style="background-color: #ecfdf5; border-left: 4px solid #114D38; padding: 12px 16px; border-radius: 4px; margin-bottom: 20px;">
+                <p style="margin: 0; font-size: 11pt; color: #064e3b; line-height: 1.5; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                  <strong>Fundamento Legal:</strong> Conforme preceitua o <em>Artigo 462, § 1º da Consolidação das Leis do Trabalho (CLT)</em>, o termo de autorização formaliza a ciência e anuência expressa do colaborador para o respectivo desconto em folha.
                 </p>
               </div>
 
               <!-- Anexos e PDF -->
-              <p style="font-size: 12px; color: #64748b; line-height: 1.5; margin-bottom: 8px;">
-                📎 <strong>Documentos em anexo:</strong> O <em>Termo de Autorização de Desconto em Folha (PDF Oficial Timbrado Risel)</em> com o detalhamento dos serviços e as fotos das avarias encontra-se anexado a esta mensagem para arquivamento e conferência.
+              <p style="font-size: 11pt; color: #475569; line-height: 1.5; margin-bottom: 8px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+                📎 <strong>Documentos em anexo:</strong> O arquivo <em>Autorização de Desconto em Folha (PDF Oficial Timbrado Risel com as Fotos das Avarias Integradas)</em>, juntamente com os eventuais relatórios/laudos adicionais em PDF, segue anexado a esta mensagem para arquivamento e conferência.
               </p>
             </td>
           </tr>
 
           <!-- Rodapé Corporativo -->
           <tr>
-            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px 28px; text-align: center;">
-              <p style="margin: 0; font-size: 11px; color: #64748b;">
+            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px 28px; text-align: center; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
+              <p style="margin: 0; font-size: 11pt; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
                 <strong>Risel Combustíveis Ltda</strong> &bull; Departamento de Frotas & Operações
               </p>
-              <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3b8;">
+              <p style="margin: 4px 0 0 0; font-size: 9.5pt; color: #94a3b8; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
                 Mensagem gerada automaticamente pelo Sistema de Gestão de Frotas Risel.
               </p>
             </td>
