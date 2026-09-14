@@ -373,7 +373,7 @@ export const generateRacEmailHtml = (
 ): string => {
   let cnhAttachedNow = false;
   let cnhAlreadyOnRecord = false;
-  let voucherAttachedNow = !!rental.hasVoucher || !!rental.voucherFileName || !!rental.voucherBase64;
+  let voucherAttachedNow = false;
   let actionType: 'created' | 'approved' | 'rejected' | 'updated' = 'created';
   let adminNotes = rental.adminNotes || '';
   let rejectReason = rental.rejectReason || '';
@@ -381,6 +381,7 @@ export const generateRacEmailHtml = (
   if (typeof cnhAttachedOrOptions === 'boolean') {
     cnhAttachedNow = cnhAttachedOrOptions;
     cnhAlreadyOnRecord = !!cnhAlreadyOnRecordParam || !!rental.cnhAlreadyOnRecord;
+    voucherAttachedNow = false;
     if (rental.status === 'Rejeitada' || rental.status === 'Recusada') {
       actionType = 'rejected';
     } else if (rental.status === 'Aguardando retirada' || rental.status === 'Aprovada' || rental.status === 'Em Uso') {
@@ -391,9 +392,7 @@ export const generateRacEmailHtml = (
   } else if (cnhAttachedOrOptions && typeof cnhAttachedOrOptions === 'object') {
     cnhAttachedNow = !!cnhAttachedOrOptions.cnhAttachedNow;
     cnhAlreadyOnRecord = !!cnhAlreadyOnRecordParam || !!cnhAttachedOrOptions.cnhAlreadyOnRecord || !!rental.cnhAlreadyOnRecord;
-    if (cnhAttachedOrOptions.voucherAttachedNow !== undefined) {
-      voucherAttachedNow = cnhAttachedOrOptions.voucherAttachedNow;
-    }
+    voucherAttachedNow = !!cnhAttachedOrOptions.voucherAttachedNow;
     actionType = cnhAttachedOrOptions.actionType || 'created';
     if (cnhAttachedOrOptions.adminNotes) adminNotes = cnhAttachedOrOptions.adminNotes;
     if (cnhAttachedOrOptions.rejectReason) rejectReason = cnhAttachedOrOptions.rejectReason;
@@ -432,50 +431,50 @@ export const generateRacEmailHtml = (
   const returnCityNorm = (rental.returnCity || rental.returnStore || '').trim().toUpperCase();
   const isIntercity = pickupCityNorm && returnCityNorm && pickupCityNorm !== returnCityNorm;
   const itineraryBadge = isIntercity
-    ? `<span style="display:inline-block; padding:3px 10px; border-radius:12px; background-color:#eff6ff; color:#1d4ed8; font-weight:700; font-size:10pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1px solid #bfdbfe;">🛣️ Deslocamento Intermunicipal</span>`
-    : `<span style="display:inline-block; padding:3px 10px; border-radius:12px; background-color:#f0fdf4; color:#166534; font-weight:700; font-size:10pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1px solid #bbf7d0;">🏙️ Trajeto Municipal / Local</span>`;
+    ? `<span style="display:inline-block; padding:3px 10px; border-radius:12px; background-color:#eff6ff; color:#1d4ed8; font-weight:700; font-size:10pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1px solid #bfdbfe;">🛣️ Deslocamento Intermunicipal</span>`
+    : `<span style="display:inline-block; padding:3px 10px; border-radius:12px; background-color:#f0fdf4; color:#166534; font-weight:700; font-size:10pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1px solid #bbf7d0;">🏙️ Trajeto Municipal / Local</span>`;
 
   // Formatação Condicional da CNH
   const statusCnhHtml = cnhAttachedNow
-    ? `<span style="display:inline-block; padding:4px 12px; border-radius:8px; background-color:#ecfdf5; color:#065f46; font-weight:700; font-size:11pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1px solid #a7f3d0;">📎 CNH Anexa a esta Mensagem</span>`
+    ? `<span style="display:inline-block; padding:4px 12px; border-radius:8px; background-color:#ecfdf5; color:#065f46; font-weight:700; font-size:10.5pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1px solid #a7f3d0;">📎 CNH Anexa a esta Mensagem</span>`
     : cnhAlreadyOnRecord || rental.hasCnhCopy
-    ? `<span style="display:inline-block; padding:4px 12px; border-radius:8px; background-color:#eff6ff; color:#1e40af; font-weight:700; font-size:11pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1px solid #bfdbfe;">✅ CNH em Arquivo Digital Ativo</span>`
-    : `<span style="display:inline-block; padding:4px 12px; border-radius:8px; background-color:#fffbeb; color:#92400e; font-weight:700; font-size:11pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1px solid #fde68a;">⚠️ Pendente de Regularização de CNH</span>`;
+    ? `<span style="display:inline-block; padding:4px 12px; border-radius:8px; background-color:#eff6ff; color:#1e40af; font-weight:700; font-size:10.5pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1px solid #bfdbfe;">✅ CNH em Arquivo Digital Ativo (Dispensado novo envio)</span>`
+    : `<span style="display:inline-block; padding:4px 12px; border-radius:8px; background-color:#fffbeb; color:#92400e; font-weight:700; font-size:10.5pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1px solid #fde68a;">⚠️ Pendente de Regularização de CNH</span>`;
 
   // Configurações Visuais Dinâmicas por Status / Ação (CRM Status)
   let headerTitle = "SOLICITAÇÃO DE LOCAÇÃO RAC";
   let headerSubtitle = "Novo pedido de veículo terceirizado registrado na fila operacional";
-  let statusHeroBadge = `<div style="display:inline-block; padding:8px 18px; border-radius:30px; background-color:#fef3c7; color:#92400e; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1.5px solid #f59e0b; box-shadow:0 2px 8px rgba(245,158,11,0.15);">⏳ SOLICITAÇÃO RECEBIDA (EM ANÁLISE PELA GESTÃO)</div>`;
-  let statusColorAccent = "#f59e0b";
+  let statusHeroBadge = `<table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;"><tr><td style="padding:8px 20px; border-radius:24px; background-color:#fef3c7; color:#92400e; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1.5px solid #f59e0b; text-align:center;">⏳ SOLICITAÇÃO RECEBIDA (EM ANÁLISE PELA GESTÃO)</td></tr></table>`;
 
   if (actionType === 'approved') {
     headerTitle = "SOLICITAÇÃO DE LOCAÇÃO RAC APROVADA";
     headerSubtitle = "Reserva confirmada pela Gestão de Frota • Documentos e voucher disponíveis";
-    statusHeroBadge = `<div style="display:inline-block; padding:8px 20px; border-radius:30px; background-color:#ecfdf5; color:#065f46; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1.5px solid #10b981; box-shadow:0 2px 8px rgba(16,185,129,0.18);">✅ RESERVA APROVADA / AGUARDANDO RETIRADA</div>`;
-    statusColorAccent = "#10b981";
+    statusHeroBadge = `<table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;"><tr><td style="padding:8px 22px; border-radius:24px; background-color:#ecfdf5; color:#065f46; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1.5px solid #10b981; text-align:center;">✅ RESERVA APROVADA / AGUARDANDO RETIRADA</td></tr></table>`;
   } else if (actionType === 'rejected') {
     headerTitle = "SOLICITAÇÃO DE LOCAÇÃO RAC RECUSADA";
     headerSubtitle = "Informamos que a solicitação não foi autorizada pela Gestão de Frota";
-    statusHeroBadge = `<div style="display:inline-block; padding:8px 20px; border-radius:30px; background-color:#fef2f2; color:#991b1b; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1.5px solid #ef4444; box-shadow:0 2px 8px rgba(239,68,68,0.18);">❌ SOLICITAÇÃO NÃO AUTORIZADA PELA GESTÃO</div>`;
-    statusColorAccent = "#ef4444";
+    statusHeroBadge = `<table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;"><tr><td style="padding:8px 22px; border-radius:24px; background-color:#fef2f2; color:#991b1b; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1.5px solid #ef4444; text-align:center;">❌ SOLICITAÇÃO NÃO AUTORIZADA PELA GESTÃO</td></tr></table>`;
   } else if (actionType === 'updated') {
     headerTitle = "ATUALIZAÇÃO DE LOCAÇÃO RAC";
     headerSubtitle = "Os dados da sua solicitação foram atualizados pela Gestão de Frota";
-    statusHeroBadge = `<div style="display:inline-block; padding:8px 20px; border-radius:30px; background-color:#eff6ff; color:#1e40af; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', Calibri, sans-serif; border:1.5px solid #3b82f6; box-shadow:0 2px 8px rgba(59,130,246,0.18);">ℹ️ STATUS OPERACIONAL: ${(rental.status || 'Atualizada').toUpperCase()}</div>`;
-    statusColorAccent = "#3b82f6";
+    statusHeroBadge = `<table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;"><tr><td style="padding:8px 22px; border-radius:24px; background-color:#eff6ff; color:#1e40af; font-weight:800; font-size:11pt; font-family:'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; border:1.5px solid #3b82f6; text-align:center;">ℹ️ STATUS OPERACIONAL: ${(rental.status || 'Atualizada').toUpperCase()}</td></tr></table>`;
   }
 
   // Bloco de Parecer / Despacho da Gestão de Frota (se houver observação ou recusa)
   const notesToDisplay = adminNotes || (actionType === 'rejected' ? rejectReason : '');
   const dispatchBoxHtml = notesToDisplay ? `
-    <div style="background-color: ${actionType === 'rejected' ? '#fff1f2' : '#f0fdf4'}; border-left: 5px solid ${actionType === 'rejected' ? '#e11d48' : '#16a34a'}; border-radius: 12px; padding: 18px 20px; margin: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.03); border-top: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'}; border-right: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'}; border-bottom: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'};">
-      <div style="font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: ${actionType === 'rejected' ? '#9f1239' : '#14532d'}; margin-bottom: 8px; letter-spacing: 0.5px;">
-        ${actionType === 'rejected' ? '❌ Parecer de Recusa da Gestão de Frota:' : '💬 Despacho & Orientações da Gestão de Frota:'}
-      </div>
-      <div style="font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; color: ${actionType === 'rejected' ? '#881337' : '#166534'}; line-height: 1.5; font-weight: 600; white-space: pre-wrap;">
-        ${notesToDisplay}
-      </div>
-    </div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: ${actionType === 'rejected' ? '#fff1f2' : '#f0fdf4'}; border-left: 5px solid ${actionType === 'rejected' ? '#e11d48' : '#16a34a'}; border-radius: 8px; margin: 18px 0; border-top: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'}; border-right: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'}; border-bottom: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'};">
+      <tr>
+        <td style="padding: 14px 18px;">
+          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: ${actionType === 'rejected' ? '#9f1239' : '#14532d'}; margin-bottom: 6px;">
+            ${actionType === 'rejected' ? '❌ Parecer de Recusa da Gestão de Frota:' : '💬 Despacho & Orientações da Gestão de Frota:'}
+          </div>
+          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: ${actionType === 'rejected' ? '#881337' : '#166534'}; line-height: 1.45; font-weight: 600; white-space: pre-wrap;">
+            ${notesToDisplay}
+          </div>
+        </td>
+      </tr>
+    </table>
   ` : '';
 
   // Bloco de Dados Confirmados da Locadora (quando aprovada / com dados preenchidos)
@@ -483,491 +482,361 @@ export const generateRacEmailHtml = (
   const isApprovedOrUpdated = actionType === 'approved' || actionType === 'updated';
 
   const rentalCompanyBlockHtml = (isApprovedOrUpdated && hasRentalCompanyData) ? `
-    <div style="background-color: #ffffff; border: 1.5px solid #10b981; border-radius: 14px; padding: 18px 20px; margin: 22px 0; box-shadow: 0 4px 14px rgba(16,185,129,0.08);">
-      <div style="font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: #065f46; letter-spacing: 0.5px; border-bottom: 1px solid #d1fae5; padding-bottom: 8px; margin-bottom: 14px; display: flex; align-items: center;">
-        🏢 Dados Oficiais Confirmados da Reserva (Locadora)
-      </div>
-      <table style="width: 100%; border-collapse: collapse;">
-        ${rental.rentalCompany ? `
-        <tr>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 42%;">Locadora Parceira:</td>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a;">${rental.rentalCompany}</td>
-        </tr>` : ''}
-        ${rental.reservationNumber ? `
-        <tr>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Nº Reserva / Localizador:</td>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 800; color: #00753f; font-family: monospace;">${rental.reservationNumber}</td>
-        </tr>` : ''}
-        ${rental.plate && rental.plate !== 'A DEFINIR' ? `
-        <tr>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Placa Atribuída:</td>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a; font-family: monospace;">${rental.plate}</td>
-        </tr>` : ''}
-        ${rental.pickupStore ? `
-        <tr>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Loja de Retirada:</td>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.pickupStore}</td>
-        </tr>` : ''}
-        ${rental.returnStore ? `
-        <tr>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Loja de Devolução:</td>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.returnStore}</td>
-        </tr>` : ''}
-        ${formattedValue ? `
-        <tr>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Custo Contratado / Aprovado:</td>
-          <td style="padding: 7px 0; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 800; color: #059669;">${formattedValue}</td>
-        </tr>` : ''}
-      </table>
-    </div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border: 1.5px solid #10b981; border-radius: 10px; margin: 18px 0; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 12px 16px; background-color: #f0fdf4; border-bottom: 1px solid #d1fae5; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: #065f46;">
+          🏢 Dados Oficiais Confirmados da Reserva (Locadora)
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 16px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0">
+            ${rental.rentalCompany ? `
+            <tr>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 40%;">Locadora Parceira:</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a;">${rental.rentalCompany}</td>
+            </tr>` : ''}
+            ${rental.reservationNumber ? `
+            <tr>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Nº Reserva / Localizador:</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #00753f;">${rental.reservationNumber}</td>
+            </tr>` : ''}
+            ${rental.plate && rental.plate !== 'A DEFINIR' ? `
+            <tr>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Placa Atribuída:</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a;">${rental.plate}</td>
+            </tr>` : ''}
+            ${rental.pickupStore ? `
+            <tr>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Loja de Retirada:</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.pickupStore}</td>
+            </tr>` : ''}
+            ${rental.returnStore ? `
+            <tr>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Loja de Devolução:</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.returnStore}</td>
+            </tr>` : ''}
+            ${formattedValue ? `
+            <tr>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Custo Contratado / Aprovado:</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #059669;">${formattedValue}</td>
+            </tr>` : ''}
+          </table>
+        </td>
+      </tr>
+    </table>
   ` : '';
 
-  // Bloco de Anexos Vinculados (Voucher da Locadora e CNH do Condutor)
-  const hasVoucherAttached = voucherAttachedNow || rental.hasVoucher || rental.voucherFileName;
-  const hasCnhAttached = cnhAttachedNow || rental.hasCnhCopy || rental.cnhFileName;
+  // Bloco de Anexos Vinculados (Apenas se de fato houver anexo nesta mensagem)
+  const hasActualAttachments = voucherAttachedNow || cnhAttachedNow;
   
-  const attachmentsModuleHtml = (hasVoucherAttached || hasCnhAttached) ? `
-    <div style="background-color: #f8fafc; border: 1.5px dashed #0d9488; border-radius: 14px; padding: 18px 20px; margin: 22px 0;">
-      <div style="font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: #0f766e; letter-spacing: 0.5px; margin-bottom: 12px;">
-        📎 Documentos e Anexos Vinculados à Reserva
-      </div>
-      <div style="font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; color: #334155; line-height: 1.5; margin-bottom: 12px;">
-        Os seguintes documentos estão oficialmente anexados a esta mensagem de resposta para download imediato:
-      </div>
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-        ${hasVoucherAttached ? `
-        <div style="background-color: #ffffff; border: 1px solid #ccfbf1; border-radius: 8px; padding: 10px 14px; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; color: #0f172a; font-weight: 700;">
-          🎫 <span style="color: #0f766e;">Voucher Oficial da Reserva:</span> ${rental.voucherFileName || 'Voucher_Reserva.pdf'} 
-          <span style="font-size: 10pt; color: #059669; font-weight: 800; background: #ecfdf5; padding: 2px 8px; border-radius: 6px; margin-left: 6px;">[Anexo Incluso]</span>
-          <div style="font-size: 10pt; color: #64748b; font-weight: 500; margin-top: 4px;">
-            ⚠️ Apresente este voucher no balcão da locadora juntamente com sua CNH física original.
+  const attachmentsModuleHtml = hasActualAttachments ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8fafc; border: 1.5px dashed #0d9488; border-radius: 10px; margin: 18px 0;">
+      <tr>
+        <td style="padding: 14px 16px;">
+          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: #0f766e; margin-bottom: 8px;">
+            📎 Documentos e Anexos Vinculados a esta Mensagem
           </div>
-        </div>` : ''}
-        ${hasCnhAttached ? `
-        <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; font-family: 'Aptos Narrow', Calibri, sans-serif; font-size: 11pt; color: #0f172a; font-weight: 700;">
-          🪪 <span style="color: #1e40af;">Habilitação do Condutor (CNH):</span> ${rental.cnhFileName || 'CNH_Condutor.pdf'}
-          <span style="font-size: 10pt; color: #2563eb; font-weight: 800; background: #eff6ff; padding: 2px 8px; border-radius: 6px; margin-left: 6px;">[Arquivo Vinculado]</span>
-        </div>` : ''}
-      </div>
-    </div>
+          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #334155; line-height: 1.4; margin-bottom: 10px;">
+            Os seguintes documentos foram anexados diretamente a este e-mail para download e consulta:
+          </div>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0">
+            ${voucherAttachedNow ? `
+            <tr>
+              <td style="padding: 8px 12px; background-color: #ffffff; border: 1px solid #ccfbf1; border-radius: 6px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #0f172a; font-weight: 700; margin-bottom: 6px;">
+                🎫 <span style="color: #0f766e;">Voucher Oficial da Reserva:</span> ${rental.voucherFileName || 'Voucher_Reserva.pdf'} 
+                <span style="font-size: 9.5pt; color: #059669; font-weight: 800; background: #ecfdf5; padding: 2px 8px; border-radius: 4px; margin-left: 6px;">[Anexo Incluso]</span>
+              </td>
+            </tr>` : ''}
+            ${cnhAttachedNow ? `
+            <tr>
+              <td style="padding: 8px 12px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #0f172a; font-weight: 700; margin-top: 6px;">
+                🪪 <span style="color: #1e40af;">Habilitação do Condutor (CNH):</span> ${rental.cnhFileName || 'CNH_Condutor.pdf'}
+                <span style="font-size: 9.5pt; color: #2563eb; font-weight: 800; background: #eff6ff; padding: 2px 8px; border-radius: 4px; margin-left: 6px;">[Anexo Incluso]</span>
+              </td>
+            </tr>` : ''}
+          </table>
+        </td>
+      </tr>
+    </table>
   ` : '';
 
-  return `
-<!DOCTYPE html>
-<html lang="pt-BR">
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${headerTitle} - Risel ERP</title>
-  <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background-color: #f1f5f9;
-      font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;
-      color: #1e293b;
-      -webkit-font-smoothing: antialiased;
-    }
-    .wrapper {
-      width: 100%;
-      background-color: #f1f5f9;
-      padding: 25px 12px;
-    }
-    .container {
-      max-width: 660px;
-      margin: 0 auto;
-      background-color: #ffffff;
-      border-radius: 20px;
-      overflow: hidden;
-      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.08);
-      border: 1px solid #e2e8f0;
-    }
-    .header {
-      background: linear-gradient(135deg, #022318 0%, #0b5138 45%, #053b27 100%);
-      padding: 34px 24px 30px;
-      text-align: center;
-      border-top: 5px solid #10b981;
-      position: relative;
-    }
-    .logo-container {
-      display: inline-block;
-      background: #ffffff;
-      padding: 6px 8px;
-      border-radius: 16px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      margin-bottom: 12px;
-    }
-    .logo-img {
-      width: 64px;
-      height: 64px;
-      border-radius: 10px;
-      display: block;
-      object-fit: cover;
-    }
-    .company-tag {
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 11px;
-      font-weight: 800;
-      color: #6ee7b7;
-      text-transform: uppercase;
-      letter-spacing: 1.8px;
-      margin: 0 0 6px 0;
-    }
-    .header-title {
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 21px;
-      font-weight: 800;
-      color: #ffffff;
-      margin: 0;
-      text-transform: uppercase;
-      letter-spacing: -0.3px;
-      line-height: 1.25;
-    }
-    .header-subtitle {
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 13px;
-      color: #d1fae5;
-      font-weight: 500;
-      margin: 6px 0 0;
-      line-height: 1.4;
-    }
-    .protocol-pill {
-      display: inline-block;
-      background: rgba(0, 0, 0, 0.35);
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      color: #ffffff;
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 11.5px;
-      font-weight: 800;
-      padding: 6px 18px;
-      border-radius: 20px;
-      margin-top: 14px;
-      letter-spacing: 0.8px;
-    }
-    .protocol-code {
-      color: #fde68a;
-      font-family: monospace;
-    }
-    .body {
-      padding: 26px 24px;
-    }
-    .hero-status {
-      text-align: center;
-      margin-bottom: 22px;
-    }
-    .kpi-row {
-      display: table;
-      width: 100%;
-      margin-bottom: 22px;
-      border-collapse: separate;
-      border-spacing: 8px 0;
-    }
-    .kpi-col {
-      display: table-cell;
-      width: 33.33%;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      padding: 12px 10px;
-      text-align: center;
-      vertical-align: top;
-    }
-    .kpi-label {
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 10pt;
-      font-weight: 700;
-      color: #64748b;
-      text-transform: uppercase;
-      margin-bottom: 4px;
-    }
-    .kpi-value {
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 11pt;
-      font-weight: 800;
-      color: #0f172a;
-    }
-    .section-header {
-      background: #f8fafc;
-      border-left: 4px solid #114D38;
-      padding: 8px 14px;
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 11pt;
-      font-weight: 800;
-      text-transform: uppercase;
-      color: #114D38;
-      letter-spacing: 0.5px;
-      margin: 22px 0 10px;
-      border-radius: 4px 8px 8px 4px;
-    }
-    .grid-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 8px;
-    }
-    .grid-table tr:nth-child(even) {
-      background-color: #fafbfd;
-    }
-    .grid-table td {
-      padding: 8px 12px;
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 11pt;
-      line-height: 1.45;
-      border-bottom: 1px solid #f1f5f9;
-    }
-    .grid-table td.label-col {
-      width: 38%;
-      font-weight: 700;
-      color: #475569;
-    }
-    .grid-table td.val-col {
-      font-weight: 600;
-      color: #0f172a;
-    }
-    .route-card {
-      background: #f8fafc;
-      border: 1px solid #cbd5e1;
-      border-radius: 12px;
-      padding: 14px 18px;
-      margin: 16px 0;
-      text-align: center;
-    }
-    .route-title {
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 10pt;
-      font-weight: 800;
-      text-transform: uppercase;
-      color: #475569;
-      margin-bottom: 6px;
-    }
-    .route-display {
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 12pt;
-      font-weight: 800;
-      color: #0f172a;
-    }
-    .btn-action {
-      display: inline-block;
-      background: #00753f;
-      color: #ffffff !important;
-      padding: 13px 32px;
-      border-radius: 10px;
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-weight: 800;
-      font-size: 11.5pt;
-      text-decoration: none;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      box-shadow: 0 4px 12px rgba(0, 117, 63, 0.25);
-    }
-    .footer {
-      background-color: #f8fafc;
-      border-top: 1px solid #e2e8f0;
-      padding: 22px 24px;
-      text-align: center;
-      font-family: 'Aptos Narrow', Calibri, sans-serif;
-      font-size: 10pt;
-      color: #64748b;
-      line-height: 1.5;
-    }
-  </style>
 </head>
-<body>
-  <div class="wrapper">
-    <div class="container">
-      
-      <!-- CABEÇALHO VERDE GRADIENTE COM LOGOTIPO DA RISEL -->
-      <div class="header">
-        <div class="logo-container">
-          <img 
-            src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" 
-            alt="Risel Combustíveis" 
-            class="logo-img"
-          />
-        </div>
-        <p class="company-tag">RISEL COMBUSTÍVEIS &bull; GESTÃO DE FROTAS</p>
-        <h1 class="header-title">${headerTitle}</h1>
-        <p class="header-subtitle">${headerSubtitle}</p>
-        <div class="protocol-pill">
-          📋 PROTOCOLO CRM: <span class="protocol-code">${protocolText}</span>
-        </div>
-      </div>
-
-      <!-- CORPO PRINCIPAL ESTILO CRM -->
-      <div class="body">
-        
-        <!-- STATUS CONDICIONAL EM DESTAQUE -->
-        <div class="hero-status">
-          ${statusHeroBadge}
-        </div>
-
-        <!-- RESUMO RÁPIDO EXECUTIVO (KPIS DO ATENDIMENTO) -->
-        <div class="kpi-row">
-          <div class="kpi-col">
-            <div class="kpi-label">Duração Prevista</div>
-            <div class="kpi-value" style="color: #00753f;">⏱️ ${totalDays} diária(s)</div>
-          </div>
-          <div class="kpi-col">
-            <div class="kpi-label">Condutor Designado</div>
-            <div class="kpi-value" style="font-size: 10.5pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-              👤 ${rental.driverName || rental.requesterName}
-            </div>
-          </div>
-          <div class="kpi-col">
-            <div class="kpi-label">Tipo de Trajeto</div>
-            <div class="kpi-value" style="font-size: 10pt;">${itineraryBadge}</div>
-          </div>
-        </div>
-
-        <!-- PARECER / DESPACHO DA GESTÃO DE FROTA (SE HOUVER) -->
-        ${dispatchBoxHtml}
-
-        <!-- DADOS DA LOCADORA CONFIRMADA & VOUCHER (SE HOUVER) -->
-        ${rentalCompanyBlockHtml}
-
-        <!-- ANEXOS VINCULADOS (VOUCHER E CNH) -->
-        ${attachmentsModuleHtml}
-
-        <!-- ITINERÁRIO EM DESTAQUE -->
-        <div class="route-card">
-          <div class="route-title">Itinerário de Retirada & Devolução</div>
-          <div class="route-display">
-            📍 <strong>${rental.pickupCity || rental.pickupStore || 'Origem a definir'}</strong> 
-            &nbsp; ➔ &nbsp; 
-            🏁 <strong>${rental.returnCity || rental.returnStore || 'Destino a definir'}</strong>
-          </div>
-        </div>
-
-        <!-- 1. SOLICITANTE & CONTATO CORPORATIVO -->
-        <div class="section-header">
-          👤 1. Solicitante & Contato Corporativo
-        </div>
-        <table class="grid-table">
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.4; color: #1e293b;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f1f5f9; padding: 20px 10px;">
+    <tr>
+      <td align="center">
+        <!-- CONTÊINER CENTRAL 650PX -->
+        <table width="650" cellpadding="0" cellspacing="0" border="0" style="width: 650px; max-width: 650px; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+          
+          <!-- CABEÇALHO TIMBRADO OFICIAL RISEL COM LOGOTIPO -->
           <tr>
-            <td class="label-col">Solicitante Responsável:</td>
-            <td class="val-col"><strong>${rental.requesterName}</strong></td>
+            <td style="background-color: #114D38; padding: 24px 20px 20px; text-align: center; border-top: 5px solid #00A859;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="padding-bottom: 12px;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 8px; padding: 6px 14px;">
+                      <tr>
+                        <td align="center">
+                          <img 
+                            src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" 
+                            alt="Risel Combustíveis" 
+                            height="42" 
+                            style="height: 42px; width: auto; max-width: 160px; display: block; border: 0;"
+                          />
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt; font-weight: 800; color: #6ee7b7; text-transform: uppercase; letter-spacing: 1.5px; padding-bottom: 4px;">
+                    RISEL COMBUSTÍVEIS &bull; GESTÃO DE FROTAS
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 17pt; font-weight: 800; color: #ffffff; text-transform: uppercase; line-height: 1.25; padding-bottom: 4px;">
+                    ${headerTitle}
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #d1fae5; font-weight: 500; padding-bottom: 12px;">
+                    ${headerSubtitle}
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center">
+                    <table cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="background-color: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 16px; padding: 4px 14px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 700; color: #ffffff;">
+                          📋 PROTOCOLO CRM: <span style="color: #fde68a; font-family: 'Courier New', monospace; font-weight: 800;">${protocolText}</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
           </tr>
+
+          <!-- CORPO PRINCIPAL DO E-MAIL -->
           <tr>
-            <td class="label-col">Setor / Departamento:</td>
-            <td class="val-col">${rental.requesterSector || 'Geral'}</td>
+            <td style="padding: 24px 24px;">
+              
+              <!-- STATUS EM DESTAQUE -->
+              <div style="margin-bottom: 18px; text-align: center;">
+                ${statusHeroBadge}
+              </div>
+
+              <!-- RESUMO EXECUTIVO (KPIS 3 COLUNAS) -->
+              <table width="100%" cellpadding="0" cellspacing="6" border="0" style="margin-bottom: 18px;">
+                <tr>
+                  <td width="33%" align="center" style="width: 33.33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 8px; vertical-align: top;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Duração Prevista</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #00753f;">⏱️ ${totalDays} diária(s)</div>
+                  </td>
+                  <td width="33%" align="center" style="width: 33.33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 8px; vertical-align: top;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Condutor Designado</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #0f172a;">👤 ${rental.driverName || rental.requesterName}</div>
+                  </td>
+                  <td width="33%" align="center" style="width: 33.33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 8px; vertical-align: top;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Tipo de Trajeto</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt;">${itineraryBadge}</div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- PARECER / DESPACHO (SE HOUVER) -->
+              ${dispatchBoxHtml}
+
+              <!-- DADOS DA LOCADORA (SE HOUVER) -->
+              ${rentalCompanyBlockHtml}
+
+              <!-- ANEXOS VINCULADOS (SE HOUVER DE FATO) -->
+              ${attachmentsModuleHtml}
+
+              <!-- ITINERÁRIO EM DESTAQUE -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; margin: 16px 0;">
+                <tr>
+                  <td align="center" style="padding: 12px 16px;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 4px;">
+                      Itinerário de Retirada &amp; Devolução
+                    </div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 12pt; font-weight: 800; color: #0f172a;">
+                      📍 <strong>${rental.pickupCity || rental.pickupStore || 'Origem a definir'}</strong> 
+                      &nbsp;&nbsp;➔&nbsp;&nbsp; 
+                      🏁 <strong>${rental.returnCity || rental.returnStore || 'Destino a definir'}</strong>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- 1. SOLICITANTE & CONTATO CORPORATIVO -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 18px; margin-bottom: 6px; border-collapse: collapse;">
+                <tr>
+                  <td style="background-color: #114D38; color: #ffffff; padding: 7px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; border-radius: 6px 6px 0 0;">
+                    👤 1. Solicitante &amp; Contato Corporativo
+                  </td>
+                </tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 16px; border-collapse: collapse;">
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Solicitante Responsável:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.requesterName}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Setor / Departamento:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.requesterSector || 'Geral'}</td>
+                </tr>
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cargo / Função:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.requesterRole || 'Não informado'}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">E-mail Corporativo:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #00753f; border-bottom: 1px solid #f1f5f9;"><a href="mailto:${rental.requesterEmail}" style="color: #00753f; text-decoration: none;">${rental.requesterEmail || 'Não informado'}</a></td>
+                </tr>
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Telefone / WhatsApp:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.requesterPhone || 'Não informado'}</td>
+                </tr>
+              </table>
+
+              <!-- 2. CONDUTOR DESIGNADO & HABILITAÇÃO -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 18px; margin-bottom: 6px; border-collapse: collapse;">
+                <tr>
+                  <td style="background-color: #114D38; color: #ffffff; padding: 7px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; border-radius: 6px 6px 0 0;">
+                    🪪 2. Condutor Designado &amp; Habilitação
+                  </td>
+                </tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 16px; border-collapse: collapse;">
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Nome do Condutor:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.driverName || rental.requesterName}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cargo do Condutor:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.driverRole || rental.requesterRole || 'Condutor Corporativo'}</td>
+                </tr>
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Situação da Habilitação:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt;">${statusCnhHtml}</td>
+                </tr>
+              </table>
+
+              <!-- 3. CRONOGRAMA & DETALHES DE RETIRADA E DEVOLUÇÃO -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 18px; margin-bottom: 6px; border-collapse: collapse;">
+                <tr>
+                  <td style="background-color: #114D38; color: #ffffff; padding: 7px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; border-radius: 6px 6px 0 0;">
+                    📅 3. Cronograma &amp; Detalhes de Retirada e Devolução
+                  </td>
+                </tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 16px; border-collapse: collapse;">
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Data/Hora de Retirada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #047857; border-bottom: 1px solid #f1f5f9;">${formatDateTime(rental.pickupDate)}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cidade de Retirada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.pickupCity || 'Não informada'}</td>
+                </tr>
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Ponto / Loja de Retirada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.pickupStore || 'A definir na locadora'}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Data/Hora de Devolução:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #b91c1c; border-bottom: 1px solid #f1f5f9;">${formatDateTime(rental.returnDate)}</td>
+                </tr>
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cidade de Devolução:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.returnCity || 'Não informada'}</td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Ponto / Loja de Devolução:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.returnStore || 'A definir na locadora'}</td>
+                </tr>
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Período Total Contratado:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a;">${totalDays} diária(s)</td>
+                </tr>
+              </table>
+
+              <!-- 4. VEÍCULO SOLICITADO & FINALIDADE DO USO -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 18px; margin-bottom: 6px; border-collapse: collapse;">
+                <tr>
+                  <td style="background-color: #114D38; color: #ffffff; padding: 7px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; border-radius: 6px 6px 0 0;">
+                    🚗 4. Veículo Solicitado &amp; Finalidade do Uso
+                  </td>
+                </tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 22px; border-collapse: collapse;">
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Categoria Solicitada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #0f172a; border-bottom: 1px solid #f1f5f9;">
+                    <span style="display: inline-block; background-color: #f1f5f9; padding: 2px 8px; border-radius: 4px; border: 1px solid #e2e8f0;">${rental.category || 'Hatch / Compacto'}</span>
+                  </td>
+                </tr>
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Finalidade Operacional:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.purpose || 'Uso Operacional Corporativo'}</td>
+                </tr>
+                ${rental.observations ? `
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Observações do Solicitante:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #334155; border-bottom: 1px solid #f1f5f9; white-space: pre-wrap;">${rental.observations}</td>
+                </tr>` : ''}
+                ${rental.base ? `
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Base Operacional Vinculada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.base}</td>
+                </tr>` : ''}
+              </table>
+
+              <!-- BOTÃO DE ACESSO AO SISTEMA (BULLETPROOF) -->
+              <table border="0" cellspacing="0" cellpadding="0" align="center" style="margin: 20px auto 8px;">
+                <tr>
+                  <td align="center" style="border-radius: 8px; background-color: #00753f;">
+                    <a 
+                      href="https://ais-dev-snhwxerluvpzdf2xpbaalx-171172692145.us-east1.run.app/frota?tab=reservas&sub=racRentals" 
+                      target="_blank" 
+                      style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #ffffff; font-weight: 800; text-decoration: none; border-radius: 8px; padding: 12px 28px; border: 1px solid #00753f; display: inline-block; text-transform: uppercase; letter-spacing: 0.5px;"
+                    >
+                      Acessar Módulo RAC no Risel ERP &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
           </tr>
+
+          <!-- RODAPÉ CORPORATIVO RISEL -->
           <tr>
-            <td class="label-col">Cargo / Função:</td>
-            <td class="val-col">${rental.requesterRole || 'Não informado'}</td>
+            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 18px 20px; text-align: center;">
+              <p style="margin: 0 0 4px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 0.5px;">
+                Risel Combustíveis Ltda &bull; Sistema Integrado de Gestão de Frota (ERP)
+              </p>
+              <p style="margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; color: #64748b;">
+                Mensagem automática emitida em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} &bull; Protocolo: ${protocolText}
+              </p>
+            </td>
           </tr>
-          <tr>
-            <td class="label-col">E-mail Corporativo:</td>
-            <td class="val-col"><a href="mailto:${rental.requesterEmail}" style="color: #00753f; text-decoration: none; font-weight: 700;">${rental.requesterEmail || 'Não informado'}</a></td>
-          </tr>
-          <tr>
-            <td class="label-col">Telefone / WhatsApp:</td>
-            <td class="val-col">${rental.requesterPhone || 'Não informado'}</td>
-          </tr>
+
         </table>
-
-        <!-- 2. CONDUTOR AUTORIZADO & CNH -->
-        <div class="section-header">
-          🪪 2. Condutor Designado & Habilitação
-        </div>
-        <table class="grid-table">
-          <tr>
-            <td class="label-col">Nome do Condutor:</td>
-            <td class="val-col"><strong>${rental.driverName || rental.requesterName}</strong></td>
-          </tr>
-          <tr>
-            <td class="label-col">Cargo do Condutor:</td>
-            <td class="val-col">${rental.driverRole || rental.requesterRole || 'Condutor Corporativo'}</td>
-          </tr>
-          <tr>
-            <td class="label-col">Situação da Habilitação:</td>
-            <td class="val-col">${statusCnhHtml}</td>
-          </tr>
-        </table>
-
-        <!-- 3. CRONOGRAMA, DATAS & LOCALIDADES -->
-        <div class="section-header">
-          📅 3. Cronograma & Detalhes de Retirada e Devolução
-        </div>
-        <table class="grid-table">
-          <tr>
-            <td class="label-col">Data/Hora de Retirada:</td>
-            <td class="val-col"><strong style="color: #047857;">${formatDateTime(rental.pickupDate)}</strong></td>
-          </tr>
-          <tr>
-            <td class="label-col">Cidade de Retirada:</td>
-            <td class="val-col">${rental.pickupCity || 'Não informada'}</td>
-          </tr>
-          <tr>
-            <td class="label-col">Ponto / Loja de Retirada:</td>
-            <td class="val-col">${rental.pickupStore || 'A definir na locadora'}</td>
-          </tr>
-          <tr>
-            <td class="label-col">Data/Hora de Devolução:</td>
-            <td class="val-col"><strong style="color: #b91c1c;">${formatDateTime(rental.returnDate)}</strong></td>
-          </tr>
-          <tr>
-            <td class="label-col">Cidade de Devolução:</td>
-            <td class="val-col">${rental.returnCity || 'Não informada'}</td>
-          </tr>
-          <tr>
-            <td class="label-col">Ponto / Loja de Devolução:</td>
-            <td class="val-col">${rental.returnStore || 'A definir na locadora'}</td>
-          </tr>
-          <tr>
-            <td class="label-col">Período Total Contratado:</td>
-            <td class="val-col"><strong>${totalDays} diária(s)</strong></td>
-          </tr>
-        </table>
-
-        <!-- 4. ESPECIFICAÇÕES DO VEÍCULO & JUSTIFICATIVA -->
-        <div class="section-header">
-          🚗 4. Veículo Solicitado & Finalidade do Uso
-        </div>
-        <table class="grid-table">
-          <tr>
-            <td class="label-col">Categoria Solicitada:</td>
-            <td class="val-col"><span style="background: #f1f5f9; padding: 2px 8px; border-radius: 6px; font-weight: 700; border: 1px solid #e2e8f0;">${rental.category || 'Hatch / Compacto'}</span></td>
-          </tr>
-          <tr>
-            <td class="label-col">Finalidade Operacional:</td>
-            <td class="val-col">${rental.purpose || 'Uso Operacional Corporativo'}</td>
-          </tr>
-          ${rental.observations ? `
-          <tr>
-            <td class="label-col">Observações do Solicitante:</td>
-            <td class="val-col" style="white-space: pre-wrap; color: #334155;">${rental.observations}</td>
-          </tr>` : ''}
-          ${rental.base ? `
-          <tr>
-            <td class="label-col">Base Operacional Vinculada:</td>
-            <td class="val-col">${rental.base}</td>
-          </tr>` : ''}
-        </table>
-
-        <!-- BOTÃO DE ACESSO AO CRM NO SISTEMA -->
-        <div style="text-align: center; margin-top: 28px; margin-bottom: 12px;">
-          <a href="https://ais-dev-snhwxerluvpzdf2xpbaalx-171172692145.us-east1.run.app/frota?tab=reservas&sub=racRentals" class="btn-action">
-            Acessar Módulo RAC no Risel ERP &rarr;
-          </a>
-        </div>
-
-      </div>
-
-      <!-- RODAPÉ CORPORATIVO -->
-      <div class="footer">
-        <p style="margin: 0 0 6px; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 0.5px;">
-          Risel Combustíveis Ltda &bull; Sistema Integrado de Gestão de Frota (ERP)
-        </p>
-        <p style="margin: 0; font-size: 9.5pt;">
-          Mensagem automática emitida em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} &bull; Protocolo: ${protocolText}
-        </p>
-      </div>
-
-    </div>
-  </div>
+      </td>
+    </tr>
+  </table>
 </body>
-</html>
-  `;
+</html>`;
 };
 
 

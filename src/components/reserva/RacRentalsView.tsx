@@ -629,18 +629,16 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
-                const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-                if (fullUpdated.requesterEmail && !recipients.includes(fullUpdated.requesterEmail)) {
-                    recipients.push(fullUpdated.requesterEmail);
-                }
+                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : [...ADMIN_EMAIL_RECIPIENTS];
+                const ccList = fullUpdated.requesterEmail ? [...ADMIN_EMAIL_RECIPIENTS] : undefined;
 
                 await sendEmail(
-                    recipients,
-                    `[Solicitação RAC APROVADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
+                    primaryTo,
+                    `[LOCAÇÃO RAC CONFIRMADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.driverName || fullUpdated.requesterName}`,
                     emailHtml,
                     {
                         fromName: 'Gestão de Reservas Risel',
-                        cc: fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : undefined,
+                        cc: ccList,
                         attachments: emailAttachments.length > 0 ? emailAttachments : undefined
                     }
                 );
@@ -648,7 +646,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 console.warn("Aviso ao enviar e-mail de aprovação RAC:", mailErr);
             }
 
-            showToast("Solicitação RAC aprovada, voucher anexado e e-mails enviados com sucesso!", "success");
+            showToast("Locação RAC efetivada, voucher anexado e confirmação enviada ao solicitante!", "success");
             setIsApproveModalOpen(false);
             setSelectedRental(null);
             setVoucherFile(null);
@@ -717,18 +715,16 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
-                const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-                if (fullUpdated.requesterEmail && !recipients.includes(fullUpdated.requesterEmail)) {
-                    recipients.push(fullUpdated.requesterEmail);
-                }
+                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : [...ADMIN_EMAIL_RECIPIENTS];
+                const ccList = fullUpdated.requesterEmail ? [...ADMIN_EMAIL_RECIPIENTS] : undefined;
 
                 await sendEmail(
-                    recipients,
-                    `[Solicitação RAC RECUSADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
+                    primaryTo,
+                    `[SOLICITAÇÃO RAC NÃO AUTORIZADA] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
                     emailHtml,
                     {
                         fromName: 'Gestão de Reservas Risel',
-                        cc: fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : undefined,
+                        cc: ccList,
                         attachments: emailAttachments.length > 0 ? emailAttachments : undefined
                     }
                 );
@@ -1558,10 +1554,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                             <button
                                                                 onClick={() => handleOpenApproveModal(r)}
                                                                 className="px-2.5 py-1.5 text-xs font-black text-white bg-[#114D38] hover:bg-[#0d3b2c] rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95"
-                                                                title="Aprovar Solicitação RAC e Notificar Solicitante"
+                                                                title="Efetivar Locação RAC, Anexar Voucher e Notificar Solicitante"
                                                             >
                                                                 <CheckIcon className="h-3.5 w-3.5" />
-                                                                Aprovar
+                                                                Efetivar
                                                             </button>
                                                             <button
                                                                 onClick={() => handleOpenRejectModal(r)}
@@ -1687,7 +1683,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                         className="w-full py-2 bg-[#114D38] hover:bg-[#0d3b2c] text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-xs"
                                     >
                                         <CheckIcon className="h-3.5 w-3.5" />
-                                        Aprovar
+                                        Efetivar
                                     </button>
                                     <button
                                         onClick={() => handleOpenRejectModal(r)}
@@ -2005,7 +2001,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 title={
                     <div className="flex items-center gap-2 text-[#114D38]">
                         <CheckCircleIcon className="h-5 w-5 text-emerald-600" />
-                        <span className="font-black text-base">Aprovar Solicitação de Locação RAC</span>
+                        <span className="font-black text-base">Efetivar Locação RAC &amp; Anexar Documento da Reserva</span>
                     </div>
                 }
             >
@@ -2019,6 +2015,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </p>
                         <p className="text-slate-600 font-medium">
                             Itinerário: <span className="font-bold">{(selectedRental?.pickupCity ? normalizeCidade(selectedRental.pickupCity) : 'Origem')}</span> ➔ <span className="font-bold">{(selectedRental?.returnCity ? normalizeCidade(selectedRental.returnCity) : 'Destino')}</span>
+                        </p>
+                        <p className="text-[11px] text-emerald-800 font-bold pt-1 border-t border-emerald-200/50 mt-1">
+                            ℹ️ Ao salvar, o solicitante receberá o e-mail oficial com os dados preenchidos e o Voucher anexado para retirada.
                         </p>
                     </div>
 
@@ -2209,12 +2208,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             {isSubmittingApproval ? (
                                 <>
                                     <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                    <span>Aprovando e Notificando...</span>
+                                    <span>Efetivando e Enviando Voucher...</span>
                                 </>
                             ) : (
                                 <>
                                     <CheckCircleIcon className="h-4 w-4 text-emerald-300" />
-                                    <span>Confirmar Aprovação & Notificar</span>
+                                    <span>Efetivar Locação &amp; Enviar Voucher</span>
                                 </>
                             )}
                         </button>

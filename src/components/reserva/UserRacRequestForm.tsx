@@ -347,10 +347,16 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         });
       }
 
-      // 4. Envia notificação por e-mail com anexo da CNH EXCLUSIVAMENTE para a administração
-      // O solicitante receberá o e-mail formal de retorno quando a solicitação for aprovada ou recusada
-      const emailSubject = `[Solicitação RAC] ${protocolNumber} - ${formData.requesterName} (${formData.pickupCity} ➔ ${formData.returnCity})`;
-      const emailHtml = generateRacEmailHtml(fullRental, !!cnhFile, hasCnhAlready);
+      // 4. Envia notificação por e-mail com anexo da CNH EXCLUSIVAMENTE para a Gestão de Frota (Administração)
+      // REGRA: O solicitante NUNCA recebe o e-mail inicial de solicitação.
+      // O solicitante receberá o e-mail oficial com o voucher apenas quando a locação for realizada e aprovada.
+      const emailSubject = `[NOVA SOLICITAÇÃO RAC] ${protocolNumber} - ${formData.requesterName} (${formData.pickupCity} ➔ ${formData.returnCity})`;
+      const emailHtml = generateRacEmailHtml(fullRental, {
+        actionType: 'created',
+        cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh')),
+        cnhAlreadyOnRecord: hasCnhAlready,
+        voucherAttachedNow: false
+      });
 
       const emailRecipients = [...ADMIN_EMAIL_RECIPIENTS];
 
@@ -381,9 +387,12 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
               <h3 className="text-base font-extrabold text-slate-800 mt-2">
                 Solicitação enviada para a Gestão de Frota
               </h3>
-              <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
-                Sua solicitação de locação de veículo terceirizado foi recebida e já está registrada na fila de <strong>Locações RAC</strong>. Os gestores responsáveis foram notificados por e-mail com todos os detalhes e cópia da CNH.
+              <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto leading-relaxed">
+                Sua solicitação de locação de veículo terceirizado foi recebida e registrada na fila da <strong>Gestão de Frota</strong>.
               </p>
+              <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-[11px] font-semibold text-left">
+                ℹ️ <strong>Importante:</strong> A Gestão de Frota providenciará a reserva junto à locadora. Assim que a locação for realizada e confirmada no sistema, você receberá por e-mail a confirmação oficial com todos os dados da reserva e o <strong>Voucher anexado</strong> para retirada do veículo no balcão.
+              </div>
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-left text-xs space-y-1.5 font-sans">
