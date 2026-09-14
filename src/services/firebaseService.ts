@@ -103,17 +103,23 @@ const racRentalsCollection = db.collection('racRentals');
 
 // --- Funções de Notificação por E-mail ---
 
-// Helper para escolher ícone baseado no label
+// Helper para escolher ícone baseado no label exatamente como no padrão visual Risel
 const getIconForLabel = (label: string): string => {
     const l = label.toLowerCase();
-    if (l.includes('veículo') || l.includes('veiculo') || l.includes('carro')) return '🚗'; 
-    if (l.includes('motorista') || l.includes('solicitante') || l.includes('nome')) return '👤'; 
-    if (l.includes('departamento') || l.includes('setor')) return '🏢'; 
-    if (l.includes('data') || l.includes('saída') || l.includes('retorno') || l.includes('período') || l.includes('horário')) return '📅'; 
-    if (l.includes('destino') || l.includes('local') || l.includes('cidade')) return '📍'; 
-    if (l.includes('motivo') || l.includes('status') || l.includes('observação')) return '📝'; 
-    if (l.includes('km') || l.includes('distancia')) return '⚡'; 
-    if (l.includes('tanque') || l.includes('combustível')) return '⛽'; 
+    if (l.includes('solicitante') || l.includes('responsável')) return '👤'; 
+    if (l.includes('condutor') || l.includes('motorista')) return '🔹'; 
+    if (l.includes('departamento') || l.includes('setor') || l.includes('área') || l.includes('filial') || l.includes('base')) return '🏢'; 
+    if (l.includes('veículo') || l.includes('veiculo') || l.includes('carro') || l.includes('placa') || l.includes('modelo')) return '🚗'; 
+    if (l.includes('saída') || l.includes('saida') || l.includes('início') || l.includes('inicio') || l.includes('retorno') || l.includes('data') || l.includes('período') || l.includes('horário') || l.includes('prazo')) return '📅'; 
+    if (l.includes('destino') || l.includes('local') || l.includes('cidade') || l.includes('origem') || l.includes('rota')) return '📍'; 
+    if (l.includes('distância') || l.includes('distancia') || l.includes('km') || l.includes('odômetro') || l.includes('odometro')) return '🔹'; 
+    if (l.includes('motivo') || l.includes('finalidade') || l.includes('justificativa') || l.includes('descrição') || l.includes('serviço')) return '📝'; 
+    if (l.includes('tanque') || l.includes('combustível') || l.includes('combustivel') || l.includes('abastecimento')) return '⛽'; 
+    if (l.includes('status') || l.includes('situação') || l.includes('alçada') || l.includes('aprovador')) return '🛡️'; 
+    if (l.includes('observação') || l.includes('observacao') || l.includes('nota') || l.includes('parecer')) return '⚠️'; 
+    if (l.includes('rodízio') || l.includes('rodizio')) return '🚫';
+    if (l.includes('passageiro') || l.includes('acompanhante')) return '👥';
+    if (l.includes('cnh')) return '🪪';
     return '🔹'; 
 };
 
@@ -121,79 +127,80 @@ const getIconForLabel = (label: string): string => {
 export const generateEmailHtml = (
     title: string, 
     details: { label: string, value: string }[], 
-    highlightColor: string = '#00753f', // Usado para botões/destaques secundários
+    highlightColor: string = '#114D38', // Verde institucional Risel
     actionLink?: string, // Link opcional para botão de ação
     introText?: string, // Texto introdutório
     footerText?: string, // Texto de rodapé/orientação extra
     borderColor: string = '#e2e8f0', // Cor da borda da tabela
     mapImageUrl?: string // URL da imagem estática do mapa (opcional)
 ) => {
+    // Determina o subtítulo elegante do cabeçalho
+    const subtitleUpper = (title && title.toUpperCase().includes('RISEL')) 
+        ? title.toUpperCase() 
+        : (title ? title.toUpperCase() : 'DETALHES DA SOLICITAÇÃO');
     
-    // Construção das linhas da tabela estruturada de detalhes
+    // Construção das linhas da tabela estruturada de detalhes (Visual idêntico à imagem de referência)
     const rows = details.map((d, index) => {
         const icon = getIconForLabel(d.label);
         const isEven = index % 2 === 0;
         const isStatus = d.label.toLowerCase().includes('status');
         const isApproved = isStatus && (d.value.toLowerCase().includes('aprovad') || d.value.includes('✅'));
-        const isPending = isStatus && (d.value.toLowerCase().includes('pendente') || d.value.includes('⏳'));
-        const isRejected = isStatus && (d.value.toLowerCase().includes('rejeitad') || d.value.toLowerCase().includes('cancelad') || d.value.includes('❌'));
+        const isPending = isStatus && (d.value.toLowerCase().includes('pendente') || d.value.toLowerCase().includes('aguardando') || d.value.includes('⏳'));
+        const isRejected = isStatus && (d.value.toLowerCase().includes('rejeitad') || d.value.toLowerCase().includes('recusad') || d.value.toLowerCase().includes('cancelad') || d.value.includes('❌'));
 
         let valueDisplay = d.value;
         if (isApproved) {
-            valueDisplay = `<span style="background-color: #dcfce7; color: #15803d; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 13px; display: inline-block; border: 1px solid #bbf7d0;">${d.value}</span>`;
+            valueDisplay = `<span style="background-color: #dcfce7; color: #15803d; padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 11pt; display: inline-block; border: 1px solid #bbf7d0;">${d.value}</span>`;
         } else if (isPending) {
-            valueDisplay = `<span style="background-color: #fef3c7; color: #b45309; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 13px; display: inline-block; border: 1px solid #fde68a;">${d.value}</span>`;
+            valueDisplay = `<span style="background-color: #fef3c7; color: #b45309; padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 11pt; display: inline-block; border: 1px solid #fde68a;">${d.value}</span>`;
         } else if (isRejected) {
-            valueDisplay = `<span style="background-color: #fee2e2; color: #b91c1c; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 13px; display: inline-block; border: 1px solid #fecaca;">${d.value}</span>`;
+            valueDisplay = `<span style="background-color: #fee2e2; color: #b91c1c; padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 11pt; display: inline-block; border: 1px solid #fecaca;">${d.value}</span>`;
+        } else {
+            valueDisplay = `<span style="color: #0f172a; font-weight: 700; font-size: 11pt;">${d.value}</span>`;
         }
 
         return `
-        <tr style="background-color: ${isEven ? '#f8fafc' : '#ffffff'};">
-            <td style="padding: 11px 16px; border-bottom: 1px solid ${borderColor}; color: #0d4a36; font-weight: 700; width: 38%; font-size: 13px; vertical-align: middle; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                <span style="margin-right: 8px; font-size: 15px;">${icon}</span>${d.label}:
+        <tr style="background-color: ${isEven ? '#ffffff' : '#ffffff'}; border-bottom: 1px solid #edf2f7;">
+            <td style="padding: 12px 16px; border-bottom: 1px solid #edf2f7; background-color: #f8fafc; color: #334155; font-weight: 700; width: 38%; font-size: 11pt; vertical-align: middle; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                <span style="margin-right: 8px; font-size: 13pt;">${icon}</span><span style="color: #1e293b;">${d.label}</span>
             </td>
-            <td style="padding: 11px 16px; border-bottom: 1px solid ${borderColor}; color: #0f172a; font-size: 13.5px; vertical-align: middle; font-weight: 700; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <td style="padding: 12px 18px; border-bottom: 1px solid #edf2f7; color: #0f172a; font-size: 11pt; vertical-align: middle; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                 ${valueDisplay}
             </td>
         </tr>
     `}).join('');
 
-    // Botão Bulletproof com suporte a Outlook e todos os clientes de email (garante fundo verde e texto 100% visível)
+    // Botão Bulletproof com suporte a Outlook e todos os clientes de email
     const buttonHtml = actionLink ? `
-        <div style="text-align: center; margin-top: 30px; margin-bottom: 16px;">
-            <!-- Tabela Bulletproof para o Botão do Foguete (Impede fundo branco no Outlook/Office 365) -->
+        <div style="text-align: center; margin-top: 28px; margin-bottom: 16px;">
             <table border="0" cellspacing="0" cellpadding="0" align="center" style="margin: 0 auto; border-collapse: collapse;">
               <tr>
-                <td align="center" bgcolor="#0d4a36" style="border-radius: 8px; background-color: #0d4a36; background: linear-gradient(135deg, #09392b 0%, #00753f 100%);">
-                  <a href="${actionLink}" target="_blank" style="font-size: 14px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-weight: 800; color: #ffffff !important; text-decoration: none; padding: 14px 34px; border-radius: 8px; display: inline-block; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid #00753f;">
+                <td align="center" bgcolor="#114D38" style="border-radius: 8px; background-color: #114D38; background: linear-gradient(135deg, #09392b 0%, #114D38 50%, #1d7053 100%);">
+                  <a href="${actionLink}" target="_blank" style="font-size: 11.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-weight: 800; color: #ffffff !important; text-decoration: none; padding: 14px 36px; border-radius: 8px; display: inline-block; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid #114D38;">
                     <span style="color: #ffffff !important;">🚀 Acessar Sistema Risel</span>
                   </a>
                 </td>
               </tr>
             </table>
-            <!-- Link alternativo de contingência -->
-            <div style="margin-top: 14px; font-size: 11px; color: #64748b; background-color: #f8fafc; padding: 10px 14px; border-radius: 6px; border: 1px dashed #cbd5e1; word-break: break-all; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                Se preferir, utilize o link direto: <a href="${actionLink}" target="_blank" style="color: #00753f; text-decoration: underline; font-weight: 700;">${actionLink}</a>
-            </div>
         </div>
     ` : '';
 
     const mapHtml = mapImageUrl ? `
         <div style="margin-top: 24px; text-align: center; border: 1px solid #e2e8f0; padding: 12px; background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-            <p style="margin: 0 0 10px 0; font-size: 12px; color: #0d4a36; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📍 Registro de Localização e Rota</p>
+            <p style="margin: 0 0 10px 0; font-size: 11pt; color: #114D38; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📍 Registro de Localização e Rota</p>
             <img src="${mapImageUrl}" alt="Mapa do deslocamento" style="max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0 auto;" />
         </div>
     ` : '';
 
     const introHtml = introText ? `
-        <div style="background-color: #f0fdf4; padding: 14px 18px; border-left: 4px solid #16a34a; border-radius: 8px; margin-bottom: 22px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-            <p style="color: #166534; font-size: 14px; line-height: 1.6; margin: 0; font-weight: 600;">${introText}</p>
+        <div style="background-color: #f0fdf4; padding: 14px 18px; border-left: 5px solid #16a34a; border-radius: 8px; margin-bottom: 20px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <p style="color: #166534; font-size: 11pt; line-height: 1.5; margin: 0; font-weight: 600;">${introText}</p>
         </div>
     ` : '';
 
     const footerHtml = footerText ? `
-        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; color: #92400e; padding: 14px 18px; border-radius: 8px; margin-top: 24px; font-size: 13px; line-height: 1.5; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-            <strong style="display: block; margin-bottom: 4px; font-size: 13.5px; color: #b45309;">⚠️ Atenção & Recomendações:</strong>
+        <div style="background-color: #fffbeb; border-left: 5px solid #f59e0b; color: #92400e; padding: 14px 18px; border-radius: 8px; margin-top: 22px; font-size: 11pt; line-height: 1.5; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <strong style="display: block; margin-bottom: 4px; font-size: 11pt; color: #b45309;">⚠️ Atenção & Recomendações:</strong>
             ${footerText}
         </div>
     ` : '';
@@ -208,6 +215,7 @@ export const generateEmailHtml = (
         <style>
             body, table, td, p, h1, h2, h3, div, span, strong, a, li, b { 
                 font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif !important; 
+                font-size: 11pt;
             }
             body { 
                 background-color: #f1f5f9; 
@@ -217,21 +225,27 @@ export const generateEmailHtml = (
             }
         </style>
     </head>
-    <body style="background-color: #f1f5f9; padding: 20px 10px; margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-        <div style="max-width: 650px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+    <body style="background-color: #f1f5f9; padding: 20px 10px; margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt;">
+        <div style="max-width: 650px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #cbd5e1; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
             
-            <!-- Header Corporativo Risel com Fundo Verde Gradiente e Suporte a Todos os Clientes de Email (Outlook, Office 365, Gmail) -->
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#09392b" style="background-color: #09392b; background: linear-gradient(135deg, #06231a 0%, #0d4a36 50%, #156c50 100%); width: 100%; border-bottom: 4px solid #f47920; border-collapse: collapse;">
+            <!-- Header Corporativo Risel (Idêntico à Imagem de Referência com Dourado/Verde e Logotipo) -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#114D38" style="background-color: #114D38; background: linear-gradient(135deg, #09392b 0%, #114D38 50%, #1d7053 100%); width: 100%; border-bottom: 4px solid #f47920; border-collapse: collapse;">
               <tr>
-                <td bgcolor="#09392b" style="padding: 24px 28px; background-color: #09392b; background: linear-gradient(135deg, #06231a 0%, #0d4a36 50%, #156c50 100%);">
+                <td bgcolor="#114D38" style="padding: 24px 24px 20px 24px; text-align: center;">
                   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
                     <tr>
-                      <td width="56" valign="middle" style="width: 56px; vertical-align: middle;">
-                        <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" width="50" height="50" style="width: 50px; height: 50px; border-radius: 10px; display: block; border: 2px solid rgba(255,255,255,0.25); object-fit: cover;" />
-                      </td>
-                      <td valign="middle" style="padding-left: 16px; vertical-align: middle;">
-                        <h1 style="color: #ffffff !important; margin: 0; font-size: 19px; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">${title}</h1>
-                        <p style="color: #86efac !important; margin: 4px 0 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda • Gestão de Frotas</p>
+                      <td align="center" style="text-align: center;">
+                        <table border="0" cellspacing="0" cellpadding="0" align="center" style="margin: 0 auto; border-collapse: collapse;">
+                          <tr>
+                            <td valign="middle" style="padding-right: 14px;">
+                              <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" width="48" height="48" style="width: 48px; height: 48px; border-radius: 8px; display: block; border: 2px solid rgba(255,255,255,0.3); object-fit: cover;" />
+                            </td>
+                            <td valign="middle" style="text-align: left;">
+                              <h1 style="color: #f59e0b !important; margin: 0; font-size: 19pt; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.1;">RISEL COMBUSTÍVEIS</h1>
+                              <p style="color: #fde047 !important; margin: 4px 0 0 0; font-size: 11pt; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">${subtitleUpper}</p>
+                            </td>
+                          </tr>
+                        </table>
                       </td>
                     </tr>
                   </table>
@@ -239,11 +253,11 @@ export const generateEmailHtml = (
               </tr>
             </table>
            
-            <div style="padding: 28px 28px 24px 28px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <div style="padding: 26px 26px 22px 26px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt;">
                 ${introHtml}
                  
-                <!-- Tabela Estruturada de Informações -->
-                <table style="width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; border: 1px solid ${borderColor}; border-radius: 10px; overflow: hidden; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                <!-- Tabela Estruturada de Informações (Padrão Visual da Imagem com Fundo Cinza no Label e Branco no Valor) -->
+                <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11pt; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                     ${rows}
                 </table>
 
@@ -254,9 +268,9 @@ export const generateEmailHtml = (
             </div>
            
             <!-- Rodapé Institucional Oficial Risel -->
-            <div style="background-color: #f8fafc; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                <p style="margin: 0; font-size: 11px; font-weight: 700; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">&copy; ${new Date().getFullYear()} Risel Combustíveis Ltda • Sistema de Gestão de Frotas</p>
-                <p style="margin: 4px 0 0 0; font-size: 10px; color: #94a3b8; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Mensagem corporativa gerada automaticamente pelo Sistema Risel ERP.</p>
+            <div style="background-color: #f8fafc; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 10pt;">
+                <p style="margin: 0; font-size: 10pt; font-weight: 700; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">&copy; ${new Date().getFullYear()} Risel Combustíveis Ltda • Sistema de Gestão de Frotas & Reservas</p>
+                <p style="margin: 3px 0 0 0; font-size: 9.5pt; color: #94a3b8; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Mensagem corporativa gerada automaticamente pelo Sistema Risel ERP.</p>
             </div>
         </div>
     </body>

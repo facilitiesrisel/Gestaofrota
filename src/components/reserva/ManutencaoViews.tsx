@@ -16,6 +16,7 @@ import { Veiculo } from "../../pages/Frota";
 import { MercosulPlateBadge } from "../MercosulPlateBadge";
 import { SupabaseManutencao } from "../../services/supabaseService";
 import { normalizeBaseOperacional, isSameCityOrBase } from "../../utils/baseOperacional";
+import { formatCPF, isValidCPF, cleanCPF } from "../../utils/cpfHelper";
 import { 
   ServicoManutencaoItem, 
   AnexoManutencao, 
@@ -198,6 +199,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
   const [avariaColaborador, setAvariaColaborador] = useState("");
   const [avariaBase, setAvariaBase] = useState("");
   const [avariaCpf, setAvariaCpf] = useState("");
+  const [avariaCpfError, setAvariaCpfError] = useState<string | null>(null);
   const [avariaCargo, setAvariaCargo] = useState("Condutor / Operador");
   const [avariaDescricao, setAvariaDescricao] = useState("");
   const [avariaData, setAvariaData] = useState(new Date().toISOString().split("T")[0]);
@@ -288,8 +290,9 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
     const veic = veiculos.find(v => v.placa === activePlaca);
     setAvariaColaborador(dadosAvaria?.colaboradorNome || veic?.condutor || "");
     setAvariaBase(dadosAvaria?.base || veic?.filial || "Paulínia");
-    setAvariaCpf(dadosAvaria?.cpfMatricula || "");
-    setAvariaCargo(dadosAvaria?.cargoFuncao || "Condutor / Operador");
+    setAvariaCpf(dadosAvaria?.cpfMatricula || veic?.cpfCondutor || "");
+    setAvariaCpfError(null);
+    setAvariaCargo(dadosAvaria?.cargoFuncao || veic?.funcao || "Condutor / Operador");
     setAvariaDescricao(dadosAvaria?.descricaoOcorrencia || `Avaria identificada no veículo ${activePlaca}`);
     const custoOS = totalServicosCalculado > 0 ? totalServicosCalculado : 0;
     setAvariaValorTotal(dadosAvaria?.valorTotalReparo || custoOS);
@@ -301,6 +304,18 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
   // Confirmar e gerar a autorização de desconto de avaria
   const handleConfirmarAvaria = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const cleanCpfDigits = cleanCPF(avariaCpf);
+    if (!cleanCpfDigits || cleanCpfDigits.length < 11) {
+      setAvariaCpfError("CPF do condutor é obrigatório (informe os 11 dígitos).");
+      return;
+    }
+    if (!isValidCPF(cleanCpfDigits)) {
+      setAvariaCpfError("CPF inválido. Verifique os números informados.");
+      return;
+    }
+    setAvariaCpfError(null);
+
     const valorReparo = Number(avariaValorTotal) || totalServicosCalculado || 0;
     const sub = Number(avariaSubsidio) || 0;
     const desc = Math.max(0, valorReparo - sub);
@@ -311,7 +326,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
       id: `av-${Date.now()}`,
       colaboradorNome: avariaColaborador.trim() || "Condutor Responsável",
       base: avariaBase.trim() || "Paulínia",
-      cpfMatricula: avariaCpf.trim() || "-",
+      cpfMatricula: formatCPF(cleanCpfDigits),
       cargoFuncao: avariaCargo.trim() || "Condutor",
       descricaoOcorrencia: avariaDescricao.trim() || "Avaria veicular",
       dataOcorrencia: avariaData,
@@ -1814,19 +1829,28 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block text-slate-800">CPF ou Matrícula</label>
+                  <label className="block text-slate-800 flex items-center justify-between">
+                    <span>CPF do Condutor *</span>
+                    {avariaCpfError && <span className="text-[10px] text-rose-500 font-bold">{avariaCpfError}</span>}
+                  </label>
                   <input
                     type="text"
+                    required
                     value={avariaCpf}
-                    onChange={(e) => setAvariaCpf(e.target.value)}
-                    placeholder="Ex: 123.456.789-00"
-                    className="w-full border border-slate-200 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-amber-600 text-xs font-bold"
+                    onChange={(e) => {
+                      setAvariaCpf(formatCPF(e.target.value));
+                      if (avariaCpfError) setAvariaCpfError(null);
+                    }}
+                    maxLength={14}
+                    placeholder="000.000.000-00"
+                    className={`w-full border ${avariaCpfError ? 'border-rose-400 focus:ring-rose-500' : 'border-slate-200 focus:ring-amber-600'} px-3 py-2 rounded-xl outline-none focus:ring-2 text-xs font-mono font-bold`}
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-slate-800">Cargo / Função</label>
+                  <label className="block text-slate-800">Cargo / Função *</label>
                   <input
                     type="text"
+                    required
                     value={avariaCargo}
                     onChange={(e) => setAvariaCargo(e.target.value)}
                     placeholder="Ex: Operador de Guindaste / Condutor"

@@ -4,6 +4,7 @@ export interface Veiculo {
   modelo: string;
   vencContrato: string;
   condutor: string;
+  cpfCondutor?: string;
   funcao: string;
   contatoMotorista: string;
   gestorResp: string;

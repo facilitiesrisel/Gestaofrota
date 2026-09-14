@@ -258,19 +258,22 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
             // --- ENVIO DE EMAIL (ADMIN START) ---
             const vehicle = getVehicleById(addFormData.vehicleId);
             const emailHtml = generateEmailHtml(
-                "Início de Uso Diário (Admin)",
+                "Início de Uso Diário",
                 [
-                    { label: "Motorista", value: addFormData.driverName },
+                    { label: "Status", value: "🚀 VEÍCULO EM TRÂNSITO" },
+                    { label: "Condutor", value: addFormData.driverName },
+                    { label: "Departamento", value: addFormData.department || "Operacional" },
                     { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "N/A" },
-                    { label: "Saída", value: tripDate.toLocaleString('pt-BR') },
+                    { label: "Data de Saída", value: tripDate.toLocaleString('pt-BR') },
                     { label: "Destino", value: `${addFormData.destinationCity} - ${addFormData.destination}` },
-                    { label: "KM Inicial", value: `${initialKm} km` },
+                    { label: "Odômetro Inicial", value: `${initialKm.toLocaleString('pt-BR')} km` },
                     { label: "Nível Tanque", value: addFormData.initialFuelLevel },
-                    { label: "Motivo", value: addFormData.purpose }
+                    { label: "Motivo / Serviço", value: addFormData.purpose || "Atendimento Operacional" }
                 ],
-                "#00753f",
-                undefined,
-                "Viagem iniciada pelo painel administrativo."
+                "#114D38",
+                window.location.origin,
+                `Informamos que o veículo ${vehicle ? vehicle.plate : ''} iniciou deslocamento para ${addFormData.destinationCity}.`,
+                "Lembre-se de conduzir com prudência e registrar o retorno e KM final ao concluir a rota."
             );
             // Envia para admins
             await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${addFormData.driverName}`, emailHtml, {
@@ -338,19 +341,25 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                 const distance = finalKm - (selectedTrip.initialKm || 0);
 
                 const emailHtml = generateEmailHtml(
-                    "Fim de Uso Diário (Admin)",
+                    "Fim de Uso Diário",
                     [
-                        { label: "Motorista", value: selectedTrip.driverName },
+                        { label: "Status", value: "🏁 CONCLUÍDA / RETORNO REALIZADO" },
+                        { label: "Condutor", value: selectedTrip.driverName },
+                        { label: "Departamento", value: selectedTrip.department || "Operacional" },
                         { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "N/A" },
-                        { label: "Saída", value: new Date(selectedTrip.departureDateTime).toLocaleString('pt-BR') },
-                        { label: "Retorno", value: returnDate.toLocaleString('pt-BR') },
-                        { label: "KM Final", value: `${finalKm} km` },
-                        { label: "KM Percorrido", value: `${distance} km` },
-                        { label: "Tanque (Chegada)", value: returnFormData.finalFuelLevel },
+                        { label: "Data de Saída", value: new Date(selectedTrip.departureDateTime).toLocaleString('pt-BR') },
+                        { label: "Data de Retorno", value: returnDate.toLocaleString('pt-BR') },
+                        { label: "Destino Percorrido", value: `${selectedTrip.destinationCity} - ${selectedTrip.destination}` },
+                        { label: "Odômetro Inicial", value: `${(selectedTrip.initialKm || 0).toLocaleString('pt-BR')} km` },
+                        { label: "Odômetro Final", value: `${finalKm.toLocaleString('pt-BR')} km` },
+                        { label: "Distância Percorrida", value: `${distance.toLocaleString('pt-BR')} km` },
+                        { label: "Nível Tanque (Chegada)", value: returnFormData.finalFuelLevel },
+                        { label: "Motivo / Serviço", value: selectedTrip.purpose || "Atendimento Operacional" }
                     ],
-                    "#00753f",
-                    undefined,
-                    "Viagem finalizada pelo painel administrativo."
+                    "#114D38",
+                    window.location.origin,
+                    `O veículo ${vehicle ? vehicle.plate : ''} foi devolvido e a rota concluída com sucesso.`,
+                    "O odômetro e status do veículo foram atualizados no sistema Risel."
                 );
                 await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${selectedTrip.driverName}`, emailHtml, {
                     fromName: "Gestão de Reservas Risel",

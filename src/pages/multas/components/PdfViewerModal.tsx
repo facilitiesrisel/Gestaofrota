@@ -363,7 +363,14 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
                     <div className="border-t border-slate-500 w-4/5 mx-auto mb-1.5"></div>
                     <p className="font-black text-slate-800 text-[11px] uppercase">ASSINATURA DO CONDUTOR</p>
                     <p className="text-[10px] text-slate-400">(Idêntica à assinatura constante na CNH)</p>
-                    <p className="text-[10px] text-slate-600 font-bold mt-0.5">{multaData.responsavelNome || '-'}</p>
+                    <p className="text-[10px] text-slate-600 font-bold mt-0.5">
+                      {multaData.responsavelNome || '-'}
+                      {multaData.responsavelCodigo && multaData.responsavelCodigo !== '-' && (
+                        <span className="font-mono text-slate-500 font-normal ml-1">
+                          (CPF: {multaData.responsavelCodigo})
+                        </span>
+                      )}
+                    </p>
                   </div>
                   <div className="text-center">
                     <div className="border-t border-slate-500 w-4/5 mx-auto mb-1.5"></div>

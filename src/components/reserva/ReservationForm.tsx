@@ -480,18 +480,17 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         });
     }
 
-    // Enviar e-mail para a administração e com cópia para o solicitante
+    // Enviar e-mail de notificação de nova solicitação EXCLUSIVAMENTE para a administração
+    // O solicitante só receberá o e-mail após a aprovação ou recusa formal da reserva
     const emailHtml = generateEmailHtml(
         "Detalhes da Solicitação",
         emailDetails,
         '#005C30',
-        window.location.origin
+        window.location.origin,
+        `Uma nova solicitação de reserva de veículo foi registrada por ${formData.requesterName} e aguarda análise da Gestão de Frota.`
     );
 
     const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-    if (formData.email && formData.email.trim() && !recipients.includes(formData.email.trim())) {
-      recipients.push(formData.email.trim());
-    }
 
     try {
       await sendEmail(

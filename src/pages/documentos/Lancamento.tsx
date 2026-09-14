@@ -14,6 +14,8 @@ import {
   saveFornecedorSupabase,
   fetchCentrosCustoSupabase,
   saveCentroCustoSupabase,
+  fetchBasesSupabase,
+  saveBaseSupabase,
   testSupabaseConnection, 
   pingSupabaseKeepAlive, 
   getSupabaseConfig, 
@@ -28,6 +30,7 @@ import {
   normalizeLancamento,
   forceSyncLancamentos
 } from "../../services/lancamentosService";
+import { sendLancamentoAprovacaoEmail } from "../../services/lancamentoEmailService";
 import {
   consultarCnpjReceita,
   formatarCnpjCpf,
@@ -77,6 +80,20 @@ export function parseCurrencyToNumber(val: string | number | undefined | null): 
   }
   const num = parseFloat(str);
   return isNaN(num) ? 0 : num;
+}
+
+/**
+ * Calcula a Alçada de Aprovação com base no valor da Nota Fiscal
+ * Regra: Até R$ 2.000,00 -> Deny
+ *        De R$ 2.000,01 até R$ 3.000,00 -> Deny e Gerência
+ *        Acima de R$ 3.000,00 -> Deny, Gerência e Diretoria
+ */
+export function calcularAlcadaPorValor(val: string | number | undefined | null): string {
+  const numVal = parseCurrencyToNumber(val);
+  if (numVal <= 0) return "";
+  if (numVal <= 2000) return "Deny";
+  if (numVal <= 3000) return "Deny e Gerência";
+  return "Deny, Gerência e Diretoria";
 }
 
 export function calcularDiasAteVencimento(dataVencStr: string, status: string) {
@@ -273,11 +290,12 @@ export default function Lancamento() {
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-  const [estabelecimentos, setEstabelecimentos] = useState(["100 - Paulínia", "150 - Aguaí"]);
+  const [estabelecimentos, setEstabelecimentos] = useState<string[]>(["100 - Paulínia", "150 - Aguaí"]);
   const [showNewFilialInput, setShowNewFilialInput] = useState(false);
   const [newFilialName, setNewFilialName] = useState("");
   const [isVencimentosOpen, setIsVencimentosOpen] = useState(false);
   const [activeVencTab, setActiveVencTab] = useState("Próximos");
+  const [emailSentNotice, setEmailSentNotice] = useState<{ title: string; desc: string } | null>(null);
 
   // Estados para Gestão de Centros de Custo (C.C)
   const [centrosCustoList, setCentrosCustoList] = useState<string[]>(() => {
@@ -290,22 +308,49 @@ export default function Lancamento() {
     } catch (e) {}
     return CENTROS_CUSTO_SUGERIDOS;
   });
-
   const [isNewCcModalOpen, setIsNewCcModalOpen] = useState(false);
   const [newCcCodigo, setNewCcCodigo] = useState("");
   const [newCcNome, setNewCcNome] = useState("");
 
   useEffect(() => {
+    // 1. Carrega Centros de Custo do banco de dados Supabase e Firestore
     fetchCentrosCustoSupabase().then(dbCcs => {
       if (dbCcs && dbCcs.length > 0) {
         setCentrosCustoList(prev => {
-          const merged = Array.from(new Set([...prev, ...dbCcs]));
+          const merged = Array.from(new Set([...prev, ...dbCcs])).filter(Boolean);
           localStorage.setItem("risel_centros_custo", JSON.stringify(merged));
           return merged;
         });
       }
     });
+
+    // 2. Carrega Bases (Estabelecimentos / Filiais) do banco de dados Supabase e Firestore
+    fetchBasesSupabase().then(dbBases => {
+      if (dbBases && dbBases.length > 0) {
+        setEstabelecimentos(prev => {
+          const merged = Array.from(new Set([...prev, ...dbBases])).filter(Boolean);
+          merged.sort();
+          return merged;
+        });
+      }
+    });
   }, []);
+
+  const handleAddNewFilial = async () => {
+    const clean = newFilialName.trim();
+    if (clean) {
+      setEstabelecimentos(prev => {
+        const merged = Array.from(new Set([...prev, clean])).filter(Boolean);
+        merged.sort();
+        return merged;
+      });
+      setFormData(prev => ({ ...prev, estabelecimento: clean }));
+      setNewFilialName("");
+      setShowNewFilialInput(false);
+      // Salva imediatamente no banco de dados Supabase e Firestore
+      await saveBaseSupabase(clean);
+    }
+  };
 
   const handleAddNovoCentroCusto = (e: React.FormEvent) => {
     e.preventDefault();
@@ -530,13 +575,34 @@ export default function Lancamento() {
       sincronizarFornecedoresFrequentes(lancamentos).catch(err => {
         console.warn("Aviso ao auto-sincronizar fornecedores frequentes:", err);
       });
+
+      const basesL = lancamentos.map(l => l.estabelecimento).filter(Boolean);
+      if (basesL.length > 0) {
+        setEstabelecimentos(prev => {
+          const merged = Array.from(new Set([...prev, ...basesL])).filter(Boolean);
+          merged.sort();
+          return merged;
+        });
+      }
+
+      const ccsL = lancamentos.map(l => l.centroCusto).filter(Boolean);
+      if (ccsL.length > 0) {
+        setCentrosCustoList(prev => {
+          const merged = Array.from(new Set([...prev, ...ccsL])).filter(Boolean);
+          return merged;
+        });
+      }
     }
   }, [lancamentos.length]);
 
   // Vencimentos dinâmicos derivados diretamente dos lançamentos reais (sem dados fictícios)
+  // REQUISITO OFICIAL: Só mostrar alerta de vencimentos próximos para documentos com status de "Aguardando aprovação"
   const vencimentosReais = useMemo(() => {
     return lancamentos
-      .filter(item => item.status !== "Finalizado" && item.status !== "Cancelado")
+      .filter(item => {
+        const s = String(item.status || "").trim().toLowerCase();
+        return s === "aguardando aprovação" || s === "aguardando aprovacao";
+      })
       .map(item => {
         const vencCalc = calcularDiasAteVencimento(item.dataVencimento, item.status);
         return {
@@ -866,19 +932,8 @@ export default function Lancamento() {
   const numericValue = parseFloat(formData.valorNf.replace(/\./g, '').replace(',', '.')) || 0;
   const alcadaAprovacao = useMemo(() => {
     if (!formData.valorNf) return "";
-    if (numericValue <= 2000) return "Deny";
-    if (numericValue > 3000) return "Deny, Gerência e Diretoria";
-    return "Deny e Gerência";
-  }, [numericValue]);
-
-  const handleAddNewFilial = () => {
-    if (newFilialName.trim()) {
-      setEstabelecimentos(prev => [...prev, newFilialName.trim()]);
-      setFormData(prev => ({ ...prev, estabelecimento: newFilialName.trim() }));
-      setNewFilialName("");
-      setShowNewFilialInput(false);
-    }
-  };
+    return calcularAlcadaPorValor(formData.valorNf);
+  }, [formData.valorNf]);
 
   const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -926,7 +981,17 @@ export default function Lancamento() {
   const isMaior = numericValue > valMesAnterior;
   
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const { name, value } = e.target;
+    if (name === "valorNf") {
+      const calculatedAlcada = calcularAlcadaPorValor(value);
+      setFormData(prev => ({
+        ...prev,
+        valorNf: value,
+        aprovadores: calculatedAlcada
+      }));
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
   };
 
   // Simulação premium do Scanner OCR de Nota Fiscal sem custo por IA com busca real na BrasilAPI
@@ -1139,6 +1204,17 @@ export default function Lancamento() {
     const numVal = parseCurrencyToNumber(data.valorNf);
     const formatValueCurrency = `R$ ${numVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const formatVencimiento = data.dataVencimento || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const finalAlcada = data.aprovadores || calcularAlcadaPorValor(data.valorNf) || "Deny";
+    const finalEstabelecimento = data.estabelecimento || "100 - Paulínia";
+    const finalCentroCusto = data.centroCusto || "C.C 101 - Operacional";
+
+    // Persiste imediatamente no banco de dados Supabase e Firestore a Base e o Centro de Custo Principal
+    if (finalEstabelecimento.trim()) {
+      saveBaseSupabase(finalEstabelecimento.trim());
+    }
+    if (finalCentroCusto.trim()) {
+      saveCentroCustoSupabase(finalCentroCusto.trim());
+    }
 
     let savedItem: any = null;
 
@@ -1167,7 +1243,7 @@ export default function Lancamento() {
         tipo: data.tipoDocumento || "NF-e",
         descricao: data.descricao || "Lançamento editado",
         cnpj: data.cnpj,
-        estabelecimento: data.estabelecimento || "100 - Paulínia",
+        estabelecimento: finalEstabelecimento,
         nomeArquivoAnexo: data.nomeArquivoAnexo || existing?.nomeArquivoAnexo || "",
         arquivoAnexoBase64: data.arquivoAnexoBase64 || existing?.arquivoAnexoBase64 || "",
         itemSistema: data.itemSistema || "",
@@ -1176,7 +1252,8 @@ export default function Lancamento() {
         frequencia: data.tipo || "Esporádico",
         lancadoPor: data.lancadoPor || primeiroNome,
         dataAprovacao: dataAprovacao,
-        centroCusto: data.centroCusto || "C.C 101 - Operacional",
+        aprovadores: finalAlcada,
+        centroCusto: finalCentroCusto,
         codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
         codigoLancamento: data.codLancamentoOc || data.codigoLancamento || "",
         cidade: data.cidade || lastCnpjDataRef.current?.municipio || existing?.cidade || "",
@@ -1202,7 +1279,7 @@ export default function Lancamento() {
         tipo: data.tipoDocumento || "NF-e",
         descricao: data.descricao || "Lançamento",
         cnpj: data.cnpj,
-        estabelecimento: data.estabelecimento || "100 - Paulínia",
+        estabelecimento: finalEstabelecimento,
         nomeArquivoAnexo: data.nomeArquivoAnexo || "",
         arquivoAnexoBase64: data.arquivoAnexoBase64 || "",
         itemSistema: data.itemSistema || "",
@@ -1211,7 +1288,8 @@ export default function Lancamento() {
         frequencia: data.tipo || "Esporádico",
         lancadoPor: data.lancadoPor || primeiroNome,
         dataAprovacao: isNowApproved ? new Date().toLocaleDateString('pt-BR') : "",
-        centroCusto: data.centroCusto || "C.C 101 - Operacional",
+        aprovadores: finalAlcada,
+        centroCusto: finalCentroCusto,
         codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
         codigoLancamento: data.codLancamentoOc || data.codigoLancamento || "",
         cidade: data.cidade || lastCnpjDataRef.current?.municipio || "",
@@ -1224,7 +1302,24 @@ export default function Lancamento() {
     }
 
     // REGRA DE NEGÓCIO OFICIAL:
-    // Se for lançamento MENSAL OU se tiver mais de três lançamentos (mesmo que não seja mensal), envie para a lista de cadastro de Fornecedores!
+    // O e-mail para Lorena deve ser enviado uma vez, ao salvar o documento com Status Aguardando Aprovação
+    const isStatusAguardandoAprovacao = (savedItem?.status || "").toLowerCase().includes("aguardando");
+    
+    if (isStatusAguardandoAprovacao) {
+      sendLancamentoAprovacaoEmail(savedItem).then(sent => {
+        if (sent) {
+          setEmailSentNotice({
+            title: "E-mail de Aprovação Enviado",
+            desc: `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br.`
+          });
+          setTimeout(() => setEmailSentNotice(null), 8000);
+        }
+      }).catch(err => {
+        console.warn("Falha no disparo de e-mail de aprovação:", err);
+      });
+    }
+
+    // Se for lançamento MENSAL OU se tiver mais de três lançamentos, envie para a lista de cadastro de Fornecedores
     const itemParaAvaliar = savedItem || data;
     avaliarEEnviarFornecedor(itemParaAvaliar, lancamentos, lastCnpjDataRef.current).then(res => {
       if (res.qualificado) {
@@ -1375,6 +1470,32 @@ export default function Lancamento() {
 
   return (
     <div className="space-y-4">
+      {/* Alerta de Confirmação de E-mail de Aprovação */}
+      {emailSentNotice && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="flex items-center justify-between p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl shadow-sm"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-[#114D38] text-white rounded-lg">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-emerald-950">{emailSentNotice.title}</p>
+              <p className="text-[11px] text-emerald-800">{emailSentNotice.desc}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setEmailSentNotice(null)}
+            className="p-1 text-emerald-700 hover:text-emerald-900 rounded-lg hover:bg-emerald-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </motion.div>
+      )}
+
       {/* Cabeçalho ultra-compacto integrado para focar na tabela, ocultado se o formulário estiver aberto */}
       {!isFormOpen && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-2xl border border-slate-200/60 shadow-sm">

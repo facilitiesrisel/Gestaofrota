@@ -183,10 +183,13 @@ const ReservationsView: React.FC = () => {
             { label: "Status", value: "✅ APROVADA" },
             { label: "Solicitante", value: resSnapshot.requesterName || "Colaborador" },
             { label: "Condutor", value: resSnapshot.driverName || resSnapshot.requesterName || "Não Informado" },
-            { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
-            { label: "Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : "A Definir" },
-            { label: "Retorno", value: !isNaN(returnDate.getTime()) ? returnDate.toLocaleString('pt-BR') : "A Definir" },
-            { label: "Destino", value: `${resSnapshot.destinationCity || ''} - ${resSnapshot.destination || ''}` }
+            { label: "Departamento", value: resSnapshot.department || "Geral" },
+            { label: "Veículo Aprovado", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
+            { label: "Data de Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : "A Definir" },
+            { label: "Retorno Previsto", value: !isNaN(returnDate.getTime()) ? returnDate.toLocaleString('pt-BR') : "A Definir" },
+            { label: "Destino", value: `${resSnapshot.destinationCity || ''} - ${resSnapshot.destination || ''}` },
+            { label: "Distância Estimada", value: resSnapshot.distanceKm ? `${resSnapshot.distanceKm.toLocaleString('pt-BR')} km` : 'N/A' },
+            { label: "Motivo / Finalidade", value: resSnapshot.purpose || "Deslocamento Corporativo" }
         ];
 
         if (finalNotes && finalNotes.trim()) {
@@ -194,15 +197,15 @@ const ReservationsView: React.FC = () => {
         }
 
         const emailHtml = generateEmailHtml(
-            "Confirmação de Reserva de Veículo",
+            "Solicitação de Reserva Aprovada",
             details,
-            "#005C30",
+            "#114D38",
             window.location.origin,
             `Prezado(a) ${resSnapshot.requesterName}, informamos que sua solicitação de reserva de veículo da frota Risel foi aprovada com sucesso.`,
             finalNotes && finalNotes.trim() 
               ? `Observações da Gestão de Frota: ${finalNotes.trim()}` 
               : "Orientamos realizar o checklist antes de sair. Lembre-se de devolver o veículo abastecido e preencher a KM Final e Diário de Bordo ao retornar.",
-            "#00753f"
+            "#114D38"
         );
 
         const recipients = [...ADMIN_EMAIL_RECIPIENTS];
@@ -268,18 +271,25 @@ const ReservationsView: React.FC = () => {
         rejectReason: reason 
       });
       const departureDate = new Date(resSnapshot.departureDateTime);
+      const returnDate = new Date(resSnapshot.returnDate);
+      const vehicle = getVehicleById(resSnapshot.vehicleId);
       const emailHtml = generateEmailHtml(
-          "Solicitação de Reserva Rejeitada",
+          "Solicitação de Reserva Recusada",
           [
-              { label: "Status", value: "❌ REJEITADA" }, 
+              { label: "Status", value: "❌ RECUSADA" }, 
               { label: "Solicitante", value: resSnapshot.requesterName }, 
+              { label: "Condutor", value: resSnapshot.driverName || resSnapshot.requesterName || "Não Informado" },
+              { label: "Departamento", value: resSnapshot.department || "Geral" },
+              { label: "Veículo Solicitado", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
               { label: "Data de Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : 'Data Agendada' },
+              { label: "Retorno Previsto", value: !isNaN(returnDate.getTime()) ? returnDate.toLocaleString('pt-BR') : 'Data Agendada' },
               { label: "Destino", value: `${resSnapshot.destinationCity} - ${resSnapshot.destination}` },
+              { label: "Motivo da Solicitação", value: resSnapshot.purpose || "Deslocamento Corporativo" },
               { label: "Motivo da Recusa", value: reason }
           ],
           "#dc2626",
-          undefined,
-          `Prezado(a) ${resSnapshot.requesterName}, informamos que sua solicitação de reserva não pôde ser aprovada.`,
+          window.location.origin,
+          `Prezado(a) ${resSnapshot.requesterName}, informamos que sua solicitação de reserva não pôde ser aprovada pela Gestão de Frota.`,
           `Motivo da Recusa / Parecer da Administração: ${reason}`,
           "#dc2626"
       );
@@ -309,17 +319,24 @@ const ReservationsView: React.FC = () => {
               // Disparo de notificação de cancelamento por e-mail
               try {
                 const departureDate = new Date(reservation.departureDateTime);
+                const returnDate = new Date(reservation.returnDate);
+                const vehicle = getVehicleById(reservation.vehicleId);
                 const emailHtml = generateEmailHtml(
                     "Solicitação de Reserva Cancelada",
                     [
                         { label: "Status", value: "🚫 CANCELADA" }, 
                         { label: "Solicitante", value: reservation.requesterName }, 
+                        { label: "Condutor", value: reservation.driverName || reservation.requesterName || "Não Informado" },
+                        { label: "Departamento", value: reservation.department || "Geral" },
+                        { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
                         { label: "Data de Saída Prevista", value: departureDate.toLocaleString('pt-BR') },
+                        { label: "Retorno Previsto", value: returnDate.toLocaleString('pt-BR') },
                         { label: "Destino", value: `${reservation.destinationCity} - ${reservation.destination}` },
-                        { label: "Atualização", value: "A reserva foi cancelada no sistema de frotas." }
+                        { label: "Motivo Original", value: reservation.purpose || "Deslocamento Corporativo" },
+                        { label: "Situação", value: "Reserva cancelada no sistema de gestão de frotas." }
                     ],
                     "#64748b",
-                    undefined,
+                    window.location.origin,
                     `Prezado(a) ${reservation.requesterName}, informamos que sua reserva de veículo foi cancelada.`,
                     "Caso necessite de um veículo para uma nova data, realize uma nova solicitação.",
                     "#475569"
@@ -391,50 +408,10 @@ const ReservationsView: React.FC = () => {
     if(selectedReservation) {
         try {
           await updateReservation(selectedReservation.id, updatedData);
-          
-          // Envia notificação por e-mail sobre a atualização para administradores e solicitante
-          const vehicle = getVehicleById(updatedData.vehicleId || selectedReservation.vehicleId);
-          const depDate = new Date(updatedData.departureDateTime || selectedReservation.departureDateTime);
-          const retDate = new Date(updatedData.returnDate || selectedReservation.returnDate);
-          const recipientEmail = updatedData.email || selectedReservation.email;
-          const adminNotes = updatedData.adminNotes !== undefined ? updatedData.adminNotes : selectedReservation.adminNotes;
-          
-          const details = [
-            { label: "Status", value: (updatedData.status || selectedReservation.status).toUpperCase() },
-            { label: "Solicitante", value: updatedData.requesterName || selectedReservation.requesterName },
-            { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "N/A" },
-            { label: "Saída", value: depDate.toLocaleString('pt-BR') },
-            { label: "Retorno", value: retDate.toLocaleString('pt-BR') },
-            { label: "Destino", value: `${updatedData.destinationCity || selectedReservation.destinationCity} - ${updatedData.destination || selectedReservation.destination}` },
-          ];
-
-          if (adminNotes && adminNotes.trim()) {
-            details.push({ label: "Observações da Administração", value: adminNotes.trim() });
-          }
-
-          const emailHtml = generateEmailHtml(
-            "Atualização na Reserva de Veículo",
-            details,
-            "#ff9b00",
-            undefined,
-            `Prezado(a) ${updatedData.requesterName || selectedReservation.requesterName}, sua reserva de veículo foi atualizada pela Gestão de Frota.`,
-            adminNotes && adminNotes.trim() ? `Observações da Gestão de Frota: ${adminNotes.trim()}` : undefined,
-            "#00753f"
-          );
-
-          const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-          if (recipientEmail && !recipients.includes(recipientEmail)) {
-            recipients.push(recipientEmail);
-          }
-
-          await sendEmail(recipients, `Atualização de Reserva - ${updatedData.requesterName || selectedReservation.requesterName}`, emailHtml, {
-            fromName: "Gestão de Reservas Risel",
-            source: "reservas"
-          });
-          showToast("Reserva atualizada e e-mails enviados com sucesso.", 'success');
+          showToast("Reserva atualizada com sucesso no sistema.", 'success');
         } catch (err) {
           console.error("Erro ao salvar edição de reserva:", err);
-          showToast("Reserva atualizada.", 'success');
+          showToast("Erro ao atualizar reserva.", 'error');
         } finally {
           setIsEditModalOpen(false);
           setSelectedReservation(null);

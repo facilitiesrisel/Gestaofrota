@@ -67,6 +67,8 @@ export function normalizeLancamento(item: any): any {
   // Extrai Cód. Lançamento / Nº OC
   let codOc = item.codLancamentoOc || item.codigoLancamento || item.codigo_lancamento || "";
   let centCusto = item.centroCusto || item.centro_custo || "C.C 101 - Operacional";
+  let alcada = item.aprovadores || "";
+  let baseFilial = item.estabelecimento || "";
 
   if (item.observacao) {
     const ocMatch = String(item.observacao).match(/\[OC\/CÓD:\s*([^\]]+)\]/i);
@@ -77,6 +79,14 @@ export function normalizeLancamento(item: any): any {
     if (ccMatch && ccMatch[1] && (!item.centroCusto || item.centroCusto === "C.C 101 - Operacional")) {
       centCusto = ccMatch[1].trim();
     }
+    const alcadaMatch = String(item.observacao).match(/\[ALÇADA:\s*([^\]]+)\]/i);
+    if (alcadaMatch && alcadaMatch[1] && !alcada) {
+      alcada = alcadaMatch[1].trim();
+    }
+    const baseMatch = String(item.observacao).match(/\[BASE:\s*([^\]]+)\]/i);
+    if (baseMatch && baseMatch[1] && !baseFilial) {
+      baseFilial = baseMatch[1].trim();
+    }
   }
 
   return {
@@ -85,6 +95,8 @@ export function normalizeLancamento(item: any): any {
     codLancamentoOc: codOc,
     codigoLancamento: codOc || item.doc || "",
     centroCusto: centCusto,
+    aprovadores: alcada || item.aprovadores || "Deny e Gerência",
+    estabelecimento: baseFilial || item.estabelecimento || "100 - Paulínia",
     status: item.status || "Aguardando aprovação",
     doc: item.doc || (codOc ? `DOC-${codOc}` : `DOC-${cleanId}`),
     fornecedor: item.fornecedor || "Fornecedor Não Informado"

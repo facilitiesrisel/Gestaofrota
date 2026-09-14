@@ -13,6 +13,7 @@ import { MapQuotaIndicator } from '../../../components/reserva/MapQuotaIndicator
 import { getAccurateCoordinates, setManualCoordinateOverride } from '../../../services/accurateGeocodingService';
 import { fetchVehiclePositionAtTime, TrackerMatchResult } from '../../../services/geoFrotasService';
 import { MercosulPlateBadge } from '../../../components/MercosulPlateBadge';
+import { formatCPF, cleanCPF } from '../../../utils/cpfHelper';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -889,6 +890,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           let foundFilial = '';
           let foundMotorista = '';
           let foundFrota = '';
+          let foundCpf = '';
 
           // 1. Procurar em veiculos
           const veiculo = veiculos.find(v => cleanString(v.placa) === cleanVal);
@@ -896,6 +898,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               foundFrota = veiculo.id || veiculo.placa;
               foundFilial = veiculo.filial || (veiculo as any).base || '';
               foundMotorista = (veiculo as any).condutor || (veiculo as any).motorista || (veiculo as any).responsavelNome || '';
+              foundCpf = (veiculo as any).cpfCondutor || (veiculo as any).cpf || '';
           }
 
           // 2. Procurar em VEICULOS_REAIS se não encontrou condutor/filial
@@ -905,6 +908,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   if (!foundFrota) foundFrota = vr.placa;
                   if (!foundFilial) foundFilial = vr.filial || '';
                   if (!foundMotorista) foundMotorista = vr.condutor || (vr as any).motorista || '';
+                  if (!foundCpf) foundCpf = (vr as any).cpfCondutor || '';
               }
           }
 
@@ -919,6 +923,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                           if (!foundFrota) foundFrota = lv.placa || lv.id;
                           if (!foundFilial) foundFilial = lv.filial || lv.base || '';
                           if (!foundMotorista) foundMotorista = lv.condutor || lv.motorista || '';
+                          if (!foundCpf) foundCpf = lv.cpfCondutor || lv.cpf || '';
                       }
                   }
               } catch (e) {}
@@ -929,7 +934,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               placa: rawText, 
               frota: foundFrota || prev.frota || rawText, 
               base: foundFilial || prev.base || '',
-              responsavelNome: foundMotorista || prev.responsavelNome || ''
+              responsavelNome: foundMotorista || prev.responsavelNome || '',
+              responsavelCodigo: foundCpf || prev.responsavelCodigo || ''
           }));
           clearError('frota');
       }
@@ -3004,6 +3010,26 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                 value={formData.responsavelNome || ''} 
                                 onChange={e => setFormData({...formData, responsavelNome: formatInputText(e.target.value)})}
                                 placeholder="Deixe em branco para preencher à mão no PDF"
+                            />
+                        </div>
+
+                        <div>
+                            <div className="flex items-center justify-between mb-0.5">
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                                    CPF do Condutor
+                                </label>
+                                <span className="text-[9px] text-slate-400 font-mono">11 dígitos</span>
+                            </div>
+                            <input 
+                                type="text" 
+                                maxLength={14}
+                                className="w-full border border-slate-300 rounded-lg p-1.5 bg-slate-50 focus:bg-white text-slate-900 font-mono font-bold text-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all" 
+                                value={formData.responsavelCodigo || ''} 
+                                onChange={e => {
+                                    const formatted = formatCPF(e.target.value);
+                                    setFormData({...formData, responsavelCodigo: formatted});
+                                }}
+                                placeholder="000.000.000-00"
                             />
                         </div>
 

@@ -315,9 +315,10 @@ export const generateAutorizacaoDescontoPdf = async (multa: Partial<Multa>): Pro
   doc.setTextColor(100, 116, 139);
   doc.text('(Idêntica à assinatura constante na CNH)', 57.5, currentY + 8, { align: 'center' });
   if (motorista) {
-    doc.text(motorista.substring(0, 35), 57.5, currentY + 12, { align: 'center' });
+    const infoMotorista = cpfMatricula ? `${motorista.substring(0, 30)} (CPF: ${cpfMatricula})` : motorista.substring(0, 35);
+    doc.text(infoMotorista, 57.5, currentY + 12, { align: 'center' });
   } else {
-    doc.text('Nome Legível: ____________________________', 57.5, currentY + 12, { align: 'center' });
+    doc.text('Nome Legível / CPF: ____________________________', 57.5, currentY + 12, { align: 'center' });
   }
 
   // Assinatura da Empresa (Gerenciamento de Riscos)

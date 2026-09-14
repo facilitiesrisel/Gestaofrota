@@ -787,54 +787,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
             if (selectedRental) {
                 await updateRacRental(selectedRental.id, dataToSave);
-
-                // Envia e-mail de atualização com observações e documentos se for edição
-                try {
-                    const fullUpdated: RacRental = {
-                        ...selectedRental,
-                        ...dataToSave
-                    };
-                    const emailAttachments: Array<{ filename: string; content?: string; contentType?: string }> = [];
-                    if (fullUpdated.voucherBase64) {
-                        emailAttachments.push({
-                            filename: fullUpdated.voucherFileName || `Voucher_${fullUpdated.protocolNumber || fullUpdated.reservationNumber || 'Reserva'}.pdf`,
-                            content: fullUpdated.voucherBase64,
-                            contentType: 'application/pdf'
-                        });
-                    }
-                    if (fullUpdated.cnhBase64) {
-                        emailAttachments.push({
-                            filename: fullUpdated.cnhFileName || `CNH_${(fullUpdated.driverName || 'Condutor').replace(/\s+/g, '_')}.pdf`,
-                            content: fullUpdated.cnhBase64,
-                            contentType: 'application/pdf'
-                        });
-                    }
-
-                    const emailHtml = generateRacEmailHtml(fullUpdated, {
-                        actionType: 'updated',
-                        adminNotes: (formData.adminNotes || '').trim(),
-                        voucherAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('voucher')),
-                        cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
-                    });
-                    const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-                    if (fullUpdated.requesterEmail && !recipients.includes(fullUpdated.requesterEmail)) {
-                        recipients.push(fullUpdated.requesterEmail);
-                    }
-                    await sendEmail(
-                        recipients,
-                        `[Atualização de Locação RAC] ${fullUpdated.protocolNumber || fullUpdated.reservationNumber} - ${fullUpdated.requesterName}`,
-                        emailHtml,
-                        {
-                            fromName: 'Gestão de Reservas Risel',
-                            cc: fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : undefined,
-                            attachments: emailAttachments.length > 0 ? emailAttachments : undefined
-                        }
-                    );
-                } catch (mErr) {
-                    console.warn("Aviso ao enviar e-mail de atualização RAC:", mErr);
-                }
-
-                showToast("Locação RAC atualizada e notificação enviada!");
+                showToast("Locação RAC atualizada com sucesso no sistema!");
             } else {
                 await addRacRental(dataToSave as any);
                 showToast("Nova locação RAC cadastrada!");

@@ -177,6 +177,8 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
       let rawObs = row.observacao || "";
       let parsedOc = row.codigo_lancamento || row.cod_lancamento_oc || "";
       let parsedCc = row.centro_custo || "";
+      let parsedAlcada = row.aprovadores || "";
+      let parsedBase = row.estabelecimento || "";
 
       const ocMatch = rawObs.match(/\[OC\/CÓD:\s*([^\]]+)\]/i);
       if (ocMatch && ocMatch[1]) {
@@ -186,6 +188,16 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
       const ccMatch = rawObs.match(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/i);
       if (ccMatch && ccMatch[1]) {
         if (!parsedCc) parsedCc = ccMatch[1].trim();
+      }
+
+      const alcadaMatch = rawObs.match(/\[ALÇADA:\s*([^\]]+)\]/i);
+      if (alcadaMatch && alcadaMatch[1]) {
+        if (!parsedAlcada) parsedAlcada = alcadaMatch[1].trim();
+      }
+
+      const baseMatch = rawObs.match(/\[BASE:\s*([^\]]+)\]/i);
+      if (baseMatch && baseMatch[1]) {
+        if (!parsedBase) parsedBase = baseMatch[1].trim();
       }
 
       return {
@@ -200,7 +212,7 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
         tipo: row.tipo,
         descricao: row.descricao,
         cnpj: row.cnpj,
-        estabelecimento: row.estabelecimento,
+        estabelecimento: parsedBase || "100 - Paulínia",
         nomeArquivoAnexo: row.nome_arquivo_anexo,
         arquivoAnexoBase64: row.arquivo_anexo_base64,
         itemSistema: row.item_sistema,
@@ -209,9 +221,14 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
         frequencia: row.frequencia,
         lancadoPor: row.lancado_por,
         dataAprovacao: row.data_aprovacao,
+        aprovadores: parsedAlcada || "Deny e Gerência",
         centroCusto: parsedCc || "C.C 101 - Operacional",
         codLancamentoOc: parsedOc || "",
-        codigoLancamento: parsedOc || row.doc || ""
+        codigoLancamento: parsedOc || row.doc || "",
+        cidade: row.cidade || "",
+        uf: row.uf || "",
+        telefone: row.telefone || "",
+        email: row.email || ""
       };
     });
   } catch (err) {
@@ -237,6 +254,8 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
 
     const codOc = item.codLancamentoOc || item.codigoLancamento || "";
     const centCusto = item.centroCusto || "C.C 101 - Operacional";
+    const alcada = item.aprovadores || "Deny e Gerência";
+    const filialBase = item.estabelecimento || "100 - Paulínia";
 
     // Preserva embutido na observação para garantir persistência 100% à prova de falhas de schema
     let finalObs = item.observacao || "";
@@ -245,6 +264,12 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     }
     if (centCusto && !finalObs.includes(`[CENTRO DE CUSTO: ${centCusto}]`)) {
       finalObs = finalObs ? `${finalObs} [CENTRO DE CUSTO: ${centCusto}]` : `[CENTRO DE CUSTO: ${centCusto}]`;
+    }
+    if (alcada && !finalObs.includes(`[ALÇADA: ${alcada}]`)) {
+      finalObs = finalObs ? `${finalObs} [ALÇADA: ${alcada}]` : `[ALÇADA: ${alcada}]`;
+    }
+    if (filialBase && !finalObs.includes(`[BASE: ${filialBase}]`)) {
+      finalObs = finalObs ? `${finalObs} [BASE: ${filialBase}]` : `[BASE: ${filialBase}]`;
     }
 
     // Monta o objeto base
@@ -260,7 +285,7 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       tipo: item.tipo || "NF-e",
       descricao: item.descricao || "",
       cnpj: item.cnpj || "",
-      estabelecimento: item.estabelecimento || "100 - Paulínia",
+      estabelecimento: filialBase,
       nome_arquivo_anexo: item.nomeArquivoAnexo || "",
       arquivo_anexo_base64: item.arquivoAnexoBase64 || "",
       item_sistema: item.itemSistema || "",
@@ -275,7 +300,8 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     const completeRecord = {
       ...baseRecord,
       centro_custo: centCusto,
-      codigo_lancamento: codOc
+      codigo_lancamento: codOc,
+      aprovadores: alcada
     };
 
     const firstTry = await client
@@ -1024,6 +1050,11 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
         modelo: row.modelo || real.modelo || "Veículo Frota",
         vencContrato: row.venc_contrato || row.vencContrato || extra.vencContrato || real.vencContrato || "",
         condutor: row.condutor || real.condutor || "Disponível",
+        cpfCondutor: row.cpf_condutor || row.cpfCondutor || extra.cpfCondutor || real.cpfCondutor || "",
+        cnhValidade: row.cnh_validade || row.cnhValidade || extra.cnhValidade || "",
+        cnhNumero: row.cnh_numero || row.cnhNumero || extra.cnhNumero || "",
+        cnhAnexoBase64: row.cnh_anexo_base64 || row.cnhAnexoBase64 || extra.cnhAnexoBase64 || "",
+        cnhNomeArquivo: row.cnh_nome_arquivo || row.cnhNomeArquivo || extra.cnhNomeArquivo || "",
         funcao: row.funcao || extra.funcao || real.funcao || "Motorista",
         contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || real.contatoMotorista || "",
         gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || real.gestorResp || "",
@@ -1055,6 +1086,7 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
           modelo: row.modelo || "Veículo Frota",
           vencContrato: row.venc_contrato || row.vencContrato || extra.vencContrato || "",
           condutor: row.condutor || "Disponível",
+          cpfCondutor: row.cpf_condutor || row.cpfCondutor || extra.cpfCondutor || "",
           funcao: row.funcao || extra.funcao || "Motorista",
           contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || "",
           gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || "",
@@ -1096,6 +1128,11 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
 
     const extraData = JSON.stringify({
       vencContrato: item.vencContrato || "",
+      cpfCondutor: item.cpfCondutor || "",
+      cnhValidade: item.cnhValidade || "",
+      cnhNumero: item.cnhNumero || "",
+      cnhAnexoBase64: item.cnhAnexoBase64 || "",
+      cnhNomeArquivo: item.cnhNomeArquivo || "",
       funcao: item.funcao || "",
       contatoMotorista: item.contatoMotorista || "",
       gestorResp: item.gestorResp || "",
@@ -1124,6 +1161,11 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
       // Campos detalhados explícitos no Supabase
       venc_contrato: item.vencContrato || "",
+      cpf_condutor: item.cpfCondutor || "",
+      cnh_validade: item.cnhValidade || "",
+      cnh_numero: item.cnhNumero || "",
+      cnh_anexo_base64: item.cnhAnexoBase64 || "",
+      cnh_nome_arquivo: item.cnhNomeArquivo || "",
       funcao: item.funcao || "Motorista",
       contato_motorista: item.contatoMotorista || "",
       gestor_resp: item.gestorResp || "",
@@ -1189,6 +1231,11 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
 
       const extraData = JSON.stringify({
         vencContrato: item.vencContrato || "",
+        cpfCondutor: item.cpfCondutor || "",
+        cnhValidade: item.cnhValidade || "",
+        cnhNumero: item.cnhNumero || "",
+        cnhAnexoBase64: item.cnhAnexoBase64 || "",
+        cnhNomeArquivo: item.cnhNomeArquivo || "",
         funcao: item.funcao || "",
         contatoMotorista: item.contatoMotorista || "",
         gestorResp: item.gestorResp || "",
@@ -1216,6 +1263,11 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
         combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
         venc_contrato: item.vencContrato || "",
+        cpf_condutor: item.cpfCondutor || "",
+        cnh_validade: item.cnhValidade || "",
+        cnh_numero: item.cnhNumero || "",
+        cnh_anexo_base64: item.cnhAnexoBase64 || "",
+        cnh_nome_arquivo: item.cnhNomeArquivo || "",
         funcao: item.funcao || "Motorista",
         contato_motorista: item.contatoMotorista || "",
         gestor_resp: item.gestorResp || "",
@@ -1562,8 +1614,21 @@ export async function fetchCentrosCustoSupabase(): Promise<string[]> {
       .select('nome')
       .order('nome', { ascending: true });
 
-    if (error) return [];
-    return (data || []).map(row => row.nome);
+    if (error) {
+      // Fallback para Firestore caso a tabela ainda não exista
+      try {
+        const { db } = await import("../firebaseConfig");
+        const snap = await db.collection("centros_custo").get();
+        const firestoreList: string[] = [];
+        snap.forEach(doc => {
+          const d = doc.data();
+          if (d.nome) firestoreList.push(d.nome);
+        });
+        if (firestoreList.length > 0) return firestoreList;
+      } catch (e) {}
+      return [];
+    }
+    return (data || []).map(row => row.nome).filter(Boolean);
   } catch (err) {
     return [];
   }
@@ -1571,27 +1636,120 @@ export async function fetchCentrosCustoSupabase(): Promise<string[]> {
 
 export async function saveCentroCustoSupabase(nome: string, codigo?: string, descricao?: string): Promise<boolean> {
   try {
-    const client = getSupabaseClient();
     const cleanName = nome.trim();
     if (!cleanName) return false;
 
-    const dbRecord = {
-      nome: cleanName,
-      codigo: codigo || "",
-      descricao: descricao || ""
-    };
+    // 1. Salva no Supabase
+    try {
+      const client = getSupabaseClient();
+      const dbRecord = {
+        nome: cleanName,
+        codigo: codigo || "",
+        descricao: descricao || ""
+      };
 
-    const { error } = await client
-      .from('centros_custo')
-      .upsert(dbRecord, { onConflict: 'nome' });
+      const { error } = await client
+        .from('centros_custo')
+        .upsert(dbRecord, { onConflict: 'nome' });
 
-    if (error) {
-      console.warn("Aviso ao salvar Centro de Custo no Supabase:", error.message);
-      return false;
+      if (error) {
+        console.warn("Aviso ao salvar Centro de Custo no Supabase:", error.message);
+      }
+    } catch (sbErr) {
+      console.warn("Falha no client Supabase para Centro de Custo:", sbErr);
     }
+
+    // 2. Salva no Firestore para redundância e disponibilidade multiusuário imediata
+    try {
+      const { db } = await import("../firebaseConfig");
+      const docKey = cleanName.replace(/[/\\?%*:|"<>]/g, '_');
+      await db.collection("centros_custo").doc(docKey).set({
+        nome: cleanName,
+        codigo: codigo || "",
+        descricao: descricao || "",
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (fErr) {
+      console.warn("Aviso ao salvar Centro de Custo no Firestore:", fErr);
+    }
+
     return true;
   } catch (err) {
     console.error("Erro no saveCentroCustoSupabase:", err);
+    return false;
+  }
+}
+
+// 10.B. Funções para Persistência de Bases (Estabelecimentos / Filiais)
+export async function fetchBasesSupabase(): Promise<string[]> {
+  const resultList = new Set<string>();
+
+  // 1. Tenta buscar no Supabase
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('bases')
+      .select('nome')
+      .order('nome', { ascending: true });
+
+    if (!error && Array.isArray(data)) {
+      data.forEach(row => {
+        if (row.nome && typeof row.nome === "string") {
+          resultList.add(row.nome.trim());
+        }
+      });
+    }
+  } catch (err) {}
+
+  // 2. Tenta buscar no Firestore
+  try {
+    const { db } = await import("../firebaseConfig");
+    const snap = await db.collection("bases_filiais").get();
+    snap.forEach(doc => {
+      const d = doc.data();
+      if (d.nome && typeof d.nome === "string") {
+        resultList.add(d.nome.trim());
+      }
+    });
+  } catch (e) {}
+
+  return Array.from(resultList);
+}
+
+export async function saveBaseSupabase(nome: string): Promise<boolean> {
+  try {
+    const cleanName = nome.trim();
+    if (!cleanName) return false;
+
+    // 1. Salva no Supabase
+    try {
+      const client = getSupabaseClient();
+      const { error } = await client
+        .from('bases')
+        .upsert({ nome: cleanName }, { onConflict: 'nome' });
+
+      if (error) {
+        console.warn("Aviso ao salvar Base no Supabase:", error.message);
+      }
+    } catch (sbErr) {
+      console.warn("Falha no client Supabase para Base:", sbErr);
+    }
+
+    // 2. Salva no Firestore
+    try {
+      const { db } = await import("../firebaseConfig");
+      const docKey = cleanName.replace(/[/\\?%*:|"<>]/g, '_');
+      await db.collection("bases_filiais").doc(docKey).set({
+        nome: cleanName,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (fErr) {
+      console.warn("Aviso ao salvar Base no Firestore:", fErr);
+    }
+
+    return true;
+  } catch (err) {
+    console.error("Erro no saveBaseSupabase:", err);
     return false;
   }
 }
@@ -2373,6 +2531,11 @@ CREATE TABLE IF NOT EXISTS public.veiculos (
     km_atual NUMERIC(10,2) DEFAULT 0,
     combustivel_padrao VARCHAR(100) DEFAULT 'Flex',
     venc_contrato VARCHAR(50),
+    cpf_condutor VARCHAR(50),
+    cnh_validade VARCHAR(50),
+    cnh_numero VARCHAR(50),
+    cnh_anexo_base64 TEXT,
+    cnh_nome_arquivo VARCHAR(255),
     funcao VARCHAR(100) DEFAULT 'Motorista',
     contato_motorista VARCHAR(100),
     gestor_resp VARCHAR(255),
@@ -2391,6 +2554,11 @@ CREATE TABLE IF NOT EXISTS public.veiculos (
 
 -- Garantir adição de colunas detalhadas caso a tabela 'veiculos' já exista no Supabase:
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS venc_contrato VARCHAR(50);
+ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cpf_condutor VARCHAR(50);
+ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cnh_validade VARCHAR(50);
+ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cnh_numero VARCHAR(50);
+ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cnh_anexo_base64 TEXT;
+ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cnh_nome_arquivo VARCHAR(255);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS funcao VARCHAR(100);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS contato_motorista VARCHAR(100);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS gestor_resp VARCHAR(255);

@@ -347,14 +347,12 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         });
       }
 
-      // 4. Envia notificação por e-mail para os administradores com cópia para o solicitante
+      // 4. Envia notificação por e-mail com anexo da CNH EXCLUSIVAMENTE para a administração
+      // O solicitante receberá o e-mail formal de retorno quando a solicitação for aprovada ou recusada
       const emailSubject = `[Solicitação RAC] ${protocolNumber} - ${formData.requesterName} (${formData.pickupCity} ➔ ${formData.returnCity})`;
       const emailHtml = generateRacEmailHtml(fullRental, !!cnhFile, hasCnhAlready);
 
       const emailRecipients = [...ADMIN_EMAIL_RECIPIENTS];
-      if (formData.requesterEmail && !emailRecipients.includes(formData.requesterEmail.trim())) {
-        emailRecipients.push(formData.requesterEmail.trim());
-      }
 
       await sendEmail(
         emailRecipients,
@@ -362,7 +360,6 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         emailHtml,
         {
           fromName: 'Gestão de Reservas Risel',
-          cc: formData.requesterEmail ? [formData.requesterEmail.trim()] : undefined,
           attachments: emailAttachments.length > 0 ? emailAttachments : undefined
         }
       );

@@ -1,0 +1,253 @@
+import { sendEmail } from "./firebaseService";
+
+export interface LancamentoEmailData {
+  id?: number | string;
+  fornecedor: string;
+  descricao?: string;
+  valor: string;
+  dataVencimento: string;
+  dataEmissao?: string;
+  dataLancamento?: string;
+  formaPagto?: string;
+  formaPagamento?: string;
+  tipo?: string;
+  tipoDocumento?: string;
+  frequencia?: string;
+  cnpj?: string;
+  estabelecimento?: string;
+  centroCusto?: string;
+  aprovadores?: string;
+  codLancamentoOc?: string;
+  codigoLancamento?: string;
+  doc?: string;
+  status?: string;
+  observacao?: string;
+  lancadoPor?: string;
+  nomeArquivoAnexo?: string;
+  arquivoAnexoBase64?: string;
+}
+
+/**
+ * Converte data ISO (yyyy-mm-dd) ou qualquer formato para dd/mm/aaaa
+ */
+export function formatDataParaBrasileiro(dataStr?: string): string {
+  if (!dataStr) return "-";
+  const clean = dataStr.trim();
+  if (!clean) return "-";
+
+  // Se já estiver no formato dd/mm/aaaa
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) {
+    return clean;
+  }
+
+  // Se estiver no formato yyyy-mm-dd ou similar
+  const parts = clean.split("T")[0].split(/[-/]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      // yyyy-mm-dd -> dd/mm/aaaa
+      const [ano, mes, dia] = parts;
+      return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano}`;
+    }
+  }
+
+  // Tenta parse de Date
+  const d = new Date(clean);
+  if (!isNaN(d.getTime())) {
+    return d.toLocaleDateString("pt-BR", { timeZone: "UTC" });
+  }
+
+  return clean;
+}
+
+/**
+ * Gera o corpo HTML elegante no padrão corporativo Risel para o e-mail de aprovação de lançamento
+ * Tabela Horizontal (padrão tela de Lançamentos) com fonte estrita Aptos Narrow 11
+ */
+export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData): { subject: string; html: string } {
+  const fornecedorNome = data.fornecedor || "Fornecedor Não Informado";
+  const descricaoServico = data.descricao?.trim() || "Prestação de serviços operacionais / corporativos";
+  const vencimentoBr = formatDataParaBrasileiro(data.dataVencimento);
+  const emissaoBr = formatDataParaBrasileiro(data.dataEmissao);
+  const docNumero = data.doc || data.codigoLancamento || "S/N";
+  const formaPagto = data.formaPagto || data.formaPagamento || "Boleto";
+  const tipoDoc = data.tipo || data.tipoDocumento || "NF-e";
+  const frequencia = data.frequencia || "Esporádico";
+  const filialBase = data.estabelecimento || "100 - Paulínia";
+  const centroCusto = data.centroCusto || "C.C 101 - Operacional";
+  const aprovadores = data.aprovadores || "Deny e Gerência";
+  const statusAtual = data.status || "Aguardando aprovação";
+  const lancadoPor = data.lancadoPor || "Colaborador Risel";
+  const codOc = data.codLancamentoOc || data.codigoLancamento || "-";
+  const observacoes = data.observacao?.trim() || "";
+  const valorFormatado = data.valor || "R$ 0,00";
+
+  // Assunto exigido: Aprovação - Nome do Fornecedor - Vencimento
+  const subject = `Aprovação - ${fornecedorNome} - ${vencimentoBr}`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${subject}</title>
+      <style>
+        body, table, td, th, p, h1, h2, h3, div, span, strong, a { 
+          font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif !important; 
+        }
+        body { 
+          background-color: #f1f5f9; 
+          margin: 0; 
+          padding: 0; 
+          -webkit-font-smoothing: antialiased;
+        }
+      </style>
+    </head>
+    <body style="background-color: #f1f5f9; padding: 24px 10px; margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt;">
+      <div style="max-width: 960px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08); border: 1px solid #cbd5e1; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        
+        <!-- Header Corporativo Risel -->
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#09392b" style="background-color: #09392b; background: linear-gradient(135deg, #06231a 0%, #0d4a36 50%, #156c50 100%); width: 100%; border-bottom: 4px solid #f47920; border-collapse: collapse;">
+          <tr>
+            <td bgcolor="#09392b" style="padding: 22px 28px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                <tr>
+                  <td width="52" valign="middle" style="width: 52px; vertical-align: middle;">
+                    <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" width="48" height="48" style="width: 48px; height: 48px; border-radius: 8px; display: block; border: 2px solid rgba(255,255,255,0.3); object-fit: cover;" />
+                  </td>
+                  <td valign="middle" style="padding-left: 18px; vertical-align: middle;">
+                    <h1 style="color: #ffffff !important; margin: 0; font-size: 16pt; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">Solicitação de Aprovação de Lançamento</h1>
+                    <p style="color: #86efac !important; margin: 3px 0 0 0; font-size: 10pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda • Sistema de Lançamento de Documentos</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+        
+        <!-- Conteúdo do E-mail -->
+        <div style="padding: 26px 28px 26px 28px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1e293b;">
+          
+          <!-- Texto de Introdução para Encaminhamento Fácil -->
+          <p style="font-size: 11pt; color: #334155; margin: 0 0 16px 0; line-height: 1.6; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            Prezados(as), segue para validação e aprovação o documento/fatura lançado(a) no Sistema:
+          </p>
+
+          <!-- Bloco em Destaque: Descrição Formatada -->
+          <div style="background-color: #f0fdf4; border-left: 5px solid #16a34a; padding: 16px 20px; border-radius: 8px; margin-bottom: 24px; border-top: 1px solid #dcfce7; border-right: 1px solid #dcfce7; border-bottom: 1px solid #dcfce7; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <div style="font-size: 10pt; font-weight: 900; color: #166534; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              📝 Descrição:
+            </div>
+            <div style="font-size: 11.5pt; color: #0f172a; font-weight: 700; line-height: 1.6; white-space: pre-wrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              ${descricaoServico}
+            </div>
+          </div>
+
+          <!-- Tabela Horizontal com Dados do Lançamento (Padrão Tela de Lançamentos) -->
+          <div>
+            <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
+              <h3 style="margin: 0; font-size: 11.5pt; font-weight: 900; color: #0d4a36; text-transform: uppercase; letter-spacing: 0.5px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                📊 Detalhamento do Lançamento
+              </h3>
+            </div>
+            
+            <div style="overflow-x: auto;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                <thead>
+                  <tr bgcolor="#114D38" style="background-color: #114D38; color: #ffffff;">
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">STATUS</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">VENCIMENTO</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">CÓD. / OC</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15);">FORNECEDOR</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">CNPJ / CPF</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">FILIAL</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">TIPO / DOC</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">FORMA PAGTO</th>
+                    <th style="padding: 10px 12px; text-align: left; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">C.C (CENTRO CUSTO)</th>
+                    <th style="padding: 10px 12px; text-align: right; font-size: 9.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #f47920; white-space: nowrap;">VALOR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr bgcolor="#ffffff" style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0;">
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      <span style="background-color: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 800; font-size: 9pt; text-transform: uppercase; display: inline-block;">
+                        ⏳ ${statusAtual}
+                      </span>
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-weight: 800; color: #b45309; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${vencimentoBr}
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-weight: 700; color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${codOc}
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; font-weight: 800; color: #0f172a; font-size: 10.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${fornecedorNome}
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${data.cnpj || "-"}
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${filialBase}
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      <strong>${tipoDoc}</strong> ${docNumero}
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${formaPagto}
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      <span style="background-color: #ecfdf5; color: #065f46; padding: 4px 8px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 800; font-size: 9.5pt; display: inline-block;">
+                        ${centroCusto}
+                      </span>
+                    </td>
+                    <td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; text-align: right; white-space: nowrap; font-weight: 900; color: #065f46; font-size: 12pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${valorFormatado}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return { subject, html };
+}
+
+/**
+ * Envia o e-mail de aprovação com anexo automático para lorena.padilha@risel.com.br
+ */
+export async function sendLancamentoAprovacaoEmail(data: LancamentoEmailData): Promise<boolean> {
+  const DESTINATARIO_OFICIAL = "lorena.padilha@risel.com.br";
+  
+  try {
+    const { subject, html } = generateLancamentoAprovacaoEmailHtml(data);
+
+    const attachments: Array<{ filename: string; content?: string; dataUrl?: string; contentType?: string }> = [];
+
+    if (data.nomeArquivoAnexo && data.arquivoAnexoBase64) {
+      attachments.push({
+        filename: data.nomeArquivoAnexo,
+        content: data.arquivoAnexoBase64,
+        dataUrl: data.arquivoAnexoBase64
+      });
+    }
+
+    console.log(`[Risel Email] Disparando e-mail de aprovação para ${DESTINATARIO_OFICIAL}: "${subject}"`);
+
+    await sendEmail(DESTINATARIO_OFICIAL, subject, html, {
+      fromName: "Sistema de Documentos Risel",
+      source: "documentos",
+      attachments: attachments.length > 0 ? attachments : undefined
+    });
+
+    return true;
+  } catch (err) {
+    console.error("[Risel Email] Erro ao enviar e-mail de aprovação de lançamento:", err);
+    return false;
+  }
+}

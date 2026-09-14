@@ -495,7 +495,10 @@ export const generateTermoAvariaPdf = async (
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
   doc.setTextColor(100, 116, 139);
-  doc.text(colaborador, 60, currentY + 7.5, { align: 'center' });
+  const infoAssinante = cpfMatricula && cpfMatricula !== '-'
+    ? `${colaborador} (CPF: ${cpfMatricula})`
+    : colaborador;
+  doc.text(infoAssinante, 60, currentY + 7.5, { align: 'center' });
   // Nota: O texto "Gestão de Frotas / Recursos Humanos" foi removido da assinatura a pedido
 
   // Seção 6: Registro Fotográfico Direto no PDF (todas as fotos anexadas)

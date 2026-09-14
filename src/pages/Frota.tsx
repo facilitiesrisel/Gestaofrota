@@ -6,13 +6,15 @@ import React, { useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { toTitleCase } from "../lib/utils";
 import { normalizeBaseOperacional, normalizeCidade, isSameCityOrBase } from "../utils/baseOperacional";
+import { formatCPF, isValidCPF, cleanCPF } from "../utils/cpfHelper";
 import { 
   Car, Award, Crown, Trophy, Calendar, CheckSquare, ShieldAlert, 
   Navigation, Plus, Search, Filter, Fuel, Wrench, AlertTriangle, 
   ChevronRight, Check, X, Eye, Phone, Mail, FileText, ArrowLeft, 
   Clock, MapPin, Gauge, Star, BarChart3, TrendingUp, DollarSign,
   LayoutGrid, ArrowRight, Activity, Edit2, LayoutDashboard, FileSpreadsheet, RefreshCw, RotateCcw,
-  CheckCircle, AlertCircle, Info, Database, Copy, ExternalLink, Link2, Lock, Code, Download, Siren, BellRing, Settings
+  CheckCircle, AlertCircle, Info, Database, Copy, ExternalLink, Link2, Lock, Code, Download, Siren, BellRing, Settings,
+  Upload, Trash2
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import Papa from "papaparse";
@@ -123,6 +125,11 @@ export interface Veiculo {
   modelo: string;
   vencContrato: string;
   condutor: string;
+  cpfCondutor?: string;
+  cnhValidade?: string;
+  cnhNumero?: string;
+  cnhAnexoBase64?: string;
+  cnhNomeArquivo?: string;
   funcao: string;
   contatoMotorista: string;
   gestorResp: string;
@@ -1534,6 +1541,13 @@ export default function Frota() {
   const [modalStatus, setModalStatus] = useState<string>("Ativo");
   const [modalDataInativacao, setModalDataInativacao] = useState<string>("");
   const [modalMotivoInativacao, setModalMotivoInativacao] = useState<string>("");
+  const [modalCpfCondutor, setModalCpfCondutor] = useState<string>("");
+  const [modalCpfError, setModalCpfError] = useState<string | null>(null);
+  const [modalCnhValidade, setModalCnhValidade] = useState<string>("");
+  const [modalCnhNumero, setModalCnhNumero] = useState<string>("");
+  const [modalCnhAnexoBase64, setModalCnhAnexoBase64] = useState<string>("");
+  const [modalCnhNomeArquivo, setModalCnhNomeArquivo] = useState<string>("");
+  const [previewCnhModal, setPreviewCnhModal] = useState<{ url: string; nome: string; isPdf: boolean } | null>(null);
 
   // Reservas UI States
   const [reservaError, setReservaError] = useState<string | null>(null);
@@ -2203,6 +2217,20 @@ export default function Frota() {
     const selectedStatus = (formData.get("status") as Veiculo["status"]) || modalStatus as Veiculo["status"];
     const inputDataInativacao = formData.get("dataInativacao") as string || modalDataInativacao;
     const inputMotivoInativacao = formData.get("motivoInativacao") as string || modalMotivoInativacao;
+    const cpfDigitado = (formData.get("cpfCondutor") as string || modalCpfCondutor || "").trim();
+    const cleanCpfDigits = cleanCPF(cpfDigitado);
+
+    if (!cleanCpfDigits || cleanCpfDigits.length < 11) {
+      setModalCpfError("CPF do condutor é obrigatório (informe os 11 dígitos).");
+      return;
+    }
+
+    if (!isValidCPF(cleanCpfDigits)) {
+      setModalCpfError("CPF inválido. Por favor, verifique os dígitos informados.");
+      return;
+    }
+
+    setModalCpfError(null);
 
     const data: Veiculo = {
       id,
@@ -2210,6 +2238,11 @@ export default function Frota() {
       modelo: cleanUpper(formData.get("modelo")),
       vencContrato: isFrotaPropria ? "" : (formData.get("vencContrato") as string || ""),
       condutor: cleanUpper(formData.get("condutor")),
+      cpfCondutor: formatCPF(cleanCpfDigits),
+      cnhValidade: modalCnhValidade || (formData.get("cnhValidade") as string) || "",
+      cnhNumero: modalCnhNumero || (formData.get("cnhNumero") as string) || "",
+      cnhAnexoBase64: modalCnhAnexoBase64 || "",
+      cnhNomeArquivo: modalCnhNomeArquivo || "",
       funcao: cleanUpper(formData.get("funcao")),
       contatoMotorista: cleanUpper(formData.get("contatoMotorista")),
       gestorResp: cleanUpper(formData.get("gestorResp")),
@@ -3231,6 +3264,12 @@ export default function Frota() {
                           setModalStatus("Ativo");
                           setModalDataInativacao("");
                           setModalMotivoInativacao("");
+                          setModalCpfCondutor("");
+                          setModalCpfError(null);
+                          setModalCnhValidade("");
+                          setModalCnhNumero("");
+                          setModalCnhAnexoBase64("");
+                          setModalCnhNomeArquivo("");
                           setIsVehModalOpen(true);
                         }}
                         className="px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider bg-[#114D38] hover:bg-[#1d7053] text-white shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
@@ -3326,7 +3365,14 @@ export default function Frota() {
                                       <Phone className="w-3 h-3" />
                                     </a>
                                   </div>
-                                  <div className="text-[10px] font-semibold text-slate-400 mt-0.5">{toTitleCase(v.funcao)}</div>
+                                  <div className="text-[10px] font-semibold text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                    <span>{toTitleCase(v.funcao)}</span>
+                                    {v.cpfCondutor && (
+                                      <span className="font-mono text-slate-500 bg-slate-100 px-1 py-0.2 rounded text-[9.5px]">
+                                        CPF: {v.cpfCondutor}
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-4 px-4 text-left">
                                   <div className="font-bold text-slate-750">{normalizeBaseOperacional(v.filial)}</div>
@@ -3418,6 +3464,12 @@ export default function Frota() {
                                         setModalStatus(v.status);
                                         setModalDataInativacao(v.dataInativacao || "");
                                         setModalMotivoInativacao(v.motivoInativacao || "");
+                                        setModalCpfCondutor(v.cpfCondutor || "");
+                                        setModalCpfError(null);
+                                        setModalCnhValidade(v.cnhValidade || "");
+                                        setModalCnhNumero(v.cnhNumero || "");
+                                        setModalCnhAnexoBase64(v.cnhAnexoBase64 || "");
+                                        setModalCnhNomeArquivo(v.cnhNomeArquivo || "");
                                         setIsVehModalOpen(true);
                                       }}
                                       className="p-1.5 text-slate-400 hover:text-orange-600 hover:bg-slate-100 rounded-lg transition-all cursor-pointer"
@@ -3667,6 +3719,48 @@ export default function Frota() {
                     <span className="text-[9px] text-slate-400 font-bold uppercase block tracking-wider">Condutor Atual</span>
                     <span className="font-bold text-slate-800 block mt-1">{selectedVeiculo.condutor}</span>
                     <span className="text-[10px] text-slate-400 block mt-0.5">{selectedVeiculo.funcao}</span>
+                    {selectedVeiculo.cpfCondutor && (
+                      <span className="font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded text-[10px] inline-block mt-1 font-semibold mr-1">
+                        CPF: {selectedVeiculo.cpfCondutor}
+                      </span>
+                    )}
+                    {selectedVeiculo.cnhValidade && (
+                      <div className="mt-2 pt-2 border-t border-slate-200/60 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-bold uppercase text-emerald-800">CNH do Condutor</span>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                            new Date(selectedVeiculo.cnhValidade).getTime() < new Date().setHours(0,0,0,0)
+                              ? "bg-rose-100 text-rose-800"
+                              : "bg-emerald-100 text-emerald-800"
+                          }`}>
+                            {new Date(selectedVeiculo.cnhValidade).getTime() < new Date().setHours(0,0,0,0)
+                              ? "Vencida"
+                              : "Válida"}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-700 font-medium">
+                          Validade: <strong>{selectedVeiculo.cnhValidade.split('-').reverse().join('/')}</strong>
+                        </p>
+                        {selectedVeiculo.cnhNumero && (
+                          <p className="text-[10px] font-mono text-slate-500">Nº: {selectedVeiculo.cnhNumero}</p>
+                        )}
+                        {selectedVeiculo.cnhAnexoBase64 && (
+                          <button
+                            onClick={() => {
+                              const isPdf = selectedVeiculo.cnhAnexoBase64!.includes("application/pdf") || (selectedVeiculo.cnhNomeArquivo || "").toLowerCase().endsWith(".pdf");
+                              setPreviewCnhModal({
+                                url: selectedVeiculo.cnhAnexoBase64!,
+                                nome: selectedVeiculo.cnhNomeArquivo || `CNH_${selectedVeiculo.condutor}`,
+                                isPdf
+                              });
+                            }}
+                            className="mt-1 w-full py-1 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
+                          >
+                            <FileText className="w-3 h-3" /> Ver Cópia da CNH
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[9px] text-slate-400 font-bold uppercase block tracking-wider">Contato Direto</span>
@@ -3823,8 +3917,163 @@ export default function Frota() {
                   <input required name="condutor" placeholder="Nome do motorista" defaultValue={editingVeh?.condutor || ""} className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-orange-500" />
                 </div>
                 <div className="space-y-1">
+                  <label className="block flex items-center justify-between">
+                    <span>CPF do Condutor *</span>
+                    {modalCpfError && <span className="text-[10px] text-rose-500 font-bold">{modalCpfError}</span>}
+                  </label>
+                  <input 
+                    required 
+                    name="cpfCondutor" 
+                    placeholder="000.000.000-00" 
+                    value={modalCpfCondutor}
+                    onChange={(e) => {
+                      const formatted = formatCPF(e.target.value);
+                      setModalCpfCondutor(formatted);
+                      if (modalCpfError) setModalCpfError(null);
+                    }}
+                    maxLength={14}
+                    className={`w-full border ${modalCpfError ? 'border-rose-400 focus:ring-rose-500' : 'border-slate-200 focus:ring-orange-500'} px-3 py-2 rounded-lg outline-none focus:ring-1 font-mono`} 
+                  />
+                </div>
+                <div className="space-y-1">
                   <label className="block">Função</label>
                   <input name="funcao" placeholder="e.g. Técnico de Campo" defaultValue={editingVeh?.funcao || ""} className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-orange-500" />
+                </div>
+
+                {/* BLOCO CNH DO CONDUTOR */}
+                <div className="col-span-2 bg-emerald-50/50 border border-emerald-200/70 p-3.5 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#114D38] flex items-center gap-1.5 uppercase tracking-wide">
+                      <FileText className="w-4 h-4 text-emerald-600" />
+                      Carteira Nacional de Habilitação (CNH)
+                    </span>
+                    {modalCnhValidade && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                        new Date(modalCnhValidade).getTime() < new Date().setHours(0,0,0,0)
+                          ? "bg-rose-100 text-rose-800 border-rose-200"
+                          : "bg-emerald-100 text-emerald-800 border-emerald-200"
+                      }`}>
+                        {new Date(modalCnhValidade).getTime() < new Date().setHours(0,0,0,0)
+                          ? "CNH Vencida"
+                          : `Válida até ${modalCnhValidade.split('-').reverse().join('/')}`}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-slate-700 font-bold">Nº de Registro da CNH</label>
+                      <input 
+                        name="cnhNumero" 
+                        placeholder="Ex: 01234567890" 
+                        value={modalCnhNumero}
+                        onChange={(e) => setModalCnhNumero(e.target.value)}
+                        className="w-full border border-slate-200 bg-white px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-emerald-600 font-mono text-xs" 
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-slate-700 font-bold">Validade da CNH *</label>
+                      <input 
+                        type="date" 
+                        name="cnhValidade" 
+                        value={modalCnhValidade}
+                        onChange={(e) => setModalCnhValidade(e.target.value)}
+                        className="w-full border border-slate-200 bg-white px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-emerald-600 font-mono text-xs font-bold text-slate-800" 
+                      />
+                    </div>
+                  </div>
+
+                  {/* UPLOAD / SUBSTITUIÇÃO DE ARQUIVO DA CNH */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[11px] text-slate-700 font-bold">Cópia Digital da CNH (PDF, JPG ou PNG)</label>
+                    {modalCnhAnexoBase64 ? (
+                      <div className="bg-white border border-emerald-200 p-2.5 rounded-xl flex items-center justify-between shadow-xs">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <div className="truncate text-left">
+                            <p className="text-xs font-bold text-slate-800 truncate" title={modalCnhNomeArquivo || "cnh_documento"}>
+                              {modalCnhNomeArquivo || "cnh_digital.pdf"}
+                            </p>
+                            <p className="text-[10px] text-emerald-600 font-medium">Anexo gravado e pronto para visualização</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const isPdf = modalCnhAnexoBase64.includes("application/pdf") || (modalCnhNomeArquivo || "").toLowerCase().endsWith(".pdf");
+                              setPreviewCnhModal({
+                                url: modalCnhAnexoBase64,
+                                nome: modalCnhNomeArquivo || "CNH",
+                                isPdf
+                              });
+                            }}
+                            className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-200 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Visualizar CNH"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> Visualizar
+                          </button>
+                          <label className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors">
+                            <Upload className="w-3.5 h-3.5" /> Substituir
+                            <input
+                              type="file"
+                              accept="image/*,application/pdf"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = () => {
+                                    setModalCnhAnexoBase64(reader.result as string);
+                                    setModalCnhNomeArquivo(file.name);
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm("Deseja remover a cópia da CNH deste condutor?")) {
+                                setModalCnhAnexoBase64("");
+                                setModalCnhNomeArquivo("");
+                              }
+                            }}
+                            className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Remover CNH"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="border-2 border-dashed border-emerald-300/80 hover:border-emerald-500 bg-white/60 hover:bg-emerald-50/40 p-3 rounded-xl flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors text-center">
+                        <Upload className="w-5 h-5 text-emerald-600" />
+                        <span className="text-xs font-bold text-slate-700">Clique para anexar a cópia da CNH</span>
+                        <span className="text-[10px] text-slate-400 font-medium">Suporta PDF, JPG e PNG (máx. 10MB)</span>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                setModalCnhAnexoBase64(reader.result as string);
+                                setModalCnhNomeArquivo(file.name);
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="block">Contato Motorista</label>
@@ -4702,6 +4951,63 @@ export default function Frota() {
               >
                 Fechar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Pré-visualização da CNH */}
+      {previewCnhModal && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="bg-[#114D38] px-5 py-3 text-white flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-emerald-300" />
+                <h3 className="font-display font-bold text-sm truncate max-w-md">{previewCnhModal.nome}</h3>
+              </div>
+              <button 
+                onClick={() => setPreviewCnhModal(null)} 
+                className="p-1 hover:bg-white/10 rounded-lg text-emerald-100 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 flex-1 overflow-auto flex items-center justify-center bg-slate-100 min-h-[350px]">
+              {previewCnhModal.isPdf ? (
+                <div className="w-full h-[500px] flex flex-col items-center justify-center gap-4">
+                  <iframe 
+                    src={previewCnhModal.url} 
+                    className="w-full h-full rounded-xl border border-slate-300 shadow-sm"
+                    title="Visualização da CNH (PDF)"
+                  />
+                </div>
+              ) : (
+                <img 
+                  src={previewCnhModal.url} 
+                  alt="Cópia da CNH" 
+                  className="max-h-[500px] w-auto max-w-full object-contain rounded-xl shadow-md border border-slate-300"
+                />
+              )}
+            </div>
+
+            <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex justify-between items-center shrink-0">
+              <span className="text-[11px] text-slate-500 font-medium">Documento armazenado com segurança no banco de dados</span>
+              <div className="flex gap-2">
+                <a
+                  href={previewCnhModal.url}
+                  download={previewCnhModal.nome || "cnh_condutor"}
+                  className="px-4 py-2 bg-[#114D38] hover:bg-[#1a664c] text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" /> Baixar Arquivo
+                </a>
+                <button
+                  onClick={() => setPreviewCnhModal(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+                >
+                  Fechar
+                </button>
+              </div>
             </div>
           </div>
         </div>

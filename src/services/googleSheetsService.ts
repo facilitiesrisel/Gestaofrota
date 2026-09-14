@@ -428,7 +428,7 @@ export const saveAllAbastecimentosToSheets = async (token: string, abastecimento
  */
 export const saveVehiclesToSheets = async (token: string, veiculos: Veiculo[]): Promise<void> => {
   const headers = [
-    "Placa", "Modelo", "Condutor", "Função", "Contato Motorista", 
+    "Placa", "Modelo", "Condutor", "CPF Condutor", "Função", "Contato Motorista", 
     "Gestor Resp.", "Email", "Filial", "Locadora", "Contrato", 
     "Venc. Contrato", "Odômetro", "Combustível", "Status"
   ];
@@ -437,6 +437,7 @@ export const saveVehiclesToSheets = async (token: string, veiculos: Veiculo[]): 
     v.placa || "",
     v.modelo || "",
     v.condutor || "",
+    v.cpfCondutor || "",
     v.funcao || "",
     v.contatoMotorista || "",
     v.gestorResp || "",
@@ -479,6 +480,7 @@ export const readVehiclesFromSheets = async (token?: string | null): Promise<Vei
 
     const modelo = getCol(row, ["Modelo", "modelo", "Veiculo"]) || "MOBI";
     const condutor = getCol(row, ["Condutor", "condutor", "Motorista"]) || "Motorista Risel";
+    const cpfCondutor = getCol(row, ["CPF Condutor", "CPF", "Cpf", "cpf", "CPF Motorista", "Documento"]);
     const funcao = getCol(row, ["Função", "Funcao", "funcao"]);
     const contatoMotorista = getCol(row, ["Contato Motorista", "Contato", "Telefone"]);
     const gestorResp = getCol(row, ["Gestor Resp.", "Gestor", "Responsavel"]);
@@ -506,6 +508,7 @@ export const readVehiclesFromSheets = async (token?: string | null): Promise<Vei
       placa,
       modelo,
       condutor,
+      cpfCondutor,
       funcao,
       contatoMotorista,
       gestorResp,
