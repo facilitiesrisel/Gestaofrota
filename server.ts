@@ -268,6 +268,15 @@ async function sendEmailViaBrevo(options: SendHttpEmailOptions, apiKey: string) 
       email: fromEmail
     },
     to: toList,
+    replyTo: {
+      email: fromEmail,
+      name: options.fromName || "Risel Combustíveis"
+    },
+    headers: {
+      "X-Entity-Ref-ID": `risel-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+      "Auto-Submitted": "auto-generated",
+      "X-Auto-Response-Suppress": "OOF, AutoReply"
+    },
     subject: options.subject,
     htmlContent: options.html
   };
@@ -1594,7 +1603,7 @@ async function startServer() {
         return "";
       };
 
-      const emailTo = formatRecipients(to) || formatRecipients(destinatarios) || "deny.risel@gmail.com";
+      const emailTo = formatRecipients(to) || formatRecipients(destinatarios) || "gestaodefrotarisel@gmail.com";
       const emailCc = formatRecipients(cc);
       const emailSubject = subject || "Notificação Risel Combustíveis";
       const rawHtml = html || "<p>Notificação automática do Sistema Risel.</p>";
@@ -1700,62 +1709,8 @@ async function startServer() {
       const effectiveResendKey = (clientResendKey || storedResendApiKey || process.env.RESEND_API_KEY || "").trim();
       const effectiveBrevoKey = (clientBrevoKey || storedBrevoApiKey || process.env.BREVO_API_KEY || "").trim();
 
-      // PRIORIDADE RENDER CLOUD: Se estiver em nuvem (Render) e houver chave HTTP (Porta 443) disponível, dispara de imediato
-      // sem sujeitar a requisição aos 24s de timeout das portas 587/465 bloqueadas no plano gratuito!
-      if (isRender && (effectiveResendKey || effectiveBrevoKey)) {
-        if (effectiveResendKey) {
-          try {
-            console.log("[Risel SMTP] Ambiente em nuvem (Render) com Resend configurado. Disparando via HTTPS (Porta 443)...");
-            const resendResult = await sendEmailViaResend({
-              to: emailTo,
-              cc: emailCc,
-              subject: emailSubject,
-              html: emailHtml,
-              fromName,
-              fromEmail: smtpConfig.user || "deny.risel@gmail.com",
-              attachments: mailAttachments
-            }, effectiveResendKey);
-
-            return res.json({
-              success: true,
-              delivered: true,
-              provider: "Resend HTTP API (Porta 443)",
-              message: `E-mail entregue com sucesso via Resend HTTP API (Porta 443) para ${emailTo}!`,
-              attachmentsCount: mailAttachments.length,
-              details: resendResult
-            });
-          } catch (resendPrioritaryErr: any) {
-            console.warn("[Risel SMTP] Envio prioritário via Resend falhou, tentando alternativas:", resendPrioritaryErr.message);
-          }
-        }
-
-        if (effectiveBrevoKey) {
-          try {
-            console.log("[Risel SMTP] Ambiente em nuvem (Render) com Brevo configurado. Disparando via HTTPS (Porta 443)...");
-            const brevoResult = await sendEmailViaBrevo({
-              to: emailTo,
-              cc: emailCc,
-              subject: emailSubject,
-              html: emailHtml,
-              fromName,
-              fromEmail: smtpConfig.user || "deny.risel@gmail.com",
-              attachments: mailAttachments
-            }, effectiveBrevoKey);
-
-            return res.json({
-              success: true,
-              delivered: true,
-              provider: "Brevo HTTP API (Porta 443)",
-              message: `E-mail entregue com sucesso via Brevo HTTP API (Porta 443) para ${emailTo}!`,
-              attachmentsCount: mailAttachments.length,
-              details: brevoResult
-            });
-          } catch (brevoPrioritaryErr: any) {
-            console.warn("[Risel SMTP] Envio prioritário via Brevo falhou, tentando alternativas:", brevoPrioritaryErr.message);
-          }
-        }
-      }
-
+      // PRIORIDADE GMAIL SMTP DIRETO (Plano Starter Render / Portas SMTP 465/587 liberadas):
+      // Se houver senha configurada para o Gmail (gestaodefrotarisel@gmail.com), tenta envio direto de alta fidelidade
       if (smtpConfig.pass && smtpConfig.pass.length > 0) {
         try {
           const transporter = await createSafeTransporter(smtpConfig);
@@ -1775,7 +1730,7 @@ async function startServer() {
           return res.json({ 
             success: true, 
             delivered: true, 
-            provider: `Gmail SMTP (${smtpConfig.user})`,
+            provider: `Gmail SMTP Direto (${smtpConfig.user})`,
             sender: finalSenderName,
             host: smtpConfig.host,
             message: `E-mail enviado com sucesso via Gmail (${finalSenderName}) para ${emailTo}!`,
@@ -1783,8 +1738,36 @@ async function startServer() {
           });
         } catch (err: any) {
           console.warn("[Risel SMTP] Envio via Gmail SMTP encontrou restrição de autenticação ou conexão:", err.message, ". Acionando contingência de alta disponibilidade...");
+          
+          // Tentativa 2: Contingência via Brevo HTTP API (Porta 443)
+          if (effectiveBrevoKey) {
+            try {
+              console.log("[Risel SMTP] Acionando envio via Brevo HTTP API (Porta 443)...");
+              const brevoResult = await sendEmailViaBrevo({
+                to: emailTo,
+                cc: emailCc,
+                subject: emailSubject,
+                html: emailHtml,
+                fromName,
+                fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
+                attachments: mailAttachments
+              }, effectiveBrevoKey);
+
+              return res.json({
+                success: true,
+                delivered: true,
+                provider: "Brevo HTTP API (Porta 443)",
+                message: `E-mail entregue com sucesso via Brevo HTTP API (Porta 443) para ${emailTo}!`,
+                attachmentsCount: mailAttachments.length,
+                details: brevoResult
+              });
+            } catch (brevoErr: any) {
+              console.error("[Risel SMTP] Falha no envio via Brevo HTTP:", brevoErr.message);
+            }
+          }
+
+          // Tentativa 3: Contingência corporativa com remetente do módulo preservado
           try {
-            // Contingência corporativa com remetente do módulo preservado
             const fallbackTransporter = await createSafeTransporter({
               user: "deny.goncalves@risel.com.br",
               host: "smtp.office365.com",
@@ -1814,7 +1797,7 @@ async function startServer() {
               attachmentsCount: mailAttachments.length 
             });
           } catch (retryErr: any) {
-            console.warn("[Risel SMTP] Tentativas SMTP de envio direto concluídas com restrição:", retryErr.message);
+            console.warn("[Risel SMTP] Tentativas SMTP de contingência concluídas com restrição:", retryErr.message);
 
             // Tentativa 3: Se houver chave de API HTTP configurada (Resend ou Brevo), dispara via HTTPS (Porta 443)
             const resendKey = effectiveResendKey;
@@ -1829,7 +1812,7 @@ async function startServer() {
                   subject: emailSubject,
                   html: emailHtml,
                   fromName,
-                  fromEmail: smtpConfig.user || "deny.risel@gmail.com",
+                  fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
                   attachments: mailAttachments
                 }, resendKey);
 
@@ -1855,7 +1838,7 @@ async function startServer() {
                   subject: emailSubject,
                   html: emailHtml,
                   fromName,
-                  fromEmail: smtpConfig.user || "deny.risel@gmail.com",
+                  fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
                   attachments: mailAttachments
                 }, brevoKey);
 
@@ -2076,7 +2059,7 @@ async function startServer() {
               subject: emailSubject,
               html: htmlContent,
               fromName: "Sistema de Documentos Risel",
-              fromEmail: smtpConfig.user || "deny.risel@gmail.com"
+              fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com"
             }, effectiveResendKey);
 
             return res.json({ 
@@ -2098,7 +2081,7 @@ async function startServer() {
               subject: emailSubject,
               html: htmlContent,
               fromName: "Sistema de Documentos Risel",
-              fromEmail: smtpConfig.user || "deny.risel@gmail.com"
+              fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com"
             }, effectiveBrevoKey);
 
             return res.json({ 

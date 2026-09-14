@@ -41,8 +41,8 @@ export function decryptSecret(encryptedText: string): string {
   }
 }
 
-// Senha padrão oficial gerada para app no Gmail (deny.risel@gmail.com) criptografada no vault
-export const ENCRYPTED_DEFAULT_PASSWORD = encryptSecret('lwyrtwblwzwnwots');
+// Senha padrão oficial gerada para app no Gmail (gestaodefrotarisel@gmail.com) criptografada no vault
+export const ENCRYPTED_DEFAULT_PASSWORD = encryptSecret('aeczbopvnpocoezw');
 // Senha corporativa Risel de contingência mantida no cofre
 export const ENCRYPTED_FALLBACK_PASSWORD = encryptSecret('M)175012833809uz');
 
@@ -59,22 +59,23 @@ export const RISEL_LOGO_URL = "https://risel.com.br/wp-content/uploads/2024/07/R
 
 /**
  * Gera uma assinatura corporativa de e-mail minimalista e elegante,
- * contendo estritamente o nome do remetente do módulo, o logotipo transparente oficial e o site da Risel.
+ * contendo estritamente o nome do remetente do módulo, o logotipo transparente oficial e o site da Risel,
+ * formatada na tipografia corporativa Aptos Narrow / Aptos tamanho 11pt.
  */
 export function generateModuleEmailSignature(moduleName: string): string {
   return `
-  <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 26px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', Calibri, Arial, sans-serif;">
     <tr>
       <td style="vertical-align: middle; padding-right: 16px; border-right: 2px solid #e2e8f0;">
         <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="text-decoration: none; display: block;">
           <img src="${RISEL_LOGO_URL}" alt="Risel Combustíveis" style="max-height: 40px; width: auto; display: block; border: 0;" />
         </a>
       </td>
-      <td style="vertical-align: middle; padding-left: 16px;">
-        <div style="font-size: 15px; font-weight: 700; color: #1e293b; letter-spacing: -0.2px; line-height: 1.2;">
+      <td style="vertical-align: middle; padding-left: 16px; font-family: 'Aptos Narrow', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', Calibri, Arial, sans-serif;">
+        <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; letter-spacing: -0.1px; line-height: 1.25;">
           ${moduleName}
         </div>
-        <div style="font-size: 12px; margin-top: 4px; line-height: 1.2;">
+        <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; margin-top: 4px; line-height: 1.25;">
           <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: none; font-weight: 500;">
             www.risel.com.br
           </a>
@@ -160,8 +161,8 @@ export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig 
     userCandidate = "";
   }
 
-  // Remetente padrão oficial consolidado: deny.risel@gmail.com
-  const user = overrides?.user || (userCandidate.includes("@") ? userCandidate : "deny.risel@gmail.com");
+  // Remetente padrão oficial consolidado: gestaodefrotarisel@gmail.com
+  const user = overrides?.user || (userCandidate.includes("@") ? userCandidate : "gestaodefrotarisel@gmail.com");
   const isGmail = user.toLowerCase().includes("@gmail.com");
   const defaultHost = isGmail ? "smtp.gmail.com" : "smtp.office365.com";
   const host = overrides?.host || envHost || hostFromEmailField || defaultHost;

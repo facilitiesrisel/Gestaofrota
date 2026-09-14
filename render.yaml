@@ -2,7 +2,7 @@ services:
   - type: web
     name: grrisel
     runtime: node
-    plan: free
+    plan: starter
     region: oregon
     buildCommand: npm install && npm run build
     startCommand: npm run start
@@ -13,7 +13,7 @@ services:
       - key: PORT
         value: "3000"
       - key: SMTP_EMAIL
-        value: deny.risel@gmail.com
+        value: gestaodefrotarisel@gmail.com
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
