@@ -2565,7 +2565,7 @@ export default function Frota() {
 
   if (activeTab === "portal") {
     return (
-      <div className="min-h-screen relative flex flex-col justify-between p-4 sm:p-6 lg:p-8 bg-slate-100/80 overflow-x-hidden text-slate-800">
+      <div className="min-h-screen relative flex flex-col justify-start p-4 sm:p-6 lg:px-8 lg:pt-5 lg:pb-10 bg-slate-100/80 overflow-x-hidden text-slate-800">
         {/* Imagem de Fundo com Transparência Elegante */}
         <div 
           className="fixed inset-0 z-0 pointer-events-none bg-cover bg-center bg-no-repeat opacity-25"
@@ -2576,12 +2576,12 @@ export default function Frota() {
         {/* Camada sutil de gradiente e desfoque suave para garantir contraste e legibilidade impecáveis */}
         <div className="fixed inset-0 z-0 pointer-events-none bg-gradient-to-b from-slate-50/70 via-slate-50/40 to-slate-100/80 backdrop-blur-[1px]" />
 
-        <div className="relative z-10 h-full flex flex-col justify-between max-w-7xl w-full mx-auto py-4 sm:py-6 my-auto">
+        <div className="relative z-10 w-full max-w-7xl mx-auto flex flex-col justify-start">
           {/* Barra Superior do Portal com Retorno e Perfil */}
-          <div className="flex justify-between items-center mb-8 px-2">
+          <div className="flex justify-between items-center mb-4 sm:mb-6 px-1">
             <Link 
               to="/" 
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold text-slate-600 hover:text-slate-900 bg-white/90 backdrop-blur-md hover:bg-white border border-slate-200/80 transition-all duration-300 shadow-xs hover:shadow-md"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-extrabold text-slate-600 hover:text-slate-900 bg-white/90 backdrop-blur-md hover:bg-white border border-slate-200/80 transition-all duration-300 shadow-xs hover:shadow-md"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> Voltar ao Início
             </Link>
@@ -2595,19 +2595,19 @@ export default function Frota() {
             </div>
           </div>
 
-          <div className="text-center mb-8">
+          <div className="text-center mb-5 sm:mb-7">
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-lg shadow-orange-500/25 mx-auto mb-3.5"
+              className="w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-md shadow-orange-500/20 mx-auto mb-2.5"
             >
-              <Car className="w-7 h-7" />
+              <Car className="w-6 h-6 sm:w-6.5 sm:h-6.5" />
             </motion.div>
             
             <motion.h1 
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
-              className="text-2xl sm:text-4xl font-display font-black text-slate-900 tracking-tight"
+              className="text-2xl sm:text-3xl lg:text-4xl font-display font-black text-slate-900 tracking-tight"
             >
               Módulo de <span className="bg-gradient-to-r from-orange-600 via-amber-600 to-amber-500 bg-clip-text text-transparent">Frota Leve</span>
             </motion.h1>
@@ -2615,7 +2615,7 @@ export default function Frota() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
-              className="text-xs sm:text-sm text-slate-600 mt-2 max-w-2xl mx-auto font-medium"
+              className="text-xs sm:text-sm text-slate-600 mt-1.5 max-w-2xl mx-auto font-medium"
             >
               Selecione uma das áreas operacionais abaixo para realizar vistorias, gerenciar reservas, acompanhar infrações ou rastrear veículos.
             </motion.p>

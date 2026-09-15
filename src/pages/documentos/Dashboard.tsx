@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { motion } from "motion/react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart, Pie, Legend, LabelList } from "recharts";
-import { Filter, TrendingUp, TrendingDown, Clock, CheckCircle2, Users, Receipt, Calendar, Building, CreditCard, Trophy, Crown, Award } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart, Pie, Legend, LabelList, ComposedChart, Line } from "recharts";
+import { Filter, TrendingUp, TrendingDown, Clock, CheckCircle2, Users, Receipt, Calendar, Building, CreditCard, Trophy, Crown, Award, BarChart2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { getLancamentosUnified, subscribeToLancamentosUnified } from "../../services/lancamentosService";
 
@@ -78,6 +78,8 @@ const formatarNomeFornecedor = (nome: string): string => {
 
 export default function Dashboard() {
   const [periodo, setPeriodo] = useState<"mes" | "dia">("mes");
+  const [formatoGrafico, setFormatoGrafico] = useState<"combo" | "linhas">("linhas");
+  const [metricaAtiva, setMetricaAtiva] = useState<"todas" | "valor" | "docs">("todas");
   const [filtroMes, setFiltroMes] = useState<string>("Todos");
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>("Todos");
 
@@ -397,82 +399,125 @@ export default function Dashboard() {
   }, [lancamentosAtivosParaTrend, lancamentosAnterioresParaTrend]);
 
   // Gráfico 1: Evolução dos Lançamentos com agrupamento dinâmico Mês vs Dia e ordenação cronológica
-  const dataEvolucao = useMemo(() => {
-    const extrairDataEmissao = (l: any) => {
-      if (l.dataEmissao && l.dataEmissao.includes("-")) {
-        return l.dataEmissao;
-      }
-      if (l.dataLancamento && l.dataLancamento.includes("/")) {
-        const parts = l.dataLancamento.split("/");
-        if (parts.length === 3) {
-          return `${parts[2]}-${parts[1]}-${parts[0]}`;
-        }
-      }
-      return l.dataVencimento || "2026-02-12";
-    };
+  type EvolucaoItem = {
+    name: string;
+    fullName: string;
+    docs: number;
+    valor: number;
+    mesIndex?: number;
+    dia?: number;
+  };
 
-    if (periodo === "dia") {
-      // Agrupamento por Dia (DD/MM) baseado na Data de Emissão
-      const dadosPorDia: Record<string, { name: string; dateObj: Date; docs: number; valor: number }> = {};
+  const dataEvolucao = useMemo<EvolucaoItem[]>(() => {
+    // Lista de lançamentos base filtrada por fornecedor (se aplicável)
+    const lancamentosBase = lancamentos.filter(l => {
+      if (filtroFornecedor !== "Todos" && l.fornecedor !== filtroFornecedor) {
+        return false;
+      }
+      return true;
+    });
+
+    const mesesNomesAbrev = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    const mesesNomesCompletos = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+    if (periodo === "mes") {
+      // Agrupamento por Mês: exibe a linha do tempo contínua anual (12 meses)
+      const mesesMap: Record<number, { name: string; fullName: string; mesIndex: number; docs: number; valor: number }> = {};
       
-      lancamentosFiltrados.forEach(l => {
-        const dtStr = extrairDataEmissao(l);
-        const dateParts = dtStr.split("-");
-        if (dateParts.length === 3) {
-          const ano = parseInt(dateParts[0], 10);
-          const mes = parseInt(dateParts[1], 10);
-          const dia = parseInt(dateParts[2], 10);
-          const dateObj = new Date(ano, mes - 1, dia);
-          
-          const key = `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}`;
-          const val = parseFloat(l.valor.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
+      mesesNomesAbrev.forEach((m, idx) => {
+        mesesMap[idx] = { 
+          name: m, 
+          fullName: mesesNomesCompletos[idx], 
+          mesIndex: idx, 
+          docs: 0, 
+          valor: 0 
+        };
+      });
 
-          if (!dadosPorDia[key]) {
-            dadosPorDia[key] = { name: key, dateObj, docs: 0, valor: 0 };
+      lancamentosBase.forEach(l => {
+        const dtStr = extrairDataEmissao(l);
+        if (dtStr && dtStr.includes("-")) {
+          const parts = dtStr.split("-");
+          if (parts.length === 3) {
+            const mesIdx = parseInt(parts[1], 10) - 1;
+            const val = typeof l.valor === 'number' 
+              ? l.valor 
+              : parseFloat(String(l.valor || '').replace(/[^\d,]/g, '').replace(',', '.')) || 0;
+
+            if (mesIdx >= 0 && mesIdx < 12) {
+              mesesMap[mesIdx].docs += 1;
+              mesesMap[mesIdx].valor += val;
+            }
           }
-          dadosPorDia[key].docs += 1;
-          dadosPorDia[key].valor += val;
         }
       });
 
-      // Ordenação por tempo absoluto para garantir cronologia
-      return Object.values(dadosPorDia)
-        .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime())
-        .map(({ name, docs, valor }) => ({ name, docs, valor }));
+      return Object.values(mesesMap).sort((a, b) => a.mesIndex - b.mesIndex);
     } else {
-      // Agrupamento por Mês Completo
-      const mesesNomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-      const dadosPorMes: Record<string, { name: string; mesIndex: number; docs: number; valor: number }> = {};
-
-      lancamentosFiltrados.forEach(l => {
-        const dtStr = extrairDataEmissao(l);
-        const dateParts = dtStr.split("-");
-        if (dateParts.length === 3) {
-          const mesIndex = parseInt(dateParts[1], 10) - 1;
-          const nomeMes = mesesNomes[mesIndex] || "Janeiro";
-          const val = parseFloat(l.valor.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
-
-          if (!dadosPorMes[nomeMes]) {
-            dadosPorMes[nomeMes] = { name: nomeMes, mesIndex, docs: 0, valor: 0 };
-          }
-          dadosPorMes[nomeMes].docs += 1;
-          dadosPorMes[nomeMes].valor += val;
-        }
-      });
-
-      // Caso esteja vazio, inicializa meses padrão para manter a continuidade visual do gráfico
-      if (Object.keys(dadosPorMes).length === 0) {
-        mesesNomes.slice(0, 6).forEach((m, idx) => {
-          dadosPorMes[m] = { name: m, mesIndex: idx, docs: 0, valor: 0 };
-        });
+      // Agrupamento por Dia: exibe a distribuição diária dos lançamentos do mês ativo/selecionado
+      const mesRef = filtroMes !== "Todos" ? filtroMes : mesReferenciaAtivo; // Formato "MM/AAAA"
+      let targetMes = 2;
+      let targetAno = 2026;
+      if (mesRef && mesRef.includes("/")) {
+        const parts = mesRef.split("/");
+        targetMes = parseInt(parts[0], 10) || 2;
+        targetAno = parseInt(parts[1], 10) || 2026;
       }
 
-      // Ordenação cronológica baseada no índice do mês
-      return Object.values(dadosPorMes)
-        .sort((a, b) => a.mesIndex - b.mesIndex)
-        .map(({ name, docs, valor }) => ({ name, docs, valor }));
+      const diasNoMes = new Date(targetAno, targetMes, 0).getDate(); // Ex: 28 para Fev 2026
+      const nomeMesCompleto = mesesNomesCompletos[targetMes - 1] || "Fevereiro";
+
+      const diasMap: Record<number, { name: string; fullName: string; dia: number; docs: number; valor: number }> = {};
+      for (let d = 1; d <= diasNoMes; d++) {
+        const diaStr = String(d).padStart(2, '0');
+        const mesStr = String(targetMes).padStart(2, '0');
+        diasMap[d] = {
+          name: `${diaStr}/${mesStr}`,
+          fullName: `${diaStr} de ${nomeMesCompleto}`,
+          dia: d,
+          docs: 0,
+          valor: 0
+        };
+      }
+
+      lancamentosBase.forEach(l => {
+        const dtStr = extrairDataEmissao(l);
+        if (dtStr && dtStr.includes("-")) {
+          const parts = dtStr.split("-");
+          if (parts.length === 3) {
+            const ano = parseInt(parts[0], 10);
+            const mes = parseInt(parts[1], 10);
+            const dia = parseInt(parts[2], 10);
+            const val = typeof l.valor === 'number' 
+              ? l.valor 
+              : parseFloat(String(l.valor || '').replace(/[^\d,]/g, '').replace(',', '.')) || 0;
+
+            if (mes === targetMes && ano === targetAno && diasMap[dia]) {
+              diasMap[dia].docs += 1;
+              diasMap[dia].valor += val;
+            }
+          }
+        }
+      });
+
+      return Object.values(diasMap).sort((a, b) => a.dia - b.dia);
     }
-  }, [lancamentosFiltrados, periodo]);
+  }, [lancamentos, filtroFornecedor, filtroMes, mesReferenciaAtivo, periodo]);
+
+  // Métricas de síntese do Gráfico de Evolução (Volume Financeiro, Contagem e Ticket Médio)
+  const { totalValorEvolucao, totalDocsEvolucao, ticketMedioEvolucao } = useMemo(() => {
+    let totV = 0;
+    let totD = 0;
+    dataEvolucao.forEach(d => {
+      totV += d.valor;
+      totD += d.docs;
+    });
+    return {
+      totalValorEvolucao: totV,
+      totalDocsEvolucao: totD,
+      ticketMedioEvolucao: totD > 0 ? totV / totD : 0
+    };
+  }, [dataEvolucao]);
 
   // Gráfico 2: Documentos por Status
   const dataStatus = useMemo(() => {
@@ -766,44 +811,95 @@ export default function Dashboard() {
       {/* Grid de Gráficos de alta resolução */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-4">
         
-        {/* Gráfico 1: Evolução de Lançamentos com Meses Completos (Soberano na linha inteira - Valor R$ + Qtd) */}
+        {/* Gráfico 1: Evolução de Lançamentos com Proporcionalidade Calibrada e Padrão Ouro de BI */}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: "easeOut", delay: 0.2 }}
           className="lg:col-span-3 bg-white rounded-[24px] p-6 shadow-sm border border-slate-200 flex flex-col justify-between"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5">
             <div>
-              <h3 className="font-display font-extrabold text-lg text-slate-800">Evolução de Lançamentos</h3>
-              <p className="text-xs text-slate-400 font-medium">Histórico acumulado de volume financeiro (R$) e quantidade total de documentos por período.</p>
+              <div className="flex items-center gap-2">
+                <h3 className="font-display font-extrabold text-lg text-slate-800">Evolução de Lançamentos</h3>
+              </div>
             </div>
             
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Legenda de Cores da Identidade Visual Risel */}
-              <div className="flex items-center gap-3 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200/80 text-[11px] font-extrabold">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#10b981] shadow-sm" />
-                  <span className="text-slate-700">Valor Total (R$)</span>
-                </div>
-                <div className="w-px h-3 bg-slate-300" />
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#0284c7] shadow-sm" />
-                  <span className="text-slate-700">Qtd. Lançamentos</span>
-                </div>
+            {/* Controles Dinâmicos de Visualização do BI */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Filtro de Métrica Ativa: Geral (R$ + Qtd) | Apenas R$ | Apenas Qtd */}
+              <div className="flex bg-slate-100 p-1 rounded-[12px] border border-slate-200 text-xs font-bold">
+                <button
+                  onClick={() => setMetricaAtiva("todas")}
+                  className={cn(
+                    "px-2.5 py-1 rounded-[8px] transition-all cursor-pointer",
+                    metricaAtiva === "todas" ? "bg-white text-emerald-800 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+                  )}
+                  title="Exibir ambas as grandezas com proporção calibrada"
+                >
+                  Geral (R$ + Qtd)
+                </button>
+                <button
+                  onClick={() => setMetricaAtiva("valor")}
+                  className={cn(
+                    "px-2.5 py-1 rounded-[8px] transition-all cursor-pointer",
+                    metricaAtiva === "valor" ? "bg-white text-emerald-700 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+                  )}
+                  title="Exibir exclusivamente o volume financeiro total (R$)"
+                >
+                  Apenas R$
+                </button>
+                <button
+                  onClick={() => setMetricaAtiva("docs")}
+                  className={cn(
+                    "px-2.5 py-1 rounded-[8px] transition-all cursor-pointer",
+                    metricaAtiva === "docs" ? "bg-white text-sky-700 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+                  )}
+                  title="Exibir exclusivamente a contagem de faturas"
+                >
+                  Apenas Qtd
+                </button>
               </div>
 
-              {/* Botões Mês/Dia */}
+              {/* Modo de Apresentação: Combo (Barras R$ + Linha Qtd) vs Curvas */}
+              {metricaAtiva === "todas" && (
+                <div className="flex bg-slate-100 p-1 rounded-[12px] border border-slate-200 text-xs font-bold">
+                  <button
+                    onClick={() => setFormatoGrafico("combo")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-[8px] transition-all cursor-pointer flex items-center gap-1.5",
+                      formatoGrafico === "combo" ? "bg-white text-slate-800 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+                    )}
+                    title="Combo BI: Barras para Valor Financeiro (R$) e Linha para Quantidade de Lançamentos"
+                  >
+                    <BarChart2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Combo BI</span>
+                  </button>
+                  <button
+                    onClick={() => setFormatoGrafico("linhas")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-[8px] transition-all cursor-pointer flex items-center gap-1.5",
+                      formatoGrafico === "linhas" ? "bg-white text-slate-800 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+                    )}
+                    title="Curvas: Curvas com preenchimento em gradiente"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Curvas</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Botões de Agrupamento: Dia / Mês */}
               <div className="flex bg-slate-100 p-1 rounded-[12px] border border-slate-200">
                 <button 
                   onClick={() => setPeriodo("dia")}
-                  className={cn("px-3 py-1 text-xs font-bold rounded-[8px] transition-colors cursor-pointer", periodo === "dia" ? "bg-white text-[#114D38] shadow-sm" : "text-slate-500")}
+                  className={cn("px-3 py-1 text-xs font-bold rounded-[8px] transition-colors cursor-pointer", periodo === "dia" ? "bg-white text-[#114D38] shadow-sm font-black" : "text-slate-500 hover:text-slate-800")}
                 >
                   Dia
                 </button>
                 <button 
                   onClick={() => setPeriodo("mes")}
-                  className={cn("px-3 py-1 text-xs font-bold rounded-[8px] transition-colors cursor-pointer", periodo === "mes" ? "bg-white text-[#114D38] shadow-sm" : "text-slate-500")}
+                  className={cn("px-3 py-1 text-xs font-bold rounded-[8px] transition-colors cursor-pointer", periodo === "mes" ? "bg-white text-[#114D38] shadow-sm font-black" : "text-slate-500 hover:text-slate-800")}
                 >
                   Mês
                 </button>
@@ -811,77 +907,227 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={dataEvolucao} margin={{ top: 10, right: 15, left: 15, bottom: 10 }}>
+          {/* Faixa de Contexto & Micro KPIs Consolidados do Período */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-2 border-b border-slate-100 text-xs">
+            {/* Legenda Explicativa de Escalas */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {(metricaAtiva === "todas" || metricaAtiva === "valor") && (
+                <div className="flex items-center gap-1.5 bg-emerald-50/90 border border-emerald-200/80 px-2.5 py-1 rounded-lg">
+                  <span className={cn(
+                    "bg-[#10b981] shadow-xs",
+                    formatoGrafico === "combo" ? "w-2.5 h-2.5 rounded-xs" : "w-2.5 h-2.5 rounded-full"
+                  )} />
+                  <span className="font-extrabold text-emerald-800 text-[11px]">
+                    Valor Total (R$)
+                  </span>
+                </div>
+              )}
+              {metricaAtiva === "todas" && <div className="w-px h-3 bg-slate-200 hidden sm:block" />}
+              {(metricaAtiva === "todas" || metricaAtiva === "docs") && (
+                <div className="flex items-center gap-1.5 bg-sky-50/90 border border-sky-200/80 px-2.5 py-1 rounded-lg">
+                  <span className={cn(
+                    "bg-[#0284c7] shadow-xs",
+                    formatoGrafico === "combo" ? "w-3 h-0.5 rounded-full" : "w-2.5 h-2.5 rounded-md"
+                  )} />
+                  <span className="font-extrabold text-sky-800 text-[11px]">
+                    Qtd. Lançamentos
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Resumo Numérico Rápido */}
+            <div className="flex items-center gap-3 text-slate-500 font-bold text-[11px]">
+              <div>
+                Total: <span className="font-black text-slate-800">{totalValorEvolucao.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}</span>
+              </div>
+              <span className="text-slate-300">•</span>
+              <div>
+                Faturas: <span className="font-black text-slate-800">{totalDocsEvolucao} un</span>
+              </div>
+              {totalDocsEvolucao > 0 && (
+                <>
+                  <span className="text-slate-300">•</span>
+                  <div>
+                    Ticket Médio: <span className="font-black text-emerald-700">{ticketMedioEvolucao.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="h-[340px] w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%" key={`resp-${periodo}-${formatoGrafico}-${metricaAtiva}`}>
+              <ComposedChart 
+                key={`chart-${periodo}-${formatoGrafico}-${metricaAtiva}`} 
+                data={dataEvolucao} 
+                margin={{ top: 15, right: 15, left: 15, bottom: 10 }}
+              >
                 <defs>
-                  {/* Gradiente 1: Valor Total (R$) - Verde Risel (#10b981) */}
-                  <linearGradient id="colorValor" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.35}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                  {/* Gradiente 1: Barras de Valor Total (R$) - Verde Esmeralda Risel */}
+                  <linearGradient id="colorValorBar" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.92}/>
+                    <stop offset="100%" stopColor="#047857" stopOpacity={0.74}/>
                   </linearGradient>
-                  {/* Gradiente 2: Qtd Lançamentos - Azul Sky Risel (#0284c7) */}
+                  {/* Gradiente 2: Área de Valor Total (R$) - Para modo Curvas */}
+                  <linearGradient id="colorValor" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.42}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+                  </linearGradient>
+                  {/* Gradiente 3: Área de Qtd Lançamentos - Para modo Curvas */}
                   <linearGradient id="colorDocs" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0284c7" stopOpacity={0.30}/>
+                    <stop offset="5%" stopColor="#0284c7" stopOpacity={0.20}/>
                     <stop offset="95%" stopColor="#0284c7" stopOpacity={0.0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748B', fontSize: 11, fontWeight: 700}} dy={10} />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: '#64748B', fontSize: 11, fontWeight: 700}} 
+                  dy={10} 
+                  interval={periodo === "dia" ? (dataEvolucao.length > 20 ? 2 : 1) : 0}
+                />
                 
                 {/* Eixo Esquerdo: Valor (R$) */}
-                <YAxis 
-                  yAxisId="valor" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{fill: '#059669', fontSize: 10, fontWeight: 800}} 
-                  tickFormatter={(val) => `R$ ${parseFloat(val).toLocaleString('pt-BR', { notation: 'compact', compactDisplay: 'short' })}`} 
-                />
+                {(metricaAtiva === "todas" || metricaAtiva === "valor") && (
+                  <YAxis 
+                    yAxisId="valor" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#059669', fontSize: 10, fontWeight: 800}} 
+                    domain={[0, (dataMax: number) => (dataMax <= 0 ? 1000 : Math.ceil(dataMax * 1.15))]}
+                    tickFormatter={(val) => `R$ ${parseFloat(val).toLocaleString('pt-BR', { notation: 'compact', compactDisplay: 'short' })}`} 
+                  />
+                )}
                 
                 {/* Eixo Direito: Qtd Documentos */}
-                <YAxis 
-                  yAxisId="docs" 
-                  orientation="right" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{fill: '#0284c7', fontSize: 10, fontWeight: 800}} 
-                  tickFormatter={(val) => `${val} un`} 
-                />
-
-                <RechartsTooltip 
-                  formatter={(value: any, name: any) => {
-                    if (name === "Valor Total (R$)" || name === "valor") {
-                      return [`R$ ${parseFloat(value).toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, "Valor Total"];
+                {(metricaAtiva === "todas" || metricaAtiva === "docs") && (
+                  <YAxis 
+                    yAxisId="docs" 
+                    orientation="right" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#0284c7', fontSize: 10, fontWeight: 800}} 
+                    domain={
+                      metricaAtiva === "docs"
+                        ? [0, (dataMax: number) => Math.max(Math.ceil((dataMax || 1) * 1.15), 4)]
+                        : [0, (dataMax: number) => Math.max(Math.ceil((dataMax || 1) * 1.45), 5)]
                     }
-                    return [`${value} lançamento(s)`, "Qtd. Lançamentos"];
+                    allowDecimals={false}
+                    tickFormatter={(val) => `${val} un`} 
+                  />
+                )}
+
+                {/* Tooltip Analítico Rico com Relação de Valor, Quantidade e Ticket Médio */}
+                <RechartsTooltip 
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    
+                    const valorItem = payload.find(p => p.dataKey === "valor");
+                    const docsItem = payload.find(p => p.dataKey === "docs");
+                    
+                    const valorVal = valorItem ? Number(valorItem.value) : 0;
+                    const docsVal = docsItem ? Number(docsItem.value) : 0;
+                    const ticketMedio = docsVal > 0 ? valorVal / docsVal : 0;
+                    const pctTotal = totalValorEvolucao > 0 ? (valorVal / totalValorEvolucao) * 100 : 0;
+                    const displayTitle = payload[0]?.payload?.fullName || label;
+
+                    return (
+                      <div className="bg-white/95 backdrop-blur-md p-4 rounded-2xl border border-slate-200/90 shadow-2xl shadow-slate-300/50 min-w-[230px] z-50">
+                        <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100">
+                          <span className="text-xs font-black text-slate-800 tracking-wide uppercase flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                            {displayTitle}
+                          </span>
+                          {docsVal > 0 && valorVal > 0 && (
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                              {pctTotal.toFixed(1)}% do total
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          {(metricaAtiva === "todas" || metricaAtiva === "valor") && (
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2.5 h-2.5 rounded-xs bg-[#10b981] shadow-xs" />
+                                <span className="text-xs font-bold text-slate-600">Valor Total:</span>
+                              </div>
+                              <span className="text-xs font-display font-black text-emerald-750">
+                                {valorVal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </span>
+                            </div>
+                          )}
+
+                          {(metricaAtiva === "todas" || metricaAtiva === "docs") && (
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2.5 h-2.5 rounded-full bg-[#0284c7] shadow-xs" />
+                                <span className="text-xs font-bold text-slate-600">Lançamentos:</span>
+                              </div>
+                              <span className="text-xs font-display font-black text-sky-700">
+                                {docsVal} {docsVal === 1 ? 'documento' : 'documentos'}
+                              </span>
+                            </div>
+                          )}
+
+                          {metricaAtiva === "todas" && docsVal > 0 && (
+                            <div className="pt-2 mt-1 border-t border-dashed border-slate-150 flex items-center justify-between gap-4">
+                              <span className="text-[11px] font-bold text-slate-400">Ticket Médio:</span>
+                              <span className="text-[11px] font-black text-slate-700">
+                                {ticketMedio.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
                   }}
-                  contentStyle={{ borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 10px 20px -3px rgba(0,0,0,0.08)', backgroundColor: '#fff', color: '#114D38', fontWeight: 'bold' }}
                 />
 
-                {/* Área 1: Valor (R$) - Gradiente Verde */}
-                <Area 
-                  yAxisId="valor" 
-                  type="monotone" 
-                  dataKey="valor" 
-                  name="Valor Total (R$)" 
-                  stroke="#10b981" 
-                  strokeWidth={3} 
-                  fillOpacity={1} 
-                  fill="url(#colorValor)" 
-                />
+                {/* Camada 1: Valor Total Financeiro (R$) - Barras no modo Combo BI ou Área no modo Curvas */}
+                {(metricaAtiva === "todas" || metricaAtiva === "valor") && (
+                  formatoGrafico === "combo" ? (
+                    <Bar 
+                      yAxisId="valor" 
+                      dataKey="valor" 
+                      name="Valor Total (R$)" 
+                      fill="url(#colorValorBar)" 
+                      radius={[6, 6, 0, 0]} 
+                      maxBarSize={periodo === "mes" ? 38 : 18}
+                    />
+                  ) : (
+                    <Area 
+                      yAxisId="valor" 
+                      type="monotone" 
+                      dataKey="valor" 
+                      name="Valor Total (R$)" 
+                      stroke="#10b981" 
+                      strokeWidth={3.5} 
+                      fillOpacity={1} 
+                      fill="url(#colorValor)" 
+                      activeDot={{ r: 7, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2.5 }}
+                    />
+                  )
+                )}
 
-                {/* Área 2: Qtd. Lançamentos - Gradiente Azul */}
-                <Area 
-                  yAxisId="docs" 
-                  type="monotone" 
-                  dataKey="docs" 
-                  name="Qtd. Lançamentos" 
-                  stroke="#0284c7" 
-                  strokeWidth={3} 
-                  fillOpacity={1} 
-                  fill="url(#colorDocs)" 
-                />
-              </AreaChart>
+                {/* Camada 2: Quantidade de Documentos - Linha fluindo sobre o gráfico */}
+                {(metricaAtiva === "todas" || metricaAtiva === "docs") && (
+                  <Line 
+                    yAxisId="docs" 
+                    type="monotone" 
+                    dataKey="docs" 
+                    name="Qtd. Lançamentos" 
+                    stroke="#0284c7" 
+                    strokeWidth={formatoGrafico === "combo" ? 3 : 2.5} 
+                    strokeDasharray={formatoGrafico === "combo" ? undefined : "4 4"}
+                    dot={{ r: 4.5, stroke: '#0284c7', strokeWidth: 2, fill: '#ffffff' }} 
+                    activeDot={{ r: 7, fill: '#0284c7', stroke: '#ffffff', strokeWidth: 2.5 }} 
+                  />
+                )}
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </motion.div>
