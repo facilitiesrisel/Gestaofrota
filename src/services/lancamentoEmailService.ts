@@ -369,6 +369,28 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
             </div>
           </div>
 
+          <!-- Assinatura Oficial Padronizada Risel Combustíveis Ltda -->
+          <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 26px; padding-top: 18px; border-top: 1px solid #e2e8f0; width: 100%; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <tr>
+              <td style="vertical-align: middle; width: 52px; padding-right: 14px; border-right: 2px solid #e2e8f0;">
+                <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="text-decoration: none; display: block;">
+                  <img src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" alt="Risel Combustíveis" style="max-height: 38px; width: auto; display: block; border: 0;" />
+                </a>
+              </td>
+              <td style="vertical-align: middle; padding-left: 14px;">
+                <div style="font-size: 11.5pt; font-weight: 800; color: #0d4a36; line-height: 1.2;">
+                  Risel Combustíveis Ltda
+                </div>
+                <div style="font-size: 9pt; color: #64748b; margin-top: 3px; line-height: 1.4;">
+                  Sistema Integrado de Gestão Corporativa | Gestão Financeira & Lançamentos
+                </div>
+                <div style="font-size: 8.5pt; color: #94a3b8; margin-top: 2px;">
+                  Mensagem corporativa gerada automaticamente para fluxo de aprovação de documentos.
+                </div>
+              </td>
+            </tr>
+          </table>
+
         </div>
       </div>
     </body>
