@@ -327,13 +327,13 @@ export function generateLocalPDF(c: any, vehicles: any[] = []) {
       
       th { 
         background-color: #F8FAFC; 
-        color: #4A5568; 
-        font-weight: 600; 
+        color: #1E293B; 
+        font-weight: 700; 
         width: 25%; 
         font-size: 9.5px; 
         text-transform: uppercase; 
       }
-      td { font-size: 11px; font-weight: bold; color: #1A202C; background-color: #FFFFFF; }
+      td { font-size: 11px; font-weight: normal; color: #334155; background-color: #FFFFFF; }
       
       .item-icon {
         display: inline-block;

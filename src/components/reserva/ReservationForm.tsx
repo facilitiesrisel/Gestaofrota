@@ -481,7 +481,8 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     }
 
     // Enviar e-mail de notificação de nova solicitação EXCLUSIVAMENTE para a administração
-    // O solicitante só receberá o e-mail após a aprovação ou recusa formal da reserva
+    // REGRA DE NEGÓCIO: O e-mail de solicitação NUNCA pode chegar ao solicitante.
+    // O solicitante só receberá o e-mail quando a administração responder (aprovar ou recusar) a reserva.
     const emailHtml = generateEmailHtml(
         "Detalhes da Solicitação",
         emailDetails,
@@ -490,7 +491,11 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         `Uma nova solicitação de reserva de veículo foi registrada por ${formData.requesterName} e aguarda análise da Gestão de Frota.`
     );
 
-    const recipients = [...ADMIN_EMAIL_RECIPIENTS];
+    const requesterEmailNormalized = (formData.email || "").trim().toLowerCase();
+    const filteredAdmins = ADMIN_EMAIL_RECIPIENTS.filter(
+      adminEmail => adminEmail.trim().toLowerCase() !== requesterEmailNormalized
+    );
+    const recipients = filteredAdmins.length > 0 ? filteredAdmins : [...ADMIN_EMAIL_RECIPIENTS];
 
     try {
       await sendEmail(
@@ -498,7 +503,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         `Nova Solicitação de Reserva de Veículo - ${formData.requesterName}`, 
         emailHtml,
         {
-          fromName: "Gestão de Reservas Risel",
+          fromName: "Risel Combustíveis",
           source: "reservas"
         }
       );

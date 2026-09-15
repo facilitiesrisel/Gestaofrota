@@ -499,24 +499,18 @@ export const generateTermoAvariaPdf = async (
 
   currentY += 2;
 
-  const parcelas = avaria.quantidadeParcelas || 1;
   const valorDesconto = avaria.valorDesconto || totalReparos;
-  const valorParcela = avaria.valorParcela || (valorDesconto / parcelas);
   const subsidio = avaria.subsidioEmpresa || (totalReparos - valorDesconto > 0 ? totalReparos - valorDesconto : 0);
-
-  const parcelamentoDescricao = parcelas === 1
-    ? `Desconto em cota única de ${fmtMoney(valorDesconto)}`
-    : `Desconto em ${parcelas}x de ${fmtMoney(valorParcela)} na Folha`;
 
   autoTable(doc, {
     startY: currentY,
     theme: 'grid',
-    head: [['Valor Total do Reparo', 'Participação Empresa', 'Valor a Descontar', 'Condição de Parcelamento']],
+    head: [['Valor Total do Reparo', 'Participação Empresa', 'Valor a Descontar', 'Forma de Desconto']],
     body: [[
       fmtMoney(totalReparos),
       fmtMoney(subsidio),
       fmtMoney(valorDesconto),
-      parcelamentoDescricao
+      'Desconto em Folha'
     ]],
     styles: { fontSize: 8, cellPadding: 2.5, minCellHeight: 6, textColor: darkTextColor, halign: 'center' },
     headStyles: { fillColor: primaryColor, textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
@@ -553,7 +547,7 @@ export const generateTermoAvariaPdf = async (
 
   let textOffset = currentY + 4.5 + split1.length * 3.5;
 
-  const textoClt2 = `Com fulcro no Artigo 462, § 1º da Consolidação das Leis do Trabalho (CLT), AUTORIZO EXPRESSAMENTE a empresa RISEL COMBUSTÍVEIS LTDA a efetuar o desconto do montante de ${fmtMoney(valorDesconto)} (${parcelamentoDescricao}) em minha folha de pagamento para ressarcimento das despesas decorrentes das avarias supracitadas.`;
+  const textoClt2 = `Com fulcro no Artigo 462, § 1º da Consolidação das Leis do Trabalho (CLT), AUTORIZO EXPRESSAMENTE a empresa RISEL COMBUSTÍVEIS LTDA a efetuar o desconto do montante de ${fmtMoney(valorDesconto)} em minha folha de pagamento para ressarcimento das despesas decorrentes das avarias supracitadas.`;
   const split2 = doc.splitTextToSize(textoClt2, 174);
   doc.text(split2, 18, textOffset);
 
@@ -729,8 +723,6 @@ export const generateTermoAvariaEmailHtml = (
   const base = (avaria.base || maint.base || 'Filial').toUpperCase().trim();
   const osNum = maint.nf_os || `OS-${placa}`;
   const valorDesconto = avaria.valorDesconto || avaria.valorTotalReparo || maint.custo;
-  const parcelas = avaria.quantidadeParcelas || 1;
-  const valorParcela = avaria.valorParcela || (valorDesconto / parcelas);
 
   const fmtMoney = (v: number) =>
     `R$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -824,7 +816,7 @@ export const generateTermoAvariaEmailHtml = (
                       </tr>
                       <tr>
                         <td width="50%" style="font-size: 11pt; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
-                          <strong>Condição de Desconto:</strong> <span style="color: #b91c1c; font-weight: 700; font-size: 11pt;">${parcelas === 1 ? '1 parcela única' : `${parcelas}x de ${fmtMoney(valorParcela)}`}</span>
+                          <strong>Forma de Desconto:</strong> <span style="color: #065f46; font-weight: 700; font-size: 11pt;">Desconto em Folha de Pagamento</span>
                         </td>
                         <td width="50%" style="font-size: 11pt; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
                           <strong>Valor Total a Descontar:</strong> <span style="color: #b91c1c; font-weight: 800; font-size: 12pt;">${fmtMoney(valorDesconto)}</span>
@@ -879,10 +871,10 @@ export const generateTermoAvariaEmailHtml = (
           <tr>
             <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px 28px; text-align: center; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
               <p style="margin: 0; font-size: 11pt; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
-                <strong>Risel Combustíveis Ltda</strong> &bull; Departamento de Frotas & Operações
+                <strong>Risel Combustíveis Ltda</strong>
               </p>
               <p style="margin: 4px 0 0 0; font-size: 9.5pt; color: #94a3b8; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif;">
-                Mensagem gerada automaticamente pelo Sistema de Gestão de Frotas Risel.
+                Mensagem gerada automaticamente pelo Sistema Risel ERP.
               </p>
             </td>
           </tr>

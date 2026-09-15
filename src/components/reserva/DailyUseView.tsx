@@ -277,7 +277,7 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
             );
             // Envia para admins
             await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${addFormData.driverName}`, emailHtml, {
-                fromName: "Gestão de Reservas Risel",
+                fromName: "Risel Combustíveis",
                 source: "reservas"
             });
             // --------------------------------------
@@ -362,7 +362,7 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                     "O odômetro e status do veículo foram atualizados no sistema Risel."
                 );
                 await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${selectedTrip.driverName}`, emailHtml, {
-                    fromName: "Gestão de Reservas Risel",
+                    fromName: "Risel Combustíveis",
                     source: "reservas"
                 });
                 // --------------------------------------

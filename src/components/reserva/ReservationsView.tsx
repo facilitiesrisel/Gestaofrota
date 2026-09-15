@@ -215,7 +215,7 @@ const ReservationsView: React.FC = () => {
 
         try {
           await sendEmail(recipients, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
-            fromName: "Gestão de Reservas Risel",
+            fromName: "Risel Combustíveis",
             source: "reservas"
           });
           showToast("Reserva aprovada e notificações enviadas com sucesso!", 'success');
@@ -299,7 +299,7 @@ const ReservationsView: React.FC = () => {
       }
       try {
         await sendEmail(recipients, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml, {
-          fromName: "Gestão de Reservas Risel",
+          fromName: "Risel Combustíveis",
           source: "reservas"
         });
         showToast("Reserva rejeitada e e-mail enviado com sucesso.", 'success');
@@ -346,7 +346,7 @@ const ReservationsView: React.FC = () => {
                   recipients.push(reservation.email);
                 }
                 await sendEmail(recipients, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml, {
-                  fromName: "Gestão de Reservas Risel",
+                  fromName: "Risel Combustíveis",
                   source: "reservas"
                 });
               } catch (mailErr) {

@@ -1412,7 +1412,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                       </td>
                       <td valign="middle" style="padding-left: 16px; vertical-align: middle;">
                         <h1 style="color: #ffffff !important; margin: 0; font-size: 19px; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">Notificação de Infração de Trânsito</h1>
-                        <p style="color: #86efac !important; margin: 4px 0 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda • Gestão de Frotas & Multas</p>
+                        <p style="color: #86efac !important; margin: 4px 0 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda</p>
                       </td>
                     </tr>
                   </table>
@@ -1474,7 +1474,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
             <!-- Rodapé Institucional -->
             <div style="background-color: #f8fafc; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-               <p style="color: #64748b; font-size: 11px; margin: 0; font-weight: 700;">© ${new Date().getFullYear()} Risel Combustíveis Ltda • Módulo de Frota Leve</p>
+               <p style="color: #64748b; font-size: 11px; margin: 0; font-weight: 700;">© ${new Date().getFullYear()} Risel Combustíveis Ltda</p>
                <p style="color: #94a3b8; font-size: 10px; margin: 3px 0 0 0;">Mensagem corporativa gerada automaticamente pelo Sistema Risel ERP.</p>
             </div>
           </div>

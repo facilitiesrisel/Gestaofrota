@@ -115,7 +115,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     status: {
       label: "STATUS",
       renderCell: () => `
-        <span style="background-color: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 800; font-size: 9pt; text-transform: uppercase; display: inline-block;">
+        <span style="background-color: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 600; font-size: 9pt; text-transform: uppercase; display: inline-block;">
           ⏳ ${statusAtual}
         </span>
       `
@@ -123,7 +123,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     vencimento: {
       label: "VENCIMENTO",
       renderCell: () => `
-        <span style="font-weight: 800; color: #b45309; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        <span style="font-weight: normal; color: #b45309; font-size: 10.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
           ${vencimentoBr}
         </span>
       `
@@ -131,7 +131,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     codLancamento: {
       label: "CÓD. / OC",
       renderCell: () => `
-        <span style="font-weight: 700; color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        <span style="font-weight: normal; color: #475569; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
           ${codOc}
         </span>
       `
@@ -155,7 +155,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     fornecedor: {
       label: "FORNECEDOR",
       renderCell: () => `
-        <span style="font-weight: 800; color: #0f172a; font-size: 10.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        <span style="font-weight: normal; color: #0f172a; font-size: 10.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
           ${fornecedorNome}
         </span>
       `
@@ -163,7 +163,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     centroCusto: {
       label: "C.C (CENTRO CUSTO)",
       renderCell: () => `
-        <span style="background-color: #ecfdf5; color: #065f46; padding: 4px 8px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 800; font-size: 9.5pt; display: inline-block;">
+        <span style="background-color: #ecfdf5; color: #065f46; padding: 4px 8px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: normal; font-size: 9.5pt; display: inline-block;">
           ${centroCusto}
         </span>
       `
@@ -228,7 +228,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
       label: "DOCUMENTO",
       renderCell: () => `
         <span style="color: #334155; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-          <strong>${tipoDoc}</strong> ${docNumero}
+          ${tipoDoc} ${docNumero}
         </span>
       `
     },
@@ -268,7 +268,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
       label: "VALOR",
       align: "right",
       renderCell: () => `
-        <span style="font-weight: 900; color: #065f46; font-size: 12pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        <span style="font-weight: normal; color: #065f46; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
           ${valorFormatado}
         </span>
       `
@@ -327,7 +327,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
                   </td>
                   <td valign="middle" style="padding-left: 18px; vertical-align: middle;">
                     <h1 style="color: #ffffff !important; margin: 0; font-size: 16pt; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">Solicitação de Aprovação de Lançamento</h1>
-                    <p style="color: #86efac !important; margin: 3px 0 0 0; font-size: 10pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda • Sistema de Lançamento de Documentos</p>
+                    <p style="color: #86efac !important; margin: 3px 0 0 0; font-size: 10pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda</p>
                   </td>
                 </tr>
               </table>
@@ -338,19 +338,11 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
         <!-- Conteúdo do E-mail -->
         <div style="padding: 26px 28px 26px 28px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1e293b;">
           
-          <!-- Texto de Introdução para Encaminhamento Fácil -->
-          <p style="font-size: 11pt; color: #334155; margin: 0 0 16px 0; line-height: 1.6; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-            Prezados(as), segue para validação e aprovação o documento/fatura lançado(a) no Sistema:
-          </p>
-
-          <!-- Bloco em Destaque: Descrição Formatada -->
-          <div style="background-color: #f0fdf4; border-left: 5px solid #16a34a; padding: 16px 20px; border-radius: 8px; margin-bottom: 24px; border-top: 1px solid #dcfce7; border-right: 1px solid #dcfce7; border-bottom: 1px solid #dcfce7; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-            <div style="font-size: 10pt; font-weight: 900; color: #166534; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-              📝 Descrição:
-            </div>
-            <div style="font-size: 11.5pt; color: #0f172a; font-weight: 700; line-height: 1.6; white-space: pre-wrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-              ${descricaoServico}
-            </div>
+          <!-- Texto de Introdução com Descrição Integrada -->
+          <div style="background-color: #f8fafc; border-left: 5px solid #0d4a36; padding: 14px 18px; border-radius: 8px; margin-bottom: 22px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <p style="font-size: 11pt; color: #1e293b; margin: 0; line-height: 1.5; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              Segue documento para aprovação: <strong>${descricaoServico}</strong>
+            </p>
           </div>
 
           <!-- Tabela Horizontal com Dados do Lançamento (Padrão Tela de Lançamentos) -->
@@ -421,7 +413,7 @@ export async function sendLancamentoAprovacaoEmail(data: LancamentoEmailData): P
     console.log(`[Risel Email] Disparando e-mail de aprovação para [${DESTINATARIOS_OFICIAIS.join(', ')}]: "${subject}" | Anexos: ${attachments.length}`);
 
     await sendEmail(DESTINATARIOS_OFICIAIS, subject, html, {
-      fromName: "Sistema de Documentos Risel",
+      fromName: "Risel Combustíveis",
       source: "documentos",
       attachments: attachments.length > 0 ? attachments : undefined
     });

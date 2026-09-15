@@ -150,21 +150,21 @@ export const generateEmailHtml = (
 
         let valueDisplay = d.value;
         if (isApproved) {
-            valueDisplay = `<span style="background-color: #dcfce7; color: #15803d; padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 11pt; display: inline-block; border: 1px solid #bbf7d0;">${d.value}</span>`;
+            valueDisplay = `<span style="background-color: #dcfce7; color: #15803d; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 11pt; display: inline-block; border: 1px solid #bbf7d0;">${d.value}</span>`;
         } else if (isPending) {
-            valueDisplay = `<span style="background-color: #fef3c7; color: #b45309; padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 11pt; display: inline-block; border: 1px solid #fde68a;">${d.value}</span>`;
+            valueDisplay = `<span style="background-color: #fef3c7; color: #b45309; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 11pt; display: inline-block; border: 1px solid #fde68a;">${d.value}</span>`;
         } else if (isRejected) {
-            valueDisplay = `<span style="background-color: #fee2e2; color: #b91c1c; padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 11pt; display: inline-block; border: 1px solid #fecaca;">${d.value}</span>`;
+            valueDisplay = `<span style="background-color: #fee2e2; color: #b91c1c; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 11pt; display: inline-block; border: 1px solid #fecaca;">${d.value}</span>`;
         } else {
-            valueDisplay = `<span style="color: #0f172a; font-weight: 700; font-size: 11pt;">${d.value}</span>`;
+            valueDisplay = `<span style="color: #334155; font-weight: normal; font-size: 11pt;">${d.value}</span>`;
         }
 
         return `
         <tr style="background-color: ${isEven ? '#ffffff' : '#ffffff'}; border-bottom: 1px solid #edf2f7;">
-            <td style="padding: 12px 16px; border-bottom: 1px solid #edf2f7; background-color: #f8fafc; color: #334155; font-weight: 700; width: 38%; font-size: 11pt; vertical-align: middle; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-                <span style="margin-right: 8px; font-size: 13pt;">${icon}</span><span style="color: #1e293b;">${d.label}</span>
+            <td style="padding: 12px 16px; border-bottom: 1px solid #edf2f7; background-color: #f8fafc; color: #1e293b; font-weight: 700; width: 38%; font-size: 11pt; vertical-align: middle; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                <span style="margin-right: 8px; font-size: 13pt;">${icon}</span><span>${d.label}</span>
             </td>
-            <td style="padding: 12px 18px; border-bottom: 1px solid #edf2f7; color: #0f172a; font-size: 11pt; vertical-align: middle; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <td style="padding: 12px 18px; border-bottom: 1px solid #edf2f7; color: #334155; font-size: 11pt; vertical-align: middle; font-weight: normal; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                 ${valueDisplay}
             </td>
         </tr>
@@ -269,7 +269,7 @@ export const generateEmailHtml = (
            
             <!-- Rodapé Institucional Oficial Risel -->
             <div style="background-color: #f8fafc; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 10pt;">
-                <p style="margin: 0; font-size: 10pt; font-weight: 700; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">&copy; ${new Date().getFullYear()} Risel Combustíveis Ltda • Sistema de Gestão de Frotas & Reservas</p>
+                <p style="margin: 0; font-size: 10pt; font-weight: 700; color: #64748b; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">&copy; ${new Date().getFullYear()} Risel Combustíveis Ltda</p>
                 <p style="margin: 3px 0 0 0; font-size: 9.5pt; color: #94a3b8; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Mensagem corporativa gerada automaticamente pelo Sistema Risel ERP.</p>
             </div>
         </div>
@@ -494,32 +494,32 @@ export const generateRacEmailHtml = (
             ${rental.rentalCompany ? `
             <tr>
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 40%;">Locadora Parceira:</td>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a;">${rental.rentalCompany}</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.rentalCompany}</td>
             </tr>` : ''}
             ${rental.reservationNumber ? `
             <tr>
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Nº Reserva / Localizador:</td>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #00753f;">${rental.reservationNumber}</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #00753f;">${rental.reservationNumber}</td>
             </tr>` : ''}
             ${rental.plate && rental.plate !== 'A DEFINIR' ? `
             <tr>
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Placa Atribuída:</td>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a;">${rental.plate}</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.plate}</td>
             </tr>` : ''}
             ${rental.pickupStore ? `
             <tr>
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Loja de Retirada:</td>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.pickupStore}</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.pickupStore}</td>
             </tr>` : ''}
             ${rental.returnStore ? `
             <tr>
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Loja de Devolução:</td>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.returnStore}</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.returnStore}</td>
             </tr>` : ''}
             ${formattedValue ? `
             <tr>
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Custo Contratado / Aprovado:</td>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #059669;">${formattedValue}</td>
+              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #059669;">${formattedValue}</td>
             </tr>` : ''}
           </table>
         </td>
@@ -597,7 +597,7 @@ export const generateRacEmailHtml = (
                 </tr>
                 <tr>
                   <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt; font-weight: 800; color: #6ee7b7; text-transform: uppercase; letter-spacing: 1.5px; padding-bottom: 4px;">
-                    RISEL COMBUSTÍVEIS &bull; GESTÃO DE FROTAS
+                    RISEL COMBUSTÍVEIS
                   </td>
                 </tr>
                 <tr>
@@ -687,24 +687,24 @@ export const generateRacEmailHtml = (
               </table>
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 16px; border-collapse: collapse;">
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Solicitante Responsável:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.requesterName}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; width: 38%; border-bottom: 1px solid #f1f5f9;">Solicitante Responsável:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.requesterName}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Setor / Departamento:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.requesterSector || 'Geral'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Setor / Departamento:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.requesterSector || 'Geral'}</td>
                 </tr>
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cargo / Função:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.requesterRole || 'Não informado'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Cargo / Função:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.requesterRole || 'Não informado'}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">E-mail Corporativo:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #00753f; border-bottom: 1px solid #f1f5f9;"><a href="mailto:${rental.requesterEmail}" style="color: #00753f; text-decoration: none;">${rental.requesterEmail || 'Não informado'}</a></td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">E-mail Corporativo:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #00753f; border-bottom: 1px solid #f1f5f9;"><a href="mailto:${rental.requesterEmail}" style="color: #00753f; text-decoration: none; font-weight: normal;">${rental.requesterEmail || 'Não informado'}</a></td>
                 </tr>
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Telefone / WhatsApp:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.requesterPhone || 'Não informado'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b;">Telefone / WhatsApp:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.requesterPhone || 'Não informado'}</td>
                 </tr>
               </table>
 
@@ -718,16 +718,16 @@ export const generateRacEmailHtml = (
               </table>
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 16px; border-collapse: collapse;">
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Nome do Condutor:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.driverName || rental.requesterName}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; width: 38%; border-bottom: 1px solid #f1f5f9;">Nome do Condutor:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.driverName || rental.requesterName}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cargo do Condutor:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.driverRole || rental.requesterRole || 'Condutor Corporativo'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Cargo do Condutor:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.driverRole || rental.requesterRole || 'Condutor Corporativo'}</td>
                 </tr>
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Situação da Habilitação:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt;">${statusCnhHtml}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b;">Situação da Habilitação:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal;">${statusCnhHtml}</td>
                 </tr>
               </table>
 
@@ -741,32 +741,32 @@ export const generateRacEmailHtml = (
               </table>
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 16px; border-collapse: collapse;">
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Data/Hora de Retirada:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #047857; border-bottom: 1px solid #f1f5f9;">${formatDateTime(rental.pickupDate)}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; width: 38%; border-bottom: 1px solid #f1f5f9;">Data/Hora de Retirada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #047857; border-bottom: 1px solid #f1f5f9;">${formatDateTime(rental.pickupDate)}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cidade de Retirada:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.pickupCity || 'Não informada'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Cidade de Retirada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.pickupCity || 'Não informada'}</td>
                 </tr>
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Ponto / Loja de Retirada:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.pickupStore || 'A definir na locadora'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Ponto / Loja de Retirada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.pickupStore || 'A definir na locadora'}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Data/Hora de Devolução:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #b91c1c; border-bottom: 1px solid #f1f5f9;">${formatDateTime(rental.returnDate)}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Data/Hora de Devolução:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #b91c1c; border-bottom: 1px solid #f1f5f9;">${formatDateTime(rental.returnDate)}</td>
                 </tr>
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Cidade de Devolução:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.returnCity || 'Não informada'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Cidade de Devolução:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.returnCity || 'Não informada'}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Ponto / Loja de Devolução:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.returnStore || 'A definir na locadora'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Ponto / Loja de Devolução:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.returnStore || 'A definir na locadora'}</td>
                 </tr>
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Período Total Contratado:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #0f172a;">${totalDays} diária(s)</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b;">Período Total Contratado:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${totalDays} diária(s)</td>
                 </tr>
               </table>
 
@@ -780,24 +780,24 @@ export const generateRacEmailHtml = (
               </table>
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 22px; border-collapse: collapse;">
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; width: 38%; border-bottom: 1px solid #f1f5f9;">Categoria Solicitada:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #0f172a; border-bottom: 1px solid #f1f5f9;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; width: 38%; border-bottom: 1px solid #f1f5f9;">Categoria Solicitada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">
                     <span style="display: inline-block; background-color: #f1f5f9; padding: 2px 8px; border-radius: 4px; border: 1px solid #e2e8f0;">${rental.category || 'Hatch / Compacto'}</span>
                   </td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Finalidade Operacional:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a; border-bottom: 1px solid #f1f5f9;">${rental.purpose || 'Uso Operacional Corporativo'}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Finalidade Operacional:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.purpose || 'Uso Operacional Corporativo'}</td>
                 </tr>
                 ${rental.observations ? `
                 <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569; border-bottom: 1px solid #f1f5f9;">Observações do Solicitante:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #334155; border-bottom: 1px solid #f1f5f9; white-space: pre-wrap;">${rental.observations}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Observações do Solicitante:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9; white-space: pre-wrap;">${rental.observations}</td>
                 </tr>` : ''}
                 ${rental.base ? `
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Base Operacional Vinculada:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 600; color: #0f172a;">${rental.base}</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b;">Base Operacional Vinculada:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.base}</td>
                 </tr>` : ''}
               </table>
 
@@ -810,7 +810,7 @@ export const generateRacEmailHtml = (
                       target="_blank" 
                       style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #ffffff; font-weight: 800; text-decoration: none; border-radius: 8px; padding: 12px 28px; border: 1px solid #00753f; display: inline-block; text-transform: uppercase; letter-spacing: 0.5px;"
                     >
-                      Acessar Módulo RAC no Risel ERP &rarr;
+                      Acessar Sistema Risel ERP &rarr;
                     </a>
                   </td>
                 </tr>
@@ -823,7 +823,7 @@ export const generateRacEmailHtml = (
           <tr>
             <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 18px 20px; text-align: center;">
               <p style="margin: 0 0 4px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 0.5px;">
-                Risel Combustíveis Ltda &bull; Sistema Integrado de Gestão de Frota (ERP)
+                Risel Combustíveis Ltda
               </p>
               <p style="margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; color: #64748b;">
                 Mensagem automática emitida em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} &bull; Protocolo: ${protocolText}

@@ -587,7 +587,7 @@ export const TermoAvariaViewerModal: React.FC<TermoAvariaViewerModalProps> = ({
                       <th className="p-2.5 border border-slate-300 w-1/4">Valor Total do Reparo</th>
                       <th className="p-2.5 border border-slate-300 w-1/4">Participação Empresa</th>
                       <th className="p-2.5 border border-slate-300 w-1/4">Valor Líquido a Descontar</th>
-                      <th className="p-2.5 border border-slate-300 w-1/4">Condição de Parcelamento</th>
+                      <th className="p-2.5 border border-slate-300 w-1/4">Forma de Desconto</th>
                     </tr>
                   </thead>
                   <tbody className="bg-slate-50 font-bold">
@@ -602,13 +602,7 @@ export const TermoAvariaViewerModal: React.FC<TermoAvariaViewerModalProps> = ({
                         {fmtMoney(valorDesconto)}
                       </td>
                       <td className="p-3 border border-slate-300 text-slate-800 text-[11px]">
-                        {parcelas === 1 ? (
-                          <span className="font-extrabold text-slate-900">1 parcela única de {fmtMoney(valorDesconto)}</span>
-                        ) : (
-                          <span className="font-extrabold text-slate-900">
-                            {parcelas}x de {fmtMoney(valorParcela)} na Folha
-                          </span>
-                        )}
+                        <span className="font-extrabold text-slate-900">Desconto em Folha de Pagamento</span>
                       </td>
                     </tr>
                   </tbody>
@@ -625,7 +619,7 @@ export const TermoAvariaViewerModal: React.FC<TermoAvariaViewerModalProps> = ({
                   Eu, <strong className="text-slate-900 uppercase">{autorizacao.colaboradorNome || 'COLABORADOR'}</strong>, identificado(a) neste termo, declaro para todos os fins de direito e efeitos legais que me encontrava na condução/posse do veículo de placa <strong className="font-mono text-slate-900">{manutencao.placa}</strong> ({manutencao.modelo || 'Veículo'}) na data da ocorrência, sendo de minha responsabilidade os danos e avarias ocorridos.
                 </p>
                 <p className="text-[11px] leading-relaxed text-justify">
-                  Com fulcro no <strong className="text-slate-900">Artigo 462, § 1º da Consolidação das Leis do Trabalho (CLT)</strong>, <strong className="text-emerald-900">AUTORIZO EXPRESSAMENTE</strong> a empresa RISEL COMBUSTÍVEIS LTDA a efetuar o desconto em minha folha de pagamento do montante de <strong className="text-rose-700">{fmtMoney(valorDesconto)}</strong> ({parcelas === 1 ? 'em cota única' : `em ${parcelas} parcelas de ${fmtMoney(valorParcela)}`}) para fins de ressarcimento dos serviços e peças discriminados na presente Ordem de Serviço.
+                  Com fulcro no <strong className="text-slate-900">Artigo 462, § 1º da Consolidação das Leis do Trabalho (CLT)</strong>, <strong className="text-emerald-900">AUTORIZO EXPRESSAMENTE</strong> a empresa RISEL COMBUSTÍVEIS LTDA a efetuar o desconto em minha folha de pagamento do montante de <strong className="text-rose-700">{fmtMoney(valorDesconto)}</strong> para fins de ressarcimento dos serviços e peças discriminados na presente Ordem de Serviço.
                 </p>
               </div>
 
@@ -915,7 +909,7 @@ export const TermoAvariaViewerModal: React.FC<TermoAvariaViewerModalProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span>Valor a Descontar:</span>
-                  <strong className="text-rose-700 font-bold">{fmtMoney(valorDesconto)} ({parcelas}x)</strong>
+                  <strong className="text-rose-700 font-bold">{fmtMoney(valorDesconto)}</strong>
                 </div>
                 <div className="flex justify-between pt-1 border-t border-slate-200">
                   <span>Anexos Inclusos:</span>

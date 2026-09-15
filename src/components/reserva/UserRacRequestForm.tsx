@@ -358,14 +358,18 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         voucherAttachedNow: false
       });
 
-      const emailRecipients = [...ADMIN_EMAIL_RECIPIENTS];
+      const requesterEmailNormalized = (formData.requesterEmail || "").trim().toLowerCase();
+      const filteredAdmins = ADMIN_EMAIL_RECIPIENTS.filter(
+        adminEmail => adminEmail.trim().toLowerCase() !== requesterEmailNormalized
+      );
+      const emailRecipients = filteredAdmins.length > 0 ? filteredAdmins : [...ADMIN_EMAIL_RECIPIENTS];
 
       await sendEmail(
         emailRecipients,
         emailSubject,
         emailHtml,
         {
-          fromName: 'Gestão de Reservas Risel',
+          fromName: 'Risel Combustíveis',
           attachments: emailAttachments.length > 0 ? emailAttachments : undefined
         }
       );

@@ -1694,7 +1694,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                       <h4 className="font-extrabold text-amber-900 text-xs">Autorização de Desconto por Avaria (Art. 462 da CLT)</h4>
                     </div>
                     <p className="text-[10px] text-amber-800/80 font-normal mt-0.5">
-                      Gera o termo jurídico timbrado com dados do colaborador, serviços discriminados, fotos e parcelamento em folha
+                      Gera o termo jurídico timbrado com dados do colaborador, serviços discriminados, fotos e desconto em folha
                     </p>
                   </div>
 
@@ -1736,7 +1736,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
                         Colaborador: <strong className="text-amber-900">{dadosAvaria.colaboradorNome}</strong> ({dadosAvaria.base})
                       </span>
                       <span className="text-[10px] text-slate-500 block">
-                        Desconto de <strong>{formatBRL(dadosAvaria.valorDesconto)}</strong> em <strong>{dadosAvaria.quantidadeParcelas}x de {formatBRL(dadosAvaria.valorParcela)}</strong> em folha
+                        Desconto de <strong>{formatBRL(dadosAvaria.valorDesconto)}</strong> em folha de pagamento
                       </span>
                     </div>
                     <span className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-800 font-black text-[10px] rounded-lg">

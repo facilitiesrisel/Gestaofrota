@@ -196,14 +196,14 @@ export function generateResetPasswordHtml(data: ResetPasswordEmailData): string 
           />
         </div>
         <h1 class="header-title">Risel Combustíveis</h1>
-        <p class="header-subtitle">Segurança & Gestão de Acessos ERP</p>
+        <p class="header-subtitle">Risel Combustíveis Ltda</p>
       </div>
 
       <!-- CORPO PRINCIPAL -->
       <div class="content">
         <h2 class="greeting">Olá, ${userName || 'Colaborador(a)'}!</h2>
         <p class="lead-text">
-          Recebemos uma solicitação para redefinição da sua senha de acesso ao <strong>Sistema Risel ERP</strong> (módulos de <em>Lançamento de Documentos</em> e <em>Controle de Frota Leve</em>).
+          Recebemos uma solicitação para redefinição da sua senha de acesso ao <strong>Sistema Risel ERP</strong>.
         </p>
 
         <!-- CARD DE DETALHES -->
