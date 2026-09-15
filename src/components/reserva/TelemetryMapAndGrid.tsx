@@ -498,24 +498,24 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
   return (
     <div className="space-y-6 text-left">
       {/* Control Header */}
-      <div className="bg-white p-3 rounded-2xl border border-slate-150 flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-sm">
-        {/* Busca Rápida Sempre Visível */}
-        <div className="relative w-full lg:max-w-md">
+      <div className="bg-white p-3 rounded-2xl border border-slate-150 flex flex-col xl:flex-row xl:items-center justify-between gap-3 shadow-sm">
+        {/* Busca Rápida Sempre Visível (Tamanho otimizado para acomodar os KPIs sem perda de qualidade) */}
+        <div className="relative w-full sm:w-56 md:w-64 shrink-0">
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar placa, motorista ou modelo..."
+            placeholder="Buscar placa, motorista..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-xl pl-9 pr-4 py-2 outline-none focus:ring-1 focus:ring-violet-500"
+            className="w-full bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-xl pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-violet-500"
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 self-end lg:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start xl:self-auto">
           {/* Botão de Filtro Retrátil */}
           <button
             onClick={() => setIsFilterExpanded(!isFilterExpanded)}
-            className={`px-3 py-1.5 border rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer ${
+            className={`px-3 py-1.5 border rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
               isFilterExpanded 
                 ? 'bg-violet-600 text-white border-violet-600 shadow-sm' 
                 : 'bg-white text-slate-650 border-slate-200 hover:bg-slate-50'
@@ -526,21 +526,51 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
             {isFilterExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
 
-          {/* Indicador Discreto Online/Offline */}
-          <div className="flex items-center gap-3 bg-slate-50 border border-slate-150 px-3 py-1.5 rounded-xl text-[10px] font-black tracking-wide shrink-0 shadow-inner">
-            <span className="flex items-center gap-1.5 text-emerald-600">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block"></span>
-              {onlineCount} Online
-            </span>
-            <span className="w-px h-3 bg-slate-250"></span>
-            <span className="flex items-center gap-1.5 text-slate-450">
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-300 inline-block"></span>
-              {offlineCount} Offline
-            </span>
+          {/* NOVOS CAMPOS AO LADO DO FILTRO: Frota Monitorada, Em Movimento e Sinal Médio GPS */}
+          <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+            {/* 1. Frota Monitorada */}
+            <div 
+              className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 px-2.5 py-1 rounded-xl shadow-2xs" 
+              title={`Total de ${processedFleet.length} veículos monitorados (${onlineCount} online e ${offlineCount} offline)`}
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <div className="flex flex-col text-left leading-tight">
+                <span className="text-[8px] text-slate-400 font-black uppercase tracking-tight">Frota Monitorada</span>
+                <span className="text-[10.5px] font-black text-slate-800">
+                  {processedFleet.length} <span className="text-[9.5px] font-medium text-slate-500 font-sans">({onlineCount} on)</span>
+                </span>
+              </div>
+            </div>
+
+            {/* 2. Em Movimento */}
+            <div 
+              className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 px-2.5 py-1 rounded-xl shadow-2xs" 
+              title="Veículos se deslocando em tempo real com velocidade > 0 km/h"
+            >
+              <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
+              <div className="flex flex-col text-left leading-tight">
+                <span className="text-[8px] text-slate-400 font-black uppercase tracking-tight">Em Movimento</span>
+                <span className="text-[10.5px] font-black text-blue-700">
+                  {processedFleet.filter(v => v.speed > 0).length} <span className="text-[9.5px] font-medium text-slate-500 font-sans">unid.</span>
+                </span>
+              </div>
+            </div>
+
+            {/* 3. Sinal Médio GPS */}
+            <div 
+              className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 px-2.5 py-1 rounded-xl shadow-2xs" 
+              title="Média consolidada da intensidade e estabilidade dos sinais GPS e satélite"
+            >
+              <Wifi className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <div className="flex flex-col text-left leading-tight">
+                <span className="text-[8px] text-slate-400 font-black uppercase tracking-tight">Sinal Médio GPS</span>
+                <span className="text-[10.5px] font-black text-emerald-600">92% Excelente</span>
+              </div>
+            </div>
           </div>
 
           {/* Chave Seletora de Homologação GeoFrotas */}
-          <div className="flex items-center gap-2 border-r border-slate-150 pr-2">
+          <div className="flex items-center gap-2 border-l border-r border-slate-150 px-2">
             <label className="flex items-center gap-1.5 cursor-pointer select-none">
               <input 
                 type="checkbox" 
@@ -549,7 +579,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                 className="rounded border-slate-300 text-violet-600 focus:ring-violet-500 cursor-pointer w-4 h-4"
               />
               <span className="text-[10px] font-black uppercase text-slate-600 tracking-wider flex items-center gap-1">
-                📡 Apenas GeoFrotas Ativo
+                📡 GeoFrotas Ativo
               </span>
             </label>
           </div>
@@ -699,8 +729,8 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
             exit={{ opacity: 0, y: -15 }}
             className="rounded-3xl p-3 border border-slate-200 bg-white text-slate-800 relative overflow-hidden transition-all duration-500 shadow-sm"
           >
-            {/* O MAPA INTERATIVO REAL (Leaflet + Google Maps / OpenStreetMap) */}
-            <div className="relative w-full h-[620px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 shadow-inner isolate z-0">
+            {/* O MAPA INTERATIVO REAL (Leaflet + Google Maps / OpenStreetMap) - Altura maximizada para visualização ampla */}
+            <div className="relative w-full h-[700px] md:h-[740px] lg:h-[780px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 shadow-inner isolate z-0">
               
               {/* Badges de Status Flutuantes Absolutos de Alta Tecnologia e Estilo BI */}
               <div className="absolute top-3 left-12 z-30 flex flex-col gap-2 pointer-events-none">
@@ -1211,28 +1241,6 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
               )}
             </div>
             )}
-
-            {/* Bottom Info Bar */}
-            <div className="relative z-10 grid grid-cols-3 gap-4 border-t pt-4 text-center border-slate-200">
-              <div>
-                <span className="text-[9px] text-slate-500 block uppercase font-black">Frota Monitorada</span>
-                <span className="text-xs font-black mt-1 block text-slate-800">
-                  {processedFleet.length} Veículos Ativos
-                </span>
-              </div>
-              <div>
-                <span className="text-[9px] text-slate-500 block uppercase font-black">Em Movimento</span>
-                <span className="text-xs font-black mt-1 block text-slate-800">
-                  {processedFleet.filter(v => v.speed > 0).length} Unidades
-                </span>
-              </div>
-              <div>
-                <span className="text-[9px] text-slate-500 block uppercase font-black">Sinal Médio GPS</span>
-                <span className="text-xs font-black text-emerald-500 mt-1 block">
-                  92% Excelente
-                </span>
-              </div>
-            </div>
           </motion.div>
         )}
 

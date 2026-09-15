@@ -482,6 +482,7 @@ export const readVehiclesFromSheets = async (token?: string | null): Promise<Vei
     const condutor = getCol(row, ["Condutor", "condutor", "Motorista"]) || "Motorista Risel";
     const cpfCondutor = getCol(row, ["CPF Condutor", "CPF", "Cpf", "cpf", "CPF Motorista", "Documento"]);
     const funcao = getCol(row, ["Função", "Funcao", "funcao"]);
+    const setor = getCol(row, ["Setor", "setor", "Departamento", "Área", "Area"]);
     const contatoMotorista = getCol(row, ["Contato Motorista", "Contato", "Telefone"]);
     const gestorResp = getCol(row, ["Gestor Resp.", "Gestor", "Responsavel"]);
     const email = getCol(row, ["Email", "email"]);
@@ -510,6 +511,7 @@ export const readVehiclesFromSheets = async (token?: string | null): Promise<Vei
       condutor,
       cpfCondutor,
       funcao,
+      setor,
       contatoMotorista,
       gestorResp,
       email,

@@ -2448,6 +2448,7 @@ async function startServer() {
               vencContrato: "", // Deixa em branco para preencher manual
               condutor: condutor,
               funcao: "",
+              setor: "",
               contatoMotorista: "", // Deixa em branco para preencher manual
               gestorResp: "",
               email: emailCondutor, // Mudado de "email do gestor" para "E-mail"
@@ -2481,6 +2482,7 @@ async function startServer() {
             vencContrato: dataRow[2] || "", // Coluna C
             condutor: dataRow[3] || "", // Coluna D
             funcao: dataRow[4] || "", // Coluna E
+            setor: dataRow[14] || "",
             contatoMotorista: dataRow[5] || "", // Coluna F
             gestorResp: dataRow[6] || "", // Coluna G
             email: dataRow[7] || "", // Coluna H

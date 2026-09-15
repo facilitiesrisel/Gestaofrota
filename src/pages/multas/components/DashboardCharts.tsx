@@ -411,6 +411,28 @@ const CustomSVGLineAreaChart = ({
   isEvolucao?: boolean;
 }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [svgWidth, setSvgWidth] = useState<number>(isFullWidth ? 1100 : 500);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateWidth = () => {
+      if (containerRef.current) {
+        const w = containerRef.current.clientWidth;
+        if (w > 50) setSvgWidth(w);
+      }
+    };
+    updateWidth();
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 50) {
+          setSvgWidth(Math.round(entry.contentRect.width));
+        }
+      }
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [isFullWidth]);
   
   if (!data || data.length === 0) {
     return (
@@ -431,20 +453,22 @@ const CustomSVGLineAreaChart = ({
   const maxItem = data.reduce((prev, curr) => (curr.value > prev.value ? curr : prev), data[0]);
   const mediaPeriodo = data.length > 0 ? (totalMultas / data.length).toFixed(1) : '0';
 
-  const width = isFullWidth ? 850 : 500;
-  const height = isFullWidth ? 195 : 180;
-  const paddingLeft = isFullWidth ? 45 : 40;
-  const paddingRight = isFullWidth ? 25 : 15;
-  const paddingTop = isFullWidth ? 22 : 20;
-  const paddingBottom = isFullWidth ? 28 : 25;
+  const width = svgWidth;
+  const height = isFullWidth ? 200 : 180;
+  const paddingLeft = isFullWidth ? 45 : 38;
+  const paddingRight = isFullWidth ? 30 : 20;
+  const paddingTop = isFullWidth ? 20 : 18;
+  const paddingBottom = isFullWidth ? 28 : 24;
 
-  const chartWidth = width - paddingLeft - paddingRight;
-  const chartHeight = height - paddingTop - paddingBottom;
+  const chartWidth = Math.max(width - paddingLeft - paddingRight, 10);
+  const chartHeight = Math.max(height - paddingTop - paddingBottom, 10);
 
   const maxVal = Math.max(...data.map(d => Number(d.value) || 0), 1);
 
   const points = data.map((d, i) => {
-    const x = paddingLeft + (i / Math.max(data.length - 1, 1)) * chartWidth;
+    const x = data.length === 1
+      ? paddingLeft + chartWidth / 2
+      : paddingLeft + (i / Math.max(data.length - 1, 1)) * chartWidth;
     const y = paddingTop + chartHeight - ((Number(d.value) || 0) / maxVal) * chartHeight;
     return { x, y, name: d.name, value: Number(d.value) || 0 };
   });
@@ -469,7 +493,7 @@ const CustomSVGLineAreaChart = ({
   };
 
   const linePath = getBezierCurvePath(points);
-  const areaPath = points.length > 0 
+  const areaPath = points.length > 1 
     ? `${linePath} L ${points[points.length - 1].x} ${paddingTop + chartHeight} L ${points[0].x} ${paddingTop + chartHeight} Z`
     : '';
 
@@ -477,10 +501,21 @@ const CustomSVGLineAreaChart = ({
   const primaryColor = activeColors[0];
   const secondaryColor = activeColors[1] || primaryColor;
 
-  // Linhas do grid horizontal
-  const gridLines = [0, 0.25, 0.5, 0.75, 1].map(ratio => {
+  // Linhas do grid horizontal evitando repetição de números inteiros quando maxVal é baixo
+  const yAxisTicks = useMemo(() => {
+    if (maxVal <= 2) {
+      return Array.from({ length: maxVal + 1 }, (_, i) => maxVal - i);
+    }
+    if (maxVal <= 4) {
+      return Array.from({ length: maxVal + 1 }, (_, i) => maxVal - i);
+    }
+    const steps = 4;
+    return Array.from({ length: steps + 1 }, (_, i) => Math.round(maxVal * (1 - i / steps)));
+  }, [maxVal]);
+
+  const gridLines = yAxisTicks.map((val) => {
+    const ratio = maxVal > 0 ? (1 - val / maxVal) : 0;
     const y = paddingTop + chartHeight * ratio;
-    const val = Math.round(maxVal * (1 - ratio));
     return { y, val };
   });
 
@@ -510,10 +545,10 @@ const CustomSVGLineAreaChart = ({
         </div>
       )}
 
-      <div className="relative flex-1 w-full min-h-0">
+      <div ref={containerRef} className="relative flex-1 w-full min-h-0">
         <svg 
           viewBox={`0 0 ${width} ${height}`} 
-          className="w-full h-full overflow-visible"
+          className="w-full h-full block overflow-visible"
           onMouseMove={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const mouseX = ((e.clientX - rect.left) / rect.width) * width;
@@ -636,23 +671,29 @@ const CustomSVGLineAreaChart = ({
 
           {/* Rótulos de texto do eixo X com distribuição equilibrada */}
           {points.filter((_, i) => {
+            if (points.length <= 8) return true;
             const step = isFullWidth 
-              ? (points.length <= 16 ? 1 : Math.ceil(points.length / 12))
-              : (points.length <= 10 ? 1 : Math.ceil(points.length / 8));
+              ? Math.ceil(points.length / 12)
+              : Math.ceil(points.length / 7);
             return i % step === 0 || i === points.length - 1;
-          }).map((p, i) => (
-            <text 
-              key={i} 
-              x={p.x} 
-              y={height - 6} 
-              fill="#64748b" 
-              fontSize={isFullWidth ? "10" : "9"} 
-              textAnchor="middle" 
-              className="font-bold uppercase tracking-wider font-sans"
-            >
-              {p.name}
-            </text>
-          ))}
+          }).map((p, i, arr) => {
+            const isFirst = i === 0;
+            const isLast = i === arr.length - 1;
+            const anchor = isFirst ? "start" : (isLast ? "end" : "middle");
+            return (
+              <text 
+                key={i} 
+                x={p.x} 
+                y={height - 6} 
+                fill="#64748b" 
+                fontSize={isFullWidth ? "10" : "9"} 
+                textAnchor={anchor} 
+                className="font-bold uppercase tracking-wider font-sans"
+              >
+                {p.name}
+              </text>
+            );
+          })}
         </svg>
 
         {/* Tooltip Executivo Flutuante */}
@@ -1277,55 +1318,140 @@ const DashboardCharts: React.FC<DashboardChartsProps> = ({ multas }) => {
       .sort((a, b) => b.value - a.value);
   };
 
-  // Process Evolution Data based on Granularity
+  // Process Evolution Data based on Granularity (com linha contínua cronológica temporal para BI executivo)
   const processEvolutionData = (dataset: Multa[] = filteredMultasForCharts) => {
     const counts: Record<string, { count: number, sortKey: string, label: string }> = {};
-    
-    dataset.forEach(m => {
+    const allDates = dataset.map(m => parseLocalDate(m.dataHoraInfracao)).filter(Boolean) as Date[];
+
+    if (evolutionGranularity === 'day') {
+      // Janela de pelo menos 14 dias contínuos
+      const refDate = allDates.length > 0 ? new Date(Math.max(...allDates.map(d => d.getTime()))) : new Date();
+      const daysCount = 14;
+      for (let i = daysCount - 1; i >= 0; i--) {
+        const d = new Date(refDate);
+        d.setDate(d.getDate() - i);
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        const sortKey = `${y}-${mo}-${dy}`;
+        const label = `${dy}/${mo}`;
+        counts[sortKey] = { count: 0, sortKey, label };
+      }
+
+      dataset.forEach(m => {
         const date = parseLocalDate(m.dataHoraInfracao);
         if (!date) return;
-
-        let key = '';
-        let sortKey = '';
-        let label = '';
-
-        if (evolutionGranularity === 'day') {
-            const y = date.getFullYear();
-            const mo = String(date.getMonth() + 1).padStart(2, '0');
-            const dy = String(date.getDate()).padStart(2, '0');
-            sortKey = `${y}-${mo}-${dy}`;
-            label = `${dy}/${mo}`;
-            key = sortKey;
-        } else if (evolutionGranularity === 'week') {
-            // ISO Week
-            const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-            const dayNum = d.getUTCDay() || 7;
-            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-            const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-            const weekNo = Math.ceil(( ( (d.getTime() - yearStart.getTime()) / 86400000) + 1)/7);
-            sortKey = `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2,'0')}`;
-            label = `Sem ${weekNo}`;
-            key = sortKey;
-        } else if (evolutionGranularity === 'quarter') {
-            const q = Math.floor((date.getMonth() + 3) / 3);
-            sortKey = `${date.getFullYear()}-Q${q}`;
-            label = `${date.getFullYear()} T${q}`;
-            key = sortKey;
+        const y = date.getFullYear();
+        const mo = String(date.getMonth() + 1).padStart(2, '0');
+        const dy = String(date.getDate()).padStart(2, '0');
+        const sortKey = `${y}-${mo}-${dy}`;
+        if (counts[sortKey]) {
+          counts[sortKey].count++;
         } else {
-            // Month (Default)
-            sortKey = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
-            const monthName = date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
-            label = monthName.charAt(0).toUpperCase() + monthName.slice(1);
-            key = sortKey;
+          counts[sortKey] = { count: 1, sortKey, label: `${dy}/${mo}` };
         }
+      });
+    } else if (evolutionGranularity === 'week') {
+      // Janela de pelo menos 8 semanas contínuas
+      const refDate = allDates.length > 0 ? new Date(Math.max(...allDates.map(d => d.getTime()))) : new Date();
+      const weeksCount = 8;
+      for (let i = weeksCount - 1; i >= 0; i--) {
+        const d = new Date(refDate);
+        d.setDate(d.getDate() - (i * 7));
+        const dUtc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+        const dayNum = dUtc.getUTCDay() || 7;
+        dUtc.setUTCDate(dUtc.getUTCDate() + 4 - dayNum);
+        const yearStart = new Date(Date.UTC(dUtc.getUTCFullYear(), 0, 1));
+        const weekNo = Math.ceil((((dUtc.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+        const sortKey = `${dUtc.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
+        const label = `Sem ${weekNo}`;
+        counts[sortKey] = { count: 0, sortKey, label };
+      }
 
-        if (!counts[key]) counts[key] = { count: 0, sortKey, label };
-        counts[key].count++;
-    });
+      dataset.forEach(m => {
+        const date = parseLocalDate(m.dataHoraInfracao);
+        if (!date) return;
+        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+        const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+        const sortKey = `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
+        if (counts[sortKey]) {
+          counts[sortKey].count++;
+        } else {
+          counts[sortKey] = { count: 1, sortKey, label: `Sem ${weekNo}` };
+        }
+      });
+    } else if (evolutionGranularity === 'quarter') {
+      // 4 Trimestres do ano de referência
+      const refYear = allDates.length > 0 ? new Date(Math.max(...allDates.map(d => d.getTime()))).getFullYear() : new Date().getFullYear();
+      for (let q = 1; q <= 4; q++) {
+        const sortKey = `${refYear}-Q${q}`;
+        const label = `${refYear} T${q}`;
+        counts[sortKey] = { count: 0, sortKey, label };
+      }
+
+      dataset.forEach(m => {
+        const date = parseLocalDate(m.dataHoraInfracao);
+        if (!date) return;
+        const q = Math.floor((date.getMonth() + 3) / 3);
+        const sortKey = `${date.getFullYear()}-Q${q}`;
+        if (counts[sortKey]) {
+          counts[sortKey].count++;
+        } else {
+          counts[sortKey] = { count: 1, sortKey, label: `${date.getFullYear()} T${q}` };
+        }
+      });
+    } else {
+      // Month (Padrão) - Garante horizonte contínuo de 6 meses no mínimo distribuídos no gráfico
+      const refDate = allDates.length > 0 ? new Date(Math.max(...allDates.map(d => d.getTime()))) : new Date();
+      const minDate = allDates.length > 0 ? new Date(Math.min(...allDates.map(d => d.getTime()))) : new Date();
+      
+      const endYear = refDate.getFullYear();
+      const endMonth = refDate.getMonth();
+      
+      let startYear = endYear;
+      let startMonth = endMonth - 5; // Pelo menos 6 meses consecutivos
+      
+      const minYear = minDate.getFullYear();
+      const minMonth = minDate.getMonth();
+      const diffMonths = (endYear - minYear) * 12 + (endMonth - minMonth);
+      if (diffMonths >= 5) {
+        startYear = minYear;
+        startMonth = minMonth;
+      }
+
+      const cur = new Date(startYear, startMonth, 1);
+      const end = new Date(endYear, endMonth, 1);
+
+      while (cur <= end) {
+        const y = cur.getFullYear();
+        const mo = cur.getMonth();
+        const sortKey = `${y}-${String(mo + 1).padStart(2, '0')}`;
+        const monthName = cur.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
+        const label = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+        counts[sortKey] = { count: 0, sortKey, label };
+        cur.setMonth(cur.getMonth() + 1);
+      }
+
+      dataset.forEach(m => {
+        const date = parseLocalDate(m.dataHoraInfracao);
+        if (!date) return;
+        const sortKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        if (counts[sortKey]) {
+          counts[sortKey].count++;
+        } else {
+          const monthName = date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
+          const label = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+          counts[sortKey] = { count: 1, sortKey, label };
+        }
+      });
+    }
 
     return Object.values(counts)
-        .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
-        .map(item => ({ name: item.label, value: item.count }));
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .map(item => ({ name: item.label, value: item.count }));
   };
 
   const processEnquadramentoData = (dataset: Multa[] = filteredMultasForCharts) => {

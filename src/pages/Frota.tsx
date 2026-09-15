@@ -131,6 +131,7 @@ export interface Veiculo {
   cnhAnexoBase64?: string;
   cnhNomeArquivo?: string;
   funcao: string;
+  setor?: string;
   contatoMotorista: string;
   gestorResp: string;
   email: string;
@@ -1522,6 +1523,81 @@ export default function Frota() {
     }
   };
 
+  // Exportar Tabela Completa de Cadastro de Veículos em formato CSV
+  const handleExportVeiculosCSV = () => {
+    if (!veiculos || veiculos.length === 0) {
+      showToast("error", "Exportação", "Nenhum veículo disponível para exportação.");
+      return;
+    }
+
+    const headers = [
+      "Placa",
+      "Modelo",
+      "Status",
+      "Condutor Atual",
+      "CPF Condutor",
+      "CNH Número",
+      "CNH Validade",
+      "Função",
+      "Setor",
+      "Contato Motorista",
+      "Gestor Responsável",
+      "E-mail",
+      "Filial / Base",
+      "Locadora",
+      "Contrato",
+      "Vencimento Contrato",
+      "Odômetro (KM)",
+      "Combustível",
+      "Data Troca Condutor",
+      "Data Inativação",
+      "Motivo Inativação"
+    ];
+
+    const escapeCsv = (val: any) => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const rows = veiculos.map(v => [
+      escapeCsv(v.placa),
+      escapeCsv(v.modelo),
+      escapeCsv(v.status),
+      escapeCsv(v.condutor),
+      escapeCsv(v.cpfCondutor || ""),
+      escapeCsv(v.cnhNumero || ""),
+      escapeCsv(v.cnhValidade || ""),
+      escapeCsv(v.funcao || ""),
+      escapeCsv(v.setor || ""),
+      escapeCsv(v.contatoMotorista || ""),
+      escapeCsv(v.gestorResp || ""),
+      escapeCsv(v.email || ""),
+      escapeCsv(v.filial || ""),
+      escapeCsv(v.locadora || ""),
+      escapeCsv(v.contrato || ""),
+      escapeCsv(v.vencContrato || ""),
+      escapeCsv(v.odometro !== undefined ? v.odometro : ""),
+      escapeCsv(v.combustivel || ""),
+      escapeCsv(v.dataTrocaCondutor || ""),
+      escapeCsv(v.dataInativacao || ""),
+      escapeCsv(v.motivoInativacao || "")
+    ].join(";"));
+
+    const csvContent = "\uFEFF" + [headers.join(";"), ...rows].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const today = new Date().toISOString().split("T")[0];
+    link.setAttribute("href", url);
+    link.setAttribute("download", `cadastro_veiculos_frota_risel_${today}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast("success", "Exportação Concluída", `Exportados ${veiculos.length} veículos para CSV com sucesso!`);
+  };
+
   // Selection drawer
   const [selectedVeiculo, setSelectedVeiculo] = useState<Veiculo | null>(null);
 
@@ -2122,7 +2198,9 @@ export default function Frota() {
       const matchesSearch = 
         v.placa.toLowerCase().includes(searchQuery.toLowerCase()) ||
         v.modelo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        v.condutor.toLowerCase().includes(searchQuery.toLowerCase());
+        v.condutor.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (Boolean(v.funcao) && v.funcao.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (Boolean(v.setor) && v.setor.toLowerCase().includes(searchQuery.toLowerCase()));
       
       const matchesFilial = filterFilial === "Todos" || isSameCityOrBase(v.filial, filterFilial);
       const matchesStatus = filterStatus === "Todos" || v.status === filterStatus;
@@ -2244,6 +2322,7 @@ export default function Frota() {
       cnhAnexoBase64: modalCnhAnexoBase64 || "",
       cnhNomeArquivo: modalCnhNomeArquivo || "",
       funcao: cleanUpper(formData.get("funcao")),
+      setor: cleanUpper(formData.get("setor")),
       contatoMotorista: cleanUpper(formData.get("contatoMotorista")),
       gestorResp: cleanUpper(formData.get("gestorResp")),
       email: cleanEmail(formData.get("email")),
@@ -3256,6 +3335,15 @@ export default function Frota() {
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
                       <button
+                        onClick={handleExportVeiculosCSV}
+                        title="Baixar planilha completa de cadastro de veículos em formato CSV"
+                        className="px-3 py-2 rounded-xl text-xs font-bold text-slate-650 hover:text-emerald-800 bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-emerald-700" />
+                        <span className="hidden sm:inline">Exportar</span> CSV
+                      </button>
+
+                      <button
                         onClick={() => {
                           setEditingVeh(null);
                           setModalLocadora("");
@@ -3367,6 +3455,11 @@ export default function Frota() {
                                   </div>
                                   <div className="text-[10px] font-semibold text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
                                     <span>{toTitleCase(v.funcao)}</span>
+                                    {v.setor && (
+                                      <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/70 px-1.5 py-0.2 rounded text-[9px] font-bold">
+                                        {toTitleCase(v.setor)}
+                                      </span>
+                                    )}
                                     {v.cpfCondutor && (
                                       <span className="font-mono text-slate-500 bg-slate-100 px-1 py-0.2 rounded text-[9.5px]">
                                         CPF: {v.cpfCondutor}
@@ -3718,7 +3811,14 @@ export default function Frota() {
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[9px] text-slate-400 font-bold uppercase block tracking-wider">Condutor Atual</span>
                     <span className="font-bold text-slate-800 block mt-1">{selectedVeiculo.condutor}</span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">{selectedVeiculo.funcao}</span>
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                      <span className="text-[10px] text-slate-500 font-semibold">{selectedVeiculo.funcao || "Função não informada"}</span>
+                      {selectedVeiculo.setor && (
+                        <span className="text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-1.5 py-0.2 rounded text-[9.5px] font-bold">
+                          {selectedVeiculo.setor}
+                        </span>
+                      )}
+                    </div>
                     {selectedVeiculo.cpfCondutor && (
                       <span className="font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded text-[10px] inline-block mt-1 font-semibold mr-1">
                         CPF: {selectedVeiculo.cpfCondutor}
@@ -3938,6 +4038,28 @@ export default function Frota() {
                 <div className="space-y-1">
                   <label className="block">Função</label>
                   <input name="funcao" placeholder="e.g. Técnico de Campo" defaultValue={editingVeh?.funcao || ""} className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-orange-500" />
+                </div>
+                <div className="space-y-1">
+                  <label className="block">Setor</label>
+                  <input 
+                    name="setor" 
+                    list="setores-list"
+                    placeholder="e.g. Operações, Comercial, TI" 
+                    defaultValue={editingVeh?.setor || ""} 
+                    className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-orange-500" 
+                  />
+                  <datalist id="setores-list">
+                    <option value="Operações" />
+                    <option value="Comercial" />
+                    <option value="Financeiro" />
+                    <option value="Tecnologia / TI" />
+                    <option value="RH / Recursos Humanos" />
+                    <option value="Logística" />
+                    <option value="Diretoria" />
+                    <option value="Manutenção" />
+                    <option value="Segurança do Trabalho" />
+                    <option value="Administrativo" />
+                  </datalist>
                 </div>
 
                 {/* BLOCO CNH DO CONDUTOR */}

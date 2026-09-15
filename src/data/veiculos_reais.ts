@@ -6,6 +6,7 @@ export interface Veiculo {
   condutor: string;
   cpfCondutor?: string;
   funcao: string;
+  setor?: string;
   contatoMotorista: string;
   gestorResp: string;
   email: string;

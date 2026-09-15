@@ -59,11 +59,21 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100/70 flex flex-col justify-between p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen relative flex flex-col justify-between p-4 sm:p-6 lg:p-8 bg-slate-100/80 overflow-x-hidden">
+      {/* Imagem de Fundo com Transparência Elegante */}
+      <div 
+        className="fixed inset-0 z-0 pointer-events-none bg-cover bg-center bg-no-repeat opacity-25"
+        style={{
+          backgroundImage: `url('https://i.ibb.co/vvh5kBgG/f-UNDO-SISTEMA.jpg')`,
+        }}
+      />
+      {/* Camada sutil de gradiente e desfoque suave para garantir contraste e legibilidade impecáveis */}
+      <div className="fixed inset-0 z-0 pointer-events-none bg-gradient-to-b from-slate-50/70 via-slate-50/40 to-slate-100/80 backdrop-blur-[1px]" />
+
       {/* Barra Superior de Identificação & Status da Sessão */}
-      <header className="max-w-6xl w-full mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 py-2 border-b border-slate-200/80 pb-4">
+      <header className="relative z-10 max-w-6xl w-full mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 py-2 border-b border-slate-200/70 pb-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl overflow-hidden border border-emerald-600/30 shadow-sm">
+          <div className="w-10 h-10 rounded-xl overflow-hidden border border-emerald-600/30 shadow-sm bg-white/90 backdrop-blur-sm">
             <img
               src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg"
               alt="Risel Combustíveis"
@@ -81,7 +91,7 @@ export default function Home() {
         {/* Status de Login do Usuário */}
         <div className="flex items-center gap-3">
           {user ? (
-            <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-3 bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl border border-slate-200/80 shadow-sm">
               <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">
                 {user.name?.charAt(0) || "U"}
               </div>
@@ -105,7 +115,7 @@ export default function Home() {
           ) : (
             <button
               onClick={() => setLoginModalState({ isOpen: true, targetModule: "Acesso Geral", targetPath: "/" })}
-              className="flex items-center gap-2 bg-white hover:bg-emerald-50/50 text-slate-700 hover:text-emerald-700 px-4 py-2 rounded-2xl border border-slate-200 shadow-sm text-xs font-bold transition-all group"
+              className="flex items-center gap-2 bg-white/90 backdrop-blur-md hover:bg-emerald-50/70 text-slate-700 hover:text-emerald-700 px-4 py-2 rounded-2xl border border-slate-200/80 shadow-sm text-xs font-bold transition-all group"
             >
               <Lock className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition-colors" />
               <span>Identificar-se / Login</span>
@@ -116,7 +126,7 @@ export default function Home() {
       </header>
 
       {/* Conteúdo Central */}
-      <main className="max-w-5xl w-full mx-auto py-10 my-auto">
+      <main className="relative z-10 max-w-5xl w-full mx-auto py-10 my-auto">
         <div className="text-center mb-10">
           <motion.h1 
             initial={{ opacity: 0, y: 15 }}
@@ -194,26 +204,17 @@ export default function Home() {
         <div className="mt-8 max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-3">
           <button
             onClick={() => navigate("/reservas")}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-2xl bg-white hover:bg-emerald-50 border border-emerald-300 text-[#114D38] text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-2xl bg-white/90 backdrop-blur-md hover:bg-emerald-50/90 border border-emerald-300/80 text-[#114D38] text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer"
           >
             <Sparkles className="w-4 h-4 text-emerald-600" />
             <span>Portal Público de Reservas (/reservas)</span>
             <ArrowRight className="w-3.5 h-3.5 text-emerald-600" />
           </button>
-
-          <button
-            onClick={() => navigate("/checklist-publico")}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-2xl bg-white hover:bg-orange-50 border border-orange-200 text-orange-700 text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer"
-          >
-            <ShieldCheck className="w-4 h-4 text-[#F47920]" />
-            <span>Checklist Público (/checklist)</span>
-            <ArrowRight className="w-3.5 h-3.5 text-orange-600" />
-          </button>
         </div>
       </main>
 
       {/* Rodapé Institucional */}
-      <footer className="max-w-5xl w-full mx-auto text-center py-4 border-t border-slate-200/60 text-xs text-slate-400 font-medium">
+      <footer className="relative z-10 max-w-5xl w-full mx-auto text-center py-4 border-t border-slate-200/60 text-xs text-slate-500 font-medium">
         <p>
           &copy; {new Date().getFullYear()} Risel Combustíveis Ltda. &bull; Sistema de Gestão Empresarial ERP
         </p>
@@ -253,7 +254,7 @@ function ModuleCard({
     >
       <div 
         onClick={onClick}
-        className="cursor-pointer group h-full bg-white rounded-[28px] p-8 border border-slate-200/90 shadow-sm transition-all duration-500 hover:shadow-xl hover:shadow-slate-200/60 hover:-translate-y-1.5 relative overflow-hidden flex flex-col justify-between"
+        className="cursor-pointer group h-full bg-white/90 backdrop-blur-md rounded-[28px] p-8 border border-white/80 sm:border-slate-200/80 shadow-sm transition-all duration-500 hover:shadow-xl hover:shadow-slate-200/60 hover:-translate-y-1.5 hover:bg-white relative overflow-hidden flex flex-col justify-between"
       >
         {/* Glow decorativo de fundo */}
         <div className={cn(

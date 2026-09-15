@@ -1056,6 +1056,7 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
         cnhAnexoBase64: row.cnh_anexo_base64 || row.cnhAnexoBase64 || extra.cnhAnexoBase64 || "",
         cnhNomeArquivo: row.cnh_nome_arquivo || row.cnhNomeArquivo || extra.cnhNomeArquivo || "",
         funcao: row.funcao || extra.funcao || real.funcao || "Motorista",
+        setor: row.setor || extra.setor || (real as any).setor || "",
         contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || real.contatoMotorista || "",
         gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || real.gestorResp || "",
         email: row.email || extra.email || real.email || "",
@@ -1088,6 +1089,7 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
           condutor: row.condutor || "Disponível",
           cpfCondutor: row.cpf_condutor || row.cpfCondutor || extra.cpfCondutor || "",
           funcao: row.funcao || extra.funcao || "Motorista",
+          setor: row.setor || extra.setor || "",
           contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || "",
           gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || "",
           email: row.email || extra.email || "",
@@ -1134,6 +1136,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       cnhAnexoBase64: item.cnhAnexoBase64 || "",
       cnhNomeArquivo: item.cnhNomeArquivo || "",
       funcao: item.funcao || "",
+      setor: item.setor || "",
       contatoMotorista: item.contatoMotorista || "",
       gestorResp: item.gestorResp || "",
       email: item.email || "",
@@ -1167,6 +1170,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       cnh_anexo_base64: item.cnhAnexoBase64 || "",
       cnh_nome_arquivo: item.cnhNomeArquivo || "",
       funcao: item.funcao || "Motorista",
+      setor: item.setor || "",
       contato_motorista: item.contatoMotorista || "",
       gestor_resp: item.gestorResp || "",
       email: item.email || "",
@@ -1237,6 +1241,7 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         cnhAnexoBase64: item.cnhAnexoBase64 || "",
         cnhNomeArquivo: item.cnhNomeArquivo || "",
         funcao: item.funcao || "",
+        setor: item.setor || "",
         contatoMotorista: item.contatoMotorista || "",
         gestorResp: item.gestorResp || "",
         email: item.email || "",
@@ -1269,6 +1274,7 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         cnh_anexo_base64: item.cnhAnexoBase64 || "",
         cnh_nome_arquivo: item.cnhNomeArquivo || "",
         funcao: item.funcao || "Motorista",
+        setor: item.setor || "",
         contato_motorista: item.contatoMotorista || "",
         gestor_resp: item.gestorResp || "",
         email: item.email || "",
@@ -2611,6 +2617,7 @@ CREATE TABLE IF NOT EXISTS public.veiculos (
     cnh_anexo_base64 TEXT,
     cnh_nome_arquivo VARCHAR(255),
     funcao VARCHAR(100) DEFAULT 'Motorista',
+    setor VARCHAR(100) DEFAULT '',
     contato_motorista VARCHAR(100),
     gestor_resp VARCHAR(255),
     email VARCHAR(255),
@@ -2634,6 +2641,7 @@ ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cnh_numero VARCHAR(50);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cnh_anexo_base64 TEXT;
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS cnh_nome_arquivo VARCHAR(255);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS funcao VARCHAR(100);
+ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS setor VARCHAR(100);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS contato_motorista VARCHAR(100);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS gestor_resp VARCHAR(255);
 ALTER TABLE public.veiculos ADD COLUMN IF NOT EXISTS email VARCHAR(255);
