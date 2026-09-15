@@ -5,10 +5,13 @@ import { DailyTrip, ReservationStatus, FuelLevel, Vehicle } from '../../types_re
 import Modal from './Modal';
 import { CarIcon, PencilIcon, TrashIcon, CameraIcon, ExclamationTriangleIcon, SteeringWheelIcon, ClockIcon, ClipboardListIcon, FunnelIcon } from './icons';
 import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { getSubmoduleRecipientsSync } from '../../services/emailRecipientsService';
+import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
 import DailyTripEditModal from './DailyTripEditModal';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import { calculateDrivingDistance } from '../../services/distanceService';
 import { normalizeCidade } from '../../utils/baseOperacional';
+import { useAuth } from '../../context/ReservationAuthContext';
 
 const FuelLevelInput: React.FC<{ name: string, value: FuelLevel | undefined, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, label?: string }> = ({ name, value, onChange, label = "Nível do Tanque" }) => {
   const levels = Object.values(FuelLevel);
@@ -112,6 +115,7 @@ interface DailyUseViewProps {
 
 const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
     const { dailyTrips, reservations, vehicles, getVehicleById, addDailyTrip, endTrip, updateDailyTrip, deleteDailyTrip } = useReservations();
+    const { user } = useAuth();
     
     // State for Tabs
     const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
@@ -128,6 +132,13 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
+
+    const isDenyUser = Boolean(
+        user?.email?.toLowerCase().includes('deny') || 
+        user?.email?.toLowerCase() === 'deny.goncalves@risel.com.br' ||
+        isAdmin
+    );
 
     const [selectedTrip, setSelectedTrip] = useState<DailyTrip | null>(null);
     const [returnFormData, setReturnFormData] = useState({ 
@@ -275,8 +286,13 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                 `Informamos que o veículo ${vehicle ? vehicle.plate : ''} iniciou deslocamento para ${addFormData.destinationCity}.`,
                 "Lembre-se de conduzir com prudência e registrar o retorno e KM final ao concluir a rota."
             );
-            // Envia para admins
-            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${addFormData.driverName}`, emailHtml, {
+            // Envia para admins configurados (Lorena e Deny garantidos)
+            const dailyRecipients = Array.from(new Set([
+                'deny.goncalves@risel.com.br',
+                'lorena.padilha@risel.com.br',
+                ...getSubmoduleRecipientsSync('uso_diario')
+            ]));
+            await sendEmail(dailyRecipients, `Início de Uso Diário - ${addFormData.driverName}`, emailHtml, {
                 fromName: "Risel Combustíveis",
                 source: "reservas"
             });
@@ -361,7 +377,12 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                     `O veículo ${vehicle ? vehicle.plate : ''} foi devolvido e a rota concluída com sucesso.`,
                     "O odômetro e status do veículo foram atualizados no sistema Risel."
                 );
-                await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${selectedTrip.driverName}`, emailHtml, {
+                const dailyEndRecipients = Array.from(new Set([
+                    'deny.goncalves@risel.com.br',
+                    'lorena.padilha@risel.com.br',
+                    ...getSubmoduleRecipientsSync('uso_diario')
+                ]));
+                await sendEmail(dailyEndRecipients, `Fim de Uso Diário - ${selectedTrip.driverName}`, emailHtml, {
                     fromName: "Risel Combustíveis",
                     source: "reservas"
                 });
@@ -535,14 +556,26 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                         <h2 className="text-sm font-extrabold text-slate-800">Uso Diário da Frota</h2>
                         <p className="text-[11px] text-slate-400 mt-0.5">Lançamento de quilometragem inicial e final com medição de tanques e percursos.</p>
                     </div>
-                    {isAdmin && (
-                        <button 
-                            onClick={handleOpenAddModal} 
-                            className="bg-[#114D38] hover:bg-[#1d7053] text-white font-extrabold uppercase tracking-wider py-2 px-4 rounded-xl transition duration-300 shadow-sm text-xs flex items-center gap-1.5 cursor-pointer w-full md:w-auto justify-center"
-                        >
-                            <span>+ Adicionar Utilização</span>
-                        </button>
-                    )}
+                    <div className="flex flex-wrap items-center gap-3">
+                        {isDenyUser && (
+                            <button 
+                                onClick={() => setIsRecipientsModalOpen(true)} 
+                                title="Configurar destinatários de e-mail de Uso Diário com sincronização no Render"
+                                className="bg-emerald-50 hover:bg-emerald-100 text-[#0d4a36] border border-emerald-300 font-extrabold uppercase tracking-wider py-2 px-3.5 rounded-xl transition duration-300 shadow-xs text-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                                <span className="text-sm">✉️</span>
+                                <span>Destinatários de E-mail</span>
+                            </button>
+                        )}
+                        {isAdmin && (
+                            <button 
+                                onClick={handleOpenAddModal} 
+                                className="bg-[#114D38] hover:bg-[#1d7053] text-white font-extrabold uppercase tracking-wider py-2 px-4 rounded-xl transition duration-300 shadow-sm text-xs flex items-center gap-1.5 cursor-pointer w-full md:w-auto justify-center"
+                            >
+                                <span>+ Adicionar Utilização</span>
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Barra de Ferramentas Premium com abas e botão de filtros */}
@@ -858,6 +891,15 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                 </>
             )}
             </div>
+
+            {/* Modal de Gestão de Destinatários de E-mail para Uso Diário */}
+            <EmailRecipientsModal
+                isOpen={isRecipientsModalOpen}
+                onClose={() => setIsRecipientsModalOpen(false)}
+                initialSubmodule="uso_diario"
+                currentUserEmail={user?.email || "deny.goncalves@risel.com.br"}
+                onSaved={() => showToast("Destinatários salvos e sincronizados com sucesso no Render!", "success")}
+            />
         </div>
     );
 };

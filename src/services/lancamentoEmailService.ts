@@ -1,4 +1,5 @@
 import { sendEmail } from "./firebaseService";
+import { getSubmoduleRecipientsSync } from "./emailRecipientsService";
 
 export interface LancamentoEmailData {
   id?: number | string;
@@ -402,9 +403,15 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
 
 /**
  * Envia o e-mail de aprovação com anexo automático para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br
+ * e para quaisquer outros destinatários configurados dinamicamente no Render
  */
 export async function sendLancamentoAprovacaoEmail(data: LancamentoEmailData): Promise<boolean> {
-  const DESTINATARIOS_OFICIAIS = ["lorena.padilha@risel.com.br", "deny.goncalves@risel.com.br"];
+  const configuredRecipients = getSubmoduleRecipientsSync('documentos');
+  const DESTINATARIOS_OFICIAIS = Array.from(new Set([
+    "lorena.padilha@risel.com.br", 
+    "deny.goncalves@risel.com.br",
+    ...configuredRecipients
+  ]));
   
   try {
     const { subject, html } = generateLancamentoAprovacaoEmailHtml(data);

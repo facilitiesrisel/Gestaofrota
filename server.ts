@@ -1256,6 +1256,225 @@ async function startServer() {
     }
   });
 
+  // =========================================================================
+  // GERENCIAMENTO CENTRAL DE DESTINATÁRIOS DE E-MAIL POR SUBMÓDULO (RENDER & FIRESTORE)
+  // Permite que deny.goncalves@risel.com.br inclua, exclua e edite destinatários
+  // refletindo imediatamente no servidor em nuvem (Render) e Firestore.
+  // =========================================================================
+  const DEFAULT_EMAIL_RECIPIENTS: Record<string, string[]> = {
+    reservas: ["deny.goncalves@risel.com.br", "lorena.padilha@risel.com.br"],
+    uso_diario: ["deny.goncalves@risel.com.br", "lorena.padilha@risel.com.br"],
+    documentos: ["deny.goncalves@risel.com.br", "lorena.padilha@risel.com.br"],
+    checklist: ["deny.goncalves@risel.com.br", "lorena.padilha@risel.com.br"],
+    multas: ["deny.goncalves@risel.com.br", "lorena.padilha@risel.com.br"],
+    frota_alertas: ["deny.goncalves@risel.com.br", "lorena.padilha@risel.com.br"],
+  };
+
+  const recipientsFilePath = path.join(process.cwd(), "data", "email_recipients_config.json");
+
+  async function getStoredEmailRecipients(): Promise<Record<string, string[]>> {
+    let result: Record<string, string[]> = { ...DEFAULT_EMAIL_RECIPIENTS };
+
+    // 1. Tentar carregar do Firestore (nuvem persistente)
+    try {
+      const db = await getServerFirestore();
+      const doc = await db.collection("system_config").doc("email_recipients").get();
+      if (doc.exists) {
+        const firestoreData = doc.data() as Record<string, any>;
+        for (const key of Object.keys(DEFAULT_EMAIL_RECIPIENTS)) {
+          if (Array.isArray(firestoreData[key]) && firestoreData[key].length > 0) {
+            result[key] = firestoreData[key].map((e: any) => String(e).trim().toLowerCase()).filter(Boolean);
+          }
+        }
+        // Atualiza cache em disco local no Render
+        try {
+          if (!fs.existsSync(path.dirname(recipientsFilePath))) {
+            fs.mkdirSync(path.dirname(recipientsFilePath), { recursive: true });
+          }
+          fs.writeFileSync(recipientsFilePath, JSON.stringify(result, null, 2), "utf-8");
+        } catch (fErr) {}
+        return result;
+      }
+    } catch (err: any) {
+      console.warn("[EmailRecipients] Aviso ao consultar Firestore, tentando disco local:", err.message);
+    }
+
+    // 2. Fallback: ler do arquivo local em disco
+    try {
+      if (fs.existsSync(recipientsFilePath)) {
+        const raw = fs.readFileSync(recipientsFilePath, "utf-8");
+        const parsed = JSON.parse(raw);
+        for (const key of Object.keys(DEFAULT_EMAIL_RECIPIENTS)) {
+          if (Array.isArray(parsed[key]) && parsed[key].length > 0) {
+            result[key] = parsed[key].map((e: any) => String(e).trim().toLowerCase()).filter(Boolean);
+          }
+        }
+      } else {
+        if (!fs.existsSync(path.dirname(recipientsFilePath))) {
+          fs.mkdirSync(path.dirname(recipientsFilePath), { recursive: true });
+        }
+        fs.writeFileSync(recipientsFilePath, JSON.stringify(result, null, 2), "utf-8");
+      }
+    } catch (diskErr: any) {
+      console.warn("[EmailRecipients] Aviso ao ler do disco local:", diskErr.message);
+    }
+
+    return result;
+  }
+
+  async function saveStoredEmailRecipients(newConfig: Record<string, string[]>): Promise<void> {
+    const cleanConfig: Record<string, string[]> = {};
+    for (const [key, emails] of Object.entries(newConfig)) {
+      if (Array.isArray(emails)) {
+        cleanConfig[key] = Array.from(new Set(
+          emails.map(e => String(e).trim().toLowerCase())
+                .filter(e => e.includes("@") && e.includes("."))
+        ));
+      }
+    }
+
+    // Salva no disco local do container (Render)
+    try {
+      if (!fs.existsSync(path.dirname(recipientsFilePath))) {
+        fs.mkdirSync(path.dirname(recipientsFilePath), { recursive: true });
+      }
+      fs.writeFileSync(recipientsFilePath, JSON.stringify(cleanConfig, null, 2), "utf-8");
+      console.log("[EmailRecipients] Configurações de destinatários salvas no disco do Render.");
+    } catch (err: any) {
+      console.error("[EmailRecipients] Erro ao gravar no disco:", err);
+    }
+
+    // Sincroniza no Firestore
+    try {
+      const db = await getServerFirestore();
+      await db.collection("system_config").doc("email_recipients").set({
+        ...cleanConfig,
+        updatedAt: new Date(),
+        lastUpdatedBy: "deny.goncalves@risel.com.br"
+      }, { merge: true });
+      console.log("[EmailRecipients] Configurações sincronizadas com sucesso no Firestore.");
+    } catch (dbErr: any) {
+      console.warn("[EmailRecipients] Aviso ao persistir no Firestore:", dbErr.message);
+    }
+  }
+
+  // Endpoint de Consulta de Destinatários por Submódulo
+  app.get("/api/email-recipients-config", async (req, res) => {
+    try {
+      const config = await getStoredEmailRecipients();
+      return res.json({ success: true, config });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Endpoint de Atualização de Destinatários (Permite Deny incluir, excluir e editar)
+  app.post("/api/email-recipients-config", express.json(), async (req, res) => {
+    try {
+      const { submodule, recipients, config, userEmail } = req.body;
+
+      // Se passou o mapa completo de configuração
+      let current = await getStoredEmailRecipients();
+      if (config && typeof config === "object") {
+        current = { ...current, ...config };
+      } else if (submodule && Array.isArray(recipients)) {
+        current[submodule] = recipients;
+      } else {
+        return res.status(400).json({ success: false, error: "Parâmetros inválidos. Informe submodule e recipients ou config." });
+      }
+
+      await saveStoredEmailRecipients(current);
+      console.log(`[EmailRecipients] Destinatários alterados por ${userEmail || 'admin'}. Refletindo diretamente no Render!`);
+      return res.json({ 
+        success: true, 
+        config: current, 
+        message: "Destinatários de e-mail atualizados com sucesso e refletidos no Render!" 
+      });
+    } catch (err: any) {
+      console.error("[EmailRecipients] Erro ao salvar:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Endpoint de Teste Rápido de Disparo para o Submódulo
+  app.post("/api/email-recipients-config/test", express.json(), async (req, res) => {
+    try {
+      const { submodule, recipients, userEmail } = req.body;
+      const targetRecipients: string[] = Array.isArray(recipients) && recipients.length > 0 
+        ? recipients 
+        : (await getStoredEmailRecipients())[submodule] || ["deny.goncalves@risel.com.br", "lorena.padilha@risel.com.br"];
+
+      const moduleTitles: Record<string, string> = {
+        reservas: "Gestão de Reservas de Veículos",
+        uso_diario: "Uso Diário & Deslocamentos",
+        documentos: "Lançamento & Aprovação de Documentos Fiscais",
+        checklist: "Checklist Veicular & Vistorias",
+        multas: "Controle de Multas & Notificações",
+        frota_alertas: "Alertas de Frota & Telemetria"
+      };
+
+      const title = moduleTitles[submodule] || "Notificações Risel ERP";
+      const smtpConfig = getRiselSmtpConfig({
+        defaultSenderName: "Risel Combustíveis"
+      });
+      const transporter = await createSafeTransporter(smtpConfig);
+
+      const html = `
+        <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; max-width: 620px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: 0 4px 18px rgba(0,0,0,0.06);">
+          <div style="background: #114D38; padding: 22px 24px; border-bottom: 4px solid #f47920; text-align: center;">
+            <h2 style="color: #ffffff; margin: 0; font-size: 15pt; text-transform: uppercase; letter-spacing: 0.5px;">Teste de Destinatários de E-mail</h2>
+            <p style="color: #86efac; margin: 4px 0 0 0; font-size: 10.5pt; font-weight: 700; text-transform: uppercase;">${title}</p>
+          </div>
+          <div style="padding: 24px; font-size: 11pt; color: #1e293b; line-height: 1.5;">
+            <div style="background-color: #f0fdf4; border-left: 5px solid #16a34a; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px;">
+              <strong style="color: #166534; display: block; margin-bottom: 4px;">✅ Validação de Entrega Concluída com Sucesso!</strong>
+              <p style="margin: 0; color: #1e293b; font-size: 10.5pt;">
+                Este e-mail confirma que a lista de destinatários configurada para o submódulo <strong>${title}</strong> está ativa e sincronizada no <strong>Render</strong>.
+              </p>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 10.5pt;">
+              <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; width: 140px;">Submódulo:</td>
+                <td style="padding: 10px 14px; color: #334155;">${title} (${submodule})</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36;">Destinatários:</td>
+                <td style="padding: 10px 14px; color: #09392b; font-weight: 600;">${targetRecipients.join(", ")}</td>
+              </tr>
+              <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36;">Testado por:</td>
+                <td style="padding: 10px 14px; color: #334155;">${userEmail || "deny.goncalves@risel.com.br"}</td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36;">Data/Hora:</td>
+                <td style="padding: 10px 14px; color: #334155;">${new Date().toLocaleString("pt-BR")}</td>
+              </tr>
+            </table>
+          </div>
+          <div style="background-color: #f8fafc; padding: 14px 20px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 9.5pt; color: #64748b;">
+            Risel Combustíveis Ltda &bull; Sistema Integrado de Gestão Corporativa
+          </div>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: '"Risel Combustíveis" <gestaodefrotarisel@gmail.com>',
+        to: targetRecipients.join(", "),
+        subject: `[Teste de Notificação] ${title} - Validação no Render`,
+        html: html
+      });
+
+      return res.json({ 
+        success: true, 
+        deliveredTo: targetRecipients, 
+        message: `E-mail de teste disparado com sucesso para: ${targetRecipients.join(", ")}` 
+      });
+    } catch (testErr: any) {
+      console.error("[EmailRecipients] Erro no teste:", testErr);
+      return res.status(500).json({ success: false, error: testErr.message });
+    }
+  });
+
   // Funções auxiliares para persistência e IDs deletados de lançamentos
   function getStoredDeletedLancamentoIds(): string[] {
     try {

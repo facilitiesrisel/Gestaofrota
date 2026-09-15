@@ -1,7 +1,19 @@
+import { getSubmoduleRecipientsSync } from './services/emailRecipientsService';
+
 export const LEADERSHIP_ROLES: string[] = ['supervisor', 'coordenador', 'gestor', 'diretor', 'engenheiro', 'responsavel', 'gerente'];
 
-// E-mail que receberá notificações de novas solicitações e uso diário
+// E-mails oficiais corporativos que SEMPRE receberão notificações de Reservas e Uso Diário
 export const ADMIN_EMAIL_RECIPIENTS: string[] = ['deny.goncalves@risel.com.br', 'lorena.padilha@risel.com.br'];
+
+/**
+ * Retorna os destinatários configurados para Gestão de Reservas,
+ * garantindo sempre a presença obrigatória de deny.goncalves@risel.com.br e lorena.padilha@risel.com.br
+ */
+export function getReservasEmailRecipients(): string[] {
+  const dynamic = getSubmoduleRecipientsSync('reservas');
+  const base = ['deny.goncalves@risel.com.br', 'lorena.padilha@risel.com.br'];
+  return Array.from(new Set([...base, ...dynamic]));
+}
 
 // INSTRUÇÃO IMPORTANTE:
 // O UID do usuário com o e-mail 'deny.goncalves@risel.com.br' DEVE ser inserido aqui.

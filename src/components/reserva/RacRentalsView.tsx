@@ -26,7 +26,7 @@ import {
   sendEmail,
   generateRacEmailHtml
 } from '../../services/firebaseService';
-import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
 import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 import { useAuth } from '../../context/ReservationAuthContext';
@@ -629,8 +629,14 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
-                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : [...ADMIN_EMAIL_RECIPIENTS];
-                const ccList = fullUpdated.requesterEmail ? [...ADMIN_EMAIL_RECIPIENTS] : undefined;
+                const baseAdmins = getReservasEmailRecipients();
+                const allRacRecipients = Array.from(new Set([
+                    'deny.goncalves@risel.com.br',
+                    'lorena.padilha@risel.com.br',
+                    ...baseAdmins
+                ]));
+                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : allRacRecipients;
+                const ccList = fullUpdated.requesterEmail ? allRacRecipients : undefined;
 
                 await sendEmail(
                     primaryTo,
@@ -715,8 +721,14 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
-                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : [...ADMIN_EMAIL_RECIPIENTS];
-                const ccList = fullUpdated.requesterEmail ? [...ADMIN_EMAIL_RECIPIENTS] : undefined;
+                const baseRejectAdmins = getReservasEmailRecipients();
+                const allRejectRacRecipients = Array.from(new Set([
+                    'deny.goncalves@risel.com.br',
+                    'lorena.padilha@risel.com.br',
+                    ...baseRejectAdmins
+                ]));
+                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : allRejectRacRecipients;
+                const ccList = fullUpdated.requesterEmail ? allRejectRacRecipients : undefined;
 
                 await sendEmail(
                     primaryTo,

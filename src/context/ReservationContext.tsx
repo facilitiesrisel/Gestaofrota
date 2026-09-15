@@ -3,6 +3,7 @@ import { Reservation, ReservationStatus, Vehicle, DailyTrip, FuelLevel } from '.
 import * as firebaseApi from '../services/firebaseService';
 import { useReservationAuth } from './ReservationAuthContext';
 import { ADMIN_EMAIL_RECIPIENTS } from '../constants_reserva';
+import { getSubmoduleRecipientsSync } from '../services/emailRecipientsService';
 import { sendEmail, generateEmailHtml } from '../services/firebaseService';
 import { fetchFleetPositions } from '../services/geoFrotasService';
 import { VEICULOS_REAIS } from '../data/veiculos_reais';
@@ -269,7 +270,14 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
              "O veículo atingiu os parâmetros de alerta para manutenção preventiva."
          );
          
-         sendEmail(ADMIN_EMAIL_RECIPIENTS, subject, emailHtml, {
+         const recipients = Array.from(new Set([
+           'deny.goncalves@risel.com.br',
+           'lorena.padilha@risel.com.br',
+           ...getSubmoduleRecipientsSync('manutencao'),
+           ...ADMIN_EMAIL_RECIPIENTS
+         ]));
+         
+         sendEmail(recipients, subject, emailHtml, {
            fromName: "Controle de Frotas",
            source: "frota"
          }).catch(err => console.error("Failed to send maintenance alert", err));

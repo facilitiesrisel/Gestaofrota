@@ -35,6 +35,7 @@ import {
   forceSyncLancamentos
 } from "../../services/lancamentosService";
 import { sendLancamentoAprovacaoEmail } from "../../services/lancamentoEmailService";
+import { EmailRecipientsModal } from "../../components/common/EmailRecipientsModal";
 import {
   consultarCnpjReceita,
   formatarCnpjCpf,
@@ -217,6 +218,13 @@ export default function Lancamento() {
   });
 
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
+
+  const isDenyUser = Boolean(
+    user?.email?.toLowerCase().includes('deny') ||
+    user?.email?.toLowerCase() === 'deny.goncalves@risel.com.br' ||
+    user?.role === 'admin'
+  );
 
   useEffect(() => {
     if (location.state && (location.state as any).editLancamentoId) {
@@ -1943,6 +1951,18 @@ export default function Lancamento() {
                 </div>
               )}
             </div>
+
+            {isDenyUser && (
+              <button
+                type="button"
+                onClick={() => setIsRecipientsModalOpen(true)}
+                title="Configurar destinatários de e-mail com sincronização no Render"
+                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-50 text-[#0d4a36] border border-emerald-300 shadow-xs hover:bg-emerald-100 transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>✉️</span>
+                <span>Destinatários de E-mail</span>
+              </button>
+            )}
 
             <button 
               onClick={() => {
@@ -3687,6 +3707,14 @@ export default function Lancamento() {
           </motion.div>
         </div>
       )}
+
+      {/* Modal de Gestão de Destinatários de E-mail para Lançamento de Documentos */}
+      <EmailRecipientsModal
+        isOpen={isRecipientsModalOpen}
+        onClose={() => setIsRecipientsModalOpen(false)}
+        initialSubmodule="documentos"
+        currentUserEmail={user?.email || "deny.goncalves@risel.com.br"}
+      />
     </div>
   );
 }

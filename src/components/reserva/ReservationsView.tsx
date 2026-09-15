@@ -7,7 +7,8 @@ import Modal from './Modal';
 import ReservationEditModal from './ReservationEditModal';
 import { useAuth } from '../../context/ReservationAuthContext';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
-import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
+import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
 import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
 import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList, RefreshCw } from 'lucide-react';
@@ -96,6 +97,14 @@ const ReservationsView: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isPublicLinkModalOpen, setIsPublicLinkModalOpen] = useState(false);
   const [copiedPublicLink, setCopiedPublicLink] = useState(false);
+  const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
+
+  // Usuário com permissão especial de gestão de destinatários no Render
+  const isDenyUser = Boolean(
+    user?.email?.toLowerCase().includes('deny') || 
+    user?.email?.toLowerCase() === 'deny.goncalves@risel.com.br' ||
+    (user as any)?.role === 'admin'
+  );
 
   const handleCopyPublicPortalLink = () => {
     const link = `${window.location.origin}/reservas`;
@@ -208,10 +217,14 @@ const ReservationsView: React.FC = () => {
             "#114D38"
         );
 
-        const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-        if (resSnapshot.email && resSnapshot.email.trim() && !recipients.includes(resSnapshot.email.trim())) {
-          recipients.push(resSnapshot.email.trim());
-        }
+        const baseRecipients = getReservasEmailRecipients();
+        const requesterEmail = (resSnapshot.email || "").trim().toLowerCase();
+        const recipients = Array.from(new Set([
+          'deny.goncalves@risel.com.br',
+          'lorena.padilha@risel.com.br',
+          ...baseRecipients,
+          ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+        ]));
 
         try {
           await sendEmail(recipients, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
@@ -293,10 +306,14 @@ const ReservationsView: React.FC = () => {
           `Motivo da Recusa / Parecer da Administração: ${reason}`,
           "#dc2626"
       );
-      const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-      if (resSnapshot.email && !recipients.includes(resSnapshot.email)) {
-        recipients.push(resSnapshot.email);
-      }
+      const baseRecipients = getReservasEmailRecipients();
+      const requesterEmail = (resSnapshot.email || "").trim().toLowerCase();
+      const recipients = Array.from(new Set([
+        'deny.goncalves@risel.com.br',
+        'lorena.padilha@risel.com.br',
+        ...baseRecipients,
+        ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+      ]));
       try {
         await sendEmail(recipients, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml, {
           fromName: "Risel Combustíveis",
@@ -341,10 +358,14 @@ const ReservationsView: React.FC = () => {
                     "Caso necessite de um veículo para uma nova data, realize uma nova solicitação.",
                     "#475569"
                 );
-                const recipients = [...ADMIN_EMAIL_RECIPIENTS];
-                if (reservation.email && !recipients.includes(reservation.email)) {
-                  recipients.push(reservation.email);
-                }
+                const baseCancelRecipients = getReservasEmailRecipients();
+                const reqCancelEmail = (reservation.email || "").trim().toLowerCase();
+                const recipients = Array.from(new Set([
+                  'deny.goncalves@risel.com.br',
+                  'lorena.padilha@risel.com.br',
+                  ...baseCancelRecipients,
+                  ...(reqCancelEmail && reqCancelEmail.includes('@') ? [reqCancelEmail] : [])
+                ]));
                 await sendEmail(recipients, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml, {
                   fromName: "Risel Combustíveis",
                   source: "reservas"
@@ -781,6 +802,17 @@ const ReservationsView: React.FC = () => {
                   <span>Link Público de Reservas</span>
               </button>
 
+              {isDenyUser && (
+                <button 
+                  onClick={() => setIsRecipientsModalOpen(true)} 
+                  title="Configurar destinatários de e-mail com sincronização no Render"
+                  className="bg-emerald-50 hover:bg-emerald-100 text-[#0d4a36] border border-emerald-300 font-extrabold uppercase tracking-wider py-2 px-3.5 rounded-xl transition duration-300 shadow-xs text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span className="text-sm">✉️</span>
+                  <span>Destinatários de E-mail</span>
+                </button>
+              )}
+
               <button 
                   onClick={() => setIsAddModalOpen(true)} 
                   className="bg-[#114D38] hover:bg-[#1d7053] text-white font-extrabold uppercase tracking-wider py-2 px-4 rounded-xl transition duration-300 shadow-sm text-xs flex items-center gap-1.5 cursor-pointer"
@@ -1169,6 +1201,15 @@ const ReservationsView: React.FC = () => {
             </>
         )}
       </div>
+
+      {/* Modal de Gestão de Destinatários de E-mail (Exclusivo para deny.goncalves@risel.com.br / Administradores) */}
+      <EmailRecipientsModal
+        isOpen={isRecipientsModalOpen}
+        onClose={() => setIsRecipientsModalOpen(false)}
+        initialSubmodule="reservas"
+        currentUserEmail={user?.email || "deny.goncalves@risel.com.br"}
+        onSaved={() => showToast("Destinatários salvos e sincronizados com sucesso no Render!", "success")}
+      />
     </div>
   );
 };

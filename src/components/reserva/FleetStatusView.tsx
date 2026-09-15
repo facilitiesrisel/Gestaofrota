@@ -11,6 +11,7 @@ import { useAuth as useReservationAuth } from '../../context/ReservationAuthCont
 import { useAuth as useGlobalAuth } from '../../context/AuthContext';
 import { generateEmailHtml, sendEmail } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { getSubmoduleRecipientsSync } from '../../services/emailRecipientsService';
 import { firebaseConfig } from '../../firebaseConfig';
 import { MercosulPlateBadge } from '../MercosulPlateBadge';
 
@@ -252,7 +253,14 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation,
             mapUrl // Passando a URL da imagem do mapa
         );
 
-        await sendEmail(ADMIN_EMAIL_RECIPIENTS, `🚨 ALERTA FDS: Movimentação não autorizada - ${vehicle.plate}`, emailHtml, {
+        const recipients = Array.from(new Set([
+            'deny.goncalves@risel.com.br',
+            'lorena.padilha@risel.com.br',
+            ...getSubmoduleRecipientsSync('rastreamento'),
+            ...ADMIN_EMAIL_RECIPIENTS
+        ]));
+
+        await sendEmail(recipients, `🚨 ALERTA FDS: Movimentação não autorizada - ${vehicle.plate}`, emailHtml, {
             fromName: "Rastreamento Frota Leve Risel",
             source: "rastreamento"
         });

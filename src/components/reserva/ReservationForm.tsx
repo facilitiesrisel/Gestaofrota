@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useReservations } from '../../context/ReservationContext';
 import { ReservationStatus, Vehicle, Reservation, FuelLevel } from '../../types_reserva';
-import { SP_CITIES, LEADERSHIP_ROLES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { SP_CITIES, LEADERSHIP_ROLES, ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
 import { fetchDistanceWithGemini } from '../../services/geminiService';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import { 
@@ -491,11 +491,15 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         `Uma nova solicitação de reserva de veículo foi registrada por ${formData.requesterName} e aguarda análise da Gestão de Frota.`
     );
 
-    const requesterEmailNormalized = (formData.email || "").trim().toLowerCase();
-    const filteredAdmins = ADMIN_EMAIL_RECIPIENTS.filter(
-      adminEmail => adminEmail.trim().toLowerCase() !== requesterEmailNormalized
-    );
-    const recipients = filteredAdmins.length > 0 ? filteredAdmins : [...ADMIN_EMAIL_RECIPIENTS];
+    // Regra estrita: Todos os e-mails de reserva chegam para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br
+    const baseAdmins = getReservasEmailRecipients();
+    const requesterEmail = (formData.email || "").trim().toLowerCase();
+    const recipients = Array.from(new Set([
+      'deny.goncalves@risel.com.br',
+      'lorena.padilha@risel.com.br',
+      ...baseAdmins,
+      ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+    ]));
 
     try {
       await sendEmail(

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RacRental } from '../../types_reserva';
-import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
 import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 import { addRacRental, sendEmail, generateRacEmailHtml } from '../../services/firebaseService';
@@ -358,11 +358,15 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         voucherAttachedNow: false
       });
 
-      const requesterEmailNormalized = (formData.requesterEmail || "").trim().toLowerCase();
-      const filteredAdmins = ADMIN_EMAIL_RECIPIENTS.filter(
-        adminEmail => adminEmail.trim().toLowerCase() !== requesterEmailNormalized
-      );
-      const emailRecipients = filteredAdmins.length > 0 ? filteredAdmins : [...ADMIN_EMAIL_RECIPIENTS];
+      // Regra estrita: Todos os e-mails de reserva chegam para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br
+      const baseAdmins = getReservasEmailRecipients();
+      const requesterEmail = (formData.requesterEmail || "").trim().toLowerCase();
+      const emailRecipients = Array.from(new Set([
+        'deny.goncalves@risel.com.br',
+        'lorena.padilha@risel.com.br',
+        ...baseAdmins,
+        ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+      ]));
 
       await sendEmail(
         emailRecipients,

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useReservations } from '../../context/ReservationContext';
 import { FuelLevel, ReservationStatus } from '../../types_reserva';
 import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
+import { getSubmoduleRecipientsSync } from '../../services/emailRecipientsService';
 import { ExclamationTriangleIcon, SteeringWheelIcon, CheckIcon, CarIcon } from './icons';
 import { calculateDrivingDistance } from '../../services/distanceService';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
@@ -241,7 +242,12 @@ const UserDailyUseForm: React.FC = () => {
                 `O condutor ${startFormData.driverName} registrou a saída do veículo ${vehicle ? vehicle.plate : ''} para ${startFormData.destinationCity}.`,
                 "Lembre-se de conduzir respeitando as leis de trânsito e preencher a KM Final no retorno."
             );
-            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Início de Uso Diário - ${startFormData.driverName}`, emailHtml, {
+            const dailyRecipients = Array.from(new Set([
+                'deny.goncalves@risel.com.br',
+                'lorena.padilha@risel.com.br',
+                ...getSubmoduleRecipientsSync('uso_diario')
+            ]));
+            await sendEmail(dailyRecipients, `Início de Uso Diário - ${startFormData.driverName}`, emailHtml, {
                 fromName: "Gestão de Reservas Risel",
                 source: "reservas"
             });
@@ -362,7 +368,12 @@ const UserDailyUseForm: React.FC = () => {
                 `O condutor ${activeTrip.driverName} registrou a devolução do veículo ${vehicle ? vehicle.plate : ''}.`,
                 "O diário de bordo e odômetro do veículo foram atualizados automaticamente."
             );
-            await sendEmail(ADMIN_EMAIL_RECIPIENTS, `Fim de Uso Diário - ${activeTrip.driverName}`, emailHtml, {
+            const dailyEndRecipients = Array.from(new Set([
+                'deny.goncalves@risel.com.br',
+                'lorena.padilha@risel.com.br',
+                ...getSubmoduleRecipientsSync('uso_diario')
+            ]));
+            await sendEmail(dailyEndRecipients, `Fim de Uso Diário - ${activeTrip.driverName}`, emailHtml, {
                 fromName: "Gestão de Reservas Risel",
                 source: "reservas"
             });
