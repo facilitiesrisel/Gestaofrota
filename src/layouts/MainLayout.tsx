@@ -246,7 +246,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
   if (isCleanView) {
     return (
-      <div className="min-h-screen bg-slate-50 w-full overflow-y-auto">
+      <div className="min-h-screen bg-slate-100/80 w-full overflow-y-auto relative">
         {children}
       </div>
     );
@@ -493,12 +493,24 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
         {/* Content Area - Para rotas da Frota, utiliza container de altura total sem perda vertical */}
         <div className={cn(
-          "flex-1 w-full max-w-full mx-auto",
+          "flex-1 w-full max-w-full mx-auto relative",
           isFrota 
             ? "h-screen overflow-hidden flex flex-col min-h-0 px-3 sm:px-4 md:px-5 pt-2 pb-2" 
             : "overflow-y-auto px-4 md:px-6 pb-20 pt-4"
         )}>
-          <div className={cn("max-w-full w-full mx-auto", isFrota && "h-full flex flex-col min-h-0 overflow-hidden")}>
+          {isFrota && (
+            <>
+              {/* Imagem de Fundo suave no módulo de Frota */}
+              <div 
+                className="fixed inset-0 z-0 pointer-events-none bg-cover bg-center bg-no-repeat opacity-15"
+                style={{
+                  backgroundImage: `url('https://i.ibb.co/vvh5kBgG/f-UNDO-SISTEMA.jpg')`,
+                }}
+              />
+              <div className="fixed inset-0 z-0 pointer-events-none bg-gradient-to-b from-slate-50/80 via-slate-50/60 to-slate-100/90 backdrop-blur-[0.5px]" />
+            </>
+          )}
+          <div className={cn("max-w-full w-full mx-auto relative z-10", isFrota && "h-full flex flex-col min-h-0 overflow-hidden")}>
             {children}
           </div>
         </div>
