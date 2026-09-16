@@ -635,6 +635,14 @@ async function startServer() {
   app.use("/api/onedrive/sync-now", syncRateLimiter);
   app.use("/api/sheets/append", syncRateLimiter);
 
+  // Prevenção de cache em rotas de API para garantir dados em tempo real em todos os computadores/locais
+  app.use("/api", (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    next();
+  });
+
   // Endpoint de Saúde e Keep-Alive (Ping) para monitoramento e prevenção de hibernação no Render
   app.get(["/api/health", "/api/ping"], (req, res) => {
     res.status(200).json({
@@ -3905,8 +3913,24 @@ Responda sempre em Português do Brasil com clareza, objetividade, sofisticaçã
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith("index.html")) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+          } else if (filePath.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$/)) {
+            // Chunks gerados pelo Vite com hash no nome podem ter cache longo seguro
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          }
+        },
+      })
+    );
     app.get("*", (req, res) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

@@ -5,11 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/jpeg" href="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" />
     <link rel="apple-touch-icon" href="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Sistema Risel - Risel ERP</title>
     <meta name="description" content="Sistema de Lançamento de Notas Fiscais e Controle de Frota para Risel Combustíveis LTDA." />
     <meta property="og:title" content="Sistema Risel - Risel ERP" />
     <meta property="og:description" content="Sistema de Lançamento de Notas Fiscais e Controle de Frota para Risel Combustíveis LTDA." />
     <meta property="og:image" content="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" />
+    <script>
+      // Desregistrar qualquer service worker legado para garantir que todos os usuários sempre recebam a versão mais recente
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for (var i = 0; i < registrations.length; i++) {
+            registrations[i].unregister();
+          }
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
