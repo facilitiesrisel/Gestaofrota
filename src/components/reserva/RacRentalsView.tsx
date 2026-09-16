@@ -635,8 +635,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     'lorena.padilha@risel.com.br',
                     ...baseAdmins
                 ]));
-                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : allRacRecipients;
-                const ccList = fullUpdated.requesterEmail ? allRacRecipients : undefined;
+                const reqEmail = (fullUpdated.requesterEmail || "").trim().toLowerCase();
+                const isRequesterValid = Boolean(reqEmail && reqEmail.includes('@'));
+                const primaryTo = isRequesterValid ? [reqEmail] : allRacRecipients;
+                const ccList = isRequesterValid ? allRacRecipients : undefined;
 
                 await sendEmail(
                     primaryTo,
@@ -727,8 +729,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     'lorena.padilha@risel.com.br',
                     ...baseRejectAdmins
                 ]));
-                const primaryTo = fullUpdated.requesterEmail ? [fullUpdated.requesterEmail] : allRejectRacRecipients;
-                const ccList = fullUpdated.requesterEmail ? allRejectRacRecipients : undefined;
+                const reqEmail = (fullUpdated.requesterEmail || "").trim().toLowerCase();
+                const isRequesterValid = Boolean(reqEmail && reqEmail.includes('@'));
+                const primaryTo = isRequesterValid ? [reqEmail] : allRejectRacRecipients;
+                const ccList = isRequesterValid ? allRejectRacRecipients : undefined;
 
                 await sendEmail(
                     primaryTo,

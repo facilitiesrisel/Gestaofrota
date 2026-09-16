@@ -491,19 +491,20 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         `Uma nova solicitação de reserva de veículo foi registrada por ${formData.requesterName} e aguarda análise da Gestão de Frota.`
     );
 
-    // Regra estrita: Todos os e-mails de reserva chegam para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br
+    // REGRA DE NEGÓCIO ESTRITA:
+    // No primeiro e-mail enviado na solicitação, os usuários NÃO devem estar em cópia nem como destinatários.
+    // O primeiro e-mail serve exclusivamente para a administração ver que há novas solicitações de reservas pendentes.
+    // Somente após a aprovação ou recusa, o e-mail deve ser enviado para o usuário, com cópia para deny e lorena.
     const baseAdmins = getReservasEmailRecipients();
-    const requesterEmail = (formData.email || "").trim().toLowerCase();
-    const recipients = Array.from(new Set([
+    const adminRecipients = Array.from(new Set([
       'deny.goncalves@risel.com.br',
       'lorena.padilha@risel.com.br',
-      ...baseAdmins,
-      ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+      ...baseAdmins
     ]));
 
     try {
       await sendEmail(
-        recipients, 
+        adminRecipients, 
         `Nova Solicitação de Reserva de Veículo - ${formData.requesterName}`, 
         emailHtml,
         {

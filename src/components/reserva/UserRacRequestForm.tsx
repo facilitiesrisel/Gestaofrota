@@ -358,18 +358,19 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         voucherAttachedNow: false
       });
 
-      // Regra estrita: Todos os e-mails de reserva chegam para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br
+      // REGRA DE NEGÓCIO ESTRITA:
+      // No primeiro e-mail enviado na solicitação de Locação RAC, os usuários NÃO devem estar em cópia nem como destinatários.
+      // O primeiro e-mail serve exclusivamente para a administração ver que há novas solicitações de RAC para cotação e providências.
+      // Somente após realizarmos a aprovação ou recusa, o e-mail deve ser enviado para o usuário, com cópia para deny e lorena.
       const baseAdmins = getReservasEmailRecipients();
-      const requesterEmail = (formData.requesterEmail || "").trim().toLowerCase();
-      const emailRecipients = Array.from(new Set([
+      const adminRecipients = Array.from(new Set([
         'deny.goncalves@risel.com.br',
         'lorena.padilha@risel.com.br',
-        ...baseAdmins,
-        ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+        ...baseAdmins
       ]));
 
       await sendEmail(
-        emailRecipients,
+        adminRecipients,
         emailSubject,
         emailHtml,
         {

@@ -219,17 +219,20 @@ const ReservationsView: React.FC = () => {
 
         const baseRecipients = getReservasEmailRecipients();
         const requesterEmail = (resSnapshot.email || "").trim().toLowerCase();
-        const recipients = Array.from(new Set([
+        const adminCcList = Array.from(new Set([
           'deny.goncalves@risel.com.br',
           'lorena.padilha@risel.com.br',
-          ...baseRecipients,
-          ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+          ...baseRecipients
         ]));
+        const isRequesterValid = Boolean(requesterEmail && requesterEmail.includes('@'));
+        const primaryTo = isRequesterValid ? [requesterEmail] : adminCcList;
+        const ccList = isRequesterValid ? adminCcList : undefined;
 
         try {
-          await sendEmail(recipients, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
+          await sendEmail(primaryTo, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
             fromName: "Risel Combustíveis",
-            source: "reservas"
+            source: "reservas",
+            cc: ccList
           });
           showToast("Reserva aprovada e notificações enviadas com sucesso!", 'success');
         } catch (emailErr) {
@@ -308,16 +311,20 @@ const ReservationsView: React.FC = () => {
       );
       const baseRecipients = getReservasEmailRecipients();
       const requesterEmail = (resSnapshot.email || "").trim().toLowerCase();
-      const recipients = Array.from(new Set([
+      const adminCcList = Array.from(new Set([
         'deny.goncalves@risel.com.br',
         'lorena.padilha@risel.com.br',
-        ...baseRecipients,
-        ...(requesterEmail && requesterEmail.includes('@') ? [requesterEmail] : [])
+        ...baseRecipients
       ]));
+      const isRequesterValid = Boolean(requesterEmail && requesterEmail.includes('@'));
+      const primaryTo = isRequesterValid ? [requesterEmail] : adminCcList;
+      const ccList = isRequesterValid ? adminCcList : undefined;
+
       try {
-        await sendEmail(recipients, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml, {
+        await sendEmail(primaryTo, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml, {
           fromName: "Risel Combustíveis",
-          source: "reservas"
+          source: "reservas",
+          cc: ccList
         });
         showToast("Reserva rejeitada e e-mail enviado com sucesso.", 'success');
       } catch (errEmail) {
@@ -360,15 +367,19 @@ const ReservationsView: React.FC = () => {
                 );
                 const baseCancelRecipients = getReservasEmailRecipients();
                 const reqCancelEmail = (reservation.email || "").trim().toLowerCase();
-                const recipients = Array.from(new Set([
+                const adminCcList = Array.from(new Set([
                   'deny.goncalves@risel.com.br',
                   'lorena.padilha@risel.com.br',
-                  ...baseCancelRecipients,
-                  ...(reqCancelEmail && reqCancelEmail.includes('@') ? [reqCancelEmail] : [])
+                  ...baseCancelRecipients
                 ]));
-                await sendEmail(recipients, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml, {
+                const isCancelEmailValid = Boolean(reqCancelEmail && reqCancelEmail.includes('@'));
+                const cancelPrimaryTo = isCancelEmailValid ? [reqCancelEmail] : adminCcList;
+                const cancelCcList = isCancelEmailValid ? adminCcList : undefined;
+
+                await sendEmail(cancelPrimaryTo, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml, {
                   fromName: "Risel Combustíveis",
-                  source: "reservas"
+                  source: "reservas",
+                  cc: cancelCcList
                 });
               } catch (mailErr) {
                 console.warn("Aviso ao enviar e-mail de cancelamento:", mailErr);
