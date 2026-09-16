@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown } from "lucide-react";
+import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -34,7 +34,12 @@ import {
   normalizeLancamento,
   forceSyncLancamentos
 } from "../../services/lancamentosService";
-import { sendLancamentoAprovacaoEmail } from "../../services/lancamentoEmailService";
+import { 
+  sendLancamentoAprovacaoEmail, 
+  DEFAULT_LANCAMENTO_TO_EMAILS, 
+  DEFAULT_LANCAMENTO_CC_EMAILS, 
+  getSaudacaoDestinatarios 
+} from "../../services/lancamentoEmailService";
 import { EmailRecipientsModal } from "../../components/common/EmailRecipientsModal";
 import {
   consultarCnpjReceita,
@@ -118,6 +123,59 @@ export function calcularDiasAteVencimento(dataVencStr: string, status: string) {
   } else {
     return { text: `${diffDays} dias restantes`, color: "text-slate-600 bg-slate-50 border-slate-100", days: diffDays };
   }
+}
+
+/**
+ * Formata data de vencimento para formato dd.mm.aaaa utilizado na padronização de arquivos
+ */
+export function formatarVencimentoParaNomeArquivo(dataStr?: string): string {
+  if (!dataStr || !dataStr.trim()) {
+    const hoje = new Date();
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const ano = hoje.getFullYear();
+    return `${dia}.${mes}.${ano}`;
+  }
+
+  const limpo = dataStr.trim();
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(limpo)) return limpo;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(limpo)) return limpo.replace(/\//g, '.');
+
+  const parts = limpo.split("T")[0].split(/[-/]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      // yyyy-mm-dd -> dd.mm.aaaa
+      return `${parts[2].padStart(2, '0')}.${parts[1].padStart(2, '0')}.${parts[0]}`;
+    } else {
+      return `${parts[0].padStart(2, '0')}.${parts[1].padStart(2, '0')}.${parts[2]}`;
+    }
+  }
+
+  return "00.00.0000";
+}
+
+/**
+ * Gera o nome pré-definido oficial do anexo conforme especificado pelo usuário:
+ * "vencimento em formato dd.mm.aaaa NF(com o nome do Fornecedor colado) e o nome do Fornecedor"
+ * Ex: "23.09.2026 NFROMANOS LAVA RAPIDO ROMANOS LAVA RAPIDO.pdf"
+ */
+export function gerarNomePadraoAnexoNf(
+  vencimento?: string,
+  fornecedor?: string,
+  nomeArquivoOriginal?: string
+): string {
+  let ext = ".pdf";
+  if (nomeArquivoOriginal && nomeArquivoOriginal.includes(".")) {
+    ext = nomeArquivoOriginal.substring(nomeArquivoOriginal.lastIndexOf("."));
+  }
+
+  const dataFmt = formatarVencimentoParaNomeArquivo(vencimento);
+  const fornLimpo = (fornecedor || "FORNECEDOR")
+    .trim()
+    .replace(/[\/\\:*?"<>|]/g, '')
+    .trim();
+
+  return `${dataFmt} NF${fornLimpo} ${fornLimpo}${ext}`;
 }
 
 const TIPOS_DOCUMENTO = ["Fatura", "Multa", "NF-e", "NFS-e", "Nota de Débito", "Outros", "Recibo"];
@@ -219,6 +277,20 @@ export default function Lancamento() {
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
+
+  // Modal de Escolha de Destinatários e Envio Oficial de E-mail de Aprovação
+  const [emailDispatchModal, setEmailDispatchModal] = useState<{
+    isOpen: boolean;
+    docData: any;
+    calculatedDocName: string;
+    toRecipients: string[];
+    ccRecipients: string[];
+    newToInput: string;
+    newCcInput: string;
+    isSaving?: boolean;
+    isSending?: boolean;
+    isManualResendOnly?: boolean;
+  } | null>(null);
 
   const isDenyUser = Boolean(
     user?.email?.toLowerCase().includes('deny') ||
@@ -1367,9 +1439,14 @@ export default function Lancamento() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
+        const isNf = formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento;
+        const nomeSugerido = isNf
+          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name)
+          : file.name;
+
         setFormData(prev => ({
           ...prev,
-          nomeArquivoAnexo: file.name,
+          nomeArquivoAnexo: nomeSugerido,
           arquivoAnexoBase64: (event.target?.result as string) || ""
         }));
       };
@@ -1387,9 +1464,14 @@ export default function Lancamento() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
+        const isNf = formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento;
+        const nomeSugerido = isNf
+          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name)
+          : file.name;
+
         setFormData(prev => ({
           ...prev,
-          nomeArquivoAnexo: file.name,
+          nomeArquivoAnexo: nomeSugerido,
           arquivoAnexoBase64: (event.target?.result as string) || ""
         }));
       };
@@ -1428,11 +1510,31 @@ export default function Lancamento() {
         data: { ...formData, docName }
       });
     } else {
-      executeSave(formData, docName);
+      // Ao salvar, em vez de disparar o e-mail direto, abre modal para o usuário escolher destinatários e cópias
+      setEmailDispatchModal({
+        isOpen: true,
+        docData: { ...formData },
+        calculatedDocName: docName,
+        toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
+        ccRecipients: [...DEFAULT_LANCAMENTO_CC_EMAILS],
+        newToInput: "",
+        newCcInput: "",
+        isSaving: false,
+        isSending: false,
+        isManualResendOnly: false
+      });
     }
   };
 
-  const executeSave = async (data: typeof formData, calculatedDocName: string) => {
+  const executeSave = async (
+    data: typeof formData, 
+    calculatedDocName: string,
+    options?: {
+      sendEmail?: boolean;
+      toRecipients?: string[];
+      ccRecipients?: string[];
+    }
+  ) => {
     const numVal = parseCurrencyToNumber(data.valorNf);
     const formatValueCurrency = `R$ ${numVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const formatVencimiento = data.dataVencimento || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -1533,21 +1635,23 @@ export default function Lancamento() {
       await saveLancamentoUnified(savedItem);
     }
 
-    // REGRA DE NEGÓCIO OFICIAL:
-    // O e-mail para aprovação deve ser enviado uma vez, ao salvar o documento com Status Aguardando Aprovação
-    // Usando a mesma ordem de colunas configurada pelo usuário
-    const isStatusAguardandoAprovacao = (savedItem?.status || "").toLowerCase().includes("aguardando");
-    
-    if (isStatusAguardandoAprovacao) {
+    // Disparo oficial com destinatários e cópias escolhidos no modal
+    if (options?.sendEmail) {
+      const paraLista = options.toRecipients && options.toRecipients.length > 0 ? options.toRecipients : DEFAULT_LANCAMENTO_TO_EMAILS;
+      const ccLista = options.ccRecipients || DEFAULT_LANCAMENTO_CC_EMAILS;
+
       sendLancamentoAprovacaoEmail({
         ...savedItem,
+        destinatariosPara: paraLista,
+        destinatariosCc: ccLista,
         columnOrder,
         visibleCols
       }).then(sent => {
         if (sent) {
+          const saudacaoUsada = getSaudacaoDestinatarios(paraLista);
           setEmailSentNotice({
             title: "E-mail de Aprovação Enviado",
-            desc: `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
+            desc: `E-mail de aprovação (${saudacaoUsada}) encaminhado para ${paraLista.join(", ")} com cópia para ${ccLista.join(", ")}.`
           });
           setTimeout(() => setEmailSentNotice(null), 8000);
         }
@@ -1574,6 +1678,7 @@ export default function Lancamento() {
     setEditingId(null);
     setFormData(getInitialFormState());
     setDuplicateWarning(null);
+    setEmailDispatchModal(null);
     setCnpjError("");
     setCnpjSuccessMsg("");
     setCnpjWarningRisel("");
@@ -1583,30 +1688,32 @@ export default function Lancamento() {
   // Estado para rastrear envio individual de e-mail de aprovação
   const [sendingEmailId, setSendingEmailId] = useState<number | string | null>(null);
 
-  // Disparo / Reenvio manual do e-mail de aprovação com anexo (respeitando a ordem de colunas do usuário)
-  const handleManualSendEmail = async (item: any) => {
-    setSendingEmailId(item.id);
-    try {
-      const sent = await sendLancamentoAprovacaoEmail({
+  // Disparo / Reenvio manual do e-mail de aprovação abrindo o modal corporativo de destinatários
+  const handleManualSendEmail = (item: any) => {
+    setEmailDispatchModal({
+      isOpen: true,
+      docData: {
         ...item,
-        columnOrder,
-        visibleCols
-      });
-      if (sent) {
-        setEmailSentNotice({
-          title: "E-mail de Aprovação Enviado",
-          desc: `E-mail com anexo e tabela formatada encaminhado com sucesso para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
-        });
-        setTimeout(() => setEmailSentNotice(null), 8000);
-      } else {
-        alert("Falha ao enviar e-mail de aprovação. Verifique a conexão com o servidor de e-mail.");
-      }
-    } catch (err: any) {
-      console.error("Erro ao disparar e-mail de aprovação:", err);
-      alert("Erro ao disparar e-mail: " + (err.message || "Falha na comunicação com o servidor"));
-    } finally {
-      setSendingEmailId(null);
-    }
+        fornecedor: item.fornecedor,
+        valorNf: item.valor,
+        dataVencimento: item.dataVencimento,
+        tipoDocumento: item.tipo,
+        estabelecimento: item.estabelecimento,
+        codigoLancamento: item.codigoLancamento || item.codLancamentoOc,
+        descricao: item.descricao,
+        cnpj: item.cnpj,
+        nomeArquivoAnexo: item.nomeArquivoAnexo,
+        arquivoAnexoBase64: item.arquivoAnexoBase64
+      },
+      calculatedDocName: item.doc,
+      toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
+      ccRecipients: [...DEFAULT_LANCAMENTO_CC_EMAILS],
+      newToInput: "",
+      newCcInput: "",
+      isSaving: false,
+      isSending: false,
+      isManualResendOnly: true
+    });
   };
 
   // Alteração e persistência direta de status na linha da tabela
@@ -2239,63 +2346,99 @@ export default function Lancamento() {
                      <h4 className="font-bold text-xs text-slate-700">Dados Básicos</h4>
                   </div>
 
-                  {/* Anexo de Nota Fiscal Integrado e Compacto */}
+                  {/* Anexo de Nota Fiscal Integrado e Compacto com Renomeação Padrão */}
                   <div className="bg-white rounded-lg border border-slate-200 p-2 shadow-inner relative overflow-hidden">
                     {formData.nomeArquivoAnexo ? (
-                      <div className="flex items-center justify-between gap-1.5">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <div className="w-6 h-6 rounded bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
-                            <FileText className="w-3.5 h-3.5 text-rose-600" />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="w-6 h-6 rounded bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
+                              <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                            </div>
+                            <div className="min-w-0">
+                              <h5 className="font-bold text-slate-800 text-[10px] leading-tight flex items-center gap-1">
+                                <span>Nota Anexada</span>
+                                <span className="text-[8px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded">
+                                  Pronta
+                                </span>
+                              </h5>
+                              <p className="text-[8px] text-slate-500 truncate" title={formData.nomeArquivoAnexo}>
+                                Padronização ativa (editável abaixo)
+                              </p>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <h5 className="font-bold text-slate-800 text-[9px] leading-tight truncate">
-                              Nota Anexada
-                            </h5>
-                            <p className="text-[8px] text-slate-500 font-mono truncate max-w-[120px]" title={formData.nomeArquivoAnexo}>
-                              {formData.nomeArquivoAnexo}
-                            </p>
+                          <div className="flex gap-1 shrink-0">
+                            <button 
+                              type="button" 
+                              onClick={() => {
+                                const novoNome = gerarNomePadraoAnexoNf(
+                                  formData.dataVencimento, 
+                                  formData.fornecedor, 
+                                  formData.nomeArquivoAnexo
+                                );
+                                setFormData(prev => ({ ...prev, nomeArquivoAnexo: novoNome }));
+                              }}
+                              className="p-1 rounded hover:bg-emerald-50 text-emerald-700 border border-emerald-200 bg-white transition-colors cursor-pointer"
+                              title="Regenerar nome padrão: dd.mm.aaaa NF[Fornecedor] [Fornecedor]"
+                            >
+                              <Sparkles className="w-3 h-3 text-emerald-600" />
+                            </button>
+                            <button 
+                              type="button" 
+                              onClick={() => {
+                                setViewingAnexo({
+                                  nome: formData.nomeArquivoAnexo,
+                                  fornecedor: formData.fornecedor || "Não identificado",
+                                  fornecedorCnpj: formData.cnpj || "Sem CNPJ",
+                                  valor: formData.valorNf ? `R$ ${formData.valorNf}` : "Não identificado",
+                                  cnpj: formData.cnpj || "Sem CNPJ",
+                                  doc: formData.codigoLancamento || formData.itemSistema || "S/N",
+                                  tipo: formData.tipoDocumento || formData.tipo || "NF-e",
+                                  estabelecimento: formData.estabelecimento || "",
+                                  centroCusto: formData.centroCusto || "",
+                                  aprovadores: formData.aprovadores || "",
+                                  formaPagto: formData.formaPagamento || "",
+                                  itemSistema: formData.itemSistema || "",
+                                  lancadoPor: formData.lancadoPor || "",
+                                  status: formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (formData.status || "Aguardando Aprovação"),
+                                  frequencia: formData.tipo || "Esporádico",
+                                  dataEmissao: formData.dataEmissao || "",
+                                  dataVencimento: formData.dataVencimento || "",
+                                  descricao: formData.descricao || "",
+                                  observacao: formData.observacao || "",
+                                  arquivoAnexoBase64: formData.arquivoAnexoBase64
+                                });
+                              }}
+                              className="p-1 rounded hover:bg-slate-100 text-slate-500 border border-slate-200 bg-white transition-colors cursor-pointer"
+                              title="Visualizar Nota"
+                            >
+                              <Eye className="w-3 h-3" />
+                            </button>
+                            <button 
+                              type="button" 
+                              onClick={() => setFormData(prev => ({ ...prev, nomeArquivoAnexo: "", arquivoAnexoBase64: "" }))}
+                              className="p-1 rounded hover:bg-rose-50 text-rose-500 border border-rose-200 bg-white transition-colors cursor-pointer"
+                              title="Remover anexo"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex gap-0.5 shrink-0">
-                          <button 
-                            type="button" 
-                            onClick={() => {
-                              setViewingAnexo({
-                                nome: formData.nomeArquivoAnexo,
-                                fornecedor: formData.fornecedor || "Não identificado",
-                                fornecedorCnpj: formData.cnpj || "Sem CNPJ",
-                                valor: formData.valorNf ? `R$ ${formData.valorNf}` : "Não identificado",
-                                cnpj: formData.cnpj || "Sem CNPJ",
-                                doc: formData.codigoLancamento || formData.itemSistema || "S/N",
-                                tipo: formData.tipoDocumento || formData.tipo || "NF-e",
-                                estabelecimento: formData.estabelecimento || "",
-                                centroCusto: formData.centroCusto || "",
-                                aprovadores: formData.aprovadores || "",
-                                formaPagto: formData.formaPagamento || "",
-                                itemSistema: formData.itemSistema || "",
-                                lancadoPor: formData.lancadoPor || "",
-                                status: formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (formData.status || "Aguardando Aprovação"),
-                                frequencia: formData.tipo || "Esporádico",
-                                dataEmissao: formData.dataEmissao || "",
-                                dataVencimento: formData.dataVencimento || "",
-                                descricao: formData.descricao || "",
-                                observacao: formData.observacao || "",
-                                arquivoAnexoBase64: formData.arquivoAnexoBase64
-                              });
-                            }}
-                            className="p-0.5 rounded hover:bg-slate-100 text-slate-500 transition-colors"
-                            title="Visualizar Nota"
-                          >
-                            <Eye className="w-3 h-3" />
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => setFormData(prev => ({ ...prev, nomeArquivoAnexo: "" }))}
-                            className="p-0.5 rounded hover:bg-rose-50 text-rose-500 transition-colors"
-                            title="Remover"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+
+                        {/* Campo editável para o nome do arquivo com máscara e sugestão padrão */}
+                        <div className="space-y-0.5 pt-0.5 border-t border-slate-100">
+                          <div className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase tracking-wider">
+                            <span>Nome do Arquivo (Editável)</span>
+                            <span className="text-[7.5px] text-emerald-700 font-semibold normal-case">dd.mm.aaaa NFFornecedor Fornecedor</span>
+                          </div>
+                          <input 
+                            type="text"
+                            value={formData.nomeArquivoAnexo}
+                            onChange={(e) => setFormData(prev => ({ ...prev, nomeArquivoAnexo: e.target.value }))}
+                            className="w-full px-2 py-1 text-[10px] font-mono font-medium text-slate-800 bg-slate-50 border border-slate-200 focus:border-[#114D38] focus:bg-white focus:ring-1 focus:ring-[#114D38]/20 rounded outline-none transition-all shadow-2xs"
+                            placeholder="dd.mm.aaaa NFFornecedor Fornecedor.pdf"
+                            title="Você pode alterar o nome do arquivo aqui se precisar"
+                          />
                         </div>
                       </div>
                     ) : (
@@ -3158,10 +3301,24 @@ export default function Lancamento() {
                 Parar Lançamento (Ajustar número)
               </button>
               <button
-                onClick={() => executeSave(duplicateWarning.data, duplicateWarning.data.docName)}
+                onClick={() => {
+                  setEmailDispatchModal({
+                    isOpen: true,
+                    docData: duplicateWarning.data,
+                    calculatedDocName: duplicateWarning.data.docName,
+                    toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
+                    ccRecipients: [...DEFAULT_LANCAMENTO_CC_EMAILS],
+                    newToInput: "",
+                    newCcInput: "",
+                    isSaving: false,
+                    isSending: false,
+                    isManualResendOnly: false
+                  });
+                  setDuplicateWarning(null);
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-500/10 cursor-pointer"
               >
-                Seguir Lançando (Ignorar duplicidade)
+                Seguir Lançando (Definir Destinatários e Salvar)
               </button>
             </div>
           </div>
@@ -3715,6 +3872,438 @@ export default function Lancamento() {
         initialSubmodule="documentos"
         currentUserEmail={user?.email || "deny.goncalves@risel.com.br"}
       />
+
+      {/* Modal Interativo de Seleção de Destinatários e Disparo de E-mail */}
+      {emailDispatchModal?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/65 backdrop-blur-xs p-4 overflow-y-auto">
+          <motion.div
+            initial={{ scale: 0.96, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.96, opacity: 0 }}
+            className="bg-white rounded-2xl p-6 max-w-2xl w-full shadow-2xl border border-slate-200 space-y-5 my-auto max-h-[95vh] flex flex-col"
+          >
+            {/* Cabeçalho do Modal */}
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-[#114D38] shadow-2xs">
+                  <Mail className="w-5 h-5 text-[#114D38]" />
+                </div>
+                <div>
+                  <h3 className="font-display font-black text-base text-slate-800 flex items-center gap-2">
+                    <span>Destinatários do E-mail de Aprovação</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-[#114D38] border border-emerald-200">
+                      Risel Combustíveis
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {emailDispatchModal.isManualResendOnly
+                      ? "Escolha os destinatários para o reenvio manual da notificação de aprovação."
+                      : "Defina quem receberá este lançamento antes de finalizar o registro no sistema."}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEmailDispatchModal(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors"
+                title="Fechar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Corpo com Scroll */}
+            <div className="space-y-4 overflow-y-auto pr-1 flex-1">
+              {/* Card Resumo do Documento e Saudação Automática */}
+              <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-700">Documento:</span>
+                    <span className="font-black text-[#114D38] bg-white px-2 py-0.5 rounded border border-slate-200 font-mono text-[11px]">
+                      {emailDispatchModal.calculatedDocName || emailDispatchModal.docData?.doc || "Lançamento"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-700">Valor:</span>
+                    <span className="font-black text-emerald-700 bg-white px-2 py-0.5 rounded border border-slate-200">
+                      {typeof emailDispatchModal.docData?.valorNf === "string" && emailDispatchModal.docData.valorNf.startsWith("R$")
+                        ? emailDispatchModal.docData.valorNf
+                        : `R$ ${emailDispatchModal.docData?.valorNf || emailDispatchModal.docData?.valor || "0,00"}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-700">Vencimento:</span>
+                    <span className="font-bold text-amber-700 bg-white px-2 py-0.5 rounded border border-slate-200">
+                      {formatDateDisplay(emailDispatchModal.docData?.dataVencimento || emailDispatchModal.docData?.vencimento)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Banner de Saudação Dinâmica */}
+                <div className="flex items-center justify-between gap-2 p-2 bg-emerald-50/60 rounded-lg border border-emerald-100 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span className="text-[11px] font-semibold text-slate-700">
+                      Saudação Dinâmica no E-mail:
+                    </span>
+                    <span className="text-xs font-black text-[#114D38] bg-white px-2 py-0.5 rounded border border-emerald-200 shadow-2xs font-mono">
+                      "{getSaudacaoDestinatarios(emailDispatchModal.toRecipients)}"
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-emerald-800 font-medium hidden sm:inline">
+                    {emailDispatchModal.toRecipients.length === 1
+                      ? "Personalizado para 1 destinatário"
+                      : "Tratamento coletivo"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Seção Destinatários Principais (Para / To) */}
+              <div className="space-y-2 p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-emerald-700" />
+                    <label className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
+                      Destinatários Principais (Para / To) *
+                    </label>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    {emailDispatchModal.toRecipients.length} selecionado(s)
+                  </span>
+                </div>
+
+                {/* Chips de Destinatários To */}
+                <div className="flex flex-wrap gap-1.5">
+                  {emailDispatchModal.toRecipients.map((email) => {
+                    const nomeIdentificado = email.toLowerCase().includes("csouza")
+                      ? "Cesar"
+                      : email.toLowerCase().includes("wbreda")
+                      ? "Wesley"
+                      : email.toLowerCase().includes("deny")
+                      ? "Deny"
+                      : email.toLowerCase().includes("lorena")
+                      ? "Lorena"
+                      : "";
+
+                    return (
+                      <span
+                        key={email}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[#114D38] text-xs font-bold shadow-2xs"
+                      >
+                        <span className="font-mono text-[11px]">{email}</span>
+                        {nomeIdentificado && (
+                          <span className="px-1.5 py-0.2 rounded bg-white text-[9px] font-black text-emerald-800 border border-emerald-100">
+                            {nomeIdentificado}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEmailDispatchModal((prev) => {
+                              if (!prev) return null;
+                              const filtrados = prev.toRecipients.filter((item) => item !== email);
+                              return { ...prev, toRecipients: filtrados };
+                            });
+                          }}
+                          className="hover:bg-emerald-200/60 p-0.5 rounded text-emerald-800 cursor-pointer transition-colors"
+                          title={`Remover ${email}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                  {emailDispatchModal.toRecipients.length === 0 && (
+                    <span className="text-xs text-rose-600 font-semibold p-1">
+                      Nenhum destinatário principal. O e-mail precisa de ao menos um destinatário no campo Para.
+                    </span>
+                  )}
+                </div>
+
+                {/* Adicionar novo e-mail To */}
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="email"
+                    placeholder="Adicionar outro e-mail (ex: diretor@risel.com.br)..."
+                    value={emailDispatchModal.newToInput}
+                    onChange={(e) =>
+                      setEmailDispatchModal((prev) => (prev ? { ...prev, newToInput: e.target.value } : null))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const val = emailDispatchModal.newToInput.trim().toLowerCase();
+                        if (val && val.includes("@") && !emailDispatchModal.toRecipients.includes(val)) {
+                          setEmailDispatchModal((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  toRecipients: [...prev.toRecipients, val],
+                                  newToInput: ""
+                                }
+                              : null
+                          );
+                        }
+                      }
+                    }}
+                    className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-800 placeholder-slate-400 bg-slate-50/50 focus:bg-white focus:border-[#114D38] outline-none transition-all font-medium"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = emailDispatchModal.newToInput.trim().toLowerCase();
+                      if (val && val.includes("@") && !emailDispatchModal.toRecipients.includes(val)) {
+                        setEmailDispatchModal((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                toRecipients: [...prev.toRecipients, val],
+                                newToInput: ""
+                              }
+                            : null
+                        );
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-[#114D38] hover:bg-[#0d3d2c] text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Adicionar</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Seção Em Cópia (CC) */}
+              <div className="space-y-2 p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-slate-600" />
+                    <label className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
+                      Em Cópia (CC)
+                    </label>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    {emailDispatchModal.ccRecipients.length} em cópia
+                  </span>
+                </div>
+
+                {/* Chips de Destinatários CC */}
+                <div className="flex flex-wrap gap-1.5">
+                  {emailDispatchModal.ccRecipients.map((email) => {
+                    const nomeIdentificado = email.toLowerCase().includes("lorena")
+                      ? "Lorena"
+                      : email.toLowerCase().includes("deny")
+                      ? "Deny"
+                      : email.toLowerCase().includes("csouza")
+                      ? "Cesar"
+                      : email.toLowerCase().includes("wbreda")
+                      ? "Wesley"
+                      : "";
+
+                    return (
+                      <span
+                        key={email}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-800 text-xs font-semibold shadow-2xs"
+                      >
+                        <span className="font-mono text-[11px]">{email}</span>
+                        {nomeIdentificado && (
+                          <span className="px-1.5 py-0.2 rounded bg-white text-[9px] font-bold text-slate-700 border border-slate-200">
+                            {nomeIdentificado}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEmailDispatchModal((prev) => {
+                              if (!prev) return null;
+                              const filtrados = prev.ccRecipients.filter((item) => item !== email);
+                              return { ...prev, ccRecipients: filtrados };
+                            });
+                          }}
+                          className="hover:bg-slate-200 p-0.5 rounded text-slate-600 cursor-pointer transition-colors"
+                          title={`Remover ${email}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                  {emailDispatchModal.ccRecipients.length === 0 && (
+                    <span className="text-xs text-slate-400 italic p-1">
+                      Nenhum e-mail em cópia configurado.
+                    </span>
+                  )}
+                </div>
+
+                {/* Adicionar novo e-mail CC */}
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="email"
+                    placeholder="Adicionar e-mail em cópia..."
+                    value={emailDispatchModal.newCcInput}
+                    onChange={(e) =>
+                      setEmailDispatchModal((prev) => (prev ? { ...prev, newCcInput: e.target.value } : null))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const val = emailDispatchModal.newCcInput.trim().toLowerCase();
+                        if (val && val.includes("@") && !emailDispatchModal.ccRecipients.includes(val)) {
+                          setEmailDispatchModal((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  ccRecipients: [...prev.ccRecipients, val],
+                                  newCcInput: ""
+                                }
+                              : null
+                          );
+                        }
+                      }
+                    }}
+                    className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-800 placeholder-slate-400 bg-slate-50/50 focus:bg-white focus:border-[#114D38] outline-none transition-all font-medium"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = emailDispatchModal.newCcInput.trim().toLowerCase();
+                      if (val && val.includes("@") && !emailDispatchModal.ccRecipients.includes(val)) {
+                        setEmailDispatchModal((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                ccRecipients: [...prev.ccRecipients, val],
+                                newCcInput: ""
+                              }
+                            : null
+                        );
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Adicionar CC</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Informação sobre a tabela e anexo anexados */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1 text-xs text-slate-600">
+                <div className="flex items-center justify-between font-bold text-slate-700">
+                  <span className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Ordem Oficial dos Dados Enviados no E-mail:</span>
+                  </span>
+                  {emailDispatchModal.docData?.nomeArquivoAnexo && (
+                    <span className="text-[10px] text-emerald-800 font-mono bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      Anexo: {emailDispatchModal.docData.nomeArquivoAnexo}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed font-mono">
+                  Status &gt; Data do Lançamento &gt; Nº Documento &gt; Fornecedor &gt; Nº Estabelecimento &gt; Nº Lançamento/OC &gt; Descrição &gt; Valor &gt; Vencimento
+                </p>
+              </div>
+            </div>
+
+            {/* Rodapé com Ações Corporativas */}
+            <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setEmailDispatchModal(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 border border-slate-200 cursor-pointer transition-colors"
+              >
+                Voltar ao Formulário
+              </button>
+
+              <div className="flex items-center gap-2">
+                {!emailDispatchModal.isManualResendOnly && (
+                  <button
+                    type="button"
+                    disabled={emailDispatchModal.isSaving}
+                    onClick={async () => {
+                      setEmailDispatchModal((prev) => (prev ? { ...prev, isSaving: true } : null));
+                      try {
+                        await executeSave(
+                          emailDispatchModal.docData,
+                          emailDispatchModal.calculatedDocName,
+                          { sendEmail: false }
+                        );
+                      } finally {
+                        setEmailDispatchModal(null);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 cursor-pointer transition-colors"
+                  >
+                    Salvar Sem Enviar E-mail
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  disabled={
+                    emailDispatchModal.isSending ||
+                    emailDispatchModal.isSaving ||
+                    emailDispatchModal.toRecipients.length === 0
+                  }
+                  onClick={async () => {
+                    setEmailDispatchModal((prev) => (prev ? { ...prev, isSending: true } : null));
+                    try {
+                      if (emailDispatchModal.isManualResendOnly) {
+                        const para = emailDispatchModal.toRecipients;
+                        const cc = emailDispatchModal.ccRecipients;
+                        const sent = await sendLancamentoAprovacaoEmail({
+                          ...emailDispatchModal.docData,
+                          doc: emailDispatchModal.calculatedDocName || emailDispatchModal.docData.doc,
+                          destinatariosPara: para,
+                          destinatariosCc: cc,
+                          columnOrder,
+                          visibleCols
+                        });
+                        if (sent) {
+                          const saudacao = getSaudacaoDestinatarios(para);
+                          setEmailSentNotice({
+                            title: "E-mail de Aprovação Enviado",
+                            desc: `E-mail (${saudacao}) encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}.`
+                          });
+                          setTimeout(() => setEmailSentNotice(null), 8000);
+                        } else {
+                          alert("Não foi possível enviar o e-mail. Verifique o servidor de e-mail.");
+                        }
+                        setEmailDispatchModal(null);
+                      } else {
+                        await executeSave(
+                          emailDispatchModal.docData,
+                          emailDispatchModal.calculatedDocName,
+                          {
+                            sendEmail: true,
+                            toRecipients: emailDispatchModal.toRecipients,
+                            ccRecipients: emailDispatchModal.ccRecipients
+                          }
+                        );
+                      }
+                    } catch (err: any) {
+                      console.error("Erro no envio:", err);
+                      alert("Erro ao disparar e-mail: " + (err?.message || "Falha"));
+                    } finally {
+                      setEmailDispatchModal(null);
+                    }
+                  }}
+                  className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-[#114D38] hover:bg-[#0d3d2c] shadow-md shadow-[#114D38]/20 flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>
+                    {emailDispatchModal.isSending
+                      ? "Enviando..."
+                      : emailDispatchModal.isManualResendOnly
+                      ? "Confirmar e Reenviar E-mail"
+                      : "Salvar e Enviar E-mail"}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

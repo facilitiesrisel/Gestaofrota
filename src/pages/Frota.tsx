@@ -144,6 +144,7 @@ export interface Veiculo {
   dataTrocaCondutor?: string;
   dataInativacao?: string;
   motivoInativacao?: string;
+  tipoVinculo?: "Contrato" | "Provisório";
 }
 
 interface Checklist {
@@ -1026,6 +1027,7 @@ export default function Frota() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterFilial, setFilterFilial] = useState("Todos");
   const [filterStatus, setFilterStatus] = useState("Todos");
+  const [filterTipoVinculo, setFilterTipoVinculo] = useState("Todos");
 
   // Real vehicles loading & costs filters states
   const [isVehiclesLoading, setIsVehiclesLoading] = useState(false);
@@ -1561,7 +1563,8 @@ export default function Frota() {
       "Combustível",
       "Data Troca Condutor",
       "Data Inativação",
-      "Motivo Inativação"
+      "Motivo Inativação",
+      "Tipo de Vínculo"
     ];
 
     const escapeCsv = (val: any) => {
@@ -1591,7 +1594,8 @@ export default function Frota() {
       escapeCsv(v.combustivel || ""),
       escapeCsv(v.dataTrocaCondutor || ""),
       escapeCsv(v.dataInativacao || ""),
-      escapeCsv(v.motivoInativacao || "")
+      escapeCsv(v.motivoInativacao || ""),
+      escapeCsv(v.tipoVinculo || "Contrato")
     ].join(";"));
 
     const csvContent = "\uFEFF" + [headers.join(";"), ...rows].join("\r\n");
@@ -1624,6 +1628,7 @@ export default function Frota() {
   const [modalLocadora, setModalLocadora] = useState("");
   const [customLocadora, setCustomLocadora] = useState("");
   const [modalVencContrato, setModalVencContrato] = useState("");
+  const [modalTipoVinculo, setModalTipoVinculo] = useState<"Contrato" | "Provisório">("Contrato");
   const [modalStatus, setModalStatus] = useState<string>("Ativo");
   const [modalDataInativacao, setModalDataInativacao] = useState<string>("");
   const [modalMotivoInativacao, setModalMotivoInativacao] = useState<string>("");
@@ -2214,8 +2219,9 @@ export default function Frota() {
       
       const matchesFilial = filterFilial === "Todos" || isSameCityOrBase(v.filial, filterFilial);
       const matchesStatus = filterStatus === "Todos" || v.status === filterStatus;
+      const matchesTipoVinculo = filterTipoVinculo === "Todos" || (v.tipoVinculo || "Contrato") === filterTipoVinculo;
 
-      return matchesSearch && matchesFilial && matchesStatus;
+      return matchesSearch && matchesFilial && matchesStatus && matchesTipoVinculo;
     });
 
     // Sort list
@@ -2240,7 +2246,7 @@ export default function Frota() {
     });
 
     return list;
-  }, [veiculos, searchQuery, filterFilial, filterStatus, sortField, sortDirection]);
+  }, [veiculos, searchQuery, filterFilial, filterStatus, filterTipoVinculo, sortField, sortDirection]);
 
   // Statistics summaries - 4 main metrics of Controle de Frota (Dinamizados de acordo com filtros ativos)
   const stats = useMemo(() => {
@@ -2250,6 +2256,10 @@ export default function Frota() {
     const inativos = targetVehicles.filter(v => v.status === "Inativo").length;
     const manutencao = targetVehicles.filter(v => v.status === "Em Manutenção").length;
     
+    // Contagem de vínculos
+    const contratoCount = targetVehicles.filter(v => (v.tipoVinculo || "Contrato") === "Contrato").length;
+    const provisorioCount = targetVehicles.filter(v => v.tipoVinculo === "Provisório").length;
+
     // Contratos vencidos ou vencendo em 90 dias ou menos
     const contratosProximos90 = targetVehicles.filter(v => {
       if (v.status === "Inativo") return false;
@@ -2267,7 +2277,7 @@ export default function Frota() {
 
     const odometroTotal = targetVehicles.reduce((acc, curr) => acc + (curr.odometro || 0), 0);
 
-    return { total, ativos, inativos, manutencao, contratosProximos90, alertaVenc30, odometroTotal };
+    return { total, ativos, inativos, manutencao, contratosProximos90, alertaVenc30, odometroTotal, contratoCount, provisorioCount };
   }, [filteredVeiculos]);
 
   // Lista dinamizada para exibição na tabela (filtro de 90 dias ou vencidos com ordenação por proximidade de vencimento)
@@ -2345,6 +2355,7 @@ export default function Frota() {
       dataTrocaCondutor: formData.get("dataTrocaCondutor") as string || HOJE_REF,
       dataInativacao: selectedStatus === "Inativo" ? (inputDataInativacao || HOJE_REF) : (editingVeh?.dataInativacao || ""),
       motivoInativacao: selectedStatus === "Inativo" ? inputMotivoInativacao : (editingVeh?.motivoInativacao || ""),
+      tipoVinculo: ((formData.get("tipoVinculo") as string) || modalTipoVinculo || "Contrato") as "Contrato" | "Provisório",
     };
 
     let updated;
@@ -2823,7 +2834,7 @@ export default function Frota() {
               { 
                 label: "Total Frota", 
                 value: stats.total, 
-                sub: "Veículos cadastrados", 
+                sub: `${stats.contratoCount} Contrato · ${stats.provisorioCount} Provisórios`, 
                 gradient: "from-orange-500 to-amber-500", 
                 icon: Car, 
                 textColor: "text-orange-600",
@@ -3357,6 +3368,18 @@ export default function Frota() {
                           <option value="Inativo">Inativo</option>
                         </select>
                       </div>
+                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-xs font-semibold text-slate-600 shrink-0">
+                        Vínculo:
+                        <select 
+                          value={filterTipoVinculo} 
+                          onChange={(e) => setFilterTipoVinculo(e.target.value)} 
+                          className="bg-transparent outline-none cursor-pointer text-orange-600 font-extrabold"
+                        >
+                          <option value="Todos">Todos</option>
+                          <option value="Contrato">Contrato</option>
+                          <option value="Provisório">Provisório</option>
+                        </select>
+                      </div>
                     </div>
 
                     {/* Action Buttons */}
@@ -3376,6 +3399,7 @@ export default function Frota() {
                           setModalLocadora("");
                           setCustomLocadora("");
                           setModalVencContrato("");
+                          setModalTipoVinculo("Contrato");
                           setModalStatus("Ativo");
                           setModalDataInativacao("");
                           setModalMotivoInativacao("");
@@ -3496,7 +3520,18 @@ export default function Frota() {
                                 </td>
                                 <td className="py-4 px-4 text-left">
                                   <div className="font-bold text-slate-750">{normalizeBaseOperacional(v.filial)}</div>
-                                  <div className="text-[10px] font-semibold text-slate-400 mt-0.5">{v.contrato}</div>
+                                  <div className="text-[10px] font-semibold text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                    <span>{v.contrato || "-"}</span>
+                                    {v.tipoVinculo === "Provisório" ? (
+                                      <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                                        Provisório
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                        Contrato
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-4 px-4 font-bold text-slate-500 uppercase text-[11px] text-left" title={v.locadora}>
                                   {formatarTextoLongo(v.locadora, 16)}
@@ -3581,6 +3616,7 @@ export default function Frota() {
                                           setCustomLocadora(loc);
                                         }
                                         setModalVencContrato(v.vencContrato || "");
+                                        setModalTipoVinculo(v.tipoVinculo || "Contrato");
                                         setModalStatus(v.status);
                                         setModalDataInativacao(v.dataInativacao || "");
                                         setModalMotivoInativacao(v.motivoInativacao || "");
@@ -3911,6 +3947,23 @@ export default function Frota() {
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[9px] text-slate-400 font-bold uppercase block tracking-wider">Locadora Proprietária</span>
                     <span className="font-bold text-slate-700 block mt-1 uppercase text-[10px]">{selectedVeiculo.locadora}</span>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                    <span className="text-[9px] text-slate-400 font-bold uppercase block tracking-wider">Tipo de Veículo</span>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      {selectedVeiculo.tipoVinculo === "Provisório" ? (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                          Provisório
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-900 border border-blue-200">
+                          Contrato
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      {selectedVeiculo.tipoVinculo === "Provisório" ? "Veículo temporário / reserva" : "Veículo regular de contrato"}
+                    </span>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[9px] text-slate-400 font-bold uppercase block tracking-wider">Vencimento do Contrato</span>
@@ -4281,6 +4334,22 @@ export default function Frota() {
                 <div className="space-y-1">
                   <label className="block">Odômetro Atual (km)</label>
                   <input type="number" name="odometro" defaultValue={editingVeh?.odometro || 0} className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-orange-500" />
+                </div>
+                <div className="space-y-1">
+                  <label className="block">Tipo de Veículo (Vínculo) *</label>
+                  <select 
+                    name="tipoVinculo" 
+                    value={modalTipoVinculo} 
+                    onChange={(e) => setModalTipoVinculo(e.target.value as "Contrato" | "Provisório")}
+                    className={`w-full border px-3 py-2 rounded-lg outline-none font-bold text-xs transition-colors ${
+                      modalTipoVinculo === "Provisório"
+                        ? "border-amber-400 bg-amber-50/50 text-amber-900 focus:ring-1 focus:ring-amber-500"
+                        : "border-slate-200 bg-white text-slate-800 focus:ring-1 focus:ring-orange-500"
+                    }`}
+                  >
+                    <option value="Contrato">Contrato (Fixo Regular)</option>
+                    <option value="Provisório">Provisório (Carro Reserva)</option>
+                  </select>
                 </div>
                 <div className="space-y-1 col-span-2">
                   <label className="block">Status do Veículo (Ativo/Inativo) *</label>
