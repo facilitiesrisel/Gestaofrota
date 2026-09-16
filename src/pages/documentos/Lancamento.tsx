@@ -1293,6 +1293,17 @@ export default function Lancamento() {
         valorNf: value,
         aprovadores: calculatedAlcada
       }));
+    } else if (name === "dataVencimento" || name === "fornecedor") {
+      setFormData(prev => {
+        const nextData = { ...prev, [name]: value };
+        // Se já anexou arquivo e o nome segue o padrão oficial, atualiza dinamicamente
+        if (prev.nomeArquivoAnexo && /^\d{2}\.\d{2}\.\d{4}/.test(prev.nomeArquivoAnexo)) {
+          const novoVenc = name === "dataVencimento" ? value : prev.dataVencimento;
+          const novoForn = name === "fornecedor" ? value : prev.fornecedor;
+          nextData.nomeArquivoAnexo = gerarNomePadraoAnexoNf(novoVenc, novoForn, prev.nomeArquivoAnexo);
+        }
+        return nextData;
+      });
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
     }
@@ -1588,8 +1599,8 @@ export default function Lancamento() {
         dataAprovacao: dataAprovacao,
         aprovadores: finalAlcada,
         centroCusto: finalCentroCusto,
-        codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
-        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || "",
+        codLancamentoOc: data.codLancamentoOc || "",
+        codigoLancamento: data.codigoLancamento || "",
         cidade: data.cidade || lastCnpjDataRef.current?.municipio || existing?.cidade || "",
         uf: (data.uf || lastCnpjDataRef.current?.uf || existing?.uf || "").toUpperCase(),
         telefone: data.telefone || lastCnpjDataRef.current?.telefone || existing?.telefone || "",
@@ -1624,8 +1635,8 @@ export default function Lancamento() {
         dataAprovacao: isNowApproved ? new Date().toLocaleDateString('pt-BR') : "",
         aprovadores: finalAlcada,
         centroCusto: finalCentroCusto,
-        codLancamentoOc: data.codLancamentoOc || data.codigoLancamento || "",
-        codigoLancamento: data.codLancamentoOc || data.codigoLancamento || "",
+        codLancamentoOc: data.codLancamentoOc || "",
+        codigoLancamento: data.codigoLancamento || "",
         cidade: data.cidade || lastCnpjDataRef.current?.municipio || "",
         uf: (data.uf || lastCnpjDataRef.current?.uf || "").toUpperCase(),
         telefone: data.telefone || lastCnpjDataRef.current?.telefone || "",
@@ -1800,8 +1811,8 @@ export default function Lancamento() {
       moduloPetroshow: "",
       status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
       aprovadores: item.aprovadores || "",
-      codigoLancamento: docCode,
-      codLancamentoOc: item.codLancamentoOc || item.codigoLancamento || "",
+      codigoLancamento: item.codigoLancamento || docCode,
+      codLancamentoOc: item.codLancamentoOc || "",
       dataAprovacao: item.dataAprovacao || "",
       dataEnvio: "",
       observacao: item.observacao || "",
@@ -2337,305 +2348,7 @@ export default function Lancamento() {
                   </div>
                 </div>
 
-                {/* Sec 2: Dados Básicos */}
-                <div className="space-y-2 bg-slate-50/50 border border-slate-100 rounded-[12px] p-3">
-                  <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-slate-200">
-                     <div className="w-6 h-6 rounded-full bg-[#114D38]/10 flex items-center justify-center">
-                       <span className="text-[#114D38] text-xs">👤</span>
-                     </div>
-                     <h4 className="font-bold text-xs text-slate-700">Dados Básicos</h4>
-                  </div>
-
-                  {/* Anexo de Nota Fiscal Integrado e Compacto com Renomeação Padrão */}
-                  <div className="bg-white rounded-lg border border-slate-200 p-2 shadow-inner relative overflow-hidden">
-                    {formData.nomeArquivoAnexo ? (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between gap-1.5">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <div className="w-6 h-6 rounded bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
-                              <FileText className="w-3.5 h-3.5 text-emerald-600" />
-                            </div>
-                            <div className="min-w-0">
-                              <h5 className="font-bold text-slate-800 text-[10px] leading-tight flex items-center gap-1">
-                                <span>Nota Anexada</span>
-                                <span className="text-[8px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded">
-                                  Pronta
-                                </span>
-                              </h5>
-                              <p className="text-[8px] text-slate-500 truncate" title={formData.nomeArquivoAnexo}>
-                                Padronização ativa (editável abaixo)
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex gap-1 shrink-0">
-                            <button 
-                              type="button" 
-                              onClick={() => {
-                                const novoNome = gerarNomePadraoAnexoNf(
-                                  formData.dataVencimento, 
-                                  formData.fornecedor, 
-                                  formData.nomeArquivoAnexo
-                                );
-                                setFormData(prev => ({ ...prev, nomeArquivoAnexo: novoNome }));
-                              }}
-                              className="p-1 rounded hover:bg-emerald-50 text-emerald-700 border border-emerald-200 bg-white transition-colors cursor-pointer"
-                              title="Regenerar nome padrão: dd.mm.aaaa NF[Fornecedor] [Fornecedor]"
-                            >
-                              <Sparkles className="w-3 h-3 text-emerald-600" />
-                            </button>
-                            <button 
-                              type="button" 
-                              onClick={() => {
-                                setViewingAnexo({
-                                  nome: formData.nomeArquivoAnexo,
-                                  fornecedor: formData.fornecedor || "Não identificado",
-                                  fornecedorCnpj: formData.cnpj || "Sem CNPJ",
-                                  valor: formData.valorNf ? `R$ ${formData.valorNf}` : "Não identificado",
-                                  cnpj: formData.cnpj || "Sem CNPJ",
-                                  doc: formData.codigoLancamento || formData.itemSistema || "S/N",
-                                  tipo: formData.tipoDocumento || formData.tipo || "NF-e",
-                                  estabelecimento: formData.estabelecimento || "",
-                                  centroCusto: formData.centroCusto || "",
-                                  aprovadores: formData.aprovadores || "",
-                                  formaPagto: formData.formaPagamento || "",
-                                  itemSistema: formData.itemSistema || "",
-                                  lancadoPor: formData.lancadoPor || "",
-                                  status: formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (formData.status || "Aguardando Aprovação"),
-                                  frequencia: formData.tipo || "Esporádico",
-                                  dataEmissao: formData.dataEmissao || "",
-                                  dataVencimento: formData.dataVencimento || "",
-                                  descricao: formData.descricao || "",
-                                  observacao: formData.observacao || "",
-                                  arquivoAnexoBase64: formData.arquivoAnexoBase64
-                                });
-                              }}
-                              className="p-1 rounded hover:bg-slate-100 text-slate-500 border border-slate-200 bg-white transition-colors cursor-pointer"
-                              title="Visualizar Nota"
-                            >
-                              <Eye className="w-3 h-3" />
-                            </button>
-                            <button 
-                              type="button" 
-                              onClick={() => setFormData(prev => ({ ...prev, nomeArquivoAnexo: "", arquivoAnexoBase64: "" }))}
-                              className="p-1 rounded hover:bg-rose-50 text-rose-500 border border-rose-200 bg-white transition-colors cursor-pointer"
-                              title="Remover anexo"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Campo editável para o nome do arquivo com máscara e sugestão padrão */}
-                        <div className="space-y-0.5 pt-0.5 border-t border-slate-100">
-                          <div className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase tracking-wider">
-                            <span>Nome do Arquivo (Editável)</span>
-                            <span className="text-[7.5px] text-emerald-700 font-semibold normal-case">dd.mm.aaaa NFFornecedor Fornecedor</span>
-                          </div>
-                          <input 
-                            type="text"
-                            value={formData.nomeArquivoAnexo}
-                            onChange={(e) => setFormData(prev => ({ ...prev, nomeArquivoAnexo: e.target.value }))}
-                            className="w-full px-2 py-1 text-[10px] font-mono font-medium text-slate-800 bg-slate-50 border border-slate-200 focus:border-[#114D38] focus:bg-white focus:ring-1 focus:ring-[#114D38]/20 rounded outline-none transition-all shadow-2xs"
-                            placeholder="dd.mm.aaaa NFFornecedor Fornecedor.pdf"
-                            title="Você pode alterar o nome do arquivo aqui se precisar"
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <div 
-                        onDragOver={handleDragOver}
-                        onDrop={handleDrop}
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex items-center gap-1.5 border border-dashed border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/5 rounded p-1.5 transition-all cursor-pointer group"
-                      >
-                        <input 
-                          type="file" 
-                          ref={fileInputRef} 
-                          onChange={handleFileUpload} 
-                          accept=".pdf,.png,.jpg,.jpeg,.xml" 
-                          className="hidden" 
-                        />
-                        <div className="w-6 h-6 rounded bg-slate-50 group-hover:bg-emerald-50 border border-slate-100 group-hover:border-emerald-200 flex items-center justify-center text-slate-500 group-hover:text-emerald-600 transition-all shrink-0">
-                          <Upload className="w-3 h-3" />
-                        </div>
-                        <div className="text-left min-w-0">
-                          <h5 className="font-bold text-slate-700 text-[9px] group-hover:text-emerald-700 transition-colors leading-none">Anexar Nota/Boleto</h5>
-                          <p className="text-[7.5px] text-slate-400 mt-0.5 leading-tight truncate">Arraste ou clique (PDF/Imagem)</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Lançado por *</label>
-                    <input type="text" name="lancadoPor" value={formData.lancadoPor} onChange={handleChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm" placeholder="Primeiro Nome" />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div className="space-y-0.5 min-w-0">
-                      <div className="flex justify-between items-center gap-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">Base/Filial</label>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button 
-                            type="button" 
-                            onClick={() => setIsManageBasesModalOpen(true)} 
-                            className="text-[9px] text-[#114D38] hover:text-emerald-700 font-bold transition-all flex items-center gap-0.5 hover:underline cursor-pointer"
-                            title="Gerenciar e Editar todas as Bases/Filiais"
-                          >
-                            <Settings className="w-2.5 h-2.5" />
-                            <span>Gerenciar</span>
-                          </button>
-                          <span className="text-slate-300 text-[9px]">•</span>
-                          <button 
-                            type="button" 
-                            onClick={() => setShowNewFilialInput(!showNewFilialInput)} 
-                            className="text-[9px] text-emerald-600 hover:text-emerald-700 font-bold transition-all underline cursor-pointer"
-                          >
-                            {showNewFilialInput ? "Voltar" : "+ Nova"}
-                          </button>
-                        </div>
-                      </div>
-                      {showNewFilialInput ? (
-                        <div className="flex items-center gap-1 w-full min-w-0">
-                          <input 
-                            type="text" 
-                            placeholder="Ex: 200 - Santos" 
-                            value={newFilialName} 
-                            onChange={(e) => setNewFilialName(e.target.value)} 
-                            className="min-w-0 flex-1 w-full px-2 py-1.5 rounded-lg border border-emerald-400 text-xs font-semibold outline-none focus:ring-2 focus:ring-emerald-500/20 bg-white"
-                            autoFocus
-                          />
-                          <button 
-                            type="button" 
-                            onClick={handleAddNewFilial} 
-                            className="bg-[#114D38] hover:bg-[#0d3d2c] text-white p-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 flex items-center justify-center cursor-pointer shadow-xs"
-                            title="Salvar e Selecionar Base"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <select name="estabelecimento" value={formData.estabelecimento} onChange={handleChange} className="w-full min-w-0 truncate px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
-                          <option value="">Selecione...</option>
-                          {estabelecimentos.map(e => <option key={e} value={e}>{e}</option>)}
-                        </select>
-                      )}
-                    </div>
-
-                    <div className="space-y-0.5 min-w-0">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Tipo</label>
-                      <select name="tipoDocumento" value={formData.tipoDocumento} onChange={handleChange} className="w-full min-w-0 truncate px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
-                        <option value="">Selecione...</option>
-                        {TIPOS_DOCUMENTO.map(t => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Frequência</label>
-                    <select name="tipo" value={formData.tipo} onChange={(e) => setFormData(prev => ({...prev, tipo: e.target.value}))} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
-                      <option value="Esporádico">Esporádico</option>
-                      <option value="Mensal">Mensal</option>
-                    </select>
-                  </div>
-
-                  {/* Campo de Centro de Custo Principal */}
-                  <div className="space-y-1 pt-1">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-wider">
-                        Centro de Custo Principal *
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setIsNewCcModalOpen(true)}
-                        className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 px-2 py-0.5 rounded-md transition-colors cursor-pointer"
-                        title="Gerenciar e Editar Centros de Custo"
-                      >
-                        <Layers className="w-3 h-3 text-emerald-600" />
-                        <span>Gerenciar / Novo C.C</span>
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <input 
-                        type="text" 
-                        name="centroCusto" 
-                        list="datalist-centro-custo"
-                        value={formData.centroCusto} 
-                        onChange={handleChange}
-                        required 
-                        placeholder="Ex: C.C 101 - Operacional"
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50/20 focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none font-bold text-xs text-slate-800 shadow-sm"
-                      />
-                      <datalist id="datalist-centro-custo">
-                        {centrosCustoList.map(cc => (
-                          <option key={cc} value={cc} />
-                        ))}
-                      </datalist>
-                    </div>
-                  </div>
-
-                  {/* Módulo de Multas integrado */}
-                  {formData.tipoDocumento === "Multa" && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 space-y-2">
-                      <div className="flex items-center gap-1 text-[10px] font-bold text-amber-750 bg-amber-50 border border-amber-100 p-1.5 rounded">
-                        <span>🚨 Multas e Infrações</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-0.5">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Placa</label>
-                          <input 
-                            type="text" 
-                            name="multaPlaca" 
-                            value={formData.multaPlaca} 
-                            onChange={handleChange} 
-                            placeholder="ABC-1234"
-                            className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 outline-none text-[11px] font-mono uppercase"
-                          />
-                        </div>
-                        <div className="space-y-0.5">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Gravidade</label>
-                          <select 
-                            name="multaGravidade" 
-                            value={formData.multaGravidade} 
-                            onChange={handleChange}
-                            className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 text-[11px] font-medium"
-                          >
-                            <option value="Leve">Leve</option>
-                            <option value="Média">Média</option>
-                            <option value="Grave">Grave</option>
-                            <option value="Gravíssima">Gravíssima</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-0.5">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Infração</label>
-                          <input 
-                            type="text" 
-                            name="multaInfracao" 
-                            value={formData.multaInfracao} 
-                            onChange={handleChange} 
-                            placeholder="Ex: Velocidade"
-                            className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 outline-none text-[11px] font-medium"
-                          />
-                        </div>
-                        <div className="space-y-0.5">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Condutor</label>
-                          <input 
-                            type="text" 
-                            name="multaMotorista" 
-                            value={formData.multaMotorista} 
-                            onChange={handleChange} 
-                            placeholder="Ex: Motorista"
-                            className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 outline-none text-[11px] font-medium"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Sec 3: Valores e datas */}
+                {/* Sec 2: Valores e datas (após Fornecedor) */}
                 <div className="space-y-2 bg-slate-50/50 border border-slate-100 rounded-[12px] p-3 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-slate-200">
@@ -2740,6 +2453,306 @@ export default function Lancamento() {
                       className="w-full min-h-[110px] p-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-700 font-medium focus:ring-2 focus:ring-[#114D38]/20 outline-none leading-relaxed resize-y shadow-sm" 
                       placeholder="Informações adicionais, histórico de observações ou anotações internas..." 
                     />
+                  </div>
+                </div>
+
+                {/* Sec 3: Dados Básicos (por último, para que Fornecedor e Vencimento já estejam preenchidos no nome dinâmico da NF) */}
+                <div className="space-y-2 bg-slate-50/50 border border-slate-100 rounded-[12px] p-3 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-slate-200">
+                       <div className="w-6 h-6 rounded-full bg-[#114D38]/10 flex items-center justify-center">
+                         <span className="text-[#114D38] text-xs">👤</span>
+                       </div>
+                       <h4 className="font-bold text-xs text-slate-700">Dados Básicos</h4>
+                    </div>
+
+                    {/* Anexo de Nota Fiscal Integrado e Compacto com Renomeação Padrão */}
+                    <div className="bg-white rounded-lg border border-slate-200 p-2 shadow-inner relative overflow-hidden">
+                      {formData.nomeArquivoAnexo ? (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <div className="w-6 h-6 rounded bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
+                                <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                              </div>
+                              <div className="min-w-0">
+                                <h5 className="font-bold text-slate-800 text-[10px] leading-tight flex items-center gap-1">
+                                  <span>Nota Anexada</span>
+                                  <span className="text-[8px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded">
+                                    Pronta
+                                  </span>
+                                </h5>
+                                <p className="text-[8px] text-slate-500 truncate" title={formData.nomeArquivoAnexo}>
+                                  Padronização ativa (editável abaixo)
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex gap-1 shrink-0">
+                              <button 
+                                type="button" 
+                                onClick={() => {
+                                  const novoNome = gerarNomePadraoAnexoNf(
+                                    formData.dataVencimento, 
+                                    formData.fornecedor, 
+                                    formData.nomeArquivoAnexo
+                                  );
+                                  setFormData(prev => ({ ...prev, nomeArquivoAnexo: novoNome }));
+                                }}
+                                className="p-1 rounded hover:bg-emerald-50 text-emerald-700 border border-emerald-200 bg-white transition-colors cursor-pointer"
+                                title="Regenerar nome padrão: dd.mm.aaaa NF[Fornecedor] [Fornecedor]"
+                              >
+                                <Sparkles className="w-3 h-3 text-emerald-600" />
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={() => {
+                                  setViewingAnexo({
+                                    nome: formData.nomeArquivoAnexo,
+                                    fornecedor: formData.fornecedor || "Não identificado",
+                                    fornecedorCnpj: formData.cnpj || "Sem CNPJ",
+                                    valor: formData.valorNf ? `R$ ${formData.valorNf}` : "Não identificado",
+                                    cnpj: formData.cnpj || "Sem CNPJ",
+                                    doc: formData.codigoLancamento || formData.itemSistema || "S/N",
+                                    tipo: formData.tipoDocumento || formData.tipo || "NF-e",
+                                    estabelecimento: formData.estabelecimento || "",
+                                    centroCusto: formData.centroCusto || "",
+                                    aprovadores: formData.aprovadores || "",
+                                    formaPagto: formData.formaPagamento || "",
+                                    itemSistema: formData.itemSistema || "",
+                                    lancadoPor: formData.lancadoPor || "",
+                                    status: formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (formData.status || "Aguardando Aprovação"),
+                                    frequencia: formData.tipo || "Esporádico",
+                                    dataEmissao: formData.dataEmissao || "",
+                                    dataVencimento: formData.dataVencimento || "",
+                                    descricao: formData.descricao || "",
+                                    observacao: formData.observacao || "",
+                                    arquivoAnexoBase64: formData.arquivoAnexoBase64
+                                  });
+                                }}
+                                className="p-1 rounded hover:bg-slate-100 text-slate-500 border border-slate-200 bg-white transition-colors cursor-pointer"
+                                title="Visualizar Nota"
+                              >
+                                <Eye className="w-3 h-3" />
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={() => setFormData(prev => ({ ...prev, nomeArquivoAnexo: "", arquivoAnexoBase64: "" }))}
+                                className="p-1 rounded hover:bg-rose-50 text-rose-500 border border-rose-200 bg-white transition-colors cursor-pointer"
+                                title="Remover anexo"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Campo editável para o nome do arquivo com máscara e sugestão padrão */}
+                          <div className="space-y-0.5 pt-0.5 border-t border-slate-100">
+                            <div className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase tracking-wider">
+                              <span>Nome do Arquivo (Editável)</span>
+                              <span className="text-[7.5px] text-emerald-700 font-semibold normal-case">dd.mm.aaaa NFFornecedor Fornecedor</span>
+                            </div>
+                            <input 
+                              type="text" 
+                              value={formData.nomeArquivoAnexo} 
+                              onChange={(e) => setFormData(prev => ({ ...prev, nomeArquivoAnexo: e.target.value }))} 
+                              className="w-full px-2 py-1 text-[10px] font-mono font-medium text-slate-800 bg-slate-50 border border-slate-200 focus:border-[#114D38] focus:bg-white focus:ring-1 focus:ring-[#114D38]/20 rounded outline-none transition-all shadow-2xs" 
+                              placeholder="dd.mm.aaaa NFFornecedor Fornecedor.pdf" 
+                              title="Você pode alterar o nome do arquivo aqui se precisar" 
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div 
+                          onDragOver={handleDragOver} 
+                          onDrop={handleDrop} 
+                          onClick={() => fileInputRef.current?.click()} 
+                          className="flex items-center gap-1.5 border border-dashed border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/5 rounded p-1.5 transition-all cursor-pointer group"
+                        >
+                          <input 
+                            type="file" 
+                            ref={fileInputRef} 
+                            onChange={handleFileUpload} 
+                            accept=".pdf,.png,.jpg,.jpeg,.xml" 
+                            className="hidden" 
+                          />
+                          <div className="w-6 h-6 rounded bg-slate-50 group-hover:bg-emerald-50 border border-slate-100 group-hover:border-emerald-200 flex items-center justify-center text-slate-500 group-hover:text-emerald-600 transition-all shrink-0">
+                            <Upload className="w-3 h-3" />
+                          </div>
+                          <div className="text-left min-w-0">
+                            <h5 className="font-bold text-slate-700 text-[9px] group-hover:text-emerald-700 transition-colors leading-none">Anexar Nota/Boleto</h5>
+                            <p className="text-[7.5px] text-slate-400 mt-0.5 leading-tight truncate">Arraste ou clique (PDF/Imagem)</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-0.5 mt-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Lançado por *</label>
+                      <input type="text" name="lancadoPor" value={formData.lancadoPor} onChange={handleChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm" placeholder="Primeiro Nome" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5 mt-2">
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex justify-between items-center gap-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">Base/Filial</label>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button 
+                              type="button" 
+                              onClick={() => setIsManageBasesModalOpen(true)} 
+                              className="text-[9px] text-[#114D38] hover:text-emerald-700 font-bold transition-all flex items-center gap-0.5 hover:underline cursor-pointer"
+                              title="Gerenciar e Editar todas as Bases/Filiais"
+                            >
+                              <Settings className="w-2.5 h-2.5" />
+                              <span>Gerenciar</span>
+                            </button>
+                            <span className="text-slate-300 text-[9px]">•</span>
+                            <button 
+                              type="button" 
+                              onClick={() => setShowNewFilialInput(!showNewFilialInput)} 
+                              className="text-[9px] text-emerald-600 hover:text-emerald-700 font-bold transition-all underline cursor-pointer"
+                            >
+                              {showNewFilialInput ? "Voltar" : "+ Nova"}
+                            </button>
+                          </div>
+                        </div>
+                        {showNewFilialInput ? (
+                          <div className="flex items-center gap-1 w-full min-w-0">
+                            <input 
+                              type="text" 
+                              placeholder="Ex: 200 - Santos" 
+                              value={newFilialName} 
+                              onChange={(e) => setNewFilialName(e.target.value)} 
+                              className="min-w-0 flex-1 w-full px-2 py-1.5 rounded-lg border border-emerald-400 text-xs font-semibold outline-none focus:ring-2 focus:ring-emerald-500/20 bg-white"
+                              autoFocus
+                            />
+                            <button 
+                              type="button" 
+                              onClick={handleAddNewFilial} 
+                              className="bg-[#114D38] hover:bg-[#0d3d2c] text-white p-1.5 rounded-lg text-xs font-bold transition-colors shrink-0 flex items-center justify-center cursor-pointer shadow-xs"
+                              title="Salvar e Selecionar Base"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <select name="estabelecimento" value={formData.estabelecimento} onChange={handleChange} className="w-full min-w-0 truncate px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
+                            <option value="">Selecione...</option>
+                            {estabelecimentos.map(e => <option key={e} value={e}>{e}</option>)}
+                          </select>
+                        )}
+                      </div>
+
+                      <div className="space-y-0.5 min-w-0">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Tipo</label>
+                        <select name="tipoDocumento" value={formData.tipoDocumento} onChange={handleChange} className="w-full min-w-0 truncate px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
+                          <option value="">Selecione...</option>
+                          {TIPOS_DOCUMENTO.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5 mt-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Frequência</label>
+                      <select name="tipo" value={formData.tipo} onChange={(e) => setFormData(prev => ({...prev, tipo: e.target.value}))} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] font-semibold text-xs text-slate-800 shadow-sm">
+                        <option value="Esporádico">Esporádico</option>
+                        <option value="Mensal">Mensal</option>
+                      </select>
+                    </div>
+
+                    {/* Campo de Centro de Custo Principal */}
+                    <div className="space-y-1 pt-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-wider">
+                          Centro de Custo Principal *
+                        </label>
+                        <button 
+                          type="button" 
+                          onClick={() => setIsNewCcModalOpen(true)} 
+                          className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 px-2 py-0.5 rounded-md transition-colors cursor-pointer" 
+                          title="Gerenciar e Editar Centros de Custo"
+                        >
+                          <Layers className="w-3 h-3 text-emerald-600" />
+                          <span>Gerenciar / Novo C.C</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input 
+                          type="text" 
+                          name="centroCusto" 
+                          list="datalist-centro-custo" 
+                          value={formData.centroCusto} 
+                          onChange={handleChange} 
+                          required 
+                          placeholder="Ex: C.C 101 - Operacional" 
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50/20 focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none font-bold text-xs text-slate-800 shadow-sm" 
+                        />
+                        <datalist id="datalist-centro-custo">
+                          {centrosCustoList.map(cc => (
+                            <option key={cc} value={cc} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+
+                    {/* Módulo de Multas integrado */}
+                    {formData.tipoDocumento === "Multa" && (
+                      <div className="mt-2 pt-2 border-t border-slate-200 space-y-2">
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-amber-750 bg-amber-50 border border-amber-100 p-1.5 rounded">
+                          <span>🚨 Multas e Infrações</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Placa</label>
+                            <input 
+                              type="text" 
+                              name="multaPlaca" 
+                              value={formData.multaPlaca} 
+                              onChange={handleChange} 
+                              placeholder="ABC-1234" 
+                              className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 outline-none text-[11px] font-mono uppercase" 
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Gravidade</label>
+                            <select 
+                              name="multaGravidade" 
+                              value={formData.multaGravidade} 
+                              onChange={handleChange} 
+                              className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 text-[11px] font-medium"
+                            >
+                              <option value="Leve">Leve</option>
+                              <option value="Média">Média</option>
+                              <option value="Grave">Grave</option>
+                              <option value="Gravíssima">Gravíssima</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Infração</label>
+                            <input 
+                              type="text" 
+                              name="multaInfracao" 
+                              value={formData.multaInfracao} 
+                              onChange={handleChange} 
+                              placeholder="Ex: Velocidade" 
+                              className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 outline-none text-[11px] font-medium" 
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Condutor</label>
+                            <input 
+                              type="text" 
+                              name="multaMotorista" 
+                              value={formData.multaMotorista} 
+                              onChange={handleChange} 
+                              placeholder="Ex: Motorista" 
+                              className="w-full px-2 py-1 rounded border border-slate-200 bg-white focus:ring-1 focus:ring-[#114D38]/25 outline-none text-[11px] font-medium" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3920,7 +3933,7 @@ export default function Lancamento() {
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-slate-700">Documento:</span>
                     <span className="font-black text-[#114D38] bg-white px-2 py-0.5 rounded border border-slate-200 font-mono text-[11px]">
-                      {emailDispatchModal.calculatedDocName || emailDispatchModal.docData?.doc || "Lançamento"}
+                      {emailDispatchModal.docData?.codigoLancamento || emailDispatchModal.calculatedDocName || emailDispatchModal.docData?.doc || "Lançamento"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -4253,7 +4266,8 @@ export default function Lancamento() {
                         const cc = emailDispatchModal.ccRecipients;
                         const sent = await sendLancamentoAprovacaoEmail({
                           ...emailDispatchModal.docData,
-                          doc: emailDispatchModal.calculatedDocName || emailDispatchModal.docData.doc,
+                          codigoLancamento: emailDispatchModal.docData?.codigoLancamento || "",
+                          doc: emailDispatchModal.docData?.codigoLancamento || emailDispatchModal.calculatedDocName || emailDispatchModal.docData.doc,
                           destinatariosPara: para,
                           destinatariosCc: cc,
                           columnOrder,

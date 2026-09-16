@@ -130,9 +130,20 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
   const vencimentoBr = formatDataParaBrasileiro(data.dataVencimento);
   const emissaoBr = formatDataParaBrasileiro(data.dataEmissao);
   const lancamentoBr = formatDataParaBrasileiro(data.dataLancamento || new Date().toISOString().split("T")[0]);
-  const docNumero = data.doc || data.codigoLancamento || "S/N";
-  const formaPagto = data.formaPagto || data.formaPagamento || "Boleto";
   const tipoDoc = data.tipo || data.tipoDocumento || "NF-e";
+
+  // No e-mail enviado, no campo Nº DOCUMENTO, deixar somente o que for digitado no campo Nº Documento
+  let docNumero = (data.codigoLancamento && String(data.codigoLancamento).trim()) 
+    ? String(data.codigoLancamento).trim() 
+    : (data.doc ? String(data.doc).trim() : "S/N");
+
+  // Se o número herdado do campo doc contiver o prefixo do tipo (ex: "NF-e 1902" ou "Fatura 554"), limpa o tipo
+  if (tipoDoc && docNumero.toLowerCase().startsWith(tipoDoc.toLowerCase() + " ")) {
+    docNumero = docNumero.substring(tipoDoc.length).trim();
+  } else if (data.tipoDocumento && docNumero.toLowerCase().startsWith(data.tipoDocumento.toLowerCase() + " ")) {
+    docNumero = docNumero.substring(data.tipoDocumento.length).trim();
+  }
+  const formaPagto = data.formaPagto || data.formaPagamento || "Boleto";
   const filialBase = data.estabelecimento || "100 - Paulínia";
   const rawStatus = data.status || "Aguardando Aprovação";
   const statusAtual = rawStatus === "Aguardando aprovação" ? "Aguardando Aprovação" : rawStatus;
@@ -191,7 +202,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
       minWidth: "120px",
       renderCell: () => `
         <span style="color: #0f172a; font-size: 9.5pt; font-weight: 700; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
-          ${tipoDoc} ${docNumero}
+          ${docNumero}
         </span>
       `
     },
