@@ -88,6 +88,7 @@ export function getSaudacaoDestinatarios(recipients?: string[]): string {
 
 /**
  * Converte data ISO (yyyy-mm-dd) ou qualquer formato para dd/mm/aaaa
+ * de maneira 100% segura contra shifts de timezone (evitando subtrair 1 dia no Brasil GMT-3)
  */
 export function formatDataParaBrasileiro(dataStr?: string): string {
   if (!dataStr) return "-";
@@ -99,21 +100,35 @@ export function formatDataParaBrasileiro(dataStr?: string): string {
     return clean;
   }
 
-  // Se estiver no formato yyyy-mm-dd ou similar
-  const parts = clean.split("T")[0].split(/[-/]/);
-  if (parts.length === 3) {
-    if (parts[0].length === 4) {
-      // yyyy-mm-dd -> dd/mm/aaaa
-      const [ano, mes, dia] = parts;
-      return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano}`;
-    }
+  // Se estiver no formato dd.mm.aaaa
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(clean)) {
+    return clean.replace(/\./g, "/");
   }
 
-  // Tenta parse de Date
-  const d = new Date(clean);
-  if (!isNaN(d.getTime())) {
-    return d.toLocaleDateString("pt-BR", { timeZone: "UTC" });
+  // Padrão YYYY-MM-DD
+  const matchIso = clean.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (matchIso) {
+    const [_, ano, mes, dia] = matchIso;
+    return `${dia}/${mes}/${ano}`;
   }
+
+  // Padrão DD-MM-YYYY ou DD/MM/YYYY
+  const matchBr = clean.match(/^(\d{2})[\/\.-](\d{2})[\/\.-](\d{4})/);
+  if (matchBr) {
+    const [_, dia, mes, ano] = matchBr;
+    return `${dia}/${mes}/${ano}`;
+  }
+
+  // Tenta parse de Date manual sem cair no problema de timezone
+  try {
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      const dia = String(d.getDate()).padStart(2, "0");
+      const mes = String(d.getMonth() + 1).padStart(2, "0");
+      const ano = d.getFullYear();
+      return `${dia}/${mes}/${ano}`;
+    }
+  } catch (e) {}
 
   return clean;
 }
@@ -388,11 +403,8 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
                 <div style="font-size: 11.5pt; font-weight: 800; color: #0d4a36; line-height: 1.2;">
                   Risel Combustíveis Ltda
                 </div>
-                <div style="font-size: 9pt; color: #64748b; margin-top: 3px; line-height: 1.4;">
-                  Sistema Integrado de Gestão Corporativa | Gestão Financeira & Lançamentos
-                </div>
-                <div style="font-size: 8.5pt; color: #94a3b8; margin-top: 2px;">
-                  Mensagem corporativa gerada automaticamente para fluxo de aprovação de documentos.
+                <div style="font-size: 9.5pt; font-weight: 600; color: #64748b; margin-top: 3px; line-height: 1.4;">
+                  Sistema de Lançamento de Documentos Risel
                 </div>
               </td>
             </tr>

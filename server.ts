@@ -653,6 +653,25 @@ async function startServer() {
     });
   });
 
+  // Endpoint de Versão Oficial para sincronização em tempo real entre todos os usuários
+  const SERVER_START_TIME = new Date().toISOString();
+  app.get(["/api/version", "/api/app-version"], (req, res) => {
+    let buildTimestamp = SERVER_START_TIME;
+    try {
+      const distIndexPath = path.join(process.cwd(), "dist", "index.html");
+      if (fs.existsSync(distIndexPath)) {
+        buildTimestamp = fs.statSync(distIndexPath).mtime.toISOString();
+      }
+    } catch (e) {}
+
+    res.status(200).json({
+      version: buildTimestamp,
+      serverStart: SERVER_START_TIME,
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // 3. Body parsers com limite estrito de payload
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ limit: "25mb", extended: true }));
@@ -3917,9 +3936,10 @@ Responda sempre em Português do Brasil com clareza, objetividade, sofisticaçã
       express.static(distPath, {
         setHeaders: (res, filePath) => {
           if (filePath.endsWith("index.html")) {
-            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
             res.setHeader("Pragma", "no-cache");
             res.setHeader("Expires", "0");
+            res.setHeader("Surrogate-Control", "no-store");
           } else if (filePath.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$/)) {
             // Chunks gerados pelo Vite com hash no nome podem ter cache longo seguro
             res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -3928,9 +3948,10 @@ Responda sempre em Português do Brasil com clareza, objetividade, sofisticaçã
       })
     );
     app.get("*", (req, res) => {
-      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
+      res.setHeader("Surrogate-Control", "no-store");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

@@ -21,6 +21,7 @@ import { AuthProvider, useAuth, hasModuleAccess } from "./context/AuthContext";
 import { Login } from "./components/Login";
 import { pingSupabaseKeepAlive } from "./services/supabaseService";
 import { Lock } from "lucide-react";
+import { VersionManager } from "./components/VersionManager";
 
 function ProtectedRoute({ 
   children, 
@@ -116,6 +117,7 @@ function AppContent() {
 
   return (
     <Router>
+      <VersionManager />
       <Routes>
         {/* Rotas públicas para colaboradores preencherem checklist sem login */}
         <Route path="/checklist-publico" element={<ChecklistPublico />} />

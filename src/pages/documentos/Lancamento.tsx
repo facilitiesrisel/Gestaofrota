@@ -51,32 +51,118 @@ import {
   CnpjSearchResult
 } from "../../services/cnpjService";
 
-export function formatDateDisplay(dateString: string | undefined | null): string {
-  if (!dateString) return "---";
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateString)) {
-    return dateString;
+/**
+ * Helper para obter a data local de hoje no formato YYYY-MM-DD sem distorção de fuso horário UTC
+ */
+export function getLocalTodayISO(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Converte qualquer formato de data (YYYY-MM-DD, DD/MM/AAAA, DD.MM.AAAA, ISO string)
+ * em YYYY-MM-DD local, preservando o dia exato digitado pelo usuário.
+ */
+export function normalizeDateToInput(dateVal: string | undefined | null): string {
+  if (!dateVal) return "";
+  const clean = String(dateVal).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  
+  const matchIso = clean.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (matchIso) {
+    return `${matchIso[1]}-${matchIso[2]}-${matchIso[3]}`;
   }
-  const match = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) {
-    const [_, year, month, day] = match;
-    return `${day}/${month}/${year}`;
+  
+  const matchBr = clean.match(/^(\d{2})[\/\.](\d{2})[\/\.](\d{4})/);
+  if (matchBr) {
+    return `${matchBr[3]}-${matchBr[2]}-${matchBr[1]}`;
   }
+
   try {
-    const d = new Date(dateString);
+    const d = new Date(clean);
     if (!isNaN(d.getTime())) {
-      if (!dateString.includes('T')) {
-        const day = String(d.getUTCDate()).padStart(2, '0');
-        const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-        const year = d.getUTCFullYear();
-        return `${day}/${month}/${year}`;
-      }
-      const day = String(d.getDate()).padStart(2, '0');
-      const month = String(d.getMonth() + 1).padStart(2, '0');
       const year = d.getFullYear();
-      return `${day}/${month}/${year}`;
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
     }
   } catch (e) {}
-  return dateString;
+  
+  return clean;
+}
+
+/**
+ * Cria uma data com horário local zerado (00:00:00) baseada nos componentes de ano, mês e dia,
+ * evitando absolutamente que fusos horários negativos (como Brasil UTC-3) subtraiam um dia.
+ */
+export function parseDateToLocalDay(dateStr: string | undefined | null): Date | null {
+  if (!dateStr) return null;
+  const clean = String(dateStr).trim();
+  if (!clean) return null;
+
+  // 1. Padrão YYYY-MM-DD (comum em inputs type="date" e ISO)
+  const matchIso = clean.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (matchIso) {
+    const y = parseInt(matchIso[1], 10);
+    const m = parseInt(matchIso[2], 10) - 1;
+    const d = parseInt(matchIso[3], 10);
+    return new Date(y, m, d, 0, 0, 0, 0);
+  }
+
+  // 2. Padrão brasileiro DD/MM/YYYY ou DD.MM.YYYY
+  const matchBr = clean.match(/^(\d{2})[\/\.](\d{2})[\/\.](\d{4})/);
+  if (matchBr) {
+    const d = parseInt(matchBr[1], 10);
+    const m = parseInt(matchBr[2], 10) - 1;
+    const y = parseInt(matchBr[3], 10);
+    return new Date(y, m, d, 0, 0, 0, 0);
+  }
+
+  // 3. Fallback para outros formatos
+  try {
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    }
+  } catch (e) {}
+
+  return null;
+}
+
+export function formatDateDisplay(dateString: string | undefined | null): string {
+  if (!dateString) return "---";
+  const clean = String(dateString).trim();
+  if (!clean) return "---";
+
+  // Se já for DD/MM/YYYY, retorna imediatamente preservando o dia digitado
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) {
+    return clean;
+  }
+  // Se for DD.MM.YYYY
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(clean)) {
+    return clean.replace(/\./g, "/");
+  }
+
+  // Se for YYYY-MM-DD (ou YYYY-MM-DDTHH:mm...), extrai ano, mês e dia diretamente sem converter para UTC
+  const matchIso = clean.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (matchIso) {
+    const [_, year, month, day] = matchIso;
+    return `${day}/${month}/${year}`;
+  }
+
+  // Fallback seguro usando parseDateToLocalDay
+  const localDate = parseDateToLocalDay(clean);
+  if (localDate && !isNaN(localDate.getTime())) {
+    const day = String(localDate.getDate()).padStart(2, "0");
+    const month = String(localDate.getMonth() + 1).padStart(2, "0");
+    const year = localDate.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  return clean;
 }
 
 export function parseCurrencyToNumber(val: string | number | undefined | null): number {
@@ -109,12 +195,21 @@ export function calcularAlcadaPorValor(val: string | number | undefined | null):
 export function calcularDiasAteVencimento(dataVencStr: string, status: string) {
   if (status === "Finalizado" || status === "Lançado") return { text: "OK", color: "text-emerald-600 bg-emerald-50 border-emerald-100", days: 0 };
   if (status === "Em Contestação" || status === "Em contestação") return { text: "CONTESTAÇÃO", color: "text-purple-700 bg-purple-50 border-purple-200 font-bold", days: 0 };
-  const hj = new Date();
-  hj.setHours(0,0,0,0);
-  const venc = new Date(dataVencStr);
-  venc.setHours(0,0,0,0);
+  
+  if (!dataVencStr) {
+    return { text: "Sem vencimento", color: "text-slate-400 bg-slate-50 border-slate-100", days: 0 };
+  }
+
+  const venc = parseDateToLocalDay(dataVencStr);
+  if (!venc) {
+    return { text: "Data inválida", color: "text-slate-400 bg-slate-50 border-slate-100", days: 0 };
+  }
+
+  const agora = new Date();
+  const hj = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), 0, 0, 0, 0);
+
   const diffTime = venc.getTime() - hj.getTime();
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
   
   if (diffDays < 0) {
     return { text: `${Math.abs(diffDays)} dias atrasados`, color: "text-rose-600 bg-rose-50 border-rose-100 font-bold", days: diffDays };
@@ -155,14 +250,40 @@ export function formatarVencimentoParaNomeArquivo(dataStr?: string): string {
 }
 
 /**
- * Gera o nome pré-definido oficial do anexo conforme especificado pelo usuário:
- * "vencimento em formato dd.mm.aaaa NF(com o nome do Fornecedor colado) e o nome do Fornecedor"
- * Ex: "23.09.2026 NFROMANOS LAVA RAPIDO ROMANOS LAVA RAPIDO.pdf"
+ * Extrai e normaliza o número da nota fiscal para colar imediatamente na palavra "NF".
+ * Ex: Se o usuário digitou "NF 12345", "NF-e 8831", "Fatura 1902" ou "1902",
+ * extrai o código/dígitos para gerar "NF12345", "NF8831", "NF1902".
+ */
+export function extrairNumeroNotaParaNome(numeroDoc?: string, nomeArquivoOriginal?: string): string {
+  if (numeroDoc && numeroDoc.trim()) {
+    const limpo = numeroDoc.trim();
+    const semPrefixo = limpo.replace(/^(nf[\-e|s]*|nfe|nfse|nota\s*fiscal|fatura|recibo|doc|oc)[\s\-_.:]*/i, '').trim();
+    if (semPrefixo) {
+      return semPrefixo.replace(/[\/\\:*?"<>|]/g, '').trim();
+    }
+    return limpo.replace(/[\/\\:*?"<>|]/g, '').trim();
+  }
+
+  if (nomeArquivoOriginal) {
+    const matchNfColado = nomeArquivoOriginal.match(/NF(\d+[\w-]*)/i);
+    if (matchNfColado && matchNfColado[1]) {
+      return matchNfColado[1].trim();
+    }
+  }
+
+  return "";
+}
+
+/**
+ * Gera o nome pré-definido oficial do anexo conforme especificado:
+ * "vencimento em formato dd.mm.aaaa NF[Número da Nota colado] [Nome do Fornecedor]"
+ * Ex: "23.09.2026 NF1902 ROMANOS LAVA RAPIDO.pdf" ou "23.09.2026 NF8831 POSTO SHELL.pdf"
  */
 export function gerarNomePadraoAnexoNf(
   vencimento?: string,
   fornecedor?: string,
-  nomeArquivoOriginal?: string
+  nomeArquivoOriginal?: string,
+  numeroDoc?: string
 ): string {
   let ext = ".pdf";
   if (nomeArquivoOriginal && nomeArquivoOriginal.includes(".")) {
@@ -175,7 +296,10 @@ export function gerarNomePadraoAnexoNf(
     .replace(/[\/\\:*?"<>|]/g, '')
     .trim();
 
-  return `${dataFmt} NF${fornLimpo} ${fornLimpo}${ext}`;
+  const numNota = extrairNumeroNotaParaNome(numeroDoc, nomeArquivoOriginal);
+  const blocoNf = numNota ? `NF${numNota}` : "NF";
+
+  return `${dataFmt} ${blocoNf} ${fornLimpo}${ext}`;
 }
 
 const TIPOS_DOCUMENTO = ["Fatura", "Multa", "NF-e", "NFS-e", "Nota de Débito", "Outros", "Recibo"];
@@ -1089,6 +1213,7 @@ export default function Lancamento() {
       try {
         const ocrData = JSON.parse(pendingOcr);
         if (ocrData.preencherForm) {
+          const hojeIso = getLocalTodayISO();
           setFormData({
             ...INITIAL_FORM_STATE,
             fornecedor: ocrData.fornecedor,
@@ -1098,8 +1223,8 @@ export default function Lancamento() {
             descricao: ocrData.descricao,
             codigoLancamento: ocrData.doc.split("_")[1] || Math.floor(Math.random() * 8000 + 1000).toString(),
             estabelecimento: "100 - Paulínia",
-            dataEmissao: new Date().toISOString().split("T")[0],
-            dataVencimento: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+            dataEmissao: hojeIso,
+            dataVencimento: normalizeDateToInput(ocrData.dataVencimento) || "",
             observacao: "Extraído automaticamente por Risel IA OCR a partir de e-mail corporativo frotaleverisel@gmail.com.",
             nomeArquivoAnexo: ocrData.doc,
             formaPagamento: "Boleto",
@@ -1293,14 +1418,15 @@ export default function Lancamento() {
         valorNf: value,
         aprovadores: calculatedAlcada
       }));
-    } else if (name === "dataVencimento" || name === "fornecedor") {
+    } else if (name === "dataVencimento" || name === "fornecedor" || name === "codigoLancamento") {
       setFormData(prev => {
         const nextData = { ...prev, [name]: value };
         // Se já anexou arquivo e o nome segue o padrão oficial, atualiza dinamicamente
         if (prev.nomeArquivoAnexo && /^\d{2}\.\d{2}\.\d{4}/.test(prev.nomeArquivoAnexo)) {
           const novoVenc = name === "dataVencimento" ? value : prev.dataVencimento;
           const novoForn = name === "fornecedor" ? value : prev.fornecedor;
-          nextData.nomeArquivoAnexo = gerarNomePadraoAnexoNf(novoVenc, novoForn, prev.nomeArquivoAnexo);
+          const novoDoc = name === "codigoLancamento" ? value : prev.codigoLancamento;
+          nextData.nomeArquivoAnexo = gerarNomePadraoAnexoNf(novoVenc, novoForn, prev.nomeArquivoAnexo, novoDoc);
         }
         return nextData;
       });
@@ -1424,7 +1550,7 @@ export default function Lancamento() {
           fornecedor: finalFornecedor,
           descricao: descServico,
           itemSistema: codSistema, // Sugerindo o item de sistema como solicitado
-          dataEmissao: new Date().toISOString().split("T")[0], // Data de emissão real
+          dataEmissao: getLocalTodayISO(), // Data de emissão real local
           valorNf: valSugerido, // Preenchendo o valor
           formaPagamento: formaPg, // Iniciado em branco como solicitado
           dataVencimento: "", // Iniciado em branco para o usuário selecionar e controlar
@@ -1452,7 +1578,7 @@ export default function Lancamento() {
       reader.onload = (event) => {
         const isNf = formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento;
         const nomeSugerido = isNf
-          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name)
+          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name, formData.codigoLancamento)
           : file.name;
 
         setFormData(prev => ({
@@ -1477,7 +1603,7 @@ export default function Lancamento() {
       reader.onload = (event) => {
         const isNf = formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento;
         const nomeSugerido = isNf
-          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name)
+          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name, formData.codigoLancamento)
           : file.name;
 
         setFormData(prev => ({
@@ -1548,7 +1674,9 @@ export default function Lancamento() {
   ) => {
     const numVal = parseCurrencyToNumber(data.valorNf);
     const formatValueCurrency = `R$ ${numVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const formatVencimiento = data.dataVencimento || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const formatVencimiento = normalizeDateToInput(data.dataVencimento) || getLocalTodayISO();
+    const formatEmissao = normalizeDateToInput(data.dataEmissao) || "";
+    const hojeLocalBr = new Date().toLocaleDateString('pt-BR');
     const finalAlcada = data.aprovadores || calcularAlcadaPorValor(data.valorNf) || "Deny";
     const finalEstabelecimento = data.estabelecimento || "100 - Paulínia";
     const finalCentroCusto = data.centroCusto || "C.C 101 - Operacional";
@@ -1571,7 +1699,7 @@ export default function Lancamento() {
       let dataAprovacao = existing?.dataAprovacao || "";
       
       if (isNowApproved && !wasApproved) {
-        dataAprovacao = new Date().toLocaleDateString('pt-BR');
+        dataAprovacao = hojeLocalBr;
       } else if (!isNowApproved) {
         dataAprovacao = "";
       }
@@ -1579,7 +1707,7 @@ export default function Lancamento() {
       savedItem = {
         id: Number(editingId),
         status: (data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status,
-        dataLancamento: existing?.dataLancamento || new Date().toLocaleDateString('pt-BR'),
+        dataLancamento: existing?.dataLancamento || hojeLocalBr,
         dataVencimento: formatVencimiento,
         fornecedor: data.fornecedor,
         doc: calculatedDocName,
@@ -1592,7 +1720,7 @@ export default function Lancamento() {
         nomeArquivoAnexo: data.nomeArquivoAnexo || existing?.nomeArquivoAnexo || "",
         arquivoAnexoBase64: data.arquivoAnexoBase64 || existing?.arquivoAnexoBase64 || "",
         itemSistema: data.itemSistema || "",
-        dataEmissao: data.dataEmissao || "",
+        dataEmissao: formatEmissao,
         observacao: data.observacao || "",
         frequencia: data.tipo || "Esporádico",
         lancadoPor: data.lancadoPor || primeiroNome,
@@ -1615,7 +1743,7 @@ export default function Lancamento() {
       savedItem = {
         id: newId,
         status: (data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status,
-        dataLancamento: new Date().toLocaleDateString('pt-BR'),
+        dataLancamento: hojeLocalBr,
         dataVencimento: formatVencimiento,
         fornecedor: data.fornecedor,
         doc: calculatedDocName,
@@ -1628,11 +1756,11 @@ export default function Lancamento() {
         nomeArquivoAnexo: data.nomeArquivoAnexo || "",
         arquivoAnexoBase64: data.arquivoAnexoBase64 || "",
         itemSistema: data.itemSistema || "",
-        dataEmissao: data.dataEmissao || "",
+        dataEmissao: formatEmissao,
         observacao: data.observacao || "",
         frequencia: data.tipo || "Esporádico",
         lancadoPor: data.lancadoPor || primeiroNome,
-        dataAprovacao: isNowApproved ? new Date().toLocaleDateString('pt-BR') : "",
+        dataAprovacao: isNowApproved ? hojeLocalBr : "",
         aprovadores: finalAlcada,
         centroCusto: finalCentroCusto,
         codLancamentoOc: data.codLancamentoOc || "",
@@ -1804,10 +1932,10 @@ export default function Lancamento() {
       fornecedor: item.fornecedor || "",
       descricao: item.descricao || "",
       itemSistema: item.itemSistema || "",
-      dataEmissao: item.dataEmissao || new Date().toISOString().split('T')[0],
+      dataEmissao: normalizeDateToInput(item.dataEmissao) || getLocalTodayISO(),
       valorNf: valClean,
       formaPagamento: item.formaPagto || "Boleto",
-      dataVencimento: item.dataVencimento || "",
+      dataVencimento: normalizeDateToInput(item.dataVencimento) || "",
       moduloPetroshow: "",
       status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
       aprovadores: item.aprovadores || "",
@@ -1853,7 +1981,7 @@ export default function Lancamento() {
     } else {
       // Se não houver lançamento, abre o formulário pré-preenchido para criar
       const valorLimpo = v.valor ? v.valor.replace("R$ ", "").replace(/\./g, "").replace(",", ".") : "";
-      const dataVenc = v.vencimento || new Date().toISOString().split('T')[0];
+      const dataVenc = normalizeDateToInput(v.vencimento) || getLocalTodayISO();
       const docCode = v.doc ? (v.doc.split(" ")[1] || v.doc) : "";
 
       setEditingId(null);
@@ -2364,13 +2492,13 @@ export default function Lancamento() {
                       </div>
                       <div className="space-y-0.5">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Data Emissão</label>
-                        <input type="date" name="dataEmissao" value={formData.dataEmissao} onChange={handleChange} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm" />
+                        <input type="date" name="dataEmissao" value={normalizeDateToInput(formData.dataEmissao)} onChange={handleChange} className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-semibold text-xs text-slate-800 shadow-sm" />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2 mt-2">
                       <div className="space-y-0.5">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vencimento *</label>
-                        <input type="date" name="dataVencimento" value={formData.dataVencimento} onChange={handleChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm text-amber-700" />
+                        <input type="date" name="dataVencimento" value={normalizeDateToInput(formData.dataVencimento)} onChange={handleChange} required className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-[#114D38]/20 focus:border-[#114D38] outline-none transition-all font-bold text-xs text-slate-800 shadow-sm text-amber-700" />
                       </div>
                       <div className="space-y-0.5">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Forma Pagto *</label>
@@ -2494,12 +2622,13 @@ export default function Lancamento() {
                                   const novoNome = gerarNomePadraoAnexoNf(
                                     formData.dataVencimento, 
                                     formData.fornecedor, 
-                                    formData.nomeArquivoAnexo
+                                    formData.nomeArquivoAnexo,
+                                    formData.codigoLancamento
                                   );
                                   setFormData(prev => ({ ...prev, nomeArquivoAnexo: novoNome }));
                                 }}
                                 className="p-1 rounded hover:bg-emerald-50 text-emerald-700 border border-emerald-200 bg-white transition-colors cursor-pointer"
-                                title="Regenerar nome padrão: dd.mm.aaaa NF[Fornecedor] [Fornecedor]"
+                                title="Regenerar nome padrão: dd.mm.aaaa NF[Nº da Nota] [Fornecedor]"
                               >
                                 <Sparkles className="w-3 h-3 text-emerald-600" />
                               </button>
@@ -2549,14 +2678,14 @@ export default function Lancamento() {
                           <div className="space-y-0.5 pt-0.5 border-t border-slate-100">
                             <div className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase tracking-wider">
                               <span>Nome do Arquivo (Editável)</span>
-                              <span className="text-[7.5px] text-emerald-700 font-semibold normal-case">dd.mm.aaaa NFFornecedor Fornecedor</span>
+                              <span className="text-[7.5px] text-emerald-700 font-semibold normal-case">dd.mm.aaaa NF[Nº] Fornecedor</span>
                             </div>
                             <input 
                               type="text" 
                               value={formData.nomeArquivoAnexo} 
                               onChange={(e) => setFormData(prev => ({ ...prev, nomeArquivoAnexo: e.target.value }))} 
                               className="w-full px-2 py-1 text-[10px] font-mono font-medium text-slate-800 bg-slate-50 border border-slate-200 focus:border-[#114D38] focus:bg-white focus:ring-1 focus:ring-[#114D38]/20 rounded outline-none transition-all shadow-2xs" 
-                              placeholder="dd.mm.aaaa NFFornecedor Fornecedor.pdf" 
+                              placeholder="dd.mm.aaaa NF12345 Fornecedor.pdf" 
                               title="Você pode alterar o nome do arquivo aqui se precisar" 
                             />
                           </div>

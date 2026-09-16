@@ -14,14 +14,23 @@
     <meta property="og:description" content="Sistema de Lançamento de Notas Fiscais e Controle de Frota para Risel Combustíveis LTDA." />
     <meta property="og:image" content="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" />
     <script>
-      // Desregistrar qualquer service worker legado para garantir que todos os usuários sempre recebam a versão mais recente
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for (var i = 0; i < registrations.length; i++) {
-            registrations[i].unregister();
-          }
-        });
-      }
+      // Desregistrar qualquer service worker legado e limpar caches antigos para garantir que todos os usuários sempre recebam a versão mais recente
+      try {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (var i = 0; i < registrations.length; i++) {
+              registrations[i].unregister();
+            }
+          });
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(names) {
+            for (var j = 0; j < names.length; j++) {
+              caches.delete(names[j]);
+            }
+          });
+        }
+      } catch (e) {}
     </script>
   </head>
   <body>
