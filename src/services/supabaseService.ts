@@ -1070,7 +1070,7 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
         dataTrocaCondutor: row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || real.dataTrocaCondutor || "",
         dataInativacao: row.data_inativacao || row.dataInativacao || extra.dataInativacao || (real as any).dataInativacao || "",
         motivoInativacao: row.motivo_inativacao || row.motivoInativacao || extra.motivoInativacao || (real as any).motivoInativacao || "",
-        tipoVinculo: row.tipo_vinculo || row.tipoVinculo || extra.tipoVinculo || real.tipoVinculo || "Contrato",
+        tipoVinculo: row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.tipoVinculo !== undefined ? row.tipoVinculo : (extra.tipoVinculo !== undefined ? extra.tipoVinculo : ((row.locadora === "FROTA PRÓPRIA" || (real && real.locadora === "FROTA PRÓPRIA")) ? "" : "Contrato"))),
         observacoes: row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || (real as any).observacoes || "")
       };
     });
@@ -1103,7 +1103,7 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
           dataTrocaCondutor: row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || "",
           dataInativacao: row.data_inativacao || row.dataInativacao || extra.dataInativacao || "",
           motivoInativacao: row.motivo_inativacao || row.motivoInativacao || extra.motivoInativacao || "",
-          tipoVinculo: row.tipo_vinculo || row.tipoVinculo || extra.tipoVinculo || "Contrato",
+          tipoVinculo: row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.tipoVinculo !== undefined ? row.tipoVinculo : (extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"))),
           observacoes: row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || "")
         });
       }
@@ -1150,7 +1150,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       dataTrocaCondutor: item.dataTrocaCondutor || "",
       dataInativacao: item.dataInativacao || "",
       motivoInativacao: item.motivoInativacao || "",
-      tipoVinculo: item.tipoVinculo || "Contrato",
+      tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (item.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
       observacoes: item.observacoes || ""
     });
 
@@ -1256,7 +1256,7 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         dataTrocaCondutor: item.dataTrocaCondutor || "",
         dataInativacao: item.dataInativacao || "",
         motivoInativacao: item.motivoInativacao || "",
-        tipoVinculo: item.tipoVinculo || "Contrato",
+        tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (item.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
         observacoes: item.observacoes || ""
       });
 

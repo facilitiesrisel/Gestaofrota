@@ -144,7 +144,7 @@ export interface Veiculo {
   dataTrocaCondutor?: string;
   dataInativacao?: string;
   motivoInativacao?: string;
-  tipoVinculo?: "Contrato" | "Provisório";
+  tipoVinculo?: "Contrato" | "Provisório" | "";
 }
 
 interface Checklist {
@@ -1628,7 +1628,7 @@ export default function Frota() {
   const [modalLocadora, setModalLocadora] = useState("");
   const [customLocadora, setCustomLocadora] = useState("");
   const [modalVencContrato, setModalVencContrato] = useState("");
-  const [modalTipoVinculo, setModalTipoVinculo] = useState<"Contrato" | "Provisório">("Contrato");
+  const [modalTipoVinculo, setModalTipoVinculo] = useState<"Contrato" | "Provisório" | "">("Contrato");
   const [modalStatus, setModalStatus] = useState<string>("Ativo");
   const [modalDataInativacao, setModalDataInativacao] = useState<string>("");
   const [modalMotivoInativacao, setModalMotivoInativacao] = useState<string>("");
@@ -2219,7 +2219,10 @@ export default function Frota() {
       
       const matchesFilial = filterFilial === "Todos" || isSameCityOrBase(v.filial, filterFilial);
       const matchesStatus = filterStatus === "Todos" || v.status === filterStatus;
-      const matchesTipoVinculo = filterTipoVinculo === "Todos" || (v.tipoVinculo || "Contrato") === filterTipoVinculo;
+      const matchesTipoVinculo = filterTipoVinculo === "Todos" 
+        || (filterTipoVinculo === "Contrato" && (v.tipoVinculo === "Contrato" || (!v.tipoVinculo && v.locadora !== "FROTA PRÓPRIA")))
+        || (filterTipoVinculo === "Provisório" && v.tipoVinculo === "Provisório")
+        || (filterTipoVinculo === "Vazio" && (!v.tipoVinculo || v.locadora === "FROTA PRÓPRIA"));
 
       return matchesSearch && matchesFilial && matchesStatus && matchesTipoVinculo;
     });
@@ -2257,7 +2260,7 @@ export default function Frota() {
     const manutencao = targetVehicles.filter(v => v.status === "Em Manutenção").length;
     
     // Contagem de vínculos
-    const contratoCount = targetVehicles.filter(v => (v.tipoVinculo || "Contrato") === "Contrato").length;
+    const contratoCount = targetVehicles.filter(v => v.tipoVinculo === "Contrato" || (!v.tipoVinculo && v.locadora !== "FROTA PRÓPRIA")).length;
     const provisorioCount = targetVehicles.filter(v => v.tipoVinculo === "Provisório").length;
 
     // Contratos vencidos ou vencendo em 90 dias ou menos
@@ -2355,7 +2358,9 @@ export default function Frota() {
       dataTrocaCondutor: formData.get("dataTrocaCondutor") as string || HOJE_REF,
       dataInativacao: selectedStatus === "Inativo" ? (inputDataInativacao || HOJE_REF) : (editingVeh?.dataInativacao || ""),
       motivoInativacao: selectedStatus === "Inativo" ? inputMotivoInativacao : (editingVeh?.motivoInativacao || ""),
-      tipoVinculo: ((formData.get("tipoVinculo") as string) || modalTipoVinculo || "Contrato") as "Contrato" | "Provisório",
+      tipoVinculo: isFrotaPropria
+        ? ((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() as "Contrato" | "Provisório" | "")
+        : (((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() || "Contrato") as "Contrato" | "Provisório"),
     };
 
     let updated;
@@ -3378,6 +3383,7 @@ export default function Frota() {
                           <option value="Todos">Todos</option>
                           <option value="Contrato">Contrato</option>
                           <option value="Provisório">Provisório</option>
+                          <option value="Vazio">Sem Vínculo / Frota Própria</option>
                         </select>
                       </div>
                     </div>
@@ -3526,11 +3532,11 @@ export default function Frota() {
                                       <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
                                         Provisório
                                       </span>
-                                    ) : (
+                                    ) : v.tipoVinculo === "Contrato" || (!v.tipoVinculo && v.locadora !== "FROTA PRÓPRIA") ? (
                                       <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                         Contrato
                                       </span>
-                                    )}
+                                    ) : null}
                                   </div>
                                 </td>
                                 <td className="py-4 px-4 font-bold text-slate-500 uppercase text-[11px] text-left" title={v.locadora}>
@@ -3616,7 +3622,7 @@ export default function Frota() {
                                           setCustomLocadora(loc);
                                         }
                                         setModalVencContrato(v.vencContrato || "");
-                                        setModalTipoVinculo(v.tipoVinculo || "Contrato");
+                                        setModalTipoVinculo(v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"));
                                         setModalStatus(v.status);
                                         setModalDataInativacao(v.dataInativacao || "");
                                         setModalMotivoInativacao(v.motivoInativacao || "");
@@ -3955,14 +3961,22 @@ export default function Frota() {
                         <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
                           Provisório
                         </span>
-                      ) : (
+                      ) : selectedVeiculo.tipoVinculo === "Contrato" || (!selectedVeiculo.tipoVinculo && selectedVeiculo.locadora !== "FROTA PRÓPRIA") ? (
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-900 border border-blue-200">
                           Contrato
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200">
+                          Frota Própria (Sem vínculo)
                         </span>
                       )}
                     </div>
                     <span className="text-[10px] text-slate-400 block mt-0.5">
-                      {selectedVeiculo.tipoVinculo === "Provisório" ? "Veículo temporário / reserva" : "Veículo regular de contrato"}
+                      {selectedVeiculo.tipoVinculo === "Provisório" 
+                        ? "Veículo temporário / reserva" 
+                        : selectedVeiculo.tipoVinculo === "Contrato" || (!selectedVeiculo.tipoVinculo && selectedVeiculo.locadora !== "FROTA PRÓPRIA")
+                          ? "Veículo regular de contrato"
+                          : "Veículo de patrimônio próprio"}
                     </span>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -4303,9 +4317,15 @@ export default function Frota() {
                     name="locadora" 
                     value={modalLocadora}
                     onChange={(e) => {
-                      setModalLocadora(e.target.value);
-                      if (e.target.value !== "OUTRA") {
+                      const val = e.target.value;
+                      setModalLocadora(val);
+                      if (val !== "OUTRA") {
                         setCustomLocadora("");
+                      }
+                      if (val === "FROTA PRÓPRIA") {
+                        setModalTipoVinculo("");
+                      } else if (!modalTipoVinculo) {
+                        setModalTipoVinculo("Contrato");
                       }
                     }}
                     className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-orange-500 text-xs font-semibold"
@@ -4336,19 +4356,24 @@ export default function Frota() {
                   <input type="number" name="odometro" defaultValue={editingVeh?.odometro || 0} className="w-full border border-slate-200 px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-orange-500" />
                 </div>
                 <div className="space-y-1">
-                  <label className="block">Tipo de Veículo (Vínculo) *</label>
+                  <label className="block">Tipo de Veículo (Vínculo) {modalLocadora === "FROTA PRÓPRIA" ? "(Opcional)" : "*"}</label>
                   <select 
                     name="tipoVinculo" 
                     value={modalTipoVinculo} 
-                    onChange={(e) => setModalTipoVinculo(e.target.value as "Contrato" | "Provisório")}
+                    onChange={(e) => setModalTipoVinculo(e.target.value as "Contrato" | "Provisório" | "")}
                     className={`w-full border px-3 py-2 rounded-lg outline-none font-bold text-xs transition-colors ${
                       modalTipoVinculo === "Provisório"
                         ? "border-amber-400 bg-amber-50/50 text-amber-900 focus:ring-1 focus:ring-amber-500"
-                        : "border-slate-200 bg-white text-slate-800 focus:ring-1 focus:ring-orange-500"
+                        : modalTipoVinculo === "Contrato"
+                          ? "border-slate-200 bg-white text-slate-800 focus:ring-1 focus:ring-orange-500"
+                          : "border-slate-200 bg-slate-50 text-slate-500 focus:ring-1 focus:ring-orange-500"
                     }`}
                   >
-                    <option value="Contrato">Contrato (Fixo Regular)</option>
-                    <option value="Provisório">Provisório (Carro Reserva)</option>
+                    {modalLocadora === "FROTA PRÓPRIA" && (
+                      <option value="">(Vazio)</option>
+                    )}
+                    <option value="Contrato">Contrato</option>
+                    <option value="Provisório">Provisório</option>
                   </select>
                 </div>
                 <div className="space-y-1 col-span-2">
