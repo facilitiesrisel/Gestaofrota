@@ -7,6 +7,7 @@ import { getSubmoduleRecipientsSync } from '../services/emailRecipientsService';
 import { sendEmail, generateEmailHtml } from '../services/firebaseService';
 import { fetchFleetPositions } from '../services/geoFrotasService';
 import { VEICULOS_REAIS } from '../data/veiculos_reais';
+import { checkAndTriggerPerimeterExitAlerts, PerimeterVehicleEvent } from '../services/perimeterAlertService';
 
 // Converte os 75 veículos reais cadastrados no sistema para o formato do módulo de reservas
 const getInitialFleetVehicles = (): Vehicle[] => {
@@ -65,6 +66,7 @@ interface ReservationContextType {
   deleteVehicle: (id: string) => Promise<void>;
   clearAllData: () => Promise<void>;
   syncVehiclesFromGeoFrotas: () => Promise<number>;
+  runPerimeterCheck: () => Promise<PerimeterVehicleEvent[]>;
 }
 
 const ReservationContext = createContext<ReservationContextType | undefined>(undefined);
@@ -192,6 +194,44 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         clearTimeout(initialTimer);
     };
   }, [reservations, user, updateReservation]);
+
+  // MONITORAMENTO DE PERÍMETRO DA SEDE (PAULÍNIA/SP):
+  // Detecta quando um veículo sai do perímetro da sede sem reserva ou agendamento de uso diário ativo
+  // e dispara e-mail informativo automático a todos os usuários com acesso ao sistema.
+  const runPerimeterCheck = useCallback(async (): Promise<PerimeterVehicleEvent[]> => {
+    try {
+      const positions = await fetchFleetPositions();
+      if (!positions || positions.length === 0) return [];
+      const events = await checkAndTriggerPerimeterExitAlerts(positions, vehicles, reservations, dailyTrips);
+      return events;
+    } catch (e) {
+      console.warn("Erro ao executar checagem de perímetro da sede:", e);
+      return [];
+    }
+  }, [vehicles, reservations, dailyTrips]);
+
+  useEffect(() => {
+    // Apenas monitora se houver veículos e não for usuário anônimo
+    if (authLoading || isLoading) return;
+
+    const executePerimeterAudit = async () => {
+      try {
+        await runPerimeterCheck();
+      } catch (err) {
+        console.warn("Auditoria periódica de perímetro falhou:", err);
+      }
+    };
+
+    // Primeira checagem após 15 segundos da inicialização do contexto
+    const timer = setTimeout(executePerimeterAudit, 15000);
+    // Intervalo contínuo de checagem a cada 90 segundos
+    const interval = setInterval(executePerimeterAudit, 90000);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [runPerimeterCheck, authLoading, isLoading]);
 
   const getVehicleById = useCallback((id: string) => {
     if (!id) return undefined;
@@ -472,6 +512,7 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         deleteVehicle,
         clearAllData,
         syncVehiclesFromGeoFrotas,
+        runPerimeterCheck,
     }}>
       {children}
     </ReservationContext.Provider>
