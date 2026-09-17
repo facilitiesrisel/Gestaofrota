@@ -92,8 +92,16 @@ export function generateModuleEmailSignature(moduleName: string): string {
  */
 export function appendRiselSignatureToHtml(html: string, moduleName: string): string {
   if (!html) return generateModuleEmailSignature(moduleName);
-  // Evita duplicar se o e-mail já contiver o logotipo da Risel
-  if (html.includes("risel.com.br/wp-content/uploads/2024/07/RISEL.png") || html.includes("Risel Combustíveis")) {
+  // Se o e-mail já for estruturado em tabela corporativa ou contiver menção à Risel,
+  // mantemos intacto para não criar textos ou tabelas soltas fora do contêiner formatado
+  if (
+    html.includes("<table") ||
+    html.includes("risel.com.br") ||
+    html.includes("Risel Combustíveis") ||
+    html.includes("Risel Engenharia") ||
+    html.includes("Gestão de Reservas") ||
+    html.includes("max-width")
+  ) {
     return html;
   }
   return `${html}<br/>${generateModuleEmailSignature(moduleName)}`;

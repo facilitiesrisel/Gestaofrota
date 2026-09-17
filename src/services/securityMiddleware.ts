@@ -15,10 +15,10 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     img: ['src', 'alt', 'width', 'height', 'style', 'class'],
     div: ['style', 'class', 'id'],
     span: ['style', 'class'],
-    table: ['style', 'class', 'border', 'cellpadding', 'cellspacing', 'width'],
-    tr: ['style', 'class'],
-    td: ['style', 'class', 'colspan', 'rowspan', 'width'],
-    th: ['style', 'class', 'colspan', 'rowspan', 'width'],
+    table: ['style', 'class', 'border', 'cellpadding', 'cellspacing', 'width', 'bgcolor', 'align'],
+    tr: ['style', 'class', 'bgcolor', 'align', 'valign'],
+    td: ['style', 'class', 'colspan', 'rowspan', 'width', 'height', 'bgcolor', 'align', 'valign'],
+    th: ['style', 'class', 'colspan', 'rowspan', 'width', 'height', 'bgcolor', 'align', 'valign'],
     p: ['style', 'class'],
     h1: ['style', 'class'],
     h2: ['style', 'class'],
@@ -26,15 +26,26 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     h4: ['style', 'class']
   },
   allowedSchemes: ['http', 'https', 'mailto', 'data'],
-  selfClosing: ['img', 'br', 'hr']
+  selfClosing: ['img', 'br', 'hr'],
+  nonTextTags: ['style', 'script', 'textarea', 'option', 'noscript', 'title', 'head']
 };
 
 /**
  * Sanitiza conteúdo HTML para prevenir Cross-Site Scripting (XSS)
+ * e garante que tags de metadados como <title> ou <head> não vazem como texto puro fora das tabelas.
  */
 export function cleanHtmlContent(rawHtml: string): string {
   if (!rawHtml || typeof rawHtml !== 'string') return '';
-  return sanitizeHtml(rawHtml, SANITIZE_OPTIONS);
+  // Remove blocos de metadados (head, title, style, doctype) para impedir que seus conteúdos de texto
+  // vazem como texto puro antes ou fora da tabela formatada em clientes de e-mail
+  let preCleaned = rawHtml
+    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<title[^>]*>[\s\S]*?<\/title>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<!DOCTYPE[^>]*>/gi, '')
+    .replace(/<\/?(html|body)[^>]*>/gi, '');
+
+  return sanitizeHtml(preCleaned, SANITIZE_OPTIONS).trim();
 }
 
 /**

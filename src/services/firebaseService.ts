@@ -211,7 +211,6 @@ export const generateEmailHtml = (
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title}</title>
         <style>
             body, table, td, p, h1, h2, h3, div, span, strong, a, li, b { 
                 font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif !important; 
@@ -226,6 +225,10 @@ export const generateEmailHtml = (
         </style>
     </head>
     <body style="background-color: #f1f5f9; padding: 20px 10px; margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt;">
+        <!-- Preheader invisível para evitar vazamento de textos no cliente de e-mail -->
+        <div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; font-size: 0px; line-height: 0px; opacity: 0;">
+            ${title} - Risel Combustíveis
+        </div>
         <div style="max-width: 650px; margin: 0 auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #cbd5e1; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
             
             <!-- Header Corporativo Risel (Idêntico à Imagem de Referência com Dourado/Verde e Logotipo) -->
@@ -566,9 +569,12 @@ export const generateRacEmailHtml = (
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${headerTitle} - Risel ERP</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.4; color: #1e293b;">
+  <!-- Preheader invisível para evitar vazamento de textos soltos no cliente de e-mail -->
+  <div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; font-size: 0px; line-height: 0px; opacity: 0;">
+    ${headerTitle} - Risel Combustíveis
+  </div>
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f1f5f9; padding: 20px 10px;">
     <tr>
       <td align="center">

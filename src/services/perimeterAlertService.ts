@@ -92,7 +92,169 @@ export interface PerimeterVehicleEvent {
 }
 
 /**
- * Monta o template HTML oficial corporativo de e-mail de alerta de saída da sede sem reserva
+ * Normaliza uma placa para formato alfanumérico em caixa alta (ex: 'TDS-3F64' -> 'TDS3F64')
+ */
+function normalizePlate(plate: string | null | undefined): string {
+  return (plate || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+/**
+ * Resultado da verificação de cobertura de reserva ou uso diário do veículo
+ */
+export interface VehicleCoverageResult {
+  hasCoverage: boolean;
+  type?: 'Reserva' | 'Uso Diário';
+  driverOrRequester?: string;
+  destination?: string;
+}
+
+/**
+ * Verifica se um veículo ativo da Frota possui Reserva ativa ou Viagem de Uso Diário registrada.
+ * Utiliza a mesma lógica rigorosa do painel de Status da Frota (FleetStatusView), cobrindo:
+ * 1. Reservas com status 'Em Uso' (ReservationStatus.InUse)
+ * 2. Reservas com status 'Aprovada' (ReservationStatus.Approved) em andamento hoje ou dentro do período
+ * 3. Viagens de Uso Diário com status 'Em Uso' (ReservationStatus.InUse) ou em andamento sem retorno registrado
+ * Cruza o veículo tanto pelo ID do cadastro da Frota quanto pela Placa normalizada.
+ */
+export function isVehicleCoveredByActiveReservationOrTrip(
+  cleanPlate: string,
+  reservations: Reservation[] = [],
+  dailyTrips: DailyTrip[] = [],
+  now = new Date(),
+  vehicleInfo?: any
+): VehicleCoverageResult {
+  const normPlate = normalizePlate(cleanPlate);
+  const vId = vehicleInfo?.id ? String(vehicleInfo.id).trim().toLowerCase() : '';
+  const nowMs = now.getTime();
+  
+  // Data de hoje zerada para comparações diárias (igual ao FleetStatusView)
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+
+  // 1. Verifica Viagens de Uso Diário (DailyTrip)
+  for (const trip of dailyTrips) {
+    const tPlate = normalizePlate((trip as any).plate || (trip as any).placa || (trip as any).vehiclePlate || '');
+    const tVehicleId = trip.vehicleId ? String(trip.vehicleId).trim() : '';
+    const tVehicleIdNorm = normalizePlate(tVehicleId);
+
+    // Casamento por placa ou por vehicleId
+    const isMatch =
+      (tPlate && tPlate === normPlate) ||
+      (tVehicleIdNorm && tVehicleIdNorm === normPlate) ||
+      (vId && tVehicleId && tVehicleId.toLowerCase() === vId);
+
+    if (!isMatch) continue;
+
+    const statusStr = String(trip.status || '').toLowerCase();
+    const isInUse =
+      trip.status === ReservationStatus.InUse ||
+      statusStr === 'em uso' ||
+      statusStr === 'inuse' ||
+      statusStr === 'in_use' ||
+      statusStr.includes('andamento');
+
+    if (isInUse) {
+      return {
+        hasCoverage: true,
+        type: 'Uso Diário',
+        driverOrRequester: trip.driverName || trip.requesterName || 'Motorista de Uso Diário',
+        destination: trip.destination ? `${trip.destinationCity || ''} - ${trip.destination}` : undefined
+      };
+    }
+
+    // Viagem de uso diário iniciada sem retorno registrado
+    if (!trip.actualReturnDateTime && trip.departureDateTime) {
+      const depDate = new Date(trip.departureDateTime);
+      depDate.setHours(0, 0, 0, 0);
+      if (depDate.getTime() <= today.getTime()) {
+        return {
+          hasCoverage: true,
+          type: 'Uso Diário',
+          driverOrRequester: trip.driverName || trip.requesterName || 'Motorista de Uso Diário',
+          destination: trip.destination ? `${trip.destinationCity || ''} - ${trip.destination}` : undefined
+        };
+      }
+    }
+  }
+
+  // 2. Verifica Reservas da Frota Leve (Reservation)
+  for (const r of reservations) {
+    const rPlate = normalizePlate((r as any).vehiclePlate || (r as any).plate || (r as any).placa || '');
+    const rVehicleId = r.vehicleId ? String(r.vehicleId).trim() : '';
+    const rVehicleIdNorm = normalizePlate(rVehicleId);
+
+    // Casamento por placa ou por vehicleId
+    const isMatch =
+      (rPlate && rPlate === normPlate) ||
+      (rVehicleIdNorm && rVehicleIdNorm === normPlate) ||
+      (vId && rVehicleId && rVehicleId.toLowerCase() === vId);
+
+    if (!isMatch) continue;
+
+    const statusStr = String(r.status || '').toLowerCase();
+
+    // 2.1 Reserva explicitamente EM USO (igual aos cards ARGO, HB20 e MOBI da foto)
+    const isInUse =
+      r.status === ReservationStatus.InUse ||
+      statusStr === 'em uso' ||
+      statusStr === 'inuse' ||
+      statusStr === 'in_use' ||
+      statusStr.includes('andamento');
+
+    if (isInUse) {
+      return {
+        hasCoverage: true,
+        type: 'Reserva',
+        driverOrRequester: r.requesterName || r.driverName || 'Solicitante da Reserva',
+        destination: r.destination ? `${r.destinationCity || ''} - ${r.destination}` : undefined
+      };
+    }
+
+    // 2.2 Reserva Aprovada / Confirmada abrangendo a data atual
+    const isApproved =
+      r.status === ReservationStatus.Approved ||
+      statusStr === 'aprovada' ||
+      statusStr === 'confirmada';
+
+    if (isApproved && r.departureDateTime && r.returnDate) {
+      const depDate = new Date(r.departureDateTime);
+      depDate.setHours(0, 0, 0, 0);
+      const retDate = new Date(r.returnDate);
+      retDate.setHours(23, 59, 59, 999);
+
+      // Se a data de hoje estiver no intervalo da reserva aprovada
+      if (today.getTime() >= depDate.getTime() && today.getTime() <= retDate.getTime()) {
+        return {
+          hasCoverage: true,
+          type: 'Reserva',
+          driverOrRequester: r.requesterName || r.driverName || 'Solicitante da Reserva',
+          destination: r.destination ? `${r.destinationCity || ''} - ${r.destination}` : undefined
+        };
+      }
+
+      // Tolerância por timestamp (30 min antes da partida até 1 hora após retorno)
+      const depMs = new Date(r.departureDateTime).getTime();
+      const retMs = new Date(r.returnDate).getTime();
+      if (!isNaN(depMs) && !isNaN(retMs)) {
+        if (nowMs >= depMs - 30 * 60 * 1000 && nowMs <= retMs + 60 * 60 * 1000) {
+          return {
+            hasCoverage: true,
+            type: 'Reserva',
+            driverOrRequester: r.requesterName || r.driverName || 'Solicitante da Reserva',
+            destination: r.destination ? `${r.destinationCity || ''} - ${r.destination}` : undefined
+          };
+        }
+      }
+    }
+  }
+
+  // Nenhuma reserva ativa nem viagem de uso diário encontrada: veículo SEM condutor/agendamento registrado
+  return { hasCoverage: false };
+}
+
+/**
+ * Monta o template HTML corporativo para o e-mail de alerta de saída da sede sem reserva ou condutor registrado.
+ * Padrão visual elegante Risel Combustíveis em tipografia Aptos Narrow, sem excesso de negrito e sem textos soltos fora da tabela.
  */
 export function generatePerimeterExitAlertEmailHtml(event: PerimeterVehicleEvent): string {
   const formattedDistance =
@@ -117,161 +279,192 @@ export function generatePerimeterExitAlertEmailHtml(event: PerimeterVehicleEvent
       ? `${window.location.origin}/frota?tab=reservas`
       : 'https://ais-dev-snhwxerluvpzdf2xpbaalx-171172692145.us-east1.run.app/frota?tab=reservas';
 
-  return `
-<!DOCTYPE html>
-<html lang="pt-BR">
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <title>Alerta de Segurança - Veículo Fora da Sede Sem Reserva</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 </head>
-<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; -webkit-font-smoothing: antialiased;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f1f5f9; padding: 24px 12px;">
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1e293b; -webkit-font-smoothing: antialiased;">
+  
+  <!-- Preheader invisível para clientes de e-mail (evita vazamento de textos soltos) -->
+  <div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; font-size: 0px; line-height: 0px; opacity: 0;">
+    Aviso de Saída da Sede sem Condutor / Reserva Registrada - Veículo ${event.plate.toUpperCase()} - Risel Combustíveis
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f1f5f9; padding: 24px 10px;">
     <tr>
       <td align="center">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 620px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
+        <!-- CONTÊINER CENTRAL DA TABELA 650PX -->
+        <table width="650" cellpadding="0" cellspacing="0" border="0" style="width: 650px; max-width: 650px; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
           
-          <!-- TOPO INSTITUCIONAL COM ALERTA CRÍTICO -->
+          <!-- CABEÇALHO TIMBRADO OFICIAL RISEL COM LOGOTIPO -->
           <tr>
-            <td style="background: linear-gradient(135deg, #114D38 0%, #0d3b2c 100%); padding: 24px 28px; text-align: left; border-bottom: 4px solid #DC2626;">
+            <td style="background-color: #114D38; padding: 24px 20px 20px; text-align: center; border-top: 5px solid #00A859;">
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td>
-                    <div style="font-size: 11px; font-weight: 800; color: #86efac; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px;">
-                      RISEL ENGENHARIA • GESTÃO DE RESERVAS E FROTA
-                    </div>
-                    <div style="font-size: 20px; font-weight: 900; color: #ffffff; line-height: 1.2;">
-                      🚨 Alerta de Circulação Não Autorizada
-                    </div>
-                  </td>
-                  <td align="right" style="vertical-align: top;">
-                    <span style="display: inline-block; background-color: #DC2626; color: #ffffff; font-size: 11px; font-weight: 800; padding: 6px 12px; rounded: 8px; border-radius: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
-                      Sem Reserva
-                    </span>
+                  <td align="center" style="padding-bottom: 12px;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 8px; padding: 6px 14px;">
+                      <tr>
+                        <td align="center">
+                          <img 
+                            src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" 
+                            alt="Risel Combustíveis" 
+                            height="42" 
+                            style="height: 42px; width: auto; max-width: 160px; display: block; border: 0;"
+                          />
+                        </td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- BANNER DE AVISO EM DESTAQUE -->
-          <tr>
-            <td style="background-color: #fef2f2; border-bottom: 1px solid #fee2e2; padding: 16px 28px;">
-              <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td width="36" style="vertical-align: middle;">
-                    <span style="font-size: 24px;">⚠️</span>
-                  </td>
-                  <td style="padding-left: 12px; vertical-align: middle;">
-                    <div style="font-size: 13px; font-weight: 800; color: #991b1b;">
-                      Veículo detectado fora do perímetro da sede da Risel (Paulínia/SP)
-                    </div>
-                    <div style="font-size: 11.5px; color: #7f1d1d; margin-top: 2px;">
-                      Nenhum agendamento de Uso Diário ou Reserva aprovada foi localizado para este veículo no momento.
-                    </div>
+                  <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt; font-weight: 700; color: #86efac; text-transform: uppercase; letter-spacing: 1.5px; padding-bottom: 4px;">
+                    RISEL COMBUSTÍVEIS • GESTÃO DE RESERVAS E FROTA
                   </td>
                 </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- CORPO COM DADOS DO VEÍCULO E LOCALIZAÇÃO -->
-          <tr>
-            <td style="padding: 28px;">
-              
-              <!-- CARTÃO DA PLACA MERCUSUL -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 22px;">
+                <tr>
+                  <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 16pt; font-weight: 700; color: #ffffff; text-transform: uppercase; line-height: 1.25; padding-bottom: 4px;">
+                    Saída da Sede sem Reserva ou Condutor Registrado
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #d1fae5; font-weight: 400; padding-bottom: 12px;">
+                    Monitoramento em Tempo Real do Perímetro Operacional
+                  </td>
+                </tr>
                 <tr>
                   <td align="center">
-                    <div style="display: inline-block; border: 2px solid #000000; border-radius: 8px; overflow: hidden; background-color: #ffffff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); min-width: 170px;">
-                      <div style="background-color: #003399; color: #ffffff; padding: 3px 12px; font-size: 10px; font-weight: 800; text-align: center; letter-spacing: 2px;">
-                        BRASIL
-                      </div>
-                      <div style="padding: 6px 14px; font-size: 24px; font-weight: 900; font-family: monospace; color: #111827; letter-spacing: 4px; text-align: center;">
-                        ${event.plate.toUpperCase()}
-                      </div>
+                    <table cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="background-color: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 16px; padding: 4px 14px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 600; color: #ffffff;">
+                          VEÍCULO: <span style="color: #fde68a; font-family: monospace; font-weight: 700;">${event.plate.toUpperCase()}</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CORPO PRINCIPAL COM CONTEÚDO FORMATADO -->
+          <tr>
+            <td style="padding: 24px 28px;">
+              
+              <!-- CAIXA INFORMATIVA ELEGANTE EM TOM ÂMBAR SUAVE -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 6px; margin-bottom: 22px;">
+                <tr>
+                  <td style="padding: 14px 18px;">
+                    <div style="font-size: 11.5pt; font-weight: 700; color: #92400e; margin-bottom: 4px;">
+                      Aviso de Movimentação de Veículo
                     </div>
-                    <div style="margin-top: 8px; font-size: 14px; font-weight: 800; color: #1e293b;">
-                      ${event.model || 'Veículo Operacional'}
+                    <div style="font-size: 10.5pt; color: #78350f; line-height: 1.5; font-weight: 400;">
+                      O veículo ativo da frota abaixo foi detectado em circulação para fora do perímetro da sede da Risel (Paulínia/SP), constando saída sem agendamento aprovado de Reserva ou Uso Diário registrado no momento.
                     </div>
                   </td>
                 </tr>
               </table>
 
-              <!-- TABELA DE DETALHES TÉCNICOS -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; margin-bottom: 22px;">
+              <!-- TABELA DE DETALHES TÉCNICOS E OPERACIONAIS -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin-bottom: 24px; border-collapse: separate;">
+                
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 10px 14px; font-size: 12px; font-weight: 700; color: #64748b; width: 40%; border-bottom: 1px solid #e2e8f0;">
-                    Data e Horário do Evento
+                  <td style="padding: 11px 16px; font-size: 10.5pt; font-weight: 600; color: #475569; width: 38%; border-bottom: 1px solid #e2e8f0;">
+                    Veículo / Modelo
                   </td>
-                  <td style="padding: 10px 14px; font-size: 12.5px; font-weight: 800; color: #0f172a; border-bottom: 1px solid #e2e8f0;">
-                    📅 ${dateStr} às ${timeStr}
+                  <td style="padding: 11px 16px; font-size: 11pt; color: #0f172a; border-bottom: 1px solid #e2e8f0;">
+                    <strong style="font-weight: 700; letter-spacing: 0.5px;">${event.plate.toUpperCase()}</strong> &bull; ${event.model || 'Veículo Frota Risel'}
                   </td>
                 </tr>
+
                 <tr>
-                  <td style="padding: 10px 14px; font-size: 12px; font-weight: 700; color: #64748b; border-bottom: 1px solid #e2e8f0;">
-                    Condutor Cadastrado
+                  <td style="padding: 11px 16px; font-size: 10.5pt; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0;">
+                    Condutor Registrado
                   </td>
-                  <td style="padding: 10px 14px; font-size: 12.5px; font-weight: 800; color: #0f172a; border-bottom: 1px solid #e2e8f0;">
-                    👤 ${event.driver || 'Não informado / Sem condutor fixo'}
+                  <td style="padding: 11px 16px; font-size: 11pt; color: #991b1b; font-weight: 600; border-bottom: 1px solid #e2e8f0;">
+                    Nenhum condutor registrado (Sem Reserva ou Uso Diário)
                   </td>
                 </tr>
+
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 10px 14px; font-size: 12px; font-weight: 700; color: #64748b; border-bottom: 1px solid #e2e8f0;">
-                    Distância da Sede (Paulínia)
+                  <td style="padding: 11px 16px; font-size: 10.5pt; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0;">
+                    Situação da Frota
                   </td>
-                  <td style="padding: 10px 14px; font-size: 12.5px; font-weight: 900; color: #dc2626; border-bottom: 1px solid #e2e8f0;">
-                    📍 ${formattedDistance} da base central (Perímetro: 450m)
+                  <td style="padding: 11px 16px; font-size: 11pt; color: #475569; border-bottom: 1px solid #e2e8f0;">
+                    Sem agendamento ativo de uso diário ou reserva aprovada
                   </td>
                 </tr>
+
                 <tr>
-                  <td style="padding: 10px 14px; font-size: 12px; font-weight: 700; color: #64748b; border-bottom: 1px solid #e2e8f0;">
+                  <td style="padding: 11px 16px; font-size: 10.5pt; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0;">
+                    Data e Horário
+                  </td>
+                  <td style="padding: 11px 16px; font-size: 11pt; color: #1e293b; border-bottom: 1px solid #e2e8f0;">
+                    ${dateStr} às ${timeStr}
+                  </td>
+                </tr>
+
+                <tr style="background-color: #f8fafc;">
+                  <td style="padding: 11px 16px; font-size: 10.5pt; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0;">
+                    Distância da Sede
+                  </td>
+                  <td style="padding: 11px 16px; font-size: 11pt; color: #b45309; font-weight: 600; border-bottom: 1px solid #e2e8f0;">
+                    ${formattedDistance} da base central (Paulínia/SP)
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding: 11px 16px; font-size: 10.5pt; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0;">
                     Velocidade Aferida
                   </td>
-                  <td style="padding: 10px 14px; font-size: 12.5px; font-weight: 800; color: #0f172a; border-bottom: 1px solid #e2e8f0;">
-                    ⚡ ${event.speed > 0 ? `${event.speed} km/h (Em trânsito)` : '0 km/h (Parado)'}
+                  <td style="padding: 11px 16px; font-size: 11pt; color: #1e293b; border-bottom: 1px solid #e2e8f0;">
+                    ${event.speed > 0 ? `${event.speed} km/h` : '0 km/h (Parado)'}
                   </td>
                 </tr>
+
                 <tr style="background-color: #f8fafc;">
-                  <td style="padding: 10px 14px; font-size: 12px; font-weight: 700; color: #64748b;">
+                  <td style="padding: 11px 16px; font-size: 10.5pt; font-weight: 600; color: #475569;">
                     Localização Aproximada
                   </td>
-                  <td style="padding: 10px 14px; font-size: 12px; font-weight: 600; color: #334155;">
-                    ${event.address || 'Próximo à rodovia / área metropolitana'}
+                  <td style="padding: 11px 16px; font-size: 10.5pt; color: #334155; line-height: 1.4;">
+                    ${event.address || 'Área metropolitana / Paulínia - SP'}
                   </td>
                 </tr>
+
               </table>
 
-              <!-- BOTÕES DE AÇÃO IMEDIATA -->
-              <table width="100%" cellpadding="0" cellspacing="8" border="0" style="margin-bottom: 12px;">
+              <!-- BOTÕES DE AÇÃO CORPORATIVOS -->
+              <table width="100%" cellpadding="0" cellspacing="8" border="0" style="margin-bottom: 16px;">
                 <tr>
                   <td width="50%" align="center">
-                    <a href="${systemReservasUrl}" target="_blank" style="display: block; background-color: #114D38; color: #ffffff; text-decoration: none; font-size: 12px; font-weight: 800; padding: 12px 18px; border-radius: 10px; text-align: center; box-shadow: 0 2px 6px rgba(17,77,56,0.3);">
-                      📋 Acessar Gestão de Reservas
+                    <a href="${systemReservasUrl}" target="_blank" style="display: block; background-color: #114D38; color: #ffffff; text-decoration: none; font-size: 11pt; font-weight: 600; padding: 11px 16px; border-radius: 8px; text-align: center;">
+                      Acessar Gestão de Reservas
                     </a>
                   </td>
                   <td width="50%" align="center">
-                    <a href="${mapsUrl}" target="_blank" style="display: block; background-color: #f8fafc; color: #0f172a; text-decoration: none; font-size: 12px; font-weight: 800; padding: 12px 18px; border-radius: 10px; text-align: center; border: 1.5px solid #cbd5e1;">
-                      🗺️ Ver no Google Maps
+                    <a href="${mapsUrl}" target="_blank" style="display: block; background-color: #f8fafc; color: #0f172a; text-decoration: none; font-size: 11pt; font-weight: 600; padding: 11px 16px; border-radius: 8px; text-align: center; border: 1px solid #cbd5e1;">
+                      Ver no Google Maps
                     </a>
                   </td>
                 </tr>
               </table>
 
-              <div style="font-size: 11px; color: #64748b; line-height: 1.4; text-align: center; margin-top: 14px; padding-top: 14px; border-top: 1px dashed #e2e8f0;">
-                ℹ️ Notificação automática de auditoria de telemetria enviada para todos os usuários cadastrados com acesso ao sistema Risel.
+              <div style="font-size: 9.5pt; color: #64748b; line-height: 1.4; text-align: center; margin-top: 10px;">
+                Notificação automática gerada pelo Sistema de Gestão de Frotas Risel.
               </div>
 
             </td>
           </tr>
 
-          <!-- RODAPÉ CORPORATIVO -->
+          <!-- RODAPÉ INSTITUCIONAL DENTRO DA TABELA -->
           <tr>
-            <td style="background-color: #0f172a; padding: 18px 28px; text-align: center;">
-              <div style="font-size: 11px; color: #94a3b8; font-weight: 600;">
-                Risel Engenharia • Sistema Integrado de Gestão de Frota e Telemetria
+            <td style="background-color: #0f172a; padding: 16px 24px; text-align: center;">
+              <div style="font-size: 10pt; color: #cbd5e1; font-weight: 600;">
+                Risel Combustíveis Ltda. &bull; Gestão de Frota e Segurança Patrimonial
               </div>
-              <div style="font-size: 10px; color: #64748b; margin-top: 4px;">
-                Base Central: Paulínia/SP • Central de Operações &amp; Segurança Patrimonial
+              <div style="font-size: 9pt; color: #94a3b8; margin-top: 3px;">
+                Base Central: Paulínia - SP &bull; www.risel.com.br
               </div>
             </td>
           </tr>
@@ -281,69 +474,7 @@ export function generatePerimeterExitAlertEmailHtml(event: PerimeterVehicleEvent
     </tr>
   </table>
 </body>
-</html>
-  `.trim();
-}
-
-/**
- * Verifica se um veículo possui reserva válida ativa cobrindo o momento atual
- */
-export function isVehicleCoveredByActiveReservationOrTrip(
-  cleanPlate: string,
-  reservations: Reservation[] = [],
-  dailyTrips: DailyTrip[] = [],
-  now = new Date()
-): boolean {
-  const normPlate = cleanPlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-  const nowMs = now.getTime();
-  // Margem de tolerância de 30 minutos antes do horário de saída previsto
-  const toleranceBeforeMs = 30 * 60 * 1000;
-
-  // 1. Verifica Reservas de Frota Leve
-  const hasReservation = reservations.some(r => {
-    const rPlate = ((r as any).vehiclePlate || (r as any).placa || (r as any).plate || r.vehicleId || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (rPlate !== normPlate) return false;
-
-    // Se estiver explicitamente em uso ou em andamento
-    if (r.status === ReservationStatus.InUse || (r.status as string) === 'em_andamento' || (r.status as string) === 'Em Andamento') {
-      return true;
-    }
-
-    // Se estiver aprovada ou confirmada e dentro do período (com tolerância)
-    if (r.status === ReservationStatus.Approved || (r.status as string) === 'Confirmada') {
-      const depMs = new Date(r.departureDateTime).getTime();
-      const retMs = new Date(r.returnDate || (r as any).returnDateTime).getTime();
-      if (!isNaN(depMs) && !isNaN(retMs)) {
-        return nowMs >= (depMs - toleranceBeforeMs) && nowMs <= (retMs + 60 * 60 * 1000);
-      }
-    }
-
-    return false;
-  });
-
-  if (hasReservation) return true;
-
-  // 2. Verifica viagens de Uso Diário
-  const hasDailyTrip = dailyTrips.some(t => {
-    const tPlate = ((t as any).plate || (t as any).placa || (t as any).vehiclePlate || t.vehicleId || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (tPlate !== normPlate) return false;
-
-    const st = ((t.status || '') as string).toLowerCase();
-    if (st === 'inuse' || st === 'in_use' || st.includes('andamento') || st.includes('uso')) {
-      return true;
-    }
-
-    // Se a viagem de uso diário foi iniciada hoje e ainda não possui finalKm ou actualReturnDateTime
-    if (!t.actualReturnDateTime && t.departureDateTime) {
-      const depDate = new Date(t.departureDateTime);
-      const isToday = depDate.toDateString() === now.toDateString();
-      if (isToday) return true;
-    }
-
-    return false;
-  });
-
-  return hasDailyTrip;
+</html>`.trim();
 }
 
 /**
@@ -423,8 +554,9 @@ export async function checkAndTriggerPerimeterExitAlerts(
 
     // Chave de persistência de estado do veículo
     const stateKey = `risel_perimeter_exit_status_${cleanPlate}`;
+    let hasStoredRecord = false;
     let previousState = {
-      wasInsideSede: true,
+      wasInsideSede: false,
       lastAlertSentAt: 0,
       alertSentForCurrentExit: false
     };
@@ -432,38 +564,64 @@ export async function checkAndTriggerPerimeterExitAlerts(
     try {
       if (typeof window !== 'undefined') {
         const stored = localStorage.getItem(stateKey);
-        if (stored) previousState = { ...previousState, ...JSON.parse(stored) };
+        if (stored) {
+          previousState = { ...previousState, ...JSON.parse(stored) };
+          hasStoredRecord = true;
+        }
       }
     } catch (e) {}
 
+    // Caso 1: Veículo está atualmente DENTRO do perímetro da sede (<= 450m)
     if (!isOutsideSede) {
-      // Veículo está DENTRO da sede
-      if (!previousState.wasInsideSede || previousState.alertSentForCurrentExit) {
-        // Veículo retornou ao pátio da sede: resetamos para monitorar nova saída
-        const newState = {
-          wasInsideSede: true,
-          lastAlertSentAt: previousState.lastAlertSentAt,
-          alertSentForCurrentExit: false
-        };
-        try {
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(stateKey, JSON.stringify(newState));
-          }
-        } catch (e) {}
-      }
+      // Registra que o veículo está na sede. Se ele estava fora ou com alerta enviado,
+      // ao retornar ao pátio da sede, resetamos o ciclo para monitorar nova saída futura.
+      const newState = {
+        wasInsideSede: true,
+        lastAlertSentAt: previousState.lastAlertSentAt,
+        alertSentForCurrentExit: false
+      };
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(stateKey, JSON.stringify(newState));
+        }
+      } catch (e) {}
       continue;
     }
 
-    // Se está FORA da sede (> 450m), verifica se possui agendamento ou reserva ativa
-    const hasAuthorizedReservation = isVehicleCoveredByActiveReservationOrTrip(
+    // Caso 2: Veículo está FORA do perímetro da sede (> 450m)
+    // REGRA ESTREITA DO USUÁRIO:
+    // "Só enviar o e-mail de saída sem reserva ou uso diário, se o veículo estiver aqui na sede no momento, e constar saída sem ninguém registrado como condutor."
+
+    // 2.1 Se não havia registro anterior no sistema (primeira leitura) ou o veículo já estava fora da sede:
+    // Significa que ele NÃO estava na sede no momento e não acabou de sair. Evita falso alerta (ex: veículos em Cosmorama ou outra base).
+    if (!hasStoredRecord || !previousState.wasInsideSede) {
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(
+            stateKey,
+            JSON.stringify({
+              wasInsideSede: false,
+              lastAlertSentAt: previousState.lastAlertSentAt || 0,
+              alertSentForCurrentExit: previousState.alertSentForCurrentExit || false
+            })
+          );
+        }
+      } catch (e) {}
+      continue;
+    }
+
+    // 2.2 Verifica se possui agendamento de Uso Diário ou Reserva aprovada/em uso cobrindo o momento
+    const coverageResult = isVehicleCoveredByActiveReservationOrTrip(
       cleanPlate,
       reservations,
       dailyTrips,
-      now
+      now,
+      vehicleInfo
     );
 
-    if (hasAuthorizedReservation) {
-      // Veículo possui reserva ou agendamento de uso diário ativo: circulação regular e autorizada!
+    if (coverageResult.hasCoverage) {
+      // Veículo possui reserva ativa ou agendamento de uso diário ativo (possui condutor/solicitante registrado):
+      // Circulação regular e autorizada! (Conforme regra: Argo, HB20 e Mobi com reservas ativas NÃO recebem alerta)
       const newState = {
         wasInsideSede: false,
         lastAlertSentAt: previousState.lastAlertSentAt,
@@ -477,20 +635,20 @@ export async function checkAndTriggerPerimeterExitAlerts(
       continue;
     }
 
-    // VEÍCULO FORA DA SEDE E SEM AGENDAMENTO OU RESERVA!
-    // Dispara o alerta por e-mail estritamente uma única vez, assim que a saída não autorizada ocorrer.
-    // Não repete o disparo enquanto o veículo permanecer fora da sede.
+    // 2.3 VEÍCULO ATIVO DA FROTA ESTAVA NA SEDE E CONSTA SAÍDA NO MOMENTO SEM USO DIÁRIO OU RESERVA ATIVA
+    // Isto é, saiu sem condutor ou agendamento registrado no sistema!
+    // Dispara o alerta por e-mail estritamente uma única vez assim que a saída não autorizada ocorrer.
     const shouldSendAlert = !previousState.alertSentForCurrentExit;
 
     const eventData: PerimeterVehicleEvent = {
       plate: cleanPlate,
-      model: vehicleInfo?.modelo || vehicleInfo?.model || pos.model || 'Veículo Risel',
-      driver: vehicleInfo?.condutor || vehicleInfo?.driver || 'Sem condutor cadastrado',
+      model: vehicleInfo?.model || vehicleInfo?.modelo || pos.model || 'Veículo Frota Risel',
+      driver: 'Nenhum condutor registrado (Sem Reserva ou Uso Diário)',
       lat,
       lng,
       distanceFromSedeMeters: distanceMeters,
       speed: typeof pos.speed === 'number' ? pos.speed : 0,
-      address: pos.address || `Região de Paulínia / RMC (Lat ${lat.toFixed(4)}, Lng ${lng.toFixed(4)})`,
+      address: pos.address || `Região Metropolitana de Campinas / Paulínia - SP (Lat ${lat.toFixed(4)}, Lng ${lng.toFixed(4)})`,
       lastUpdate: pos.lastUpdate || pos.gpsTime || now.toISOString(),
       detectedAt: now
     };
@@ -499,10 +657,10 @@ export async function checkAndTriggerPerimeterExitAlerts(
 
     if (shouldSendAlert) {
       console.warn(
-        `🚨 [ALERTA DE PERÍMETRO] Veículo ativo da frota [${cleanPlate}] saiu da sede sem agendamento/reserva! Distância: ${Math.round(distanceMeters)}m. Disparando e-mail único imediato...`
+        `🚨 [ALERTA DE PERÍMETRO] Veículo ativo da frota [${cleanPlate}] estava na sede e saiu sem reserva ou uso diário ativo! Distância: ${Math.round(distanceMeters)}m. Disparando e-mail único...`
       );
 
-      // 1. Atualiza estado imediatamente para garantir disparo único nesta saída
+      // 1. Atualiza estado imediatamente para garantir disparo estritamente único nesta saída
       const updatedState = {
         wasInsideSede: false,
         lastAlertSentAt: nowMs,
@@ -523,7 +681,7 @@ export async function checkAndTriggerPerimeterExitAlerts(
         const emailHtml = generatePerimeterExitAlertEmailHtml(eventData);
         await sendEmail(
           recipients,
-          `⚠️ ALERTA: Veículo [${cleanPlate}] saiu da sede sem Agendamento/Reserva`,
+          `⚠️ Notificação: Saída da Sede sem Condutor / Reserva Registrada [${cleanPlate}]`,
           emailHtml,
           {
             fromName: 'Segurança & Gestão de Frotas Risel',

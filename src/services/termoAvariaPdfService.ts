@@ -756,9 +756,12 @@ export const generateTermoAvariaEmailHtml = (
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Autorização de Desconto em Folha por Avaria - Risel Combustíveis</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt; line-height: 1.4; color: #1e293b;">
+  <!-- Preheader invisível para evitar vazamento de textos soltos no cliente de e-mail -->
+  <div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; font-size: 0px; line-height: 0px; opacity: 0;">
+    Autorização de Desconto em Folha por Avaria - Risel Combustíveis
+  </div>
   <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f1f5f9; padding: 24px 12px; font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
     <tr>
       <td align="center" style="font-family: 'Aptos Narrow', 'Aptos', 'Arial Narrow', Arial, sans-serif; font-size: 11pt;">
