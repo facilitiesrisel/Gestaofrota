@@ -97,6 +97,64 @@ const formatToLocalISO = (date: Date): string => {
     return localISOTime;
 };
 
+// Converte um texto para o padrão com a primeira letra maiúscula (Title Case)
+const toTitleCase = (text: string | null | undefined): string => {
+    if (!text) return '';
+    const str = String(text).trim();
+    if (!str) return '';
+
+    // Siglas técnicas ou operacionais que devem permanecer intactas em caixa alta
+    const acronyms = new Set(['RAC', 'CNH', 'CPF', 'RG', 'SP', 'RJ', 'MG', 'PR', 'SC', 'RS', 'GO', 'DF', 'ES', 'BA', 'PE', 'CE', 'MA', 'MT', 'MS', 'PA', 'PB', 'RN', 'AL', 'SE', 'PI', 'TO', 'RO', 'AC', 'AP', 'RR', 'AM', 'OK', 'TI', 'RH', 'SLA']);
+    // Preposições e conectivos que ficam em minúsculo no meio do texto
+    const lowerWords = new Set(['de', 'da', 'do', 'dos', 'das', 'e', 'em', 'para', 'com', 'por', 'a', 'o', 'na', 'no', 'nas', 'nos', 'ou']);
+
+    return str
+        .toLowerCase()
+        .split(/\s+/)
+        .map((word, index) => {
+            const upper = word.toUpperCase();
+            if (acronyms.has(upper)) return upper;
+            if (index > 0 && lowerWords.has(word)) return word;
+            return word.charAt(0).toUpperCase() + word.slice(1);
+        })
+        .join(' ');
+};
+
+// Formata a data e horário da solicitação com tratamento de segurança
+const formatRequestDateTime = (dateVal: any) => {
+    if (!dateVal) return { date: '-', time: '' };
+    try {
+        const d = new Date(dateVal);
+        if (isNaN(d.getTime())) return { date: '-', time: '' };
+        return {
+            date: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+            time: d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        };
+    } catch {
+        return { date: '-', time: '' };
+    }
+};
+
+type RacSortField = 'reservationDate' | 'rentalCompany' | 'requesterName' | 'itinerary' | 'value' | 'driverName' | 'period' | 'status';
+type SortDirection = 'asc' | 'desc';
+
+// Indicador visual de ordenação para os cabeçalhos clicáveis da tabela
+const SortIndicator: React.FC<{ active: boolean; direction: SortDirection }> = ({ active, direction }) => {
+    if (!active) {
+        return (
+            <span className="inline-flex flex-col text-[8px] opacity-35 group-hover/th:opacity-85 transition-opacity ml-1.5 select-none leading-[9px]">
+                <span>▲</span>
+                <span>▼</span>
+            </span>
+        );
+    }
+    return (
+        <span className="inline-block text-[11px] text-emerald-300 font-black ml-1.5 select-none animate-in fade-in duration-200">
+            {direction === 'asc' ? '▲' : '▼'}
+        </span>
+    );
+};
+
 interface RacRentalsViewProps {
     embedded?: boolean;
 }
@@ -109,6 +167,24 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const [usingFallback, setUsingFallback] = useState(false);
     const [localRentalsCount, setLocalRentalsCount] = useState(0);
     const [isSyncing, setIsSyncing] = useState(false);
+
+    // Sorting state for table header
+    const [sortField, setSortField] = useState<RacSortField>('reservationDate');
+    const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
+    const handleSort = (field: RacSortField) => {
+        if (sortField === field) {
+            setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+        } else {
+            setSortField(field);
+            // Para datas e valores, o padrão mais comum é ordenar do mais recente/maior para o menor
+            if (field === 'reservationDate' || field === 'period' || field === 'value') {
+                setSortDirection('desc');
+            } else {
+                setSortDirection('asc');
+            }
+        }
+    };
 
     // Filter states
     const [isFiltersOpen, setIsFiltersOpen] = useState(false);
@@ -500,12 +576,65 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
             return true;
         }).sort((a, b) => {
-            // Sort by pickupDate descending (newest first)
-            const dateA = new Date(a.pickupDate).getTime();
-            const dateB = new Date(b.pickupDate).getTime();
-            return dateB - dateA;
+            let res = 0;
+            switch (sortField) {
+                case 'reservationDate': {
+                    const dateA = new Date(a.reservationDate || (a as any).createdAt || 0).getTime();
+                    const dateB = new Date(b.reservationDate || (b as any).createdAt || 0).getTime();
+                    res = dateA - dateB;
+                    break;
+                }
+                case 'rentalCompany': {
+                    const compA = `${a.rentalCompany || ''} ${a.plate || ''}`.trim().toLowerCase();
+                    const compB = `${b.rentalCompany || ''} ${b.plate || ''}`.trim().toLowerCase();
+                    res = compA.localeCompare(compB, 'pt-BR');
+                    break;
+                }
+                case 'requesterName': {
+                    const reqA = (a.requesterName || '').trim().toLowerCase();
+                    const reqB = (b.requesterName || '').trim().toLowerCase();
+                    res = reqA.localeCompare(reqB, 'pt-BR');
+                    break;
+                }
+                case 'itinerary': {
+                    const cityA = (a.pickupCity || a.pickupStore || '').trim().toLowerCase();
+                    const cityB = (b.pickupCity || b.pickupStore || '').trim().toLowerCase();
+                    res = cityA.localeCompare(cityB, 'pt-BR');
+                    break;
+                }
+                case 'value': {
+                    const valA = Number(a.value) || 0;
+                    const valB = Number(b.value) || 0;
+                    res = valA - valB;
+                    break;
+                }
+                case 'driverName': {
+                    const dA = (a.driverName || '').trim().toLowerCase();
+                    const dB = (b.driverName || '').trim().toLowerCase();
+                    res = dA.localeCompare(dB, 'pt-BR');
+                    break;
+                }
+                case 'period': {
+                    const dateA = new Date(a.pickupDate || 0).getTime();
+                    const dateB = new Date(b.pickupDate || 0).getTime();
+                    res = dateA - dateB;
+                    break;
+                }
+                case 'status': {
+                    const stA = (a.status || '').trim().toLowerCase();
+                    const stB = (b.status || '').trim().toLowerCase();
+                    res = stA.localeCompare(stB, 'pt-BR');
+                    break;
+                }
+                default: {
+                    const dateA = new Date(a.reservationDate || a.pickupDate || 0).getTime();
+                    const dateB = new Date(b.reservationDate || b.pickupDate || 0).getTime();
+                    res = dateA - dateB;
+                }
+            }
+            return sortDirection === 'asc' ? res : -res;
         });
-    }, [rentals, filterStartDate, filterEndDate, filterCompany, filterStatus, filterSearch]);
+    }, [rentals, filterStartDate, filterEndDate, filterCompany, filterStatus, filterSearch, sortField, sortDirection]);
 
     // Statistics panel counters
     const stats = useMemo(() => {
@@ -1591,26 +1720,126 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 )}
             </div>
 
-            {/* 5. Tabela de Locações Desktop (Alto Padrão Visual) */}
-            <div className="hidden md:block overflow-hidden bg-white rounded-3xl border border-slate-200 shadow-sm">
-                <div className="overflow-x-auto">
+            {/* 5. Tabela de Locações Desktop (Alto Padrão Visual com Cabeçalho Fixo e Ordenação) */}
+            <div className="hidden md:block bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto max-h-[calc(100vh-270px)] min-h-[420px] overflow-y-auto relative scrollbar-thin">
                     <table className="w-full text-left border-collapse">
-                        <thead>
+                        <thead className="sticky top-0 z-20 shadow-xs">
                             <tr className="bg-[#114D38] text-white text-[10px] font-black uppercase tracking-wider border-b border-[#0d3b2c]">
-                                <th scope="col" className="py-4 px-5 text-left">Locadora / Placa</th>
-                                <th scope="col" className="py-4 px-5 text-left">Solicitante & Contato</th>
-                                <th scope="col" className="py-4 px-5 text-left">Itinerário (Cidades)</th>
-                                <th scope="col" className="py-4 px-5 text-left">Valor (R$)</th>
-                                <th scope="col" className="py-4 px-5 text-left">Condutor & CNH</th>
-                                <th scope="col" className="py-4 px-5 text-left">Período de Locação</th>
-                                <th scope="col" className="py-4 px-5 text-left">Status</th>
-                                <th scope="col" className="py-4 px-5 text-right">Ações</th>
+                                {/* 1. Data da Solicitação (antes de Locadora/Placa) */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('reservationDate')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Data da Solicitação"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Data Solicitação</span>
+                                        <SortIndicator active={sortField === 'reservationDate'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 2. Locadora / Placa */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('rentalCompany')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Locadora ou Placa"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Locadora / Placa</span>
+                                        <SortIndicator active={sortField === 'rentalCompany'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 3. Solicitante & Contato */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('requesterName')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Solicitante"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Solicitante & Contato</span>
+                                        <SortIndicator active={sortField === 'requesterName'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 4. Itinerário (Cidades) */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('itinerary')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Itinerário"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Itinerário (Cidades)</span>
+                                        <SortIndicator active={sortField === 'itinerary'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 5. Valor (R$) */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('value')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Valor"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Valor (R$)</span>
+                                        <SortIndicator active={sortField === 'value'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 6. Condutor & CNH */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('driverName')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Condutor"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Condutor & CNH</span>
+                                        <SortIndicator active={sortField === 'driverName'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 7. Período de Locação */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('period')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Período de Locação"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Período de Locação</span>
+                                        <SortIndicator active={sortField === 'period'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 8. Status */}
+                                <th 
+                                    scope="col" 
+                                    onClick={() => handleSort('status')}
+                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    title="Clique para ordenar por Status"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span>Status</span>
+                                        <SortIndicator active={sortField === 'status'} direction={sortDirection} />
+                                    </div>
+                                </th>
+
+                                {/* 9. Ações */}
+                                <th scope="col" className="sticky top-0 bg-[#114D38] py-4 px-5 text-right whitespace-nowrap z-20">
+                                    Ações
+                                </th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-slate-100 text-xs font-semibold text-slate-700">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={8} className="text-center py-12 text-slate-400">
+                                    <td colSpan={9} className="text-center py-12 text-slate-400">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
                                             <span className="text-xs font-bold">Carregando locações RAC...</span>
@@ -1619,7 +1848,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 </tr>
                             ) : filteredRentals.length === 0 ? (
                                 <tr>
-                                    <td colSpan={8} className="text-center py-12 text-slate-400">
+                                    <td colSpan={9} className="text-center py-12 text-slate-400">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <CarIcon className="w-8 h-8 opacity-30 text-slate-400" />
                                             <span className="font-bold text-sm">Nenhuma locação RAC encontrada.</span>
@@ -1635,27 +1864,43 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             ) : (
                                 filteredRentals.map(r => {
                                     let compBadgeClass = "bg-purple-50 text-purple-800 border-purple-200";
-                                    if (r.rentalCompany === 'Localiza') {
+                                    const compLower = (r.rentalCompany || '').toLowerCase();
+                                    if (compLower.includes('localiza')) {
                                         compBadgeClass = "bg-emerald-50 text-emerald-800 border-emerald-200";
-                                    } else if (r.rentalCompany === 'Movida') {
+                                    } else if (compLower.includes('movida')) {
                                         compBadgeClass = "bg-orange-50 text-orange-850 border-orange-200";
-                                    } else if (r.rentalCompany === 'Unidas') {
+                                    } else if (compLower.includes('unidas')) {
                                         compBadgeClass = "bg-blue-50 text-blue-800 border-blue-200";
                                     }
 
                                     const hasCnhAttached = !!(r.cnhBase64 || r.hasCnhCopy);
                                     const hasVoucherAttached = !!(r.voucherBase64 || r.hasVoucher);
+                                    const reqDateTime = formatRequestDateTime(r.reservationDate || (r as any).createdAt);
 
                                     return (
                                         <tr key={r.id} className="hover:bg-slate-50/80 transition-colors group">
                                             
-                                            {/* Locadora & Placa Mercosul */}
+                                            {/* 1. Data da Solicitação */}
+                                            <td className="px-5 py-4 whitespace-nowrap">
+                                                <div className="flex flex-col">
+                                                    <div className="flex items-center gap-1.5 text-slate-800 font-bold text-xs">
+                                                        <CalendarIcon className="w-3.5 h-3.5 text-emerald-700" />
+                                                        <span>{reqDateTime.date}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 text-slate-400 font-medium text-[11px] mt-0.5 ml-5">
+                                                        <ClockIcon className="w-3 h-3 text-slate-400" />
+                                                        <span>{reqDateTime.time}</span>
+                                                    </div>
+                                                </div>
+                                            </td>
+
+                                            {/* 2. Locadora & Placa Mercosul */}
                                             <td className="px-5 py-4 whitespace-nowrap">
                                                 <div className="flex items-center gap-3">
                                                     <MercosulPlateBadge plate={r.plate} />
                                                     <div className="flex flex-col gap-1">
                                                         <span className={`px-2 py-0.5 text-[10px] font-black rounded-md border w-fit ${compBadgeClass}`}>
-                                                            {r.rentalCompany || 'A Definir'}
+                                                            {toTitleCase(r.rentalCompany) || 'A Definir'}
                                                         </span>
                                                         {r.reservationNumber && (
                                                             <span className="text-[10px] font-mono font-bold text-slate-400">
@@ -1671,11 +1916,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </div>
                                             </td>
 
-                                            {/* Solicitante & Contato */}
+                                            {/* 3. Solicitante & Contato */}
                                             <td className="px-5 py-4">
-                                                <div className="text-sm font-black text-slate-900">{r.requesterName}</div>
+                                                <div className="text-sm font-black text-slate-900">{toTitleCase(r.requesterName)}</div>
                                                 <div className="text-[11px] text-slate-500 font-medium">
-                                                    {r.requesterSector || 'Geral'} {r.requesterRole ? `• ${r.requesterRole}` : ''}
+                                                    {toTitleCase(r.requesterSector || 'Geral')} {r.requesterRole ? `• ${toTitleCase(r.requesterRole)}` : ''}
                                                 </div>
                                                 {r.requesterPhone && (
                                                     <div className="text-[10px] text-slate-400 font-mono mt-0.5">
@@ -1684,39 +1929,39 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 )}
                                             </td>
 
-                                            {/* Itinerário (Cidades de Retirada e Devolução) */}
+                                            {/* 4. Itinerário (Cidades de Retirada e Devolução) */}
                                             <td className="px-5 py-4">
                                                 <div className="flex flex-col gap-1 text-[11px]">
                                                     <div className="flex items-center gap-1.5 text-slate-800">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                                        <span className="font-bold">{r.pickupCity ? normalizeCidade(r.pickupCity) : (r.pickupStore || 'Retirada a definir')}</span>
+                                                        <span className="font-bold">{toTitleCase(r.pickupCity ? normalizeCidade(r.pickupCity) : (r.pickupStore || 'Retirada a definir'))}</span>
                                                     </div>
                                                     <div className="flex items-center gap-1.5 text-slate-500">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                                                        <span className="font-medium">{r.returnCity ? normalizeCidade(r.returnCity) : (r.returnStore || 'Devolução a definir')}</span>
+                                                        <span className="font-medium">{toTitleCase(r.returnCity ? normalizeCidade(r.returnCity) : (r.returnStore || 'Devolução a definir'))}</span>
                                                     </div>
                                                     {r.category && (
                                                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                                            Cat: {r.category}
+                                                            Cat: {toTitleCase(r.category)}
                                                         </span>
                                                     )}
                                                 </div>
                                             </td>
 
-                                            {/* Valor Total */}
+                                            {/* 5. Valor Total */}
                                             <td className="px-5 py-4 whitespace-nowrap">
                                                 <div className="text-sm font-black text-slate-900 font-sans">
                                                     {r.value ? formatCurrencyBRL(r.value) : <span className="text-slate-400 text-xs font-normal">A cotar</span>}
                                                 </div>
                                                 <span className="text-[10px] font-semibold text-slate-400 block mt-0.5">
-                                                    {r.status === 'Solicitada' ? 'Aguardando Cotação' : 'Custo Contratado'}
+                                                    {toTitleCase(r.status === 'Solicitada' ? 'Aguardando cotação' : 'Custo contratado')}
                                                 </span>
                                             </td>
 
-                                            {/* Condutor & Documentos (CNH / Voucher) */}
+                                            {/* 6. Condutor & Documentos (CNH / Voucher) */}
                                             <td className="px-5 py-4">
                                                 <div className="text-xs font-bold text-slate-800">
-                                                    {r.driverName || 'Não informado'}
+                                                    {toTitleCase(r.driverName || 'Não informado')}
                                                 </div>
                                                 <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                                                     {hasCnhAttached ? (
@@ -1778,7 +2023,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </div>
                                             </td>
 
-                                            {/* Período de Locação (Retirada / Devolução) */}
+                                            {/* 7. Período de Locação (Retirada / Devolução) */}
                                             <td className="px-5 py-4 whitespace-nowrap">
                                                 <div className="flex flex-col gap-1 text-[11px]">
                                                     <div className="flex items-center gap-1.5">
@@ -1796,37 +2041,37 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </div>
                                             </td>
 
-                                            {/* Status */}
+                                            {/* 8. Status */}
                                             <td className="px-5 py-4 whitespace-nowrap">
                                                 {r.status === 'Solicitada' ? (
                                                     <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-                                                        Solicitada
+                                                        {toTitleCase(r.status)}
                                                     </span>
                                                 ) : r.status === 'Recusada' ? (
                                                     <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-rose-100 text-rose-800 border border-rose-200">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
-                                                        Recusada
+                                                        {toTitleCase(r.status)}
                                                     </span>
                                                 ) : r.status === 'Aguardando retirada' ? (
                                                     <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-amber-50 text-amber-800 border border-amber-200">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                                                        Aguardando
+                                                        {toTitleCase(r.status)}
                                                     </span>
                                                 ) : r.status === 'Em Uso' ? (
                                                     <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-blue-50 text-blue-700 border border-blue-200">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                                                        Em Uso
+                                                        {toTitleCase(r.status)}
                                                     </span>
                                                 ) : (
                                                     <span className="px-2.5 py-1 inline-flex items-center gap-1.5 text-xs font-black rounded-xl bg-slate-100 text-slate-600 border border-slate-200">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                                        Finalizada
+                                                        {toTitleCase(r.status)}
                                                     </span>
                                                 )}
                                             </td>
 
-                                            {/* Ações */}
+                                            {/* 9. Ações */}
                                             <td className="px-5 py-4 whitespace-nowrap text-right">
                                                 <div className="flex items-center gap-1.5 justify-end">
                                                     {r.status === 'Solicitada' ? (
@@ -1910,49 +2155,59 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         Nenhuma locação encontrada.
                     </div>
                 ) : (
-                    filteredRentals.map(r => (
-                        <div key={r.id} className="p-4.5 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3.5">
-                            <div className="flex justify-between items-start">
-                                <div className="flex items-center gap-3">
-                                    <MercosulPlateBadge plate={r.plate} />
-                                    <div>
-                                        <p className="text-sm font-black text-slate-900">
-                                            {r.requesterName}
-                                        </p>
-                                        <p className="text-xs text-slate-500 font-bold mt-0.5">
-                                            {r.rentalCompany || 'Locadora a definir'} • {r.requesterSector || 'Geral'}
-                                        </p>
+                    filteredRentals.map(r => {
+                        const reqDateTime = formatRequestDateTime(r.reservationDate || (r as any).createdAt);
+                        return (
+                            <div key={r.id} className="p-4.5 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3.5">
+                                <div className="flex justify-between items-start">
+                                    <div className="flex items-center gap-3">
+                                        <MercosulPlateBadge plate={r.plate} />
+                                        <div>
+                                            <p className="text-sm font-black text-slate-900">
+                                                {toTitleCase(r.requesterName)}
+                                            </p>
+                                            <p className="text-xs text-slate-500 font-bold mt-0.5">
+                                                {toTitleCase(r.rentalCompany) || 'Locadora a definir'} • {toTitleCase(r.requesterSector || 'Geral')}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => handleOpenEditModal(r)} className="p-1.5 text-blue-600 border border-blue-200 rounded-lg" title="Editar">
+                                            <PencilIcon className="h-4 w-4" />
+                                        </button>
+                                        <button onClick={() => handleOpenDeleteModal(r)} className="p-1.5 text-rose-600 border border-rose-200 rounded-lg" title="Excluir">
+                                            <TrashIcon className="h-4 w-4" />
+                                        </button>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-1">
-                                    <button onClick={() => handleOpenEditModal(r)} className="p-1.5 text-blue-600 border border-blue-200 rounded-lg" title="Editar">
-                                        <PencilIcon className="h-4 w-4" />
-                                    </button>
-                                    <button onClick={() => handleOpenDeleteModal(r)} className="p-1.5 text-rose-600 border border-rose-200 rounded-lg" title="Excluir">
-                                        <TrashIcon className="h-4 w-4" />
-                                    </button>
-                                </div>
-                            </div>
 
-                            <div className="text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1.5">
-                                <div className="flex justify-between">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase">Itinerário</span>
-                                    <span className="font-bold text-slate-700">
-                                        {(r.pickupCity ? normalizeCidade(r.pickupCity) : 'A definir')} ➔ {(r.returnCity ? normalizeCidade(r.returnCity) : 'A definir')}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between items-center">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase">Status</span>
-                                    <span className={`text-[11px] font-black px-2 py-0.5 rounded-lg ${
-                                        r.status === 'Solicitada' ? 'text-amber-800 bg-amber-100 border border-amber-300' :
-                                        r.status === 'Recusada' ? 'text-rose-800 bg-rose-100 border border-rose-200' :
-                                        r.status === 'Em Uso' ? 'text-blue-700 bg-blue-50 border border-blue-200' : 
-                                        r.status === 'Aguardando retirada' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 
-                                        'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                                    }`}>
-                                        {r.status}
-                                    </span>
-                                </div>
+                                <div className="text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Data Solicitação</span>
+                                        <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                                            <CalendarIcon className="w-3.5 h-3.5 text-emerald-700" />
+                                            <span>{reqDateTime.date}</span>
+                                            {reqDateTime.time && <span className="text-slate-400 font-normal">({reqDateTime.time})</span>}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Itinerário</span>
+                                        <span className="font-bold text-slate-700">
+                                            {toTitleCase(r.pickupCity ? normalizeCidade(r.pickupCity) : 'A definir')} ➔ {toTitleCase(r.returnCity ? normalizeCidade(r.returnCity) : 'A definir')}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Status</span>
+                                        <span className={`text-[11px] font-black px-2 py-0.5 rounded-lg ${
+                                            r.status === 'Solicitada' ? 'text-amber-800 bg-amber-100 border border-amber-300' :
+                                            r.status === 'Recusada' ? 'text-rose-800 bg-rose-100 border border-rose-200' :
+                                            r.status === 'Em Uso' ? 'text-blue-700 bg-blue-50 border border-blue-200' : 
+                                            r.status === 'Aguardando retirada' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 
+                                            'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                                        }`}>
+                                            {toTitleCase(r.status)}
+                                        </span>
+                                    </div>
 
                                 <div className="flex justify-between items-center pt-1 border-t border-slate-100">
                                     <span className="text-[10px] text-slate-400 font-bold uppercase">Confirmação RAC</span>
@@ -2020,9 +2275,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 </div>
                             )}
                         </div>
-                    ))
-                )}
-            </div>
+                    );
+                })
+            )}
+        </div>
 
             {/* 7. Modal de Cadastro / Edição com Design Refinado */}
             <Modal 
