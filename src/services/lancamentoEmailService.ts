@@ -209,52 +209,52 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
       label: "STATUS",
       minWidth: "140px",
       renderCell: () => `
-        <span style="background-color: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 700; font-size: 8.5pt; text-transform: uppercase; display: inline-block; white-space: nowrap;">
+        <span style="background-color: #fef3c7; color: #92400e; padding: 5px 9px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 800; font-size: 9.5pt; text-transform: uppercase; display: inline-block; white-space: nowrap;">
           ⏳ ${statusAtual}
         </span>
       `
     },
     lancamento: {
       label: "DATA DO LANÇAMENTO",
-      minWidth: "130px",
+      minWidth: "135px",
       renderCell: () => `
-        <span style="color: #334155; font-size: 9.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
+        <span style="color: #1e293b; font-size: 10.5pt; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
           ${lancamentoBr}
         </span>
       `
     },
     documento: {
       label: "Nº DOCUMENTO",
-      minWidth: "120px",
+      minWidth: "125px",
       renderCell: () => `
-        <span style="color: #0f172a; font-size: 9.5pt; font-weight: 700; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
+        <span style="color: #0f172a; font-size: 11pt; font-weight: 800; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
           ${docNumero}
         </span>
       `
     },
     fornecedor: {
       label: "FORNECEDOR",
-      minWidth: "180px",
+      minWidth: "185px",
       renderCell: () => `
-        <span style="font-weight: 700; color: #0f172a; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        <span style="font-weight: 800; color: #0f172a; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
           ${fornecedorNome}
         </span>
       `
     },
     estabelecimento: {
       label: "Nº ESTABELECIMENTO",
-      minWidth: "140px",
+      minWidth: "145px",
       renderCell: () => `
-        <span style="color: #334155; font-size: 9.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
+        <span style="color: #1e293b; font-size: 10.5pt; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
           ${filialBase}
         </span>
       `
     },
     codLancamento: {
       label: "Nº LANÇAMENTO / OC",
-      minWidth: "130px",
+      minWidth: "135px",
       renderCell: () => `
-        <span style="color: #475569; font-size: 9.5pt; font-weight: 600; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
+        <span style="color: #334155; font-size: 10.5pt; font-weight: 700; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
           ${codOc}
         </span>
       `
@@ -264,7 +264,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
       minWidth: "280px",
       maxWidth: "420px",
       renderCell: () => `
-        <div style="color: #334155; font-size: 9.5pt; line-height: 1.4; word-break: break-word; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+        <div style="color: #1e293b; font-size: 10.5pt; line-height: 1.45; word-break: break-word; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
           ${descricaoServico}
         </div>
       `
@@ -272,18 +272,18 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     valor: {
       label: "VALOR",
       align: "right",
-      minWidth: "110px",
+      minWidth: "115px",
       renderCell: () => `
-        <span style="font-weight: 800; color: #065f46; font-size: 10.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
+        <span style="font-weight: 800; color: #065f46; font-size: 11.5pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
           ${valorFormatado}
         </span>
       `
     },
     vencimento: {
       label: "VENCIMENTO",
-      minWidth: "110px",
+      minWidth: "115px",
       renderCell: () => `
-        <span style="font-weight: 700; color: #b45309; font-size: 10pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
+        <span style="font-weight: 800; color: #b45309; font-size: 11pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap;">
           ${vencimentoBr}
         </span>
       `
@@ -297,7 +297,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     const align = def.align === "right" ? "text-align: right;" : "text-align: left;";
     const minW = def.minWidth ? `min-width: ${def.minWidth};` : "";
     const maxW = def.maxWidth ? `max-width: ${def.maxWidth};` : "";
-    return `<th style="padding: 10px 12px; ${align} ${minW} ${maxW} font-size: 9pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">${def.label}</th>`;
+    return `<th style="padding: 11px 12px; ${align} ${minW} ${maxW} font-size: 9.5pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.35px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">${def.label}</th>`;
   }).join("\n");
 
   // Gerar o HTML das células (<td ...>)
@@ -307,7 +307,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     const align = def.align === "right" ? "text-align: right;" : "text-align: left;";
     const minW = def.minWidth ? `min-width: ${def.minWidth};` : "";
     const maxW = def.maxWidth ? `max-width: ${def.maxWidth};` : "";
-    return `<td style="padding: 12px 10px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; ${align} ${minW} ${maxW} font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">${def.renderCell()}</td>`;
+    return `<td style="padding: 13px 12px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; ${align} ${minW} ${maxW} font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">${def.renderCell()}</td>`;
   }).join("\n");
 
   // Assunto exigido: Aprovação - Nome do Fornecedor - Vencimento
@@ -374,8 +374,8 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
 
           <!-- Tabela Horizontal com Dados do Lançamento alinhada à esquerda -->
           <div style="text-align: left; margin: 0;">
-            <div style="margin-bottom: 8px; text-align: left;">
-              <h3 style="margin: 0; font-size: 11pt; font-weight: 900; color: #0d4a36; text-transform: uppercase; letter-spacing: 0.4px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            <div style="margin-bottom: 10px; text-align: left;">
+              <h3 style="margin: 0; font-size: 11.5pt; font-weight: 900; color: #0d4a36; text-transform: uppercase; letter-spacing: 0.4px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                 📋 Detalhamento do Lançamento
               </h3>
             </div>
@@ -395,12 +395,6 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
               </table>
             </div>
           </div>
-
-          ${observacoes ? `
-          <div style="margin-top: 18px; padding: 10px 14px; background-color: #f1f5f9; border-radius: 6px; font-size: 9.5pt; color: #475569; text-align: left;">
-            <strong>Observações do Lançador:</strong> ${observacoes}
-          </div>
-          ` : ""}
 
           ${(() => {
             const anyData = data as any;
