@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Settings, KeyRound, LogOut, ChevronDown } from "lucide-react";
+import { Shield, Settings, KeyRound, LogOut, ChevronDown, Tv } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { usePresentation } from "../context/PresentationContext";
 import { ChangePasswordModal } from "./ChangePasswordModal";
 
 interface UserProfileBadgeProps {
@@ -10,6 +11,7 @@ interface UserProfileBadgeProps {
 
 export const UserProfileBadge: React.FC<UserProfileBadgeProps> = ({ className = "" }) => {
   const { user, logout } = useAuth();
+  const { startPresentation } = usePresentation();
   const navigate = useNavigate();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
@@ -77,6 +79,25 @@ export const UserProfileBadge: React.FC<UserProfileBadgeProps> = ({ className = 
                 {user?.role === "admin" ? "Administrador Master" : "Acesso Customizado"}
               </span>
             </div>
+
+            {/* Modo Apresentação (Restrito ao usuário Deny Gonçalves) */}
+            {(user?.email?.toLowerCase() === "deny.goncalves@risel.com.br" || user?.email?.toLowerCase() === "deny.risel@gmail.com") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileOpen(false);
+                  startPresentation();
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50/70 hover:bg-emerald-100/80 transition-colors flex items-center justify-between cursor-pointer border border-emerald-200/60 my-1 group"
+                title="Iniciar Apresentação em Tela Cheia (Slides de 3 min por Dashboard • ESC para sair)"
+              >
+                <div className="flex items-center gap-2">
+                  <Tv className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
+                  <span>Apresentação (Slides)</span>
+                </div>
+                <span className="text-[8.5px] font-black bg-emerald-700 text-white px-1.5 py-0.5 rounded-full">3 MIN</span>
+              </button>
+            )}
 
             <button
               type="button"

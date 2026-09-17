@@ -1,8 +1,9 @@
 import { ReactNode, useState, useRef, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, Users, CalendarDays, Home, Bell, Search, ChevronLeft, ChevronRight, LogOut, Settings, Shield, Mail, Eye, X, AlertTriangle, Edit2, Check, CheckSquare, ShieldAlert, Navigation, LayoutGrid, Clock, Activity, DollarSign, BarChart3, Plus, FileSpreadsheet, Map, KeyRound, Siren, BellRing, Car, Wrench } from "lucide-react";
+import { LayoutDashboard, FileText, Users, CalendarDays, Home, Bell, Search, ChevronLeft, ChevronRight, LogOut, Settings, Shield, Mail, Eye, X, AlertTriangle, Edit2, Check, CheckSquare, ShieldAlert, Navigation, LayoutGrid, Clock, Activity, DollarSign, BarChart3, Plus, FileSpreadsheet, Map, KeyRound, Siren, BellRing, Car, Wrench, Tv } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAuth, hasModuleAccess, hasSubmoduleAccess } from "../context/AuthContext";
+import { usePresentation } from "../context/PresentationContext";
 import { ChangePasswordModal } from "../components/ChangePasswordModal";
 import { UserProfileBadge } from "../components/UserProfileBadge";
 import { DocumentoAnexoModal } from "../components/documentos/DocumentoAnexoModal";
@@ -11,6 +12,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { startPresentation, isActive: isPresentationActive } = usePresentation();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -336,20 +338,43 @@ export function MainLayout({ children }: { children: ReactNode }) {
           })}
         </nav>
         
-        {/* Adicionado menu inferior condicional de Usuários (Restrito a deny.goncalves@risel.com.br) */}
-        <div className="mt-auto space-y-1 pr-2">
-          {!isFrota && (user?.email?.toLowerCase() === "deny.goncalves@risel.com.br") && (
-            <Link
-              to="/documentos/usuarios"
-              className={cn(
-                "flex items-center py-2.5 text-slate-400 hover:bg-white/5 hover:text-slate-200 rounded-xl transition-all duration-200 font-bold text-xs gap-3 px-3",
-                location.pathname === "/documentos/usuarios" ? "bg-emerald-500/10 text-emerald-400 shadow-sm border-l-4 border-emerald-500 font-extrabold" : ""
+        {/* Menu inferior condicional de Usuários & Apresentação (Restrito ao acesso de Deny Gonçalves) */}
+        <div className="mt-auto space-y-1.5 pr-2">
+          {(user?.email?.toLowerCase() === "deny.goncalves@risel.com.br" || user?.email?.toLowerCase() === "deny.risel@gmail.com") && (
+            <>
+              {/* Botão Discreto de Apresentação em Tela Cheia (Slides de Dashboards) */}
+              <button
+                type="button"
+                onClick={startPresentation}
+                className={cn(
+                  "flex items-center w-full py-2.5 text-slate-400 hover:bg-emerald-950/40 hover:text-emerald-300 rounded-xl transition-all duration-200 font-bold text-xs gap-3 px-3 cursor-pointer group border border-transparent hover:border-emerald-500/25 select-none",
+                  isPresentationActive ? "bg-emerald-500/20 text-emerald-300 shadow-sm border-l-4 border-emerald-400 font-extrabold" : ""
+                )}
+                title={isCollapsed ? "Apresentação (Slides)" : "Iniciar Apresentação de Slides dos Dashboards (Tela Cheia • 3 min por dashboard • ESC para sair)"}
+              >
+                <Tv className="w-[18px] h-[18px] shrink-0 text-emerald-400 group-hover:scale-110 transition-transform" />
+                {!isCollapsed && (
+                  <div className="flex items-center justify-between w-full">
+                    <span className="whitespace-nowrap">Apresentação</span>
+                    <span className="text-[8.5px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-black tracking-wider">3 MIN</span>
+                  </div>
+                )}
+              </button>
+
+              {!isFrota && (
+                <Link
+                  to="/documentos/usuarios"
+                  className={cn(
+                    "flex items-center py-2.5 text-slate-400 hover:bg-white/5 hover:text-slate-200 rounded-xl transition-all duration-200 font-bold text-xs gap-3 px-3",
+                    location.pathname === "/documentos/usuarios" ? "bg-emerald-500/10 text-emerald-400 shadow-sm border-l-4 border-emerald-500 font-extrabold" : ""
+                  )}
+                  title={isCollapsed ? "Usuários" : undefined}
+                >
+                  <Users className="w-[18px] h-[18px] shrink-0" />
+                  {!isCollapsed && <span className="whitespace-nowrap">Usuários</span>}
+                </Link>
               )}
-              title={isCollapsed ? "Usuários" : undefined}
-            >
-              <Users className="w-[18px] h-[18px] shrink-0" />
-              {!isCollapsed && <span className="whitespace-nowrap">Usuários</span>}
-            </Link>
+            </>
           )}
         </div>
 

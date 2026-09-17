@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuth, UserPermissions, normalizePermissions } from "../../context/AuthContext";
-import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap, Bot, BookOpen, Layers, Car, Navigation, Siren, Activity } from "lucide-react";
+import { usePresentation } from "../../context/PresentationContext";
+import { Users, Plus, Shield, ShieldAlert, CheckSquare, Square, Trash2, Mail, User, Save, Lock, ArrowRight, ShieldCheck, KeyRound, Eye, EyeOff, Server, Check, Calendar, Send, Clock, AlertTriangle, FileText, X, Pencil, Database, RefreshCw, Copy, CheckCircle2, Zap, Bot, BookOpen, Layers, Car, Navigation, Siren, Activity, Tv } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "../../lib/utils";
 import { AdminAiAssistant } from "../../components/AdminAiAssistant";
@@ -19,10 +20,12 @@ import {
 
 export default function Usuarios() {
   const { user: currentUser, usersList, createUser, updateUser, deleteUser, refreshUsersFromSupabase } = useAuth();
+  const { startPresentation } = usePresentation();
   
   // Bloqueio de Segurança Rigoroso: Apenas o Administrador Master Deny Gonçalves possui autorização para gerenciar logins e permissões
   const isMasterUser = 
-    currentUser?.email?.toLowerCase() === "deny.goncalves@risel.com.br";
+    currentUser?.email?.toLowerCase() === "deny.goncalves@risel.com.br" ||
+    currentUser?.email?.toLowerCase() === "deny.risel@gmail.com";
 
   if (!isMasterUser) {
     return (
@@ -576,15 +579,29 @@ export default function Usuarios() {
           </h2>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsSupabaseModalOpen(true)}
-          className="px-4 py-2.5 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold text-xs rounded-2xl flex items-center gap-2 transition-all shadow-md cursor-pointer shrink-0 border border-emerald-600/30"
-        >
-          <Database className="w-4.5 h-4.5 text-emerald-300" />
-          <span>Banco Supabase (Real) & Anti-Inatividade</span>
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-        </button>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Botão Discreto de Apresentação (Slides em Tela Cheia) */}
+          <button
+            type="button"
+            onClick={startPresentation}
+            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-emerald-300 font-extrabold text-xs rounded-2xl flex items-center gap-2 transition-all shadow-md cursor-pointer shrink-0 border border-emerald-500/30 group"
+            title="Iniciar Apresentação em Tela Cheia (Slides automáticos de 3 min por Dashboard • ESC para sair)"
+          >
+            <Tv className="w-4.5 h-4.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+            <span>Apresentação</span>
+            <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 text-[10px] font-black rounded-full">3 MIN</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsSupabaseModalOpen(true)}
+            className="px-4 py-2.5 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold text-xs rounded-2xl flex items-center gap-2 transition-all shadow-md cursor-pointer shrink-0 border border-emerald-600/30"
+          >
+            <Database className="w-4.5 h-4.5 text-emerald-300" />
+            <span>Banco Supabase (Real) & Anti-Inatividade</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+          </button>
+        </div>
       </div>
 
       {/* Navegação de Abas do Painel Master Restrito */}

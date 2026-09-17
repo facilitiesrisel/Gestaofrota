@@ -1033,8 +1033,24 @@ export default function Frota() {
   const [isVehiclesLoading, setIsVehiclesLoading] = useState(false);
 
   const [pedagios, setPedagios] = useState<Pedagio[]>([]);
-  const [activeAbastecimentoTab, setActiveAbastecimentoTab] = useState<"tabela" | "dashboard">("tabela");
-  const [activeManutencaoTab, setActiveManutencaoTab] = useState<"tabela" | "dashboard">("tabela");
+  const subtabParam = searchParams.get("subtab");
+  const [activeAbastecimentoTab, setActiveAbastecimentoTab] = useState<"tabela" | "dashboard">(
+    subtabParam === "dashboard" ? "dashboard" : "tabela"
+  );
+  const [activeManutencaoTab, setActiveManutencaoTab] = useState<"tabela" | "dashboard">(
+    subtabParam === "dashboard" ? "dashboard" : "tabela"
+  );
+  
+  useEffect(() => {
+    const subtab = searchParams.get("subtab");
+    if (subtab === "dashboard") {
+      setActiveAbastecimentoTab("dashboard");
+      setActiveManutencaoTab("dashboard");
+    } else if (subtab === "tabela") {
+      setActiveAbastecimentoTab("tabela");
+      setActiveManutencaoTab("tabela");
+    }
+  }, [searchParams]);
   
   // Column visibility
   const [visColAbast, setVisColAbast] = useState({ veiculo: true, base: true, data: true, odometro: true, litros: true, valor: true });

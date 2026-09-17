@@ -22,6 +22,8 @@ import { Login } from "./components/Login";
 import { pingSupabaseKeepAlive } from "./services/supabaseService";
 import { Lock } from "lucide-react";
 import { VersionManager } from "./components/VersionManager";
+import { PresentationProvider } from "./context/PresentationContext";
+import { PresentationOverlay } from "./components/PresentationOverlay";
 
 function ProtectedRoute({ 
   children, 
@@ -117,8 +119,10 @@ function AppContent() {
 
   return (
     <Router>
-      <VersionManager />
-      <Routes>
+      <PresentationProvider>
+        <VersionManager />
+        <PresentationOverlay />
+        <Routes>
         {/* Rotas públicas para colaboradores preencherem checklist sem login */}
         <Route path="/checklist-publico" element={<ChecklistPublico />} />
         <Route path="/checklist" element={<ChecklistPublico />} />
@@ -152,6 +156,7 @@ function AppContent() {
         {/* Fallback de redirecionamento para Home */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </PresentationProvider>
     </Router>
   );
 }
