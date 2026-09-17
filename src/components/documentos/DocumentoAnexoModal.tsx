@@ -13,6 +13,16 @@ if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 }
 
+export interface AnexoItem {
+  id?: string;
+  nome: string;
+  base64?: string;
+  arquivoAnexoBase64?: string;
+  content?: string;
+  tamanho?: number;
+  tipo?: string;
+}
+
 export interface DocumentoAnexoData {
   nome?: string;
   fornecedor?: string;
@@ -34,6 +44,8 @@ export interface DocumentoAnexoData {
   frequencia?: string;
   observacao?: string;
   arquivoAnexoBase64?: string;
+  anexos?: AnexoItem[];
+  anexoAtivoIndex?: number;
 }
 
 interface DocumentoAnexoModalProps {
@@ -90,6 +102,37 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
   const [rotation, setRotation] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Lista normalizada de anexos (até 4)
+  const anexosList = React.useMemo<AnexoItem[]>(() => {
+    if (!documento) return [];
+    if (Array.isArray(documento.anexos) && documento.anexos.length > 0) {
+      return documento.anexos.slice(0, 4);
+    }
+    const rawSingle = documento.arquivoAnexoBase64?.trim();
+    if (rawSingle) {
+      return [{
+        id: "anx-1",
+        nome: documento.nome || "Documento_Fiscal.pdf",
+        base64: rawSingle
+      }];
+    }
+    return [];
+  }, [documento]);
+
+  const [activeAnexoIndex, setActiveAnexoIndex] = useState<number>(0);
+
+  // Reseta ou ajusta o índice quando o documento mudar
+  useEffect(() => {
+    if (documento?.anexoAtivoIndex !== undefined && documento.anexoAtivoIndex >= 0) {
+      setActiveAnexoIndex(documento.anexoAtivoIndex);
+    } else {
+      setActiveAnexoIndex(0);
+    }
+  }, [documento]);
+
+  const currentAnexo = anexosList[activeAnexoIndex] || anexosList[0] || null;
+  const fileName = currentAnexo?.nome || documento?.nome || "Documento Fiscal";
   
   // Estados para renderização do PDF via Canvas (PDF.js)
   const [pdfDoc, setPdfDoc] = useState<any>(null);
@@ -126,7 +169,7 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
     setNumPages(0);
     setPdfDoc(null);
 
-    const rawData = documento.arquivoAnexoBase64?.trim() || "";
+    const rawData = (currentAnexo?.base64 || currentAnexo?.arquivoAnexoBase64 || currentAnexo?.content || documento.arquivoAnexoBase64 || "")?.trim();
 
     if (!rawData) {
       setBlobUrl(null);
@@ -155,10 +198,10 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
           }
 
           if (mime === "application/octet-stream" || !mime) {
-            const fileName = (documento.nome || "").toLowerCase();
-            if (fileName.endsWith(".png")) mime = "image/png";
-            else if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) mime = "image/jpeg";
-            else if (fileName.endsWith(".webp")) mime = "image/webp";
+            const fName = (fileName || "").toLowerCase();
+            if (fName.endsWith(".png")) mime = "image/png";
+            else if (fName.endsWith(".jpg") || fName.endsWith(".jpeg")) mime = "image/jpeg";
+            else if (fName.endsWith(".webp")) mime = "image/webp";
             else mime = "application/pdf";
           }
 
@@ -214,7 +257,7 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
       setViewMode("voucher");
       setIsLoading(false);
     }
-  }, [isOpen, documento]);
+  }, [isOpen, documento, activeAnexoIndex, currentAnexo]);
 
   // Renderizar a página atual no Canvas quando mudar a página, zoom ou rotação
   useEffect(() => {
@@ -282,7 +325,6 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
 
   if (!isOpen || !documento) return null;
 
-  const fileName = documento.nome || `Documento_${documento.doc || "Fiscal"}.pdf`;
   const cnpjDisplay = formatCnpjClean(documento.fornecedorCnpj || documento.cnpj);
   const dataEmissaoDisplay = formatBrDate(documento.dataEmissao);
   const dataVencimentoDisplay = formatBrDate(documento.dataVencimento);
@@ -443,6 +485,43 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* BARRA DE SELEÇÃO DE ANEXOS MÚLTIPLOS (ATÉ 4 ARQUIVOS) */}
+        {anexosList.length > 1 && (
+          <div className="bg-slate-950/90 px-4 py-2 border-b border-slate-800 flex items-center gap-2 overflow-x-auto shrink-0 scrollbar-thin">
+            <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5 shrink-0 uppercase tracking-wider">
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              Anexos ({anexosList.length}/4):
+            </span>
+            <div className="flex items-center gap-1.5">
+              {anexosList.map((anx, idx) => {
+                const isCurrent = activeAnexoIndex === idx;
+                return (
+                  <button
+                    key={anx.id || idx}
+                    type="button"
+                    onClick={() => {
+                      setActiveAnexoIndex(idx);
+                      setViewMode("pdf");
+                    }}
+                    className={cn(
+                      "px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap",
+                      isCurrent
+                        ? "bg-emerald-500 text-slate-950 font-black shadow-md shadow-emerald-500/20"
+                        : "bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/80"
+                    )}
+                    title={`Visualizar Anexo ${idx + 1}: ${anx.nome}`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-black/20 flex items-center justify-center text-[10px]">
+                      {idx + 1}
+                    </span>
+                    <span className="truncate max-w-[150px]">{anx.nome}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* CORPO DO VISUALIZADOR */}
         <div className="flex-1 overflow-hidden bg-slate-950 flex flex-col relative">

@@ -378,6 +378,7 @@ const INITIAL_FORM_STATE = {
   multaGravidade: "Média",
   nomeArquivoAnexo: "",
   arquivoAnexoBase64: "",
+  anexos: [] as Array<{ id: string; nome: string; base64: string; tamanho?: number; tipo?: string }>,
   centroCusto: "C.C 101 - Operacional",
   cidade: "",
   uf: "",
@@ -1571,23 +1572,64 @@ export default function Lancamento() {
     }, 400);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
+  const processFiles = (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    const currentAnexos = Array.isArray(formData.anexos) ? [...formData.anexos] : [];
+    // Migra anexo legado se existir e a lista estiver vazia
+    if (currentAnexos.length === 0 && formData.arquivoAnexoBase64) {
+      currentAnexos.push({
+        id: `anx-${Date.now()}-legacy`,
+        nome: formData.nomeArquivoAnexo || "Documento_Fiscal.pdf",
+        base64: formData.arquivoAnexoBase64
+      });
+    }
+
+    const availableSlots = 4 - currentAnexos.length;
+    if (availableSlots <= 0) {
+      alert("Limite máximo de 4 documentos anexos já atingido. Remova um anexo para adicionar outro.");
+      return;
+    }
+
+    const filesToProcess = fileArray.slice(0, availableSlots);
+
+    filesToProcess.forEach((file, index) => {
       const reader = new FileReader();
       reader.onload = (event) => {
-        const isNf = formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento;
+        const base64 = (event.target?.result as string) || "";
+        const isNf = (formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento) && (currentAnexos.length + index === 0);
         const nomeSugerido = isNf
           ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name, formData.codigoLancamento)
           : file.name;
 
-        setFormData(prev => ({
-          ...prev,
-          nomeArquivoAnexo: nomeSugerido,
-          arquivoAnexoBase64: (event.target?.result as string) || ""
-        }));
+        setFormData(prev => {
+          const list = Array.isArray(prev.anexos) ? [...prev.anexos] : [];
+          if (list.length >= 4) return prev;
+          const newAnx = {
+            id: `anx-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            nome: nomeSugerido,
+            base64: base64,
+            tamanho: file.size,
+            tipo: file.type
+          };
+          const updated = [...list, newAnx].slice(0, 4);
+          return {
+            ...prev,
+            anexos: updated,
+            nomeArquivoAnexo: updated[0]?.nome || "",
+            arquivoAnexoBase64: updated[0]?.base64 || ""
+          };
+        });
       };
       reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      processFiles(e.target.files);
+      e.target.value = "";
     }
   };
 
@@ -1597,22 +1639,8 @@ export default function Lancamento() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const isNf = formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento;
-        const nomeSugerido = isNf
-          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name, formData.codigoLancamento)
-          : file.name;
-
-        setFormData(prev => ({
-          ...prev,
-          nomeArquivoAnexo: nomeSugerido,
-          arquivoAnexoBase64: (event.target?.result as string) || ""
-        }));
-      };
-      reader.readAsDataURL(file);
+    if (e.dataTransfer.files) {
+      processFiles(e.dataTransfer.files);
     }
   };
 
@@ -1691,22 +1719,36 @@ export default function Lancamento() {
 
     let savedItem: any = null;
 
+    const currentAnexos = Array.isArray(data.anexos) && data.anexos.length > 0
+      ? data.anexos.slice(0, 4)
+      : (data.arquivoAnexoBase64 ? [{ id: "anx-1", nome: data.nomeArquivoAnexo || "Documento.pdf", base64: data.arquivoAnexoBase64 }] : []);
+
+    const finalNomeAnexo = currentAnexos[0]?.nome || data.nomeArquivoAnexo || "";
+    const finalBase64Anexo = currentAnexos[0]?.base64 || data.arquivoAnexoBase64 || "";
+
+    // Se a intenção do salvamento é disparar e-mail de aprovação, força estritamente "Aguardando Aprovação"
+    const isDispatchingEmail = Boolean(options?.sendEmail);
+
     if (editingId !== null) {
       // Editar lançamento existente com preservação total de campos e ID
       const existing = lancamentos.find(item => Number(item.id) === Number(editingId));
-      const isNowApproved = data.status === "Aprovado";
+      const isNowApproved = !isDispatchingEmail && data.status === "Aprovado";
       const wasApproved = existing?.status === "Aprovado";
       let dataAprovacao = existing?.dataAprovacao || "";
       
       if (isNowApproved && !wasApproved) {
         dataAprovacao = hojeLocalBr;
-      } else if (!isNowApproved) {
+      } else if (!isNowApproved || isDispatchingEmail) {
         dataAprovacao = "";
       }
 
+      const statusCalculado = isDispatchingEmail 
+        ? "Aguardando Aprovação" 
+        : ((data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status);
+
       savedItem = {
         id: Number(editingId),
-        status: (data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status,
+        status: statusCalculado,
         dataLancamento: existing?.dataLancamento || hojeLocalBr,
         dataVencimento: formatVencimiento,
         fornecedor: data.fornecedor,
@@ -1717,8 +1759,9 @@ export default function Lancamento() {
         descricao: data.descricao || "Lançamento editado",
         cnpj: data.cnpj,
         estabelecimento: finalEstabelecimento,
-        nomeArquivoAnexo: data.nomeArquivoAnexo || existing?.nomeArquivoAnexo || "",
-        arquivoAnexoBase64: data.arquivoAnexoBase64 || existing?.arquivoAnexoBase64 || "",
+        nomeArquivoAnexo: finalNomeAnexo || existing?.nomeArquivoAnexo || "",
+        arquivoAnexoBase64: finalBase64Anexo || existing?.arquivoAnexoBase64 || "",
+        anexos: currentAnexos.length > 0 ? currentAnexos : (existing?.anexos || []),
         itemSistema: data.itemSistema || "",
         dataEmissao: formatEmissao,
         observacao: data.observacao || "",
@@ -1739,10 +1782,14 @@ export default function Lancamento() {
     } else {
       // Cadastrar novo lançamento
       const newId = Date.now();
-      const isNowApproved = data.status === "Aprovado";
+      const isNowApproved = !isDispatchingEmail && data.status === "Aprovado";
+      const statusCalculado = isDispatchingEmail 
+        ? "Aguardando Aprovação" 
+        : ((data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status);
+
       savedItem = {
         id: newId,
-        status: (data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status,
+        status: statusCalculado,
         dataLancamento: hojeLocalBr,
         dataVencimento: formatVencimiento,
         fornecedor: data.fornecedor,
@@ -1753,8 +1800,9 @@ export default function Lancamento() {
         descricao: data.descricao || "Lançamento",
         cnpj: data.cnpj,
         estabelecimento: finalEstabelecimento,
-        nomeArquivoAnexo: data.nomeArquivoAnexo || "",
-        arquivoAnexoBase64: data.arquivoAnexoBase64 || "",
+        nomeArquivoAnexo: finalNomeAnexo,
+        arquivoAnexoBase64: finalBase64Anexo,
+        anexos: currentAnexos,
         itemSistema: data.itemSistema || "",
         dataEmissao: formatEmissao,
         observacao: data.observacao || "",
@@ -1776,6 +1824,10 @@ export default function Lancamento() {
 
     // Disparo oficial com destinatários e cópias escolhidos no modal
     if (options?.sendEmail) {
+      // Garante que o status salvo esteja como Aguardando Aprovação
+      savedItem.status = "Aguardando Aprovação";
+      savedItem.dataAprovacao = "";
+      await saveLancamentoUnified(savedItem);
       const paraLista = options.toRecipients && options.toRecipients.length > 0 ? options.toRecipients : DEFAULT_LANCAMENTO_TO_EMAILS;
       const ccLista = options.ccRecipients || DEFAULT_LANCAMENTO_CC_EMAILS;
 
@@ -1948,8 +2000,11 @@ export default function Lancamento() {
       multaInfracao: "",
       multaMotorista: "",
       multaGravidade: "Média",
-      nomeArquivoAnexo: item.nomeArquivoAnexo || "",
-      arquivoAnexoBase64: item.arquivoAnexoBase64 || "",
+      nomeArquivoAnexo: item.nomeArquivoAnexo || (item.anexos?.[0]?.nome || ""),
+      arquivoAnexoBase64: item.arquivoAnexoBase64 || (item.anexos?.[0]?.base64 || ""),
+      anexos: Array.isArray(item.anexos) && item.anexos.length > 0
+        ? item.anexos.slice(0, 4)
+        : (item.arquivoAnexoBase64 ? [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }] : []),
       centroCusto: item.centroCusto || "C.C 101 - Operacional",
       cidade: item.cidade || matchedForn?.cidade || "",
       uf: (item.uf || matchedForn?.uf || "").toUpperCase(),
@@ -2594,122 +2649,182 @@ export default function Lancamento() {
                        <h4 className="font-bold text-xs text-slate-700">Dados Básicos</h4>
                     </div>
 
-                    {/* Anexo de Nota Fiscal Integrado e Compacto com Renomeação Padrão */}
-                    <div className="bg-white rounded-lg border border-slate-200 p-2 shadow-inner relative overflow-hidden">
-                      {formData.nomeArquivoAnexo ? (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-1.5">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <div className="w-6 h-6 rounded bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
-                                <FileText className="w-3.5 h-3.5 text-emerald-600" />
-                              </div>
-                              <div className="min-w-0">
-                                <h5 className="font-bold text-slate-800 text-[10px] leading-tight flex items-center gap-1">
-                                  <span>Nota Anexada</span>
-                                  <span className="text-[8px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded">
-                                    Pronta
-                                  </span>
-                                </h5>
-                                <p className="text-[8px] text-slate-500 truncate" title={formData.nomeArquivoAnexo}>
-                                  Padronização ativa (editável abaixo)
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex gap-1 shrink-0">
-                              <button 
-                                type="button" 
-                                onClick={() => {
-                                  const novoNome = gerarNomePadraoAnexoNf(
-                                    formData.dataVencimento, 
-                                    formData.fornecedor, 
-                                    formData.nomeArquivoAnexo,
-                                    formData.codigoLancamento
-                                  );
-                                  setFormData(prev => ({ ...prev, nomeArquivoAnexo: novoNome }));
-                                }}
-                                className="p-1 rounded hover:bg-emerald-50 text-emerald-700 border border-emerald-200 bg-white transition-colors cursor-pointer"
-                                title="Regenerar nome padrão: dd.mm.aaaa NF[Nº da Nota] [Fornecedor]"
-                              >
-                                <Sparkles className="w-3 h-3 text-emerald-600" />
-                              </button>
-                              <button 
-                                type="button" 
-                                onClick={() => {
-                                  setViewingAnexo({
-                                    nome: formData.nomeArquivoAnexo,
-                                    fornecedor: formData.fornecedor || "Não identificado",
-                                    fornecedorCnpj: formData.cnpj || "Sem CNPJ",
-                                    valor: formData.valorNf ? `R$ ${formData.valorNf}` : "Não identificado",
-                                    cnpj: formData.cnpj || "Sem CNPJ",
-                                    doc: formData.codigoLancamento || formData.itemSistema || "S/N",
-                                    tipo: formData.tipoDocumento || formData.tipo || "NF-e",
-                                    estabelecimento: formData.estabelecimento || "",
-                                    centroCusto: formData.centroCusto || "",
-                                    aprovadores: formData.aprovadores || "",
-                                    formaPagto: formData.formaPagamento || "",
-                                    itemSistema: formData.itemSistema || "",
-                                    lancadoPor: formData.lancadoPor || "",
-                                    status: formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (formData.status || "Aguardando Aprovação"),
-                                    frequencia: formData.tipo || "Esporádico",
-                                    dataEmissao: formData.dataEmissao || "",
-                                    dataVencimento: formData.dataVencimento || "",
-                                    descricao: formData.descricao || "",
-                                    observacao: formData.observacao || "",
-                                    arquivoAnexoBase64: formData.arquivoAnexoBase64
-                                  });
-                                }}
-                                className="p-1 rounded hover:bg-slate-100 text-slate-500 border border-slate-200 bg-white transition-colors cursor-pointer"
-                                title="Visualizar Nota"
-                              >
-                                <Eye className="w-3 h-3" />
-                              </button>
-                              <button 
-                                type="button" 
-                                onClick={() => setFormData(prev => ({ ...prev, nomeArquivoAnexo: "", arquivoAnexoBase64: "" }))}
-                                className="p-1 rounded hover:bg-rose-50 text-rose-500 border border-rose-200 bg-white transition-colors cursor-pointer"
-                                title="Remover anexo"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Campo editável para o nome do arquivo com máscara e sugestão padrão */}
-                          <div className="space-y-0.5 pt-0.5 border-t border-slate-100">
-                            <div className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase tracking-wider">
-                              <span>Nome do Arquivo (Editável)</span>
-                              <span className="text-[7.5px] text-emerald-700 font-semibold normal-case">dd.mm.aaaa NF[Nº] Fornecedor</span>
-                            </div>
-                            <input 
-                              type="text" 
-                              value={formData.nomeArquivoAnexo} 
-                              onChange={(e) => setFormData(prev => ({ ...prev, nomeArquivoAnexo: e.target.value }))} 
-                              className="w-full px-2 py-1 text-[10px] font-mono font-medium text-slate-800 bg-slate-50 border border-slate-200 focus:border-[#114D38] focus:bg-white focus:ring-1 focus:ring-[#114D38]/20 rounded outline-none transition-all shadow-2xs" 
-                              placeholder="dd.mm.aaaa NF12345 Fornecedor.pdf" 
-                              title="Você pode alterar o nome do arquivo aqui se precisar" 
-                            />
-                          </div>
+                    {/* Anexo de Documentos Integrado com Suporte a até 4 Arquivos */}
+                    <div className="bg-white rounded-lg border border-slate-200 p-2.5 shadow-inner relative overflow-hidden space-y-2">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-emerald-700" />
+                          <span className="font-bold text-[10px] text-slate-800">
+                            Documentos Anexados ({(formData.anexos || []).length}/4)
+                          </span>
                         </div>
-                      ) : (
+                        <span className={cn(
+                          "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                          (formData.anexos || []).length === 4
+                            ? "bg-amber-100 text-amber-800"
+                            : (formData.anexos || []).length > 0
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-slate-100 text-slate-600"
+                        )}>
+                          {(formData.anexos || []).length === 4
+                            ? "Limite Atingido (4/4)"
+                            : (formData.anexos || []).length > 0
+                            ? `${(formData.anexos || []).length}/4 Anexado(s)`
+                            : "Até 4 anexos"}
+                        </span>
+                      </div>
+
+                      {/* Lista de Documentos Anexados */}
+                      {(formData.anexos || []).length > 0 && (
+                        <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-0.5">
+                          {(formData.anexos || []).map((anx, idx) => (
+                            <div key={anx.id || idx} className="p-1.5 rounded-lg border border-slate-200 bg-slate-50/70 space-y-1">
+                              <div className="flex items-center justify-between gap-1.5">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-800 font-black text-[8px] flex items-center justify-center shrink-0">
+                                    {idx + 1}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <h5 className="font-bold text-slate-800 text-[9.5px] leading-tight flex items-center gap-1">
+                                      <span className="truncate">
+                                        {idx === 0 ? "Documento Principal (NF / Boleto)" : `Anexo Adicional #${idx + 1}`}
+                                      </span>
+                                    </h5>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {idx === 0 && (
+                                    <button 
+                                      type="button" 
+                                      onClick={() => {
+                                        const novoNome = gerarNomePadraoAnexoNf(
+                                          formData.dataVencimento, 
+                                          formData.fornecedor, 
+                                          anx.nome,
+                                          formData.codigoLancamento
+                                        );
+                                        setFormData(prev => {
+                                          const list = [...(prev.anexos || [])];
+                                          list[0] = { ...list[0], nome: novoNome };
+                                          return {
+                                            ...prev,
+                                            anexos: list,
+                                            nomeArquivoAnexo: novoNome
+                                          };
+                                        });
+                                      }}
+                                      className="p-1 rounded hover:bg-emerald-50 text-emerald-700 border border-emerald-200 bg-white transition-colors cursor-pointer"
+                                      title="Regenerar nome padrão da NF"
+                                    >
+                                      <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                                    </button>
+                                  )}
+                                  <button 
+                                    type="button" 
+                                    onClick={() => {
+                                      const allAnexos = formData.anexos || [];
+                                      setViewingAnexo({
+                                        nome: anx.nome,
+                                        fornecedor: formData.fornecedor || "Não identificado",
+                                        fornecedorCnpj: formData.cnpj || "Sem CNPJ",
+                                        valor: formData.valorNf ? `R$ ${formData.valorNf}` : "Não identificado",
+                                        cnpj: formData.cnpj || "Sem CNPJ",
+                                        doc: formData.codigoLancamento || formData.itemSistema || "S/N",
+                                        tipo: formData.tipoDocumento || formData.tipo || "NF-e",
+                                        estabelecimento: formData.estabelecimento || "",
+                                        centroCusto: formData.centroCusto || "",
+                                        aprovadores: formData.aprovadores || "",
+                                        formaPagto: formData.formaPagamento || "",
+                                        itemSistema: formData.itemSistema || "",
+                                        lancadoPor: formData.lancadoPor || "",
+                                        status: formData.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (formData.status || "Aguardando Aprovação"),
+                                        frequencia: formData.tipo || "Esporádico",
+                                        dataEmissao: formData.dataEmissao || "",
+                                        dataVencimento: formData.dataVencimento || "",
+                                        descricao: formData.descricao || "",
+                                        observacao: formData.observacao || "",
+                                        arquivoAnexoBase64: anx.base64 || formData.arquivoAnexoBase64,
+                                        anexos: allAnexos,
+                                        initialAnexoIndex: idx
+                                      });
+                                    }}
+                                    className="p-1 rounded hover:bg-slate-100 text-slate-600 border border-slate-200 bg-white transition-colors cursor-pointer"
+                                    title="Visualizar este anexo"
+                                  >
+                                    <Eye className="w-2.5 h-2.5" />
+                                  </button>
+                                  <button 
+                                    type="button" 
+                                    onClick={() => {
+                                      setFormData(prev => {
+                                        const list = (prev.anexos || []).filter((_, i) => i !== idx);
+                                        return {
+                                          ...prev,
+                                          anexos: list,
+                                          nomeArquivoAnexo: list[0]?.nome || "",
+                                          arquivoAnexoBase64: list[0]?.base64 || ""
+                                        };
+                                      });
+                                    }}
+                                    className="p-1 rounded hover:bg-rose-50 text-rose-500 border border-rose-200 bg-white transition-colors cursor-pointer"
+                                    title="Remover este anexo"
+                                  >
+                                    <Trash2 className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Input com nome do anexo */}
+                              <input 
+                                type="text" 
+                                value={anx.nome} 
+                                onChange={(e) => {
+                                  const novoVal = e.target.value;
+                                  setFormData(prev => {
+                                    const list = [...(prev.anexos || [])];
+                                    list[idx] = { ...list[idx], nome: novoVal };
+                                    return {
+                                      ...prev,
+                                      anexos: list,
+                                      nomeArquivoAnexo: idx === 0 ? novoVal : prev.nomeArquivoAnexo
+                                    };
+                                  });
+                                }} 
+                                className="w-full px-2 py-0.5 text-[9.5px] font-mono text-slate-800 bg-white border border-slate-200 focus:border-[#114D38] focus:ring-1 focus:ring-[#114D38]/20 rounded outline-none transition-all shadow-2xs truncate" 
+                                placeholder="Nome do documento..." 
+                                title="Edite o nome deste anexo se necessário" 
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Dropzone para inclusão de novos anexos (até 4) */}
+                      {(formData.anexos || []).length < 4 && (
                         <div 
                           onDragOver={handleDragOver} 
                           onDrop={handleDrop} 
                           onClick={() => fileInputRef.current?.click()} 
-                          className="flex items-center gap-1.5 border border-dashed border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/5 rounded p-1.5 transition-all cursor-pointer group"
+                          className="flex items-center justify-center gap-1.5 border border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/20 hover:bg-emerald-50/40 rounded-lg p-2 transition-all cursor-pointer group text-center"
                         >
                           <input 
                             type="file" 
+                            multiple
                             ref={fileInputRef} 
                             onChange={handleFileUpload} 
                             accept=".pdf,.png,.jpg,.jpeg,.xml" 
                             className="hidden" 
                           />
-                          <div className="w-6 h-6 rounded bg-slate-50 group-hover:bg-emerald-50 border border-slate-100 group-hover:border-emerald-200 flex items-center justify-center text-slate-500 group-hover:text-emerald-600 transition-all shrink-0">
-                            <Upload className="w-3 h-3" />
+                          <div className="w-5 h-5 rounded bg-emerald-100/70 border border-emerald-200 flex items-center justify-center text-emerald-700 transition-all shrink-0">
+                            <Upload className="w-2.5 h-2.5" />
                           </div>
                           <div className="text-left min-w-0">
-                            <h5 className="font-bold text-slate-700 text-[9px] group-hover:text-emerald-700 transition-colors leading-none">Anexar Nota/Boleto</h5>
-                            <p className="text-[7.5px] text-slate-400 mt-0.5 leading-tight truncate">Arraste ou clique (PDF/Imagem)</p>
+                            <h5 className="font-bold text-slate-700 text-[9px] group-hover:text-emerald-800 transition-colors leading-tight">
+                              {(formData.anexos || []).length === 0
+                                ? "Anexar Documentos (Até 4)"
+                                : `Adicionar mais um documento (${4 - (formData.anexos || []).length} restante${4 - (formData.anexos || []).length > 1 ? "s" : ""})`}
+                            </h5>
+                            <p className="text-[7.5px] text-slate-500 leading-none truncate">Arraste ou clique (PDF, Imagem, XML)</p>
                           </div>
                         </div>
                       )}
@@ -3305,12 +3420,15 @@ export default function Lancamento() {
                                   {(item.tipo || "").toUpperCase()}
                                 </span>
                                 <span className="truncate max-w-[120px] font-bold text-slate-750">{(item.doc || "").toUpperCase()}</span>
-                                {item.nomeArquivoAnexo && (
+                                {Boolean((Array.isArray(item.anexos) && item.anexos.length > 0) || item.nomeArquivoAnexo || item.arquivoAnexoBase64) && (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      const anxList = Array.isArray(item.anexos) && item.anexos.length > 0
+                                        ? item.anexos
+                                        : [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }];
                                       setViewingAnexo({
-                                        nome: item.nomeArquivoAnexo,
+                                        nome: item.nomeArquivoAnexo || anxList[0]?.nome || "Documento.pdf",
                                         fornecedor: item.fornecedor,
                                         fornecedorCnpj: item.cnpj || "Sem CNPJ",
                                         valor: item.valor,
@@ -3329,14 +3447,17 @@ export default function Lancamento() {
                                         dataEmissao: item.dataEmissao || item.dataLancamento,
                                         dataVencimento: item.dataVencimento || item.vencimento,
                                         observacao: item.observacao,
-                                        arquivoAnexoBase64: item.arquivoAnexoBase64
+                                        arquivoAnexoBase64: item.arquivoAnexoBase64 || anxList[0]?.base64,
+                                        anexos: anxList
                                       });
                                     }}
                                     className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[9px] font-black cursor-pointer hover:bg-rose-100 transition-colors shrink-0"
-                                    title={`Ver anexo: ${item.nomeArquivoAnexo}`}
+                                    title={Array.isArray(item.anexos) && item.anexos.length > 1 ? `Ver ${item.anexos.length} documentos anexos` : `Ver anexo: ${item.nomeArquivoAnexo || "Documento.pdf"}`}
                                   >
                                     <FileText className="w-3 h-3 text-rose-600" />
-                                    PDF
+                                    {Array.isArray(item.anexos) && item.anexos.length > 1
+                                      ? `${item.anexos.length} Anexos`
+                                      : "PDF"}
                                   </button>
                                 )}
                               </div>
@@ -4403,10 +4524,22 @@ export default function Lancamento() {
                           visibleCols
                         });
                         if (sent) {
+                          const docId = emailDispatchModal.docData?.id;
+                          if (docId) {
+                            const existingDoc = lancamentos.find(item => String(item.id) === String(docId)) || emailDispatchModal.docData;
+                            const updatedDoc = {
+                              ...existingDoc,
+                              status: "Aguardando Aprovação",
+                              dataAprovacao: ""
+                            };
+                            await saveLancamentoUnified(updatedDoc);
+                            setLancamentos(prev => prev.map(l => String(l.id) === String(docId) ? { ...l, status: "Aguardando Aprovação", dataAprovacao: "" } : l));
+                            window.dispatchEvent(new Event("risel_lancamentos_updated"));
+                          }
                           const saudacao = getSaudacaoDestinatarios(para);
                           setEmailSentNotice({
                             title: "E-mail de Aprovação Enviado",
-                            desc: `E-mail (${saudacao}) encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}.`
+                            desc: `E-mail (${saudacao}) encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}. Status atualizado para "Aguardando Aprovação".`
                           });
                           setTimeout(() => setEmailSentNotice(null), 8000);
                         } else {

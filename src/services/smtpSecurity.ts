@@ -64,19 +64,20 @@ export const RISEL_LOGO_URL = "https://risel.com.br/wp-content/uploads/2024/07/R
  */
 export function generateModuleEmailSignature(moduleName: string): string {
   return `
-  <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 26px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', Calibri, Arial, sans-serif;">
+  <!-- Assinatura Corporativa Risel - Otimizada para Outlook e Todos os Clientes -->
+  <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; font-family: 'Aptos Narrow', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', Calibri, Arial, sans-serif;">
     <tr>
-      <td style="vertical-align: middle; padding-right: 16px; border-right: 2px solid #e2e8f0;">
+      <td width="96" valign="middle" style="width: 96px; vertical-align: middle; padding-right: 16px; border-right: 2px solid #e2e8f0;">
         <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="text-decoration: none; display: block;">
-          <img src="${RISEL_LOGO_URL}" alt="Risel Combustíveis" style="max-height: 40px; width: auto; display: block; border: 0;" />
+          <img src="${RISEL_LOGO_URL}" alt="Risel Combustíveis" width="88" height="36" style="width: 88px; height: 36px; max-width: 88px; max-height: 36px; display: block; border: 0; outline: none; text-decoration: none;" />
         </a>
       </td>
-      <td style="vertical-align: middle; padding-left: 16px; font-family: 'Aptos Narrow', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', Calibri, Arial, sans-serif;">
-        <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; letter-spacing: -0.1px; line-height: 1.25;">
+      <td valign="middle" style="vertical-align: middle; padding-left: 16px; font-family: 'Aptos Narrow', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', Calibri, Arial, sans-serif;">
+        <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; letter-spacing: -0.1px; line-height: 1.25; mso-line-height-rule: exactly;">
           ${moduleName}
         </div>
-        <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; margin-top: 4px; line-height: 1.25;">
-          <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: none; font-weight: 500;">
+        <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt; margin-top: 4px; line-height: 1.25; mso-line-height-rule: exactly;">
+          <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: none; font-weight: 600;">
             www.risel.com.br
           </a>
         </div>

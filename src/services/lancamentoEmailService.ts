@@ -1,6 +1,16 @@
 import { sendEmail } from "./firebaseService";
 import { getSubmoduleRecipientsSync } from "./emailRecipientsService";
 
+export interface LancamentoAnexoItem {
+  id?: string;
+  nome: string;
+  base64?: string;
+  arquivoAnexoBase64?: string;
+  content?: string;
+  dataUrl?: string;
+  path?: string;
+}
+
 export interface LancamentoEmailData {
   id?: number | string;
   fornecedor: string;
@@ -28,6 +38,7 @@ export interface LancamentoEmailData {
   itemSistema?: string;
   nomeArquivoAnexo?: string;
   arquivoAnexoBase64?: string;
+  anexos?: LancamentoAnexoItem[];
   columnOrder?: string[];
   visibleCols?: Record<string, boolean>;
   destinatariosPara?: string[];
@@ -391,19 +402,40 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
           </div>
           ` : ""}
 
-          <!-- Assinatura Oficial Padronizada Risel Combustíveis Ltda -->
-          <table cellpadding="0" cellspacing="0" border="0" align="left" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; width: 100%; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; text-align: left;">
+          ${(() => {
+            const anyData = data as any;
+            const listaAnexos: string[] = [];
+            if (Array.isArray(anyData.anexos) && anyData.anexos.length > 0) {
+              anyData.anexos.slice(0, 4).forEach((a: any, idx: number) => {
+                if (a && a.nome) listaAnexos.push(`${idx + 1}. ${a.nome}`);
+              });
+            } else if (data.nomeArquivoAnexo) {
+              listaAnexos.push(`1. ${data.nomeArquivoAnexo}`);
+            }
+            if (listaAnexos.length === 0) return "";
+            return `
+            <div style="margin-top: 16px; padding: 10px 14px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 9.5pt; color: #334155; text-align: left;">
+              <strong style="color: #0d4a36;">📎 Documento(s) Anexo(s) (${listaAnexos.length}):</strong>
+              <div style="margin-top: 4px; font-size: 9pt; color: #475569; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif;">
+                ${listaAnexos.map(item => `<div>&bull; ${item}</div>`).join('')}
+              </div>
+            </div>
+            `;
+          })()}
+
+          <!-- Assinatura Oficial Padronizada Risel Combustíveis Ltda - Otimizada para Outlook -->
+          <table cellpadding="0" cellspacing="0" border="0" align="left" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; width: 100%; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; text-align: left;">
             <tr>
-              <td style="vertical-align: middle; width: 52px; padding-right: 14px; border-right: 2px solid #e2e8f0;">
+              <td width="96" valign="middle" style="width: 96px; vertical-align: middle; padding-right: 14px; border-right: 2px solid #e2e8f0;">
                 <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="text-decoration: none; display: block;">
-                  <img src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" alt="Risel Combustíveis" style="max-height: 38px; width: auto; display: block; border: 0;" />
+                  <img src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" alt="Risel Combustíveis" width="88" height="36" style="width: 88px; height: 36px; max-width: 88px; max-height: 36px; display: block; border: 0; outline: none; text-decoration: none;" />
                 </a>
               </td>
-              <td style="vertical-align: middle; padding-left: 14px; text-align: left;">
-                <div style="font-size: 11.5pt; font-weight: 800; color: #0d4a36; line-height: 1.2;">
+              <td valign="middle" style="vertical-align: middle; padding-left: 14px; text-align: left;">
+                <div style="font-size: 11.5pt; font-weight: 800; color: #0d4a36; line-height: 1.2; mso-line-height-rule: exactly;">
                   Risel Combustíveis Ltda
                 </div>
-                <div style="font-size: 9.5pt; font-weight: 600; color: #64748b; margin-top: 3px; line-height: 1.4;">
+                <div style="font-size: 9.5pt; font-weight: 600; color: #64748b; margin-top: 3px; line-height: 1.35; mso-line-height-rule: exactly;">
                   Sistema de Lançamento de Documentos Risel
                 </div>
               </td>
@@ -420,7 +452,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
 }
 
 /**
- * Envia o e-mail de aprovação com anexo automático para os destinatários selecionados
+ * Envia o e-mail de aprovação com anexos automáticos (até 4) para os destinatários selecionados
  * e quem vai em cópia (com padrões oficiais predefinidos)
  */
 export async function sendLancamentoAprovacaoEmail(data: LancamentoEmailData): Promise<boolean> {
@@ -442,26 +474,53 @@ export async function sendLancamentoAprovacaoEmail(data: LancamentoEmailData): P
     });
 
     const attachments: Array<{ filename: string; content?: string; dataUrl?: string; contentType?: string; path?: string }> = [];
-
-    // Suporta todas as variações de propriedades onde o anexo pode estar no objeto
     const anyData = data as any;
-    const nomeAnexo = data.nomeArquivoAnexo || anyData.nomeArquivo || anyData.fileName || anyData.name || "Documento_Fiscal.pdf";
+
+    // 1. Processa múltiplos anexos (até 4) se informados em data.anexos
+    if (Array.isArray(anyData.anexos) && anyData.anexos.length > 0) {
+      for (const anexo of anyData.anexos.slice(0, 4)) {
+        if (!anexo) continue;
+        const nomeAnx = (anexo.nome || anexo.filename || "Documento_Anexo.pdf").trim();
+        const base64Anx = anexo.base64 || anexo.arquivoAnexoBase64 || anexo.content || anexo.dataUrl;
+        const pathAnx = anexo.path || anexo.url;
+
+        if (base64Anx && typeof base64Anx === 'string' && base64Anx.trim().length > 0) {
+          attachments.push({
+            filename: nomeAnx,
+            content: base64Anx,
+            dataUrl: base64Anx
+          });
+          console.log(`[Risel Email] Anexo detectado: ${nomeAnx} (${Math.round(base64Anx.length / 1024)} KB)`);
+        } else if (pathAnx && typeof pathAnx === 'string' && pathAnx.startsWith('http')) {
+          attachments.push({
+            filename: nomeAnx,
+            path: pathAnx
+          });
+          console.log(`[Risel Email] Anexo por URL detectado: ${nomeAnx} -> ${pathAnx}`);
+        }
+      }
+    }
+
+    // 2. Fallback com anexo legado se nenhum anexo da lista tiver o mesmo nome
+    const nomeAnexo = data.nomeArquivoAnexo || anyData.nomeArquivo || anyData.fileName || anyData.name;
     const base64Data = data.arquivoAnexoBase64 || anyData.arquivo_anexo_base64 || anyData.base64 || anyData.dataUrl || anyData.fileBase64;
     const urlAnexo = anyData.anexoUrl || anyData.comprovanteUrl || anyData.url || anyData.driveUrl;
 
-    if (base64Data && typeof base64Data === 'string' && base64Data.trim().length > 0) {
-      attachments.push({
-        filename: nomeAnexo,
-        content: base64Data,
-        dataUrl: base64Data
-      });
-      console.log(`[Risel Email] Anexo detectado para envio: ${nomeAnexo} (${Math.round(base64Data.length / 1024)} KB)`);
-    } else if (urlAnexo && typeof urlAnexo === 'string' && urlAnexo.startsWith('http')) {
-      attachments.push({
-        filename: nomeAnexo,
-        path: urlAnexo
-      });
-      console.log(`[Risel Email] Anexo por URL detectado para envio: ${nomeAnexo} -> ${urlAnexo}`);
+    if (nomeAnexo && attachments.every(a => a.filename !== nomeAnexo)) {
+      if (base64Data && typeof base64Data === 'string' && base64Data.trim().length > 0) {
+        attachments.push({
+          filename: nomeAnexo,
+          content: base64Data,
+          dataUrl: base64Data
+        });
+        console.log(`[Risel Email] Anexo principal detectado: ${nomeAnexo} (${Math.round(base64Data.length / 1024)} KB)`);
+      } else if (urlAnexo && typeof urlAnexo === 'string' && urlAnexo.startsWith('http')) {
+        attachments.push({
+          filename: nomeAnexo,
+          path: urlAnexo
+        });
+        console.log(`[Risel Email] Anexo principal URL: ${nomeAnexo} -> ${urlAnexo}`);
+      }
     }
 
     console.log(`[Risel Email] Disparando e-mail de aprovação para [${targetTo.join(', ')}] (CC: [${targetCc.join(', ')}]): "${subject}" | Anexos: ${attachments.length}`);

@@ -99,7 +99,10 @@ export function normalizeLancamento(item: any): any {
     estabelecimento: baseFilial || item.estabelecimento || "100 - Paulínia",
     status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
     doc: item.doc || (codOc ? `DOC-${codOc}` : `DOC-${cleanId}`),
-    fornecedor: item.fornecedor || "Fornecedor Não Informado"
+    fornecedor: item.fornecedor || "Fornecedor Não Informado",
+    anexos: Array.isArray(item.anexos)
+      ? item.anexos.slice(0, 4)
+      : (item.arquivoAnexoBase64 ? [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }] : [])
   };
 }
 
