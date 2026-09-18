@@ -1938,28 +1938,73 @@ async function startServer() {
         }
       }
 
-      // Anexos vindos de driveUrls ou Data URLs
+      // Anexos vindos de driveUrls ou Data URLs (com download automático de links do Google Drive)
       if (Array.isArray(driveUrls)) {
         for (let i = 0; i < driveUrls.length; i++) {
           const item = driveUrls[i];
           if (!item || !item.url) continue;
-          const fname = item.name ? (item.name.endsWith('.pdf') ? item.name : `${item.name}.pdf`) : `Documento_${i + 1}.pdf`;
 
-          if (item.url.startsWith('data:')) {
-            const parsed = parseBase64Attachment(item.url, fname, 'application/pdf');
+          let rawUrl = String(item.url || "").trim();
+          let customName = item.name || "";
+
+          // Se o formato vier como "Nome::URL"
+          if (rawUrl.includes("::")) {
+            const parts = rawUrl.split("::");
+            if (!customName) customName = parts[0].trim();
+            rawUrl = parts.slice(1).join("::").trim();
+          }
+
+          let fname = customName || `Documento_${i + 1}.pdf`;
+
+          if (rawUrl.startsWith('data:')) {
+            const parsed = parseBase64Attachment(rawUrl, fname, 'application/pdf');
             if (parsed) mailAttachments.push(parsed);
-          } else if (typeof item.url === 'string' && isValidSafeHttpsUrl(item.url)) {
-            const isDirectFile = /\.(pdf|png|jpe?g|webp|gif|txt|csv)$/i.test(item.url);
+          } else if (typeof rawUrl === 'string' && isValidSafeHttpsUrl(rawUrl)) {
+            // Se for link do Google Drive, faz o download automático do arquivo para envio direto
+            const driveMatch = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+            if (driveMatch && driveMatch[1]) {
+              const fileId = driveMatch[1];
+              try {
+                const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+                console.log(`[Risel SMTP] Baixando anexo do Google Drive (${fileId}) para envio no e-mail...`);
+                const driveRes = await fetch(downloadUrl);
+                if (driveRes.ok) {
+                  const contentType = driveRes.headers.get("content-type") || "application/pdf";
+                  const arrayBuf = await driveRes.arrayBuffer();
+                  const buf = Buffer.from(arrayBuf);
+
+                  if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+                    if (!fname.toLowerCase().endsWith(".jpg") && !fname.toLowerCase().endsWith(".jpeg")) fname += ".jpg";
+                  } else if (contentType.includes("png")) {
+                    if (!fname.toLowerCase().endsWith(".png")) fname += ".png";
+                  } else {
+                    if (!fname.toLowerCase().endsWith(".pdf")) fname += ".pdf";
+                  }
+
+                  mailAttachments.push({
+                    filename: fname,
+                    content: buf,
+                    contentType: contentType
+                  });
+                  console.log(`[Risel SMTP] Anexo do Google Drive anexado com sucesso: ${fname} (${buf.byteLength} bytes)`);
+                  continue;
+                }
+              } catch (driveErr: any) {
+                console.warn(`[Risel SMTP] Falha ao baixar anexo do Google Drive (${fileId}):`, driveErr.message);
+              }
+            }
+
+            const isDirectFile = /\.(pdf|png|jpe?g|webp|gif|txt|csv)$/i.test(rawUrl);
             if (isDirectFile) {
               mailAttachments.push({
                 filename: fname,
-                path: item.url
+                path: rawUrl
               });
             } else {
-              console.log(`[Risel SMTP] Anexo remoto é link web (${item.url}), link preservado no corpo do e-mail.`);
+              console.log(`[Risel SMTP] Anexo remoto é link web (${rawUrl}), link preservado no corpo do e-mail.`);
             }
           } else {
-            console.warn(`[Segurança Risel SMTP] URL de anexo bloqueada por segurança: ${item.url}`);
+            console.warn(`[Segurança Risel SMTP] URL de anexo bloqueada por segurança: ${rawUrl}`);
           }
         }
       }

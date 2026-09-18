@@ -18,20 +18,36 @@ const DEFAULT_TEMPLATE_ID = '1aGQJt53eI0Gv0-W8uXyDdbvqOaLaPQEJcRAgVircinw'; // I
 
 // Getters Dinâmicos
 export const getApiUrl = () => {
-    return localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL;
+    if (typeof localStorage !== 'undefined') {
+        return localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL;
+    }
+    return DEFAULT_API_URL;
 };
 
-export const getDriveFolderId = () => localStorage.getItem(DRIVE_FOLDER_KEY) || DEFAULT_FOLDER_ID;
-export const getDocsTemplateId = () => localStorage.getItem(DOCS_TEMPLATE_KEY) || DEFAULT_TEMPLATE_ID;
+export const getDriveFolderId = () => {
+    if (typeof localStorage !== 'undefined') {
+        return localStorage.getItem(DRIVE_FOLDER_KEY) || DEFAULT_FOLDER_ID;
+    }
+    return DEFAULT_FOLDER_ID;
+};
+
+export const getDocsTemplateId = () => {
+    if (typeof localStorage !== 'undefined') {
+        return localStorage.getItem(DOCS_TEMPLATE_KEY) || DEFAULT_TEMPLATE_ID;
+    }
+    return DEFAULT_TEMPLATE_ID;
+};
 
 // Email Config
 export const getEmailConfig = () => {
-    const stored = localStorage.getItem(EMAIL_CONFIG_KEY);
-    if (stored) {
-        try {
-            return JSON.parse(stored);
-        } catch (e) {
-            console.error("Error parsing email config", e);
+    if (typeof localStorage !== 'undefined') {
+        const stored = localStorage.getItem(EMAIL_CONFIG_KEY);
+        if (stored) {
+            try {
+                return JSON.parse(stored);
+            } catch (e) {
+                console.error("Error parsing email config", e);
+            }
         }
     }
     return { serviceId: '', templateId: '', publicKey: '' };
@@ -451,6 +467,40 @@ export interface SendEmailPayload {
 }
 
 export const sendEmailWithAttachmentsApi = async (data: SendEmailPayload) => {
+    // 1. Tentar envio prioritário pelo backend Node (/api/send-email) com suporte a Resend, Brevo e SMTP
+    try {
+        const res = await fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                to: data.to_email,
+                cc: data.cc_email,
+                subject: data.subject,
+                html: data.message_html,
+                source: 'multas',
+                fromName: 'Sistema de Multas Risel',
+                driveUrls: [
+                    ...(data.linkAit ? [{ name: 'AIT_Auto_Infracao.pdf', url: data.linkAit }] : []),
+                    ...(data.linkAuth ? [{ name: 'Autorizacao_Desconto.pdf', url: data.linkAuth }] : [])
+                ]
+            })
+        });
+        if (res.ok) {
+            const json = await res.json();
+            if (json.success || json.delivered) {
+                return {
+                    success: true,
+                    message: json.message || 'E-mail enviado com sucesso!',
+                    attachmentsCount: json.attachmentsCount ?? 0,
+                    provider: json.provider
+                };
+            }
+        }
+    } catch (nodeErr) {
+        console.warn("Disparo pelo backend Node falhou, tentando rota direta Apps Script:", nodeErr);
+    }
+
+    // 2. Fallback para Google Apps Script
     const payload = {
         action: 'send_email',
         payload: data
