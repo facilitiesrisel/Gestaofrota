@@ -13,6 +13,7 @@ import Vencimentos from "./pages/documentos/Vencimentos";
 import Fornecedores from "./pages/documentos/Fornecedores";
 import Usuarios from "./pages/documentos/Usuarios";
 import Frota from "./pages/Frota";
+import FrotaPesada from "./pages/FrotaPesada";
 import ResetPassword from "./pages/ResetPassword";
 
 import ChecklistPublico from "./pages/ChecklistPublico";
@@ -30,14 +31,18 @@ function ProtectedRoute({
   module 
 }: { 
   children: React.ReactNode; 
-  module?: "documentos" | "frota" | "usuarios";
+  module?: "documentos" | "frota" | "frota_pesada" | "usuarios";
 }) {
   const { user } = useAuth();
   const location = useLocation();
 
   if (!user) {
-    const isFrota = location.pathname.startsWith("/frota");
-    const moduleName = isFrota ? "Controle de Frota Leve" : "Lançamento de Documentos";
+    let moduleName = "Lançamento de Documentos";
+    if (location.pathname.startsWith("/frota-pesada")) {
+      moduleName = "Frota Pesada";
+    } else if (location.pathname.startsWith("/frota")) {
+      moduleName = "Controle de Frota Leve";
+    }
     return <Login targetModule={moduleName} redirectTo={location.pathname} />;
   }
 
@@ -73,7 +78,7 @@ function ProtectedRoute({
     );
   }
 
-  // Se for Frota e o usuário não tiver acesso
+  // Se for Frota Leve e o usuário não tiver acesso
   if (module === "frota" && !hasModuleAccess(user.permissions, "frota", user.email)) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -91,6 +96,28 @@ function ProtectedRoute({
                 Acessar Lançamento de Documentos
               </a>
             )}
+            <a href="/" className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all">
+              Voltar ao Início
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Se for Frota Pesada e o usuário não tiver acesso
+  if (module === "frota_pesada" && !hasModuleAccess(user.permissions, "frota_pesada", user.email)) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 max-w-md w-full text-center shadow-lg space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
+            <Lock className="w-7 h-7" />
+          </div>
+          <h2 className="text-lg font-bold text-slate-900">Acesso Restrito</h2>
+          <p className="text-sm text-slate-500 leading-relaxed">
+            Seu usuário (<span className="font-semibold text-slate-800">{user.email}</span>) não possui permissão ativa para acessar o módulo de Frota Pesada.
+          </p>
+          <div className="pt-2 flex flex-col gap-2">
             <a href="/" className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all">
               Voltar ao Início
             </a>
@@ -152,6 +179,7 @@ function AppContent() {
         <Route path="/documentos/fornecedores" element={<ProtectedRoute module="documentos"><MainLayout><Fornecedores /></MainLayout></ProtectedRoute>} />
         <Route path="/documentos/usuarios" element={<ProtectedRoute module="usuarios"><MainLayout><Usuarios /></MainLayout></ProtectedRoute>} />
         <Route path="/frota" element={<ProtectedRoute module="frota"><MainLayout><Frota /></MainLayout></ProtectedRoute>} />
+        <Route path="/frota-pesada" element={<ProtectedRoute module="frota_pesada"><FrotaPesada /></ProtectedRoute>} />
 
         {/* Fallback de redirecionamento para Home */}
         <Route path="*" element={<Navigate to="/" replace />} />

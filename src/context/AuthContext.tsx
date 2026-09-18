@@ -16,6 +16,8 @@ export interface UserPermissions {
   frota_reservas?: boolean;
   frota_multas?: boolean;
   frota_rastreamento?: boolean;
+  // Módulo Frota Pesada
+  frota_pesada?: boolean;
   usuarios: boolean;
 }
 
@@ -40,6 +42,7 @@ export function normalizePermissions(
       frota_reservas: true,
       frota_multas: true,
       frota_rastreamento: true,
+      frota_pesada: true,
       usuarios: true,
     };
   }
@@ -73,6 +76,10 @@ export function normalizePermissions(
     ? Boolean(perms.frota_rastreamento)
     : Boolean((perms as any)?.telemetria || (perms as any)?.rastreamento);
 
+  const fPesada = perms?.frota_pesada !== undefined
+    ? Boolean(perms.frota_pesada)
+    : false;
+
   // Frota só é permitida se tiver pelo menos um submódulo individual liberado
   const frotaGeral = fVeiculos || fChecklist || fReservas || fMultas || fRastreamento;
 
@@ -88,6 +95,7 @@ export function normalizePermissions(
     frota_reservas: fReservas,
     frota_multas: fMultas,
     frota_rastreamento: fRastreamento,
+    frota_pesada: fPesada,
     usuarios: false,
   };
 }
@@ -143,7 +151,7 @@ export function hasSubmoduleAccess(
  */
 export function hasModuleAccess(
   permissions: UserPermissions | undefined,
-  module: "dashboard" | "lancamentos" | "fornecedores" | "documentos" | "frota" | "usuarios",
+  module: "dashboard" | "lancamentos" | "fornecedores" | "documentos" | "frota" | "frota_pesada" | "usuarios",
   currentUserEmail?: string
 ): boolean {
   if (!permissions) return false;
@@ -173,6 +181,9 @@ export function hasModuleAccess(
       permissions.frota_rastreamento ||
       permissions.frota
     );
+  }
+  if (module === "frota_pesada") {
+    return Boolean(permissions.frota_pesada !== false); // Deny Gonçalves ou liberado
   }
   if (module === "usuarios") {
     // Menu Usuários é exclusivo do usuário master Deny Gonçalves

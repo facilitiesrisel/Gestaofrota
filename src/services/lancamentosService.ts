@@ -58,19 +58,29 @@ let isInitialized = false;
 let unsubscribeFirestore: (() => void) | null = null;
 let pollIntervalTimer: any = null;
 
-// Normaliza um registro de lançamento para manter consistência nos campos
+// Normaliza um registro de lançamento para manter consistência total e integridade absoluta dos campos
 export function normalizeLancamento(item: any): any {
+  if (!item) return item;
   const rawId = item.id;
   const numId = Number(rawId);
   const cleanId = !isNaN(numId) && numId > 0 ? numId : rawId;
 
-  // Extrai Cód. Lançamento / Nº OC
-  let codOc = item.codLancamentoOc || item.codigoLancamento || item.codigo_lancamento || "";
+  // 1. Número do Documento (Nº Documento *) - NUNCA deve ser misturado com Cód. OC
+  let numDoc = item.codigoLancamento || item.numeroDocumento || item.codigo_lancamento || "";
+  
+  // 2. Cód. Lançamento / Nº OC - Campo independente e opcional
+  let codOc = item.codLancamentoOc || item.codigo_lancamento_oc || item.cod_lancamento_oc || "";
+
   let centCusto = item.centroCusto || item.centro_custo || "C.C 101 - Operacional";
   let alcada = item.aprovadores || "";
   let baseFilial = item.estabelecimento || "";
 
+  // Extração inteligente de tags de segurança na observação
   if (item.observacao) {
+    const docMatch = String(item.observacao).match(/\[Nº DOC:\s*([^\]]+)\]/i);
+    if (docMatch && docMatch[1] && !numDoc) {
+      numDoc = docMatch[1].trim();
+    }
     const ocMatch = String(item.observacao).match(/\[OC\/CÓD:\s*([^\]]+)\]/i);
     if (ocMatch && ocMatch[1] && !codOc) {
       codOc = ocMatch[1].trim();
@@ -89,16 +99,44 @@ export function normalizeLancamento(item: any): any {
     }
   }
 
+  // Se ainda não tem numDoc mas tem o campo doc, tenta extrair o número do documento (ex: "NF-e 1902" -> "1902")
+  if (!numDoc && item.doc && typeof item.doc === "string") {
+    const cleanDoc = item.doc.trim();
+    if (!cleanDoc.startsWith("DOC-") && !cleanDoc.endsWith("S/N")) {
+      const parts = cleanDoc.split(" ");
+      if (parts.length > 1) {
+        numDoc = parts.slice(1).join(" ").trim();
+      } else {
+        numDoc = cleanDoc;
+      }
+    }
+  }
+
+  // Formatação consistente e determinística do campo 'doc' (tipo + número do documento)
+  const tipoDoc = item.tipo || item.tipoDocumento || "NF-e";
+  let finalDoc = item.doc;
+  if (!finalDoc || finalDoc === "N/A" || finalDoc.startsWith("DOC-")) {
+    if (numDoc) {
+      finalDoc = numDoc.toLowerCase().startsWith(tipoDoc.toLowerCase())
+        ? numDoc
+        : `${tipoDoc} ${numDoc}`;
+    } else {
+      finalDoc = `${tipoDoc} S/N`;
+    }
+  }
+
   return {
     ...item,
     id: cleanId,
+    tipo: tipoDoc,
+    doc: finalDoc,
+    codigoLancamento: numDoc,
+    numeroDocumento: numDoc,
     codLancamentoOc: codOc,
-    codigoLancamento: codOc || item.doc || "",
     centroCusto: centCusto,
     aprovadores: alcada || item.aprovadores || "Deny e Gerência",
     estabelecimento: baseFilial || item.estabelecimento || "100 - Paulínia",
     status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
-    doc: item.doc || (codOc ? `DOC-${codOc}` : `DOC-${cleanId}`),
     fornecedor: item.fornecedor || "Fornecedor Não Informado",
     anexos: Array.isArray(item.anexos)
       ? item.anexos.slice(0, 4)
@@ -300,7 +338,22 @@ export async function pullFromCloudAndServer(): Promise<any[]> {
           const idStr = String(item.id);
           if (!deletedIds.has(idStr)) {
             const existing = idMap.get(idStr);
-            idMap.set(idStr, normalizeLancamento({ ...existing, ...item }));
+            if (existing) {
+              // Preserva com segurança os dados já em memória/servidor se o Supabase tiver vindo com valores vazios ou default
+              idMap.set(idStr, normalizeLancamento({
+                ...existing,
+                ...item,
+                codigoLancamento: item.codigoLancamento || existing.codigoLancamento || "",
+                numeroDocumento: item.numeroDocumento || existing.numeroDocumento || item.codigoLancamento || existing.codigoLancamento || "",
+                codLancamentoOc: item.codLancamentoOc || existing.codLancamentoOc || "",
+                doc: (item.doc && !item.doc.startsWith("DOC-") && !item.doc.endsWith("S/N")) ? item.doc : existing.doc,
+                nomeArquivoAnexo: item.nomeArquivoAnexo || existing.nomeArquivoAnexo || "",
+                arquivoAnexoBase64: item.arquivoAnexoBase64 || existing.arquivoAnexoBase64 || "",
+                anexos: (Array.isArray(existing.anexos) && existing.anexos.length > 0) ? existing.anexos : (item.anexos || [])
+              }));
+            } else {
+              idMap.set(idStr, normalizeLancamento(item));
+            }
           }
         });
       }

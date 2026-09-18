@@ -175,10 +175,16 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
     return (data || []).map(row => {
       // Extrai metadados seguros caso estejam embutidos na observação
       let rawObs = row.observacao || "";
-      let parsedOc = row.codigo_lancamento || row.cod_lancamento_oc || "";
+      let parsedNumDoc = row.codigo_lancamento || row.numero_documento || "";
+      let parsedOc = row.cod_lancamento_oc || row.cod_oc || "";
       let parsedCc = row.centro_custo || "";
       let parsedAlcada = row.aprovadores || "";
       let parsedBase = row.estabelecimento || "";
+
+      const docMatch = rawObs.match(/\[Nº DOC:\s*([^\]]+)\]/i);
+      if (docMatch && docMatch[1]) {
+        if (!parsedNumDoc) parsedNumDoc = docMatch[1].trim();
+      }
 
       const ocMatch = rawObs.match(/\[OC\/CÓD:\s*([^\]]+)\]/i);
       if (ocMatch && ocMatch[1]) {
@@ -198,6 +204,19 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
       const baseMatch = rawObs.match(/\[BASE:\s*([^\]]+)\]/i);
       if (baseMatch && baseMatch[1]) {
         if (!parsedBase) parsedBase = baseMatch[1].trim();
+      }
+
+      // Se ainda não tem parsedNumDoc mas row.doc tem o número, extrai com segurança
+      if (!parsedNumDoc && row.doc && typeof row.doc === "string") {
+        const cleanDoc = row.doc.trim();
+        if (!cleanDoc.startsWith("DOC-") && !cleanDoc.endsWith("S/N")) {
+          const parts = cleanDoc.split(" ");
+          if (parts.length > 1) {
+            parsedNumDoc = parts.slice(1).join(" ").trim();
+          } else {
+            parsedNumDoc = cleanDoc;
+          }
+        }
       }
 
       return {
@@ -224,7 +243,8 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
         aprovadores: parsedAlcada || "Deny e Gerência",
         centroCusto: parsedCc || "C.C 101 - Operacional",
         codLancamentoOc: parsedOc || "",
-        codigoLancamento: parsedOc || row.doc || "",
+        codigoLancamento: parsedNumDoc || "",
+        numeroDocumento: parsedNumDoc || "",
         cidade: row.cidade || "",
         uf: row.uf || "",
         telefone: row.telefone || "",
@@ -252,13 +272,17 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       targetId = Date.now();
     }
 
-    const codOc = item.codLancamentoOc || item.codigoLancamento || "";
+    const numDoc = item.codigoLancamento || item.numeroDocumento || "";
+    const codOc = item.codLancamentoOc || "";
     const centCusto = item.centroCusto || "C.C 101 - Operacional";
     const alcada = item.aprovadores || "Deny e Gerência";
     const filialBase = item.estabelecimento || "100 - Paulínia";
 
     // Preserva embutido na observação para garantir persistência 100% à prova de falhas de schema
     let finalObs = item.observacao || "";
+    if (numDoc && !finalObs.includes(`[Nº DOC: ${numDoc}]`)) {
+      finalObs = finalObs ? `${finalObs} [Nº DOC: ${numDoc}]` : `[Nº DOC: ${numDoc}]`;
+    }
     if (codOc && !finalObs.includes(`[OC/CÓD: ${codOc}]`)) {
       finalObs = finalObs ? `${finalObs} [OC/CÓD: ${codOc}]` : `[OC/CÓD: ${codOc}]`;
     }
@@ -279,7 +303,7 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       data_lancamento: item.dataLancamento || new Date().toISOString().split("T")[0],
       data_vencimento: item.dataVencimento || item.dataLancamento,
       fornecedor: item.fornecedor || "Fornecedor Não Informado",
-      doc: item.doc || "N/A",
+      doc: item.doc || (numDoc ? `${item.tipo || 'NF-e'} ${numDoc}` : "N/A"),
       valor: item.valor || "R$ 0,00",
       forma_pagto: item.formaPagto || "Boleto",
       tipo: item.tipo || "NF-e",
@@ -300,7 +324,8 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     const completeRecord = {
       ...baseRecord,
       centro_custo: centCusto,
-      codigo_lancamento: codOc,
+      codigo_lancamento: numDoc,
+      cod_lancamento_oc: codOc,
       aprovadores: alcada
     };
 
@@ -724,28 +749,55 @@ export async function syncLocalLancamentosToSupabase(localItems: any[]): Promise
 
   try {
     const client = getSupabaseClient();
-    const dbRecords = localItems.map(item => ({
-      id: typeof item.id === "number" ? item.id : (parseInt(item.id, 10) || Math.floor(Math.random() * 1000000000)),
-      status: item.status || "Aguardando aprovação",
-      data_lancamento: item.dataLancamento || new Date().toISOString().split("T")[0],
-      data_vencimento: item.dataVencimento || item.dataLancamento,
-      fornecedor: item.fornecedor || "Fornecedor",
-      doc: item.doc || "N/A",
-      valor: item.valor || "R$ 0,00",
-      forma_pagto: item.formaPagto || "Boleto",
-      tipo: item.tipo || "NF-e",
-      descricao: item.descricao || "",
-      cnpj: item.cnpj || "",
-      estabelecimento: item.estabelecimento || "100 - Paulínia",
-      nome_arquivo_anexo: item.nomeArquivoAnexo || "",
-      arquivo_anexo_base64: item.arquivoAnexoBase64 || "",
-      item_sistema: item.itemSistema || "",
-      data_emissao: item.dataEmissao || "",
-      observacao: item.observacao || "",
-      frequencia: item.frequencia || "Esporádico",
-      lancado_por: item.lancadoPor || "Deny",
-      data_aprovacao: item.dataAprovacao || ""
-    }));
+    const dbRecords = localItems.map(item => {
+      const numDoc = item.codigoLancamento || item.numeroDocumento || "";
+      const codOc = item.codLancamentoOc || "";
+      const centCusto = item.centroCusto || "C.C 101 - Operacional";
+      const alcada = item.aprovadores || "Deny e Gerência";
+      const filialBase = item.estabelecimento || "100 - Paulínia";
+
+      let finalObs = item.observacao || "";
+      if (numDoc && !finalObs.includes(`[Nº DOC: ${numDoc}]`)) {
+        finalObs = finalObs ? `${finalObs} [Nº DOC: ${numDoc}]` : `[Nº DOC: ${numDoc}]`;
+      }
+      if (codOc && !finalObs.includes(`[OC/CÓD: ${codOc}]`)) {
+        finalObs = finalObs ? `${finalObs} [OC/CÓD: ${codOc}]` : `[OC/CÓD: ${codOc}]`;
+      }
+      if (centCusto && !finalObs.includes(`[CENTRO DE CUSTO: ${centCusto}]`)) {
+        finalObs = finalObs ? `${finalObs} [CENTRO DE CUSTO: ${centCusto}]` : `[CENTRO DE CUSTO: ${centCusto}]`;
+      }
+      if (alcada && !finalObs.includes(`[ALÇADA: ${alcada}]`)) {
+        finalObs = finalObs ? `${finalObs} [ALÇADA: ${alcada}]` : `[ALÇADA: ${alcada}]`;
+      }
+      if (filialBase && !finalObs.includes(`[BASE: ${filialBase}]`)) {
+        finalObs = finalObs ? `${finalObs} [BASE: ${filialBase}]` : `[BASE: ${filialBase}]`;
+      }
+
+      let parsedId = typeof item.id === "number" ? item.id : (parseInt(item.id, 10) || Date.now());
+
+      return {
+        id: parsedId,
+        status: item.status || "Aguardando aprovação",
+        data_lancamento: item.dataLancamento || new Date().toISOString().split("T")[0],
+        data_vencimento: item.dataVencimento || item.dataLancamento,
+        fornecedor: item.fornecedor || "Fornecedor",
+        doc: item.doc || (numDoc ? `${item.tipo || 'NF-e'} ${numDoc}` : "N/A"),
+        valor: item.valor || "R$ 0,00",
+        forma_pagto: item.formaPagto || "Boleto",
+        tipo: item.tipo || "NF-e",
+        descricao: item.descricao || "",
+        cnpj: item.cnpj || "",
+        estabelecimento: filialBase,
+        nome_arquivo_anexo: item.nomeArquivoAnexo || "",
+        arquivo_anexo_base64: item.arquivoAnexoBase64 || "",
+        item_sistema: item.itemSistema || "",
+        data_emissao: item.dataEmissao || "",
+        observacao: finalObs,
+        frequencia: item.frequencia || "Esporádico",
+        lancado_por: item.lancadoPor || "Deny",
+        data_aprovacao: item.dataAprovacao || ""
+      };
+    });
 
     const { error } = await client
       .from('lancamentos')

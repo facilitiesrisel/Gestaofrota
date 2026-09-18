@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { motion } from "motion/react";
 import { useNavigate } from "react-router-dom";
-import { FileText, Car, ArrowRight, ShieldCheck, LogOut, UserCheck, Lock, Sparkles, LogIn } from "lucide-react";
+import { FileText, Car, Truck, ArrowRight, ShieldCheck, LogOut, UserCheck, Lock, Sparkles, LogIn } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAuth, hasModuleAccess } from "../context/AuthContext";
 import { Login } from "../components/Login";
@@ -22,10 +22,23 @@ export default function Home() {
 
   const docsAllowed = user ? hasModuleAccess(user.permissions, "documentos", user.email) : false;
   const frotaAllowed = user ? hasModuleAccess(user.permissions, "frota", user.email) : false;
+  
+  // Módulo de Frota Pesada exibido por enquanto apenas para deny.goncalves@risel.com.br
+  const isDenyUser = Boolean(
+    user && (
+      user.email?.toLowerCase() === "deny.goncalves@risel.com.br" ||
+      user.email?.toLowerCase() === "deny.risel@gmail.com"
+    )
+  );
+  const pesadaAllowed = isDenyUser;
 
-  const handleCardClick = (moduleKey: "documentos" | "frota", moduleName: string, path: string) => {
+  const handleCardClick = (moduleKey: "documentos" | "frota" | "frota_pesada", moduleName: string, path: string) => {
     if (user) {
-      const allowed = moduleKey === "documentos" ? docsAllowed : frotaAllowed;
+      let allowed = false;
+      if (moduleKey === "documentos") allowed = docsAllowed;
+      else if (moduleKey === "frota") allowed = frotaAllowed;
+      else if (moduleKey === "frota_pesada") allowed = pesadaAllowed;
+
       if (!allowed) {
         setDeniedModalMessage(`Seu usuário (${user.email}) não possui permissão ativa para acessar o módulo ${moduleName}. Solicite a liberação no Menu de Usuários.`);
         return;
@@ -150,10 +163,16 @@ export default function Home() {
         </div>
 
         {/* Grid de Módulos */}
-        <div className="grid md:grid-cols-2 gap-6 sm:gap-8 max-w-4xl mx-auto">
+        <div className={cn(
+          "items-stretch mx-auto",
+          isDenyUser 
+            ? "grid grid-cols-1 md:grid-cols-3 gap-5 lg:gap-6 max-w-6xl" 
+            : "grid md:grid-cols-2 gap-6 sm:gap-8 max-w-4xl"
+        )}>
           {/* Card 1: Lançamento de Documentos */}
           <ModuleCard
             title="Lançamento de Documentos"
+            badge="Fiscal & Contábil"
             description="Gestão centralizada de notas fiscais, faturas e recibos com fluxo de aprovação e dashboard analítico."
             icon={FileText}
             theme="emerald"
@@ -166,6 +185,7 @@ export default function Home() {
           {/* Card 2: Controle de Frota Leve */}
           <ModuleCard
             title="Controle de Frota Leve"
+            badge="75 Veículos Utilitários"
             description="Gestão operacional de veículos, telemetria ao vivo, vistorias de checklist, manutenções e reservas."
             icon={Car}
             theme="orange"
@@ -174,6 +194,21 @@ export default function Home() {
             hasAccess={frotaAllowed}
             onClick={() => handleCardClick("frota", "Controle de Frota Leve", "/frota")}
           />
+
+          {/* Card 3: Frota Pesada - Exibição restrita temporariamente ao Deny Gonçalves */}
+          {isDenyUser && (
+            <ModuleCard
+              title="Controle de Frota Pesada"
+              badge="260+ Veículos & Multas"
+              description="Gestão de caminhões e carretas, automação de multas e AITs, controle de motoristas e termos de desconto."
+              icon={Truck}
+              theme="blue"
+              delay={0.35}
+              isLoggedIn={Boolean(user)}
+              hasAccess={pesadaAllowed}
+              onClick={() => handleCardClick("frota_pesada", "Frota Pesada", "/frota-pesada")}
+            />
+          )}
         </div>
 
         {/* Modal de Acesso Negado */}
@@ -201,7 +236,7 @@ export default function Home() {
         )}
 
         {/* Links Públicos Diretos para Colaboradores (Sem exigência de senha/módulos restritos) */}
-        <div className="mt-8 max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-3">
+        <div className="mt-8 max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-3">
           <button
             onClick={() => navigate("/reservas")}
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-2xl bg-white/90 backdrop-blur-md hover:bg-emerald-50/90 border border-emerald-300/80 text-[#114D38] text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer"
@@ -225,9 +260,10 @@ export default function Home() {
 
 interface ModuleCardProps {
   title: string;
+  badge?: string;
   description: string;
   icon: any;
-  theme: "emerald" | "orange";
+  theme: "emerald" | "orange" | "blue";
   delay: number;
   isLoggedIn: boolean;
   hasAccess?: boolean;
@@ -236,6 +272,7 @@ interface ModuleCardProps {
 
 function ModuleCard({
   title,
+  badge,
   description,
   icon: Icon,
   theme,
@@ -245,71 +282,93 @@ function ModuleCard({
   onClick
 }: ModuleCardProps) {
   const isEmerald = theme === "emerald";
+  const isOrange = theme === "orange";
+  const isBlue = theme === "blue";
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay }}
+      className="h-full"
     >
       <div 
         onClick={onClick}
-        className="cursor-pointer group h-full bg-white/90 backdrop-blur-md rounded-[28px] p-8 border border-white/80 sm:border-slate-200/80 shadow-sm transition-all duration-500 hover:shadow-xl hover:shadow-slate-200/60 hover:-translate-y-1.5 hover:bg-white relative overflow-hidden flex flex-col justify-between"
+        className="cursor-pointer group h-full bg-white/90 backdrop-blur-md rounded-[26px] p-6 sm:p-7 border border-white/80 sm:border-slate-200/80 shadow-sm transition-all duration-500 hover:shadow-xl hover:shadow-slate-200/60 hover:-translate-y-1.5 hover:bg-white relative overflow-hidden flex flex-col justify-between"
       >
-        {/* Glow decorativo de fundo */}
+        {/* Glow decorativo de fundo com assimetria sutil */}
         <div className={cn(
-          "absolute -top-24 -right-24 w-56 h-56 rounded-full blur-3xl opacity-20 transition-opacity duration-500 group-hover:opacity-40",
-          isEmerald ? "bg-emerald-500" : "bg-orange-500"
+          "absolute -top-24 -right-24 w-52 h-52 rounded-full blur-3xl opacity-20 transition-opacity duration-500 group-hover:opacity-40",
+          isEmerald && "bg-emerald-500",
+          isOrange && "bg-orange-500",
+          isBlue && "bg-blue-600"
         )} />
         
         <div>
-          <div className="flex items-center justify-between mb-6">
+          {/* Topo do Card: Ícone e Status de Acesso */}
+          <div className="flex items-center justify-between mb-5">
             <div className={cn(
-              "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-sm border transition-all duration-500 group-hover:scale-110 group-hover:-rotate-3 relative z-10",
-              isEmerald 
-                ? "bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200/60 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white"
-                : "bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200/60 text-orange-600 group-hover:bg-orange-500 group-hover:text-white"
+              "w-14 h-14 rounded-2xl flex items-center justify-center shadow-xs border transition-all duration-500 group-hover:scale-105 relative z-10",
+              isEmerald && "bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200/60 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white group-hover:-rotate-3",
+              isOrange && "bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200/60 text-orange-600 group-hover:bg-orange-500 group-hover:text-white group-hover:rotate-3",
+              isBlue && "bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200/60 text-blue-600 group-hover:bg-blue-600 group-hover:text-white group-hover:-rotate-2"
             )}>
-              <Icon className="w-8 h-8" />
+              <Icon className="w-7 h-7" />
             </div>
 
             {/* Badge de Requisito de Login ou Acesso Liberado */}
             <div className="relative z-10">
               {isLoggedIn ? (
                 hasAccess ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10.5px] font-bold">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
                     <UserCheck className="w-3 h-3 text-emerald-600" />
                     Liberado
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10.5px] font-bold">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold">
                     <Lock className="w-3 h-3 text-rose-600" />
                     Acesso Restrito
                   </span>
                 )
               ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-[10.5px] font-bold group-hover:border-emerald-300 group-hover:bg-emerald-50 group-hover:text-emerald-700 transition-colors">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-bold group-hover:border-slate-300 group-hover:bg-slate-50 transition-colors">
                   <Lock className="w-3 h-3" />
                   Requer Senha
                 </span>
               )}
             </div>
           </div>
+
+          {/* Subtítulo / Badge de Categoria para Assimetria Visual Refinada */}
+          {badge && (
+            <div className="mb-2 relative z-10">
+              <span className={cn(
+                "inline-block px-2.5 py-0.5 rounded-md text-[10px] font-bold tracking-wide uppercase",
+                isEmerald && "bg-emerald-50 text-emerald-700 border border-emerald-100",
+                isOrange && "bg-orange-50 text-orange-700 border border-orange-100",
+                isBlue && "bg-blue-50 text-blue-700 border border-blue-100"
+              )}>
+                {badge}
+              </span>
+            </div>
+          )}
           
-          <h2 className="text-2xl font-display font-bold text-slate-800 mb-3 relative z-10 group-hover:text-slate-900 transition-colors">
+          <h2 className="text-xl font-display font-bold text-slate-900 mb-2.5 relative z-10 group-hover:text-slate-950 transition-colors">
             {title}
           </h2>
-          <p className="text-slate-500 leading-relaxed mb-8 text-sm relative z-10">
+          <p className="text-slate-500 leading-relaxed mb-6 text-xs sm:text-[13px] relative z-10 line-clamp-3">
             {description}
           </p>
         </div>
         
         <div className={cn(
-          "inline-flex items-center gap-2 font-bold tracking-wide uppercase text-xs transition-all relative z-10 mt-auto pt-4 border-t border-slate-100",
-          isEmerald ? "text-emerald-600 group-hover:text-emerald-700" : "text-orange-600 group-hover:text-orange-700"
+          "inline-flex items-center gap-2 font-bold tracking-wide uppercase text-[11px] transition-all relative z-10 mt-auto pt-4 border-t border-slate-100",
+          isEmerald && "text-emerald-600 group-hover:text-emerald-700",
+          isOrange && "text-orange-600 group-hover:text-orange-700",
+          isBlue && "text-blue-600 group-hover:text-blue-700"
         )}>
           <span>{isLoggedIn ? "Acessar Módulo" : "Entrar com Login & Senha"}</span>
-          <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-2" />
+          <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-1.5" />
         </div>
       </div>
     </motion.div>

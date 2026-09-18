@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users } from "lucide-react";
+import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -435,8 +435,13 @@ export default function Lancamento() {
             setEditingId(targetId);
             const numVal = parseCurrencyToNumber(found.valor || "");
             const valClean = numVal > 0 ? numVal.toFixed(2).replace(".", ",") : "";
-            const docParts = (found.doc || "").split(" ");
-            const docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
+            const docClean = (found.doc || "").trim();
+            let docCode = "";
+            if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N")) {
+              const docParts = docClean.split(" ");
+              docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
+            }
+            const numDocReal = found.codigoLancamento || found.numeroDocumento || docCode || "";
 
             setFormData({
               ...getInitialFormState(),
@@ -445,7 +450,8 @@ export default function Lancamento() {
               cnpj: found.cnpj || "",
               valorNf: valClean,
               tipoDocumento: found.tipo || "NF-e",
-              codigoLancamento: docCode,
+              codigoLancamento: numDocReal,
+              codLancamentoOc: found.codLancamentoOc || "",
               dataEmissao: found.dataEmissao || "",
               dataVencimento: found.dataVencimento || "",
               status: found.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (found.status || "Aguardando Aprovação"),
@@ -476,15 +482,21 @@ export default function Lancamento() {
         const numVal = parseCurrencyToNumber(p.valor || "");
         const valorLimpo = numVal > 0 ? numVal.toFixed(2).replace(".", ",") : "";
         const dataVenc = p.vencimento || new Date().toISOString().split('T')[0];
-        const docParts = (p.doc || "").split(" ");
-        const docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
+        const docClean = (p.doc || "").trim();
+        let docCode = "";
+        if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N")) {
+          const docParts = docClean.split(" ");
+          docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
+        }
+        const numDocReal = p.codigoLancamento || p.numeroDocumento || docCode || "";
 
         setFormData({
           ...getInitialFormState(),
           fornecedor: p.fornecedor || "",
           valorNf: valorLimpo,
           dataVencimento: dataVenc,
-          codigoLancamento: docCode,
+          codigoLancamento: numDocReal,
+          codLancamentoOc: p.codLancamentoOc || "",
           tipo: p.frequencia || "Esporádico",
           observacao: "Preenchido automaticamente a partir do Alerta de Vencimentos."
         });
@@ -1131,6 +1143,32 @@ export default function Lancamento() {
     localStorage.setItem("risel_lanc_cols_v2", JSON.stringify(visibleCols));
   }, [visibleCols, userKey]);
 
+  // Modo de densidade da tabela: 'comfortable' (padrão ampliado/confortável) ou 'compact'
+  const [tableDensity, setTableDensity] = useState<"comfortable" | "compact">(() => {
+    const saved = localStorage.getItem("risel_lanc_table_density");
+    return saved === "compact" ? "compact" : "comfortable";
+  });
+
+  const handleToggleDensity = () => {
+    const next = tableDensity === "comfortable" ? "compact" : "comfortable";
+    setTableDensity(next);
+    localStorage.setItem("risel_lanc_table_density", next);
+  };
+
+  // Modo tela cheia / maximizar tabela (Full-Screen BI View)
+  const [isTableMaximized, setIsTableMaximized] = useState(false);
+
+  // Fecha o modo maximizado ao pressionar tecla ESC
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isTableMaximized) {
+        setIsTableMaximized(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isTableMaximized]);
+
   // Estados de Drag & Drop para reordenar colunas
   const [draggedCol, setDraggedCol] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
@@ -1517,9 +1555,9 @@ export default function Lancamento() {
           cnpjReal = "99999999999999"; // CNPJ Fictício indicativo de digitação ou detecção genérica
           descServico = "Serviços contratados conforme documento anexo";
           codSistema = "SV-0100"; // Sugestão genérica de Item de Sistema
-          valSugerido = String(Math.floor(Math.random() * 4500) + 500) + ",00"; // Um valor sugerido aleatório coerente
-          tpDoc = "NFS-e";
-          numDoc = String(Math.floor(Math.random() * 88000) + 12000);
+          // Tenta extrair número do documento do nome do arquivo (ex: "NF1902.pdf" -> "1902")
+          const nameMatch = fileName.match(/(?:nf|nfe|doc|fatura|recibo)?[\-_]?(\d{3,8})/i);
+          numDoc = nameMatch ? nameMatch[1] : "";
           obsOcr = `OCR Concluído. Dados extraídos do documento '${fileName}'. Fornecedor sugerido: ${razaoExtraida}. Ajuste as informações se necessário.`;
         }
 
@@ -1540,7 +1578,7 @@ export default function Lancamento() {
 
         setOcrProcessing(false);
 
-        // Preenche o formulário com dados dinâmicos do OCR ou extraídos do arquivo!
+        // Preenche o formulário com dados dinâmicos do OCR ou extraídos do arquivo sem sobrescrever número já preenchido!
         setFormData(prev => ({
           ...prev,
           lancadoPor: primeiroNome, // Usa o lançador logado
@@ -1558,7 +1596,7 @@ export default function Lancamento() {
           moduloPetroshow: "Não aplicável",
           status: "Aguardando Aprovação", 
           aprovadores: "Deny e Gerência",
-          codigoLancamento: numDoc, // Preenche o número real da nota
+          codigoLancamento: prev.codigoLancamento ? prev.codigoLancamento : (numDoc || ""), // Preserva sempre se já digitado
           dataAprovacao: "",
           dataEnvio: "",
           observacao: obsOcr || `OCR Concluído com sucesso. Nota Fiscal ${tpDoc} eletrônica emitida recentemente. Emitente: ${finalFornecedor}.`,
@@ -1659,7 +1697,16 @@ export default function Lancamento() {
       return;
     }
 
-    const docName = `${formData.tipoDocumento} ${formData.codigoLancamento || Math.floor(Math.random() * 10000)}`;
+    const numDocInformado = (formData.codigoLancamento || "").trim();
+    if (!numDocInformado) {
+      alert("Por favor, preencha o campo Nº Documento.");
+      return;
+    }
+
+    const prefixoTipo = (formData.tipoDocumento || "NF-e").trim();
+    const docName = numDocInformado.toLowerCase().startsWith(prefixoTipo.toLowerCase())
+      ? numDocInformado
+      : `${prefixoTipo} ${numDocInformado}`;
 
     // Verificar se já existe lançamento com o mesmo documento/numeração (excluindo o próprio se estiver editando)
     const duplicate = lancamentos.find(item => 
@@ -1954,8 +2001,13 @@ export default function Lancamento() {
   // Abrir o formulário de edição de Lançamento
   const handleEditLancamento = (item: any) => {
     // Isolar o número do documento/fatura
-    const docParts = (item.doc || "").split(" ");
-    const docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
+    const docClean = (item.doc || "").trim();
+    let docCode = "";
+    if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N")) {
+      const docParts = docClean.split(" ");
+      docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
+    }
+    const numDocReal = item.codigoLancamento || item.numeroDocumento || docCode || "";
     const numVal = parseCurrencyToNumber(item.valor || "");
     const valClean = numVal > 0 ? numVal.toFixed(2).replace(".", ",") : "";
 
@@ -1991,7 +2043,7 @@ export default function Lancamento() {
       moduloPetroshow: "",
       status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
       aprovadores: item.aprovadores || "",
-      codigoLancamento: item.codigoLancamento || docCode,
+      codigoLancamento: numDocReal,
       codLancamentoOc: item.codLancamentoOc || "",
       dataAprovacao: item.dataAprovacao || "",
       dataEnvio: "",
@@ -3029,8 +3081,21 @@ export default function Lancamento() {
           </form>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden min-h-[580px] flex flex-col">
-          <div className="px-4 py-2 border-b border-slate-150 flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center bg-slate-50/50">
+        <div className={cn(
+          "bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col transition-all",
+          isTableMaximized 
+            ? "fixed inset-2 md:inset-4 z-50 shadow-2xl rounded-2xl border-slate-300 min-h-0 h-[calc(100vh-1rem)] md:h-[calc(100vh-2rem)]" 
+            : "min-h-[620px] max-h-[calc(100vh-180px)] flex-1"
+        )}>
+          {/* Overlay escuro de fundo quando em tela cheia */}
+          {isTableMaximized && (
+            <div 
+              className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs -z-10 animate-in fade-in duration-200"
+              onClick={() => setIsTableMaximized(false)}
+            />
+          )}
+
+          <div className="px-4 py-2 border-b border-slate-150 flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center bg-slate-50/70 shrink-0">
             <div className="flex items-center gap-2 flex-1 max-w-md">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
@@ -3161,18 +3226,90 @@ export default function Lancamento() {
                 )}
               </div>
             </div>
-            <div className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 rounded-lg px-2.5 py-1 shadow-sm flex items-center gap-1.5 self-end sm:self-auto">
-              <span>📊 Total de Lançamentos:</span>
-              <span className="text-[#114D38] font-black font-mono text-xs">{sortedLancamentos.length}</span>
+
+            {/* Controles de Produtividade, BI e Ergonomia Visual */}
+            <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap sm:flex-nowrap">
+              {/* Seletor de Densidade: Confortável vs Compacta */}
+              <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableDensity("comfortable");
+                    localStorage.setItem("risel_lanc_table_density", "comfortable");
+                  }}
+                  className={cn(
+                    "px-2 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer",
+                    tableDensity === "comfortable"
+                      ? "bg-[#114D38] text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  )}
+                  title="Modo Confortável: Tipografia ampliada e maior legibilidade de dados"
+                >
+                  Confortável
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableDensity("compact");
+                    localStorage.setItem("risel_lanc_table_density", "compact");
+                  }}
+                  className={cn(
+                    "px-2 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer",
+                    tableDensity === "compact"
+                      ? "bg-[#114D38] text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  )}
+                  title="Modo Compacto: Mais linhas simultâneas na tela"
+                >
+                  Compacta
+                </button>
+              </div>
+
+              {/* Botão de Maximizar / Modo Foco BI */}
+              <button
+                type="button"
+                onClick={() => setIsTableMaximized(!isTableMaximized)}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg border text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs",
+                  isTableMaximized
+                    ? "bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100"
+                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                )}
+                title={isTableMaximized ? "Restaurar visualização normal (ESC)" : "Maximizar tabela para tela inteira (Modo Panorâmico BI)"}
+              >
+                {isTableMaximized ? (
+                  <>
+                    <Minimize2 className="w-3.5 h-3.5 text-amber-700" />
+                    <span className="hidden md:inline">Restaurar</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="w-3.5 h-3.5 text-slate-600" />
+                    <span className="hidden md:inline">Tela Cheia</span>
+                  </>
+                )}
+              </button>
+
+              {/* Contador de Lançamentos */}
+              <div className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 rounded-lg px-2.5 py-1 shadow-2xs flex items-center gap-1.5">
+                <span>Total:</span>
+                <span className="text-[#114D38] font-black font-mono text-xs">{sortedLancamentos.length}</span>
+              </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto overflow-y-auto max-h-[520px] flex-1">
+          <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
             {/* Tabela de Lançamentos Redesenhada - Layout moderno com densidade otimizada de dados de acordo com a imagem modelo */}
-            <table className="w-full font-aptos text-[10px] text-left border-collapse border border-slate-200/70">
+            <table className={cn(
+              "w-full font-aptos text-left border-collapse border border-slate-200/70",
+              tableDensity === "comfortable" ? "text-[11px]" : "text-[10px]"
+            )}>
               <thead>
-                <tr className="bg-[#114D38] text-white text-[10px] font-black uppercase tracking-wider select-none">
-                  <th className="px-4 py-3 w-16 text-center sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20">AÇÕES</th>
+                <tr className="bg-[#114D38] text-white text-[11px] font-black uppercase tracking-wider select-none">
+                  <th className={cn(
+                    "text-center sticky top-0 bg-[#114D38] z-20 border-r border-b border-slate-200/20",
+                    tableDensity === "comfortable" ? "px-3 py-3 w-20" : "px-2.5 py-2 w-16"
+                  )}>AÇÕES</th>
                   {columnOrder.map(colKey => {
                     if (!visibleCols[colKey]) return null;
 
@@ -3216,7 +3353,8 @@ export default function Lancamento() {
                         }}
                         title="Arraste para reordenar a coluna ou clique para ordenar os dados"
                         className={cn(
-                          "px-4 py-3 whitespace-nowrap sticky top-0 z-20 border-r border-b border-slate-200/20 transition-colors cursor-pointer",
+                          "whitespace-nowrap sticky top-0 z-20 border-r border-b border-slate-200/20 transition-colors cursor-pointer",
+                          tableDensity === "comfortable" ? "px-3.5 py-3 text-[11px]" : "px-3 py-2 text-[10px]",
                           config.isGreen ? "bg-[#00CA71] hover:bg-[#00b263]" : "bg-[#114D38] hover:bg-[#0c3728]",
                           config.isRight ? "text-right" : "text-left",
                           isDragging && "opacity-40 cursor-grabbing",
@@ -3230,15 +3368,19 @@ export default function Lancamento() {
                   })}
                 </tr>
               </thead>
-              <tbody className="font-semibold text-slate-700 text-[10px]">
+              <tbody className={cn(
+                "font-semibold text-slate-700",
+                tableDensity === "comfortable" ? "text-[11.5px]" : "text-[10px]"
+              )}>
                 {sortedLancamentos.map((item) => {
                   const isOrange = item.status.includes("Aguardando");
                   const isGreen = item.status.includes("Aprovado") || item.status.includes("Finalizado");
                   const vencInfo = calcularDiasAteVencimento(item.dataVencimento, item.status);
+                  const cellPadding = tableDensity === "comfortable" ? "px-3.5 py-2.5" : "px-3 py-1.5";
                   
                   return (
-                    <tr key={item.id} className="hover:bg-slate-100/50 transition-colors odd:bg-slate-50/15 even:bg-white border-b border-slate-200/50 last:border-b-0 group">
-                      <td className="px-3 py-3 text-slate-400 w-20 text-center border-r border-slate-200/50">
+                    <tr key={item.id} className="hover:bg-slate-100/60 transition-colors odd:bg-slate-50/20 even:bg-white border-b border-slate-200/50 last:border-b-0 group">
+                      <td className={cn(cellPadding, "text-slate-400 text-center border-r border-slate-200/50")}>
                         <div className="flex items-center justify-center gap-1.5">
                           <button 
                             onClick={() => handleManualSendEmail(item)}
@@ -3280,12 +3422,12 @@ export default function Lancamento() {
                           const isCanceled = currentStatus === "Cancelado";
 
                           return (
-                            <td key="status" className="px-3 py-2 border-r border-slate-200/50">
+                            <td key="status" className={cn(cellPadding, "border-r border-slate-200/50")}>
                               <select
                                 value={currentStatus}
                                 onChange={(e) => handleInlineStatusChange(item.id, e.target.value)}
                                 className={cn(
-                                  "px-2.5 py-1 rounded-lg text-[10px] font-bold border whitespace-nowrap inline-block cursor-pointer outline-none shadow-2xs transition-all",
+                                  "px-2 py-1 rounded-lg text-[10.5px] font-bold border whitespace-nowrap inline-block cursor-pointer outline-none shadow-2xs transition-all",
                                   isApproved ? "bg-emerald-50 text-emerald-800 border-emerald-300/80 hover:bg-emerald-100/80" :
                                   isContested ? "bg-purple-50 text-purple-800 border-purple-300/80 hover:bg-purple-100/80 font-black" :
                                   isPending ? "bg-amber-50 text-amber-900 border-amber-300/80 hover:bg-amber-100/80" :
@@ -3300,7 +3442,7 @@ export default function Lancamento() {
                                 <option value="Cancelado">Cancelado</option>
                               </select>
                               {item.dataAprovacao && (
-                                <div className="text-[9px] font-semibold text-emerald-700 mt-1 block whitespace-nowrap">
+                                <div className="text-[9.5px] font-semibold text-emerald-700 mt-1 block whitespace-nowrap">
                                   Aprovado em: {item.dataAprovacao}
                                 </div>
                               )}
@@ -3309,17 +3451,17 @@ export default function Lancamento() {
                         }
                         if (colKey === "vencimento") {
                           return (
-                            <td key="vencimento" className="px-4 py-3 font-bold text-slate-800 font-mono whitespace-nowrap border-r border-slate-200/50">
+                            <td key="vencimento" className={cn(cellPadding, "font-bold text-slate-800 font-mono tabular-nums whitespace-nowrap border-r border-slate-200/50")}>
                               {formatDateDisplay(item.dataVencimento)}
                             </td>
                           );
                         }
                         if (colKey === "codLancamento") {
-                          const codOc = item.codLancamentoOc || item.codigoLancamento || "";
+                          const codOc = item.codLancamentoOc || "";
                           return (
-                            <td key="codLancamento" className="px-4 py-3 text-slate-700 font-bold whitespace-nowrap border-r border-slate-200/50">
+                            <td key="codLancamento" className={cn(cellPadding, "text-slate-700 font-bold whitespace-nowrap border-r border-slate-200/50")}>
                               {codOc ? (
-                                <span className="px-2 py-0.5 rounded bg-emerald-50 text-[#114D38] font-black text-[9.5px] border border-emerald-300 font-mono inline-block">
+                                <span className="px-2 py-0.5 rounded bg-emerald-50 text-[#114D38] font-black text-[10px] border border-emerald-300 font-mono inline-block">
                                   {codOc.toUpperCase()}
                                 </span>
                               ) : (
@@ -3330,15 +3472,15 @@ export default function Lancamento() {
                         }
                         if (colKey === "lancamento") {
                           return (
-                            <td key="lancamento" className="px-4 py-3 text-slate-500 font-mono whitespace-nowrap border-r border-slate-200/50">
+                            <td key="lancamento" className={cn(cellPadding, "text-slate-500 font-mono tabular-nums whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.dataLancamento || "").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "prazo") {
                           return (
-                            <td key="prazo" className="px-4 py-3 border-r border-slate-200/50">
-                              <span className={cn("px-2 py-0.5 rounded border font-bold block text-center max-w-[145px] truncate shadow-sm", vencInfo.color)}>
+                            <td key="prazo" className={cn(cellPadding, "border-r border-slate-200/50")}>
+                              <span className={cn("px-2 py-0.5 rounded border font-bold block text-center max-w-[155px] truncate shadow-sm", vencInfo.color)}>
                                 {(vencInfo.text || "").toUpperCase()}
                               </span>
                             </td>
@@ -3346,18 +3488,18 @@ export default function Lancamento() {
                         }
                         if (colKey === "fornecedor") {
                           return (
-                            <td key="fornecedor" className="px-4 py-3 border-r border-slate-200/50">
+                            <td key="fornecedor" className={cn(cellPadding, "border-r border-slate-200/50")}>
                               <div className="flex flex-col text-left leading-normal">
-                                <span className="font-extrabold text-slate-800 uppercase block max-w-[240px] truncate" title={item.fornecedor}>{(item.fornecedor || "").toUpperCase()}</span>
-                                <span className="text-[9px] text-slate-400 font-mono mt-0.5">{formatCPFCNPJ(item.cnpj)}</span>
+                                <span className="font-extrabold text-slate-850 uppercase block max-w-[260px] truncate" title={item.fornecedor}>{(item.fornecedor || "").toUpperCase()}</span>
+                                <span className="text-[9.5px] text-slate-400 font-mono mt-0.5">{formatCPFCNPJ(item.cnpj)}</span>
                               </div>
                             </td>
                           );
                         }
                         if (colKey === "centroCusto") {
                           return (
-                            <td key="centroCusto" className="px-4 py-3 border-r border-slate-200/50">
-                              <span className="px-2 py-0.5 rounded bg-emerald-50 text-[#114D38] font-black text-[9.5px] border border-emerald-200 uppercase whitespace-nowrap inline-block">
+                            <td key="centroCusto" className={cn(cellPadding, "border-r border-slate-200/50")}>
+                              <span className="px-2 py-0.5 rounded bg-emerald-50 text-[#114D38] font-black text-[10px] border border-emerald-200 uppercase whitespace-nowrap inline-block">
                                 {(item.centroCusto || "C.C 101 - Operacional").toUpperCase()}
                               </span>
                             </td>
@@ -3365,61 +3507,61 @@ export default function Lancamento() {
                         }
                         if (colKey === "cnpj") {
                           return (
-                            <td key="cnpj" className="px-4 py-3 text-slate-500 font-mono whitespace-nowrap border-r border-slate-200/50">
+                            <td key="cnpj" className={cn(cellPadding, "text-slate-500 font-mono tabular-nums whitespace-nowrap border-r border-slate-200/50")}>
                               {formatCPFCNPJ(item.cnpj)}
                             </td>
                           );
                         }
                         if (colKey === "estabelecimento") {
                           return (
-                            <td key="estabelecimento" className="px-4 py-3 text-slate-500 font-bold whitespace-nowrap border-r border-slate-200/50">
+                            <td key="estabelecimento" className={cn(cellPadding, "text-slate-600 font-bold whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.estabelecimento || "100 - PAULÍNIA").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "tipoDocumento") {
                           return (
-                            <td key="tipoDocumento" className="px-4 py-3 text-slate-500 font-bold whitespace-nowrap border-r border-slate-200/50">
+                            <td key="tipoDocumento" className={cn(cellPadding, "text-slate-600 font-bold whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.tipo || "NF-E").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "frequencia") {
                           return (
-                            <td key="frequencia" className="px-4 py-3 text-slate-500 font-bold whitespace-nowrap border-r border-slate-200/50">
+                            <td key="frequencia" className={cn(cellPadding, "text-slate-600 font-bold whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.frequencia || "ESPORÁDICO").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "itemSistema") {
                           return (
-                            <td key="itemSistema" className="px-4 py-3 text-slate-500 font-mono whitespace-nowrap border-r border-slate-200/50">
+                            <td key="itemSistema" className={cn(cellPadding, "text-slate-500 font-mono whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.itemSistema || "---").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "lancadoPor") {
                           return (
-                            <td key="lancadoPor" className="px-4 py-3 text-slate-500 font-bold whitespace-nowrap border-r border-slate-200/50">
+                            <td key="lancadoPor" className={cn(cellPadding, "text-slate-600 font-bold whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.lancadoPor || "DENY").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "descricao") {
                           return (
-                            <td key="descricao" className="px-4 py-3 max-w-[220px] truncate text-slate-500 font-medium border-r border-slate-200/50 uppercase" title={item.descricao}>
+                            <td key="descricao" className={cn(cellPadding, "max-w-[240px] truncate text-slate-600 font-medium border-r border-slate-200/50 uppercase")} title={item.descricao}>
                               {(item.descricao || "").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "documento") {
                           return (
-                            <td key="documento" className="px-4 py-3 text-slate-500 font-mono border-r border-slate-200/50">
+                            <td key="documento" className={cn(cellPadding, "text-slate-600 font-mono border-r border-slate-200/50")}>
                               <div className="flex items-center gap-2">
-                                <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-[9px] font-extrabold text-slate-600 uppercase shrink-0">
+                                <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-[9.5px] font-extrabold text-slate-700 uppercase shrink-0">
                                   {(item.tipo || "").toUpperCase()}
                                 </span>
-                                <span className="truncate max-w-[120px] font-bold text-slate-750">{(item.doc || "").toUpperCase()}</span>
+                                <span className="truncate max-w-[130px] font-bold text-slate-800">{(item.doc || "").toUpperCase()}</span>
                                 {Boolean((Array.isArray(item.anexos) && item.anexos.length > 0) || item.nomeArquivoAnexo || item.arquivoAnexoBase64) && (
                                   <button
                                     onClick={(e) => {
@@ -3451,7 +3593,7 @@ export default function Lancamento() {
                                         anexos: anxList
                                       });
                                     }}
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[9px] font-black cursor-pointer hover:bg-rose-100 transition-colors shrink-0"
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[9.5px] font-black cursor-pointer hover:bg-rose-100 transition-colors shrink-0"
                                     title={Array.isArray(item.anexos) && item.anexos.length > 1 ? `Ver ${item.anexos.length} documentos anexos` : `Ver anexo: ${item.nomeArquivoAnexo || "Documento.pdf"}`}
                                   >
                                     <FileText className="w-3 h-3 text-rose-600" />
@@ -3466,35 +3608,35 @@ export default function Lancamento() {
                         }
                         if (colKey === "dataEmissao") {
                           return (
-                            <td key="dataEmissao" className="px-4 py-3 text-slate-500 font-mono whitespace-nowrap border-r border-slate-200/50">
+                            <td key="dataEmissao" className={cn(cellPadding, "text-slate-500 font-mono tabular-nums whitespace-nowrap border-r border-slate-200/50")}>
                               {item.dataEmissao ? formatDateDisplay(item.dataEmissao) : "---"}
                             </td>
                           );
                         }
                         if (colKey === "pagamento") {
                           return (
-                            <td key="pagamento" className="px-4 py-3 text-slate-500 font-bold whitespace-nowrap border-r border-slate-200/50">
+                            <td key="pagamento" className={cn(cellPadding, "text-slate-600 font-bold whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.formaPagto || "").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "aprovadores") {
                           return (
-                            <td key="aprovadores" className="px-4 py-3 text-slate-550 font-bold whitespace-nowrap border-r border-slate-200/50">
+                            <td key="aprovadores" className={cn(cellPadding, "text-slate-600 font-bold whitespace-nowrap border-r border-slate-200/50")}>
                               {(item.aprovadores || "---").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "observacao") {
                           return (
-                            <td key="observacao" className="px-4 py-3 max-w-[150px] truncate text-slate-500 font-medium border-r border-slate-200/50 uppercase" title={item.observacao || ""}>
+                            <td key="observacao" className={cn(cellPadding, "max-w-[170px] truncate text-slate-500 font-medium border-r border-slate-200/50 uppercase")} title={item.observacao || ""}>
                               {(item.observacao || "---").toUpperCase()}
                             </td>
                           );
                         }
                         if (colKey === "valor") {
                           return (
-                            <td key="valor" className="px-4 py-3 text-right font-black text-slate-900 font-mono whitespace-nowrap bg-emerald-50/15">
+                            <td key="valor" className={cn(cellPadding, "text-right font-black text-slate-900 font-mono tabular-nums whitespace-nowrap bg-emerald-50/20 text-xs")}>
                               {(item.valor || "").toUpperCase()}
                             </td>
                           );

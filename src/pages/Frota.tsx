@@ -2912,20 +2912,20 @@ export default function Frota() {
                   damping: 22, 
                   delay: idx * 0.04 
                 }}
-                className={`p-4 rounded-2xl border ${item.borderColor} shadow-2xs flex flex-col justify-between relative overflow-hidden bg-gradient-to-br ${item.gradientBg} ${item.glowColor} transition-all duration-300 min-h-[96px]`}
+                className={`p-3 rounded-xl border ${item.borderColor} shadow-2xs flex flex-col justify-between relative overflow-hidden bg-gradient-to-br ${item.gradientBg} ${item.glowColor} transition-all duration-300 min-h-[78px]`}
               >
                 {/* Decorative background glow */}
                 <div className={`absolute -right-8 -bottom-8 w-20 h-20 rounded-full bg-gradient-to-br ${item.gradient} opacity-[0.07] blur-lg pointer-events-none`} />
                 
                 <div className="flex justify-between items-start gap-2 relative z-10">
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block leading-tight">{item.label}</span>
-                  <div className={`w-7 h-7 rounded-lg ${item.bgLight} flex items-center justify-center shrink-0 border border-slate-200/40`}>
-                    <item.icon className={`w-3.5 h-3.5 ${item.textColor}`} />
+                  <span className="text-[9.5px] font-black text-slate-500 uppercase tracking-wider block leading-tight">{item.label}</span>
+                  <div className={`w-6 h-6 rounded-md ${item.bgLight} flex items-center justify-center shrink-0 border border-slate-200/40`}>
+                    <item.icon className={`w-3 h-3 ${item.textColor}`} />
                   </div>
                 </div>
-                <div className="mt-2 relative z-10 text-left">
-                  <span className={`text-xl sm:text-2xl font-display font-black bg-gradient-to-r ${item.gradient} bg-clip-text text-transparent block tracking-tight leading-none`}>{item.value}</span>
-                  <span className="text-[10px] font-bold text-slate-400 block mt-1">{item.sub}</span>
+                <div className="mt-1 relative z-10 text-left">
+                  <span className={`text-base sm:text-lg font-display font-black bg-gradient-to-r ${item.gradient} bg-clip-text text-transparent block tracking-tight leading-none`}>{item.value}</span>
+                  <span className="text-[9px] font-bold text-slate-400 block mt-0.5">{item.sub}</span>
                 </div>
               </motion.div>
             ))}

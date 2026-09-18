@@ -40,8 +40,23 @@ export const UserProfileBadge: React.FC<UserProfileBadgeProps> = ({ className = 
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  const displayName = user?.name || "Deny Gonçalves";
   const displayEmail = user?.email || "deny.goncalves@risel.com.br";
+  
+  const deriveNameFromEmail = (email: string) => {
+    const clean = email.split('@')[0];
+    if (clean.toLowerCase().includes('deny')) return 'Deny Gonçalves';
+    if (clean.toLowerCase().includes('lorena')) return 'Lorena Padilha';
+    return clean
+      .split(/[._-]/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  const displayName = user?.name && user.name !== user.email 
+    ? user.name 
+    : deriveNameFromEmail(displayEmail);
+
   const initials = getInitials(displayName);
 
   return (
