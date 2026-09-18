@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users, Maximize2, Minimize2 } from "lucide-react";
+import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -1154,20 +1154,6 @@ export default function Lancamento() {
     setTableDensity(next);
     localStorage.setItem("risel_lanc_table_density", next);
   };
-
-  // Modo tela cheia / maximizar tabela (Full-Screen BI View)
-  const [isTableMaximized, setIsTableMaximized] = useState(false);
-
-  // Fecha o modo maximizado ao pressionar tecla ESC
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isTableMaximized) {
-        setIsTableMaximized(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isTableMaximized]);
 
   // Estados de Drag & Drop para reordenar colunas
   const [draggedCol, setDraggedCol] = useState<string | null>(null);
@@ -3081,20 +3067,7 @@ export default function Lancamento() {
           </form>
         </div>
       ) : (
-        <div className={cn(
-          "bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col transition-all",
-          isTableMaximized 
-            ? "fixed inset-2 md:inset-4 z-50 shadow-2xl rounded-2xl border-slate-300 min-h-0 h-[calc(100vh-1rem)] md:h-[calc(100vh-2rem)]" 
-            : "min-h-[620px] max-h-[calc(100vh-180px)] flex-1"
-        )}>
-          {/* Overlay escuro de fundo quando em tela cheia */}
-          {isTableMaximized && (
-            <div 
-              className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs -z-10 animate-in fade-in duration-200"
-              onClick={() => setIsTableMaximized(false)}
-            />
-          )}
-
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col min-h-[620px] max-h-[calc(100vh-180px)] flex-1">
           <div className="px-4 py-2 border-b border-slate-150 flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center bg-slate-50/70 shrink-0">
             <div className="flex items-center gap-2 flex-1 max-w-md">
               <div className="relative flex-1">
@@ -3264,31 +3237,6 @@ export default function Lancamento() {
                   Compacta
                 </button>
               </div>
-
-              {/* Botão de Maximizar / Modo Foco BI */}
-              <button
-                type="button"
-                onClick={() => setIsTableMaximized(!isTableMaximized)}
-                className={cn(
-                  "px-2.5 py-1 rounded-lg border text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs",
-                  isTableMaximized
-                    ? "bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100"
-                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                )}
-                title={isTableMaximized ? "Restaurar visualização normal (ESC)" : "Maximizar tabela para tela inteira (Modo Panorâmico BI)"}
-              >
-                {isTableMaximized ? (
-                  <>
-                    <Minimize2 className="w-3.5 h-3.5 text-amber-700" />
-                    <span className="hidden md:inline">Restaurar</span>
-                  </>
-                ) : (
-                  <>
-                    <Maximize2 className="w-3.5 h-3.5 text-slate-600" />
-                    <span className="hidden md:inline">Tela Cheia</span>
-                  </>
-                )}
-              </button>
 
               {/* Contador de Lançamentos */}
               <div className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 rounded-lg px-2.5 py-1 shadow-2xs flex items-center gap-1.5">
