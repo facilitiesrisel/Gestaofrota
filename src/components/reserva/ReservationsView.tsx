@@ -8,6 +8,8 @@ import ReservationEditModal from './ReservationEditModal';
 import { useAuth } from '../../context/ReservationAuthContext';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
+import { getAllSystemUsersEmails } from '../../services/perimeterAlertService';
+import { AdditionalRecipientsInput } from './AdditionalRecipientsInput';
 import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
 import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
@@ -120,6 +122,8 @@ const ReservationsView: React.FC = () => {
   const [finalizeFormData, setFinalizeFormData] = useState({ finalKm: '', actualReturnDateTime: '' });
   const [rejectReason, setRejectReason] = useState('');
   const [approveAdminNotes, setApproveAdminNotes] = useState('');
+  const [approveAdditionalEmails, setApproveAdditionalEmails] = useState<string[]>([]);
+  const [rejectAdditionalEmails, setRejectAdditionalEmails] = useState<string[]>([]);
 
   // --- Filtros ---
   const [activeTab, setActiveTab] = useState<'active' | 'history' | 'locacoes'>('active');
@@ -159,12 +163,14 @@ const ReservationsView: React.FC = () => {
       setIsApproving(true);
       const resSnapshot = { ...reservation };
       const finalNotes = notes !== undefined ? notes : approveAdminNotes;
+      const additionalEmailsToSend = [...approveAdditionalEmails];
 
       // 1. Fecha imediatamente os modais para a tela do gestor responder instantaneamente sem travar
       setIsApproveModalOpen(false);
       setIsMaintenanceModalOpen(false);
       setSelectedReservation(null);
       setApproveAdminNotes('');
+      setApproveAdditionalEmails([]);
 
       showToast("Aprovando reserva e enviando e-mails...", 'info');
 
@@ -222,11 +228,12 @@ const ReservationsView: React.FC = () => {
         const adminCcList = Array.from(new Set([
           'deny.goncalves@risel.com.br',
           'lorena.padilha@risel.com.br',
-          ...baseRecipients
+          ...baseRecipients,
+          ...additionalEmailsToSend
         ]));
         const isRequesterValid = Boolean(requesterEmail && requesterEmail.includes('@'));
         const primaryTo = isRequesterValid ? [requesterEmail] : adminCcList;
-        const ccList = isRequesterValid ? adminCcList : undefined;
+        const ccList = isRequesterValid ? adminCcList : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
 
         try {
           await sendEmail(primaryTo, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
@@ -250,6 +257,7 @@ const ReservationsView: React.FC = () => {
   const handleApprove = async (reservation: Reservation) => {
     setSelectedReservation(reservation);
     setApproveAdminNotes(reservation.adminNotes || '');
+    setApproveAdditionalEmails([]);
     const vehicle = getVehicleById(reservation.vehicleId);
     if (vehicle) {
         const currentKm = vehicle.lastKm || 0;
@@ -265,6 +273,7 @@ const ReservationsView: React.FC = () => {
   const handleOpenRejectModal = (reservation: Reservation) => {
     setSelectedReservation(reservation);
     setRejectReason('');
+    setRejectAdditionalEmails([]);
     setIsRejectModalOpen(true);
   };
 
@@ -274,10 +283,12 @@ const ReservationsView: React.FC = () => {
 
     const resSnapshot = { ...selectedReservation };
     const reason = rejectReason.trim();
+    const additionalEmailsToSend = [...rejectAdditionalEmails];
 
     setIsRejectModalOpen(false);
     setSelectedReservation(null);
     setRejectReason('');
+    setRejectAdditionalEmails([]);
 
     showToast("Rejeitando reserva e enviando parecer por e-mail...", 'info');
 
@@ -314,11 +325,12 @@ const ReservationsView: React.FC = () => {
       const adminCcList = Array.from(new Set([
         'deny.goncalves@risel.com.br',
         'lorena.padilha@risel.com.br',
-        ...baseRecipients
+        ...baseRecipients,
+        ...additionalEmailsToSend
       ]));
       const isRequesterValid = Boolean(requesterEmail && requesterEmail.includes('@'));
       const primaryTo = isRequesterValid ? [requesterEmail] : adminCcList;
-      const ccList = isRequesterValid ? adminCcList : undefined;
+      const ccList = isRequesterValid ? adminCcList : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
 
       try {
         await sendEmail(primaryTo, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml, {
@@ -748,6 +760,27 @@ const ReservationsView: React.FC = () => {
               />
             </div>
 
+            {/* Inclusão de Destinatários Adicionais na Aprovação */}
+            <AdditionalRecipientsInput
+              additionalEmails={approveAdditionalEmails}
+              onChange={setApproveAdditionalEmails}
+              defaultRecipients={[
+                ...(selectedReservation.email ? [{
+                  label: 'Solicitante',
+                  email: selectedReservation.email,
+                  isPrimary: true
+                }] : []),
+                ...getReservasEmailRecipients().map(email => ({
+                  label: 'Gestão de Frotas',
+                  email
+                }))
+              ]}
+              title="Destinatários Adicionais da Aprovação (Em Cópia)"
+              description="Inclua outros e-mails de gestores ou setores que também precisam receber a confirmação de aprovação desta reserva."
+              theme="emerald"
+              quickSuggestions={getAllSystemUsersEmails()}
+            />
+
             <div className="flex justify-end gap-3 pt-2">
               <button 
                 type="button" 
@@ -778,21 +811,86 @@ const ReservationsView: React.FC = () => {
         )}
       </Modal>
 
-      <Modal isOpen={isRejectModalOpen} onClose={() => setIsRejectModalOpen(false)} title="Rejeitar Reserva">
-         <form onSubmit={confirmReject} className="space-y-4">
-             <p className="text-sm text-gray-600">Por favor, informe o motivo da rejeição. Esta mensagem será enviada ao solicitante.</p>
-             <textarea 
-                 value={rejectReason} 
-                 onChange={e => setRejectReason(e.target.value)} 
-                 required 
-                 className="w-full border p-2 rounded h-24" 
-                 placeholder="Motivo da rejeição..."
-             />
-             <div className="flex justify-end gap-4">
-                 <button type="button" onClick={() => setIsRejectModalOpen(false)} className="bg-gray-200 p-2 rounded">Cancelar</button>
-                 <button type="submit" className="bg-red-600 text-white p-2 rounded">Confirmar Rejeição</button>
-             </div>
-         </form>
+      <Modal 
+        isOpen={isRejectModalOpen} 
+        onClose={() => { setIsRejectModalOpen(false); setSelectedReservation(null); }} 
+        title="Rejeitar Solicitação de Reserva"
+      >
+        {selectedReservation && (
+          <form onSubmit={confirmReject} className="space-y-4">
+            <div className="bg-rose-50/70 p-3.5 rounded-xl border border-rose-200/70 text-xs space-y-1.5 text-slate-700">
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Solicitante:</span>
+                <span className="font-bold text-slate-900">{selectedReservation.requesterName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Veículo:</span>
+                <span className="font-bold text-slate-900">{getVehicleById(selectedReservation.vehicleId)?.model} - {getVehicleById(selectedReservation.vehicleId)?.plate}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Destino:</span>
+                <span className="font-bold text-slate-900">{normalizeCidade(selectedReservation.destinationCity)} - {selectedReservation.destination}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-semibold">Período:</span>
+                <span className="font-bold text-slate-900">
+                  {new Date(selectedReservation.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} até {new Date(selectedReservation.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 text-left">
+              <label className="block text-xs font-bold text-rose-900">
+                Justificativa / Motivo da Rejeição * (Será enviada por e-mail ao solicitante)
+              </label>
+              <textarea 
+                value={rejectReason} 
+                onChange={e => setRejectReason(e.target.value)} 
+                required 
+                rows={3}
+                className="w-full bg-white border border-rose-300 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-rose-500 outline-none" 
+                placeholder="Informe o motivo da recusa desta solicitação de reserva..."
+              />
+            </div>
+
+            {/* Inclusão de Destinatários Adicionais na Recusa */}
+            <AdditionalRecipientsInput
+              additionalEmails={rejectAdditionalEmails}
+              onChange={setRejectAdditionalEmails}
+              defaultRecipients={[
+                ...(selectedReservation.email ? [{
+                  label: 'Solicitante',
+                  email: selectedReservation.email,
+                  isPrimary: true
+                }] : []),
+                ...getReservasEmailRecipients().map(email => ({
+                  label: 'Gestão de Frotas',
+                  email
+                }))
+              ]}
+              title="Destinatários Adicionais da Notificação de Recusa"
+              description="Inclua outros e-mails que devam ser notificados formalmente sobre a recusa desta solicitação."
+              theme="rose"
+              quickSuggestions={getAllSystemUsersEmails()}
+            />
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button 
+                type="button" 
+                onClick={() => { setIsRejectModalOpen(false); setSelectedReservation(null); }} 
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="submit" 
+                className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm transition-colors cursor-pointer"
+              >
+                Confirmar Rejeição &amp; Notificar
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
 
       {/* Seção Superior Congelada (Cabeçalho, Ações e Filtros) */}

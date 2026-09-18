@@ -50,6 +50,7 @@ import {
 import Modal from './Modal';
 import { firebaseConfig } from '../../firebaseConfig';
 import { MercosulPlateBadge } from '../MercosulPlateBadge';
+import { AdditionalRecipientsInput } from './AdditionalRecipientsInput';
 
 // Helper to calculate usage time dynamically
 const calculateUsageTime = (start: Date | string, end: Date | string) => {
@@ -435,6 +436,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         adminNotes: ''
     });
     const [rejectReason, setRejectReason] = useState('');
+    const [approveAdditionalEmails, setApproveAdditionalEmails] = useState<string[]>([]);
+    const [rejectAdditionalEmails, setRejectAdditionalEmails] = useState<string[]>([]);
     const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
     const [isSubmittingRejection, setIsSubmittingRejection] = useState(false);
 
@@ -877,6 +880,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const handleOpenApproveModal = (rental: RacRental) => {
         setSelectedRental(rental);
         setVoucherFile(null);
+        setApproveAdditionalEmails([]);
         if (voucherInputRef.current) {
             voucherInputRef.current.value = '';
         }
@@ -897,6 +901,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         e.preventDefault();
         if (!selectedRental) return;
         setIsSubmittingApproval(true);
+        const additionalEmailsToSend = [...approveAdditionalEmails];
         try {
             const updatedData: Partial<RacRental> = {
                 status: 'Aguardando retirada',
@@ -959,8 +964,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 const allUsers = getAllSystemUsersEmails();
                 const reqEmail = (fullUpdated.requesterEmail || "").trim().toLowerCase();
                 const isRequesterValid = Boolean(reqEmail && reqEmail.includes('@'));
-                const primaryTo = isRequesterValid ? [reqEmail] : allUsers;
-                const ccList = isRequesterValid ? allUsers : undefined;
+                const combinedCcList = Array.from(new Set([
+                    ...allUsers,
+                    ...additionalEmailsToSend
+                ]));
+                const primaryTo = isRequesterValid ? [reqEmail] : combinedCcList;
+                const ccList = isRequesterValid ? combinedCcList : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
 
                 await sendEmail(
                     primaryTo,
@@ -980,6 +989,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             setIsApproveModalOpen(false);
             setSelectedRental(null);
             setVoucherFile(null);
+            setApproveAdditionalEmails([]);
         } catch (err) {
             console.error("Erro ao aprovar solicitação RAC:", err);
             showToast("Erro ao processar aprovação da locação.", "error");
@@ -992,6 +1002,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const handleOpenRejectModal = (rental: RacRental) => {
         setSelectedRental(rental);
         setRejectReason('');
+        setRejectAdditionalEmails([]);
         setIsRejectModalOpen(true);
     };
 
@@ -1004,6 +1015,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             return;
         }
         setIsSubmittingRejection(true);
+        const additionalEmailsToSend = [...rejectAdditionalEmails];
         try {
             const updatedData: Partial<RacRental> = {
                 status: 'Recusada',
@@ -1049,12 +1061,13 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 const allRejectRacRecipients = Array.from(new Set([
                     'deny.goncalves@risel.com.br',
                     'lorena.padilha@risel.com.br',
-                    ...baseRejectAdmins
+                    ...baseRejectAdmins,
+                    ...additionalEmailsToSend
                 ]));
                 const reqEmail = (fullUpdated.requesterEmail || "").trim().toLowerCase();
                 const isRequesterValid = Boolean(reqEmail && reqEmail.includes('@'));
                 const primaryTo = isRequesterValid ? [reqEmail] : allRejectRacRecipients;
-                const ccList = isRequesterValid ? allRejectRacRecipients : undefined;
+                const ccList = isRequesterValid ? allRejectRacRecipients : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
 
                 await sendEmail(
                     primaryTo,
@@ -1073,6 +1086,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             showToast("Solicitação RAC recusada e e-mail enviado ao solicitante.", "success");
             setIsRejectModalOpen(false);
             setSelectedRental(null);
+            setRejectAdditionalEmails([]);
         } catch (err) {
             console.error("Erro ao recusar solicitação RAC:", err);
             showToast("Erro ao processar recusa da locação.", "error");
@@ -2873,6 +2887,29 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl text-xs font-semibold text-slate-800 focus:border-emerald-600 outline-none"
                             />
                         </div>
+
+                        {/* Destinatários adicionais na Aprovação RAC */}
+                        {selectedRental && (
+                            <AdditionalRecipientsInput
+                                additionalEmails={approveAdditionalEmails}
+                                onChange={setApproveAdditionalEmails}
+                                defaultRecipients={[
+                                    ...(selectedRental.requesterEmail ? [{
+                                        label: 'Solicitante RAC',
+                                        email: selectedRental.requesterEmail,
+                                        isPrimary: true
+                                    }] : []),
+                                    ...getReservasEmailRecipients().map(email => ({
+                                        label: 'Gestão de Frotas',
+                                        email
+                                    }))
+                                ]}
+                                title="Destinatários Adicionais da Confirmação RAC (Em Cópia)"
+                                description="Adicione e-mails de outros gestores ou departamentos que devam receber o comprovante e voucher desta locação."
+                                theme="emerald"
+                                quickSuggestions={getAllSystemUsersEmails()}
+                            />
+                        )}
                     </div>
 
                     <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
@@ -2945,6 +2982,29 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             required
                         />
                     </div>
+
+                    {/* Destinatários adicionais na Recusa RAC */}
+                    {selectedRental && (
+                        <AdditionalRecipientsInput
+                            additionalEmails={rejectAdditionalEmails}
+                            onChange={setRejectAdditionalEmails}
+                            defaultRecipients={[
+                                ...(selectedRental.requesterEmail ? [{
+                                    label: 'Solicitante RAC',
+                                    email: selectedRental.requesterEmail,
+                                    isPrimary: true
+                                }] : []),
+                                ...getReservasEmailRecipients().map(email => ({
+                                    label: 'Gestão de Frotas',
+                                    email
+                                }))
+                            ]}
+                            title="Destinatários Adicionais da Notificação de Recusa RAC"
+                            description="Adicione outros e-mails que devam ser notificados formalmente sobre a recusa desta solicitação de locação."
+                            theme="rose"
+                            quickSuggestions={getAllSystemUsersEmails()}
+                        />
+                    )}
 
                     <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
                         <button
