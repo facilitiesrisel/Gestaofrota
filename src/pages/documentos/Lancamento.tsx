@@ -193,8 +193,13 @@ export function calcularAlcadaPorValor(val: string | number | undefined | null):
 }
 
 export function calcularDiasAteVencimento(dataVencStr: string, status: string) {
-  if (status === "Finalizado" || status === "Lançado") return { text: "OK", color: "text-emerald-600 bg-emerald-50 border-emerald-100", days: 0 };
-  if (status === "Em Contestação" || status === "Em contestação") return { text: "CONTESTAÇÃO", color: "text-purple-700 bg-purple-50 border-purple-200 font-bold", days: 0 };
+  const st = String(status || "").trim().toLowerCase();
+  if (st === "finalizado" || st === "lançado" || st === "lancado" || st === "cancelado") {
+    return { text: "OK", color: "text-emerald-600 bg-emerald-50 border-emerald-100", days: 0 };
+  }
+  if (st === "em contestação" || st === "em contestacao") {
+    return { text: "CONTESTAÇÃO", color: "text-purple-700 bg-purple-50 border-purple-200 font-bold", days: 0 };
+  }
   
   if (!dataVencStr) {
     return { text: "Sem vencimento", color: "text-slate-400 bg-slate-50 border-slate-100", days: 0 };
@@ -1585,7 +1590,7 @@ export default function Lancamento() {
           codigoLancamento: prev.codigoLancamento ? prev.codigoLancamento : (numDoc || ""), // Preserva sempre se já digitado
           dataAprovacao: "",
           dataEnvio: "",
-          observacao: obsOcr || `OCR Concluído com sucesso. Nota Fiscal ${tpDoc} eletrônica emitida recentemente. Emitente: ${finalFornecedor}.`,
+          observacao: prev.observacao || "", // Reservado para anotações manuais do usuário sobre o lançamento
           multaPlaca: "",
           multaInfracao: "",
           multaMotorista: "",
@@ -2665,14 +2670,14 @@ export default function Lancamento() {
                   </div>
 
                   <div className="space-y-0.5 mt-3">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Observações / Anotações</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Observações / Anotações do Lançamento</label>
                     <textarea 
                       name="observacao" 
                       value={formData.observacao} 
                       onChange={handleChange} 
                       rows={5} 
                       className="w-full min-h-[110px] p-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-700 font-medium focus:ring-2 focus:ring-[#114D38]/20 outline-none leading-relaxed resize-y shadow-sm" 
-                      placeholder="Informações adicionais, histórico de observações ou anotações internas..." 
+                      placeholder="Digite observações, anotações ou informações pertinentes a este lançamento..." 
                     />
                   </div>
                 </div>
