@@ -4,7 +4,8 @@ export enum StatusMulta {
   AGUARDANDO_RETORNO = "AGUARDANDO RETORNO",
   FINALIZADA = "FINALIZADA",
   INDICACAO_ENVIADA = "INDICAÇÃO ENVIADA",
-  RECURSO = "RECURSO"
+  RECURSO = "RECURSO",
+  IMPORTACAO_VAMOS = "IMPORTAÇÃO VAMOS"
 }
 
 export enum TipoMulta {
@@ -21,6 +22,8 @@ export interface Veiculo {
   modelo?: string; // MODELO
   ano?: string; // ANO
   filial: string; // FILIAL
+  base?: string; // BASE / FILIAL alias
+  email?: string; // E-mail cadastrado
   regiao?: string; // REGIÃO
   tipo?: string; // TIPO
   capacidade?: string; // CAPACIDADE
@@ -53,37 +56,37 @@ export interface CodigoMulta {
 export interface Multa {
   id: string;
   status: StatusMulta;
-  frota: string;
+  frota?: string;
   placa: string;
-  base: string;
+  base?: string;
   ait: string;
   tipo: TipoMulta;
   dataHoraInfracao: string;
   dataRecebimento: string;
-  prazoIndicacao: string;
-  recebidaComPrazo: 'SIM' | 'NÃO';
-  enquadramento: string;
-  artigoCtb: string;
-  descricaoInfracao: string;
-  pontosCnh: number;
-  responsavelCodigo: string;
-  responsavelNome: string;
-  orgaoAutuador: string;
-  endereco: string;
-  municipio: string;
-  uf: string;
-  rodoviaOuUrbano: 'RODOVIA' | 'URBANO';
-  retornouComPrazo: 'SIM' | 'NÃO';
-  valor: number;
-  desconto: number;
-  valorComDesconto: number;
-  empresaOuCondutor: 'EMPRESA' | 'CONDUTOR';
-  descontarMotorista: 'SIM' | 'NÃO';
-  pagoComDesconto: 'SIM' | 'NÃO';
-  descontoEnviadoRH: string; // Date
-  numDocumento: string;
-  vencimento: string; // Date
-  obs: string;
+  prazoIndicacao?: string;
+  recebidaComPrazo?: 'SIM' | 'NÃO';
+  enquadramento?: string;
+  artigoCtb?: string;
+  descricaoInfracao?: string;
+  pontosCnh?: number;
+  responsavelCodigo?: string;
+  responsavelNome?: string;
+  orgaoAutuador?: string;
+  endereco?: string;
+  municipio?: string;
+  uf?: string;
+  rodoviaOuUrbano?: 'RODOVIA' | 'URBANO';
+  retornouComPrazo?: 'SIM' | 'NÃO';
+  valor?: number;
+  desconto?: number;
+  valorComDesconto?: number;
+  empresaOuCondutor?: 'EMPRESA' | 'CONDUTOR';
+  descontarMotorista?: 'SIM' | 'NÃO';
+  pagoComDesconto?: 'SIM' | 'NÃO';
+  descontoEnviadoRH?: string; // Date
+  numDocumento?: string;
+  vencimento?: string; // Date
+  obs?: string;
   latitude?: number;
   longitude?: number;
   linkAit?: string; // Link para o arquivo AIT no Drive

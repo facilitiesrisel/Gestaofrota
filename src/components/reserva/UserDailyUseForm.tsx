@@ -5,6 +5,7 @@ import { FuelLevel, ReservationStatus } from '../../types_reserva';
 import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import { getSubmoduleRecipientsSync } from '../../services/emailRecipientsService';
 import { ExclamationTriangleIcon, SteeringWheelIcon, CheckIcon, CarIcon } from './icons';
+import { Clock, Check as LucideCheck, AlertTriangle, Car as LucideCar, Unlink, MapPin, Gauge, Fuel, CheckCircle2, ChevronRight, RefreshCw } from 'lucide-react';
 import { calculateDrivingDistance } from '../../services/distanceService';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import DailyUseGuideModal from './DailyUseGuideModal';
@@ -61,11 +62,30 @@ const formatNumber = (value: number | string | undefined) => {
 
 const UserDailyUseForm: React.FC = () => {
     const { vehicles, dailyTrips, reservations, addDailyTrip, endTrip, getVehicleById, isLoading: isContextLoading } = useReservations();
-    const [activeTripId, setActiveTripId] = useState<string | null>(null);
+    
+    // Recupera imediatamente do localStorage para não haver perda de página no celular
+    const [activeTripId, setActiveTripId] = useState<string | null>(() => {
+        try {
+            return localStorage.getItem('activeDailyTripId') || sessionStorage.getItem('activeDailyTripId') || null;
+        } catch (e) {
+            return null;
+        }
+    });
+
+    // Backup dos dados da viagem ativa para navegação offline ou conexão instável em celulares
+    const [localBackupTrip, setLocalBackupTrip] = useState<any>(() => {
+        try {
+            const raw = localStorage.getItem('activeDailyTripData') || sessionStorage.getItem('activeDailyTripData');
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    });
+
     const errorRef = useRef<HTMLDivElement>(null);
     
     const [startFormData, setStartFormData] = useState(initialStartFormData);
-    const [endFormData, setEndFormData] = useState({
+    const [endFormData, setEndFormData] = useState<{ finalKm: string; finalFuelLevel: FuelLevel }>({
         finalKm: '', finalFuelLevel: FuelLevel.Full,
     });
 
@@ -94,23 +114,35 @@ const UserDailyUseForm: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
+    // Viagem ativa: busca no banco primeiro; se o banco estiver lento ou desconectado, usa backup local do aparelho
     const activeTrip = useMemo(() => {
         if (!activeTripId) return null;
-        return dailyTrips.find(trip => trip.id === activeTripId);
-    }, [activeTripId, dailyTrips]);
+        const tripFromDb = dailyTrips.find(trip => trip.id === activeTripId);
+        if (tripFromDb) return tripFromDb;
+        if (localBackupTrip && localBackupTrip.id === activeTripId) {
+            return localBackupTrip;
+        }
+        return null;
+    }, [activeTripId, dailyTrips, localBackupTrip]);
 
+    // Viagens atualmente em trânsito no sistema aguardando devolução
+    const inUseTrips = useMemo(() => {
+        return dailyTrips.filter(t => t.status === ReservationStatus.InUse);
+    }, [dailyTrips]);
+
+    // Validação resiliente: NUNCA apaga do storage se o banco ainda estiver sincronizando ou vazio
     useEffect(() => {
-        const storedId = localStorage.getItem('activeDailyTripId');
+        const storedId = localStorage.getItem('activeDailyTripId') || sessionStorage.getItem('activeDailyTripId');
         if (!storedId) {
             setActiveTripId(null);
             return;
         }
 
-        // Se já tiver um ID, setamos no estado
+        // Mantém ativo no estado
         setActiveTripId(storedId);
 
-        // Se o contexto ainda estiver carregando, esperamos terminar para validar o ID do localStorage
-        if (isContextLoading) {
+        // Se o contexto ainda estiver carregando OU se a lista de viagens estiver vazia, NÃO APAGA NADA!
+        if (isContextLoading || dailyTrips.length === 0) {
             return;
         }
 
@@ -118,19 +150,71 @@ const UserDailyUseForm: React.FC = () => {
 
         if (tripFromDb) {
             if (tripFromDb.status === ReservationStatus.InUse) {
-                setEndFormData(prev => ({ ...prev, finalFuelLevel: tripFromDb.initialFuelLevel || FuelLevel.Full }));
-            } else {
-                // Viagem existe mas já foi finalizada
+                setEndFormData(prev => ({ 
+                    ...prev, 
+                    finalFuelLevel: prev.finalFuelLevel || tripFromDb.initialFuelLevel || FuelLevel.Full 
+                }));
+            } else if (tripFromDb.status === ReservationStatus.Completed || tripFromDb.status === ReservationStatus.Cancelled) {
+                // Viagem confirmadamente finalizada/cancelada no banco de dados: limpa os dados locais
                 localStorage.removeItem('activeDailyTripId');
+                localStorage.removeItem('activeDailyTripData');
+                try {
+                    sessionStorage.removeItem('activeDailyTripId');
+                    sessionStorage.removeItem('activeDailyTripData');
+                } catch (e) {}
                 setActiveTripId(null);
+                setLocalBackupTrip(null);
+                window.dispatchEvent(new Event('risel_daily_trip_updated'));
             }
-        } else {
-            // Se o carregamento terminou e o ID salvo não existe na lista de viagens,
-            // limpamos o localStorage e liberamos a tela para novas solicitações.
-            localStorage.removeItem('activeDailyTripId');
-            setActiveTripId(null);
         }
     }, [dailyTrips, isContextLoading]);
+
+    // Permite desvincular viagem caso o condutor precise trocar ou selecionar outra
+    const handleUnlinkTrip = () => {
+        if (window.confirm("Deseja desvincular esta viagem deste aparelho? Isso liberará a tela para registrar outra saída ou selecionar outro veículo em trânsito.")) {
+            localStorage.removeItem('activeDailyTripId');
+            localStorage.removeItem('activeDailyTripData');
+            try {
+                sessionStorage.removeItem('activeDailyTripId');
+                sessionStorage.removeItem('activeDailyTripData');
+            } catch (e) {}
+            setActiveTripId(null);
+            setLocalBackupTrip(null);
+            window.dispatchEvent(new Event('risel_daily_trip_updated'));
+        }
+    };
+
+    // Permite selecionar uma viagem em andamento no sistema para finalizar pelo celular
+    const handleSelectTripToEnd = (trip: any) => {
+        const v = getVehicleById(trip.vehicleId);
+        const backupData = {
+            id: trip.id,
+            vehicleId: trip.vehicleId,
+            plate: v?.plate || trip.plate || '',
+            model: v?.model || trip.model || '',
+            driverName: trip.driverName,
+            department: trip.department,
+            destinationCity: trip.destinationCity,
+            destination: trip.destination,
+            initialKm: trip.initialKm,
+            initialFuelLevel: trip.initialFuelLevel,
+            departureDateTime: trip.departureDateTime
+        };
+        localStorage.setItem('activeDailyTripId', trip.id);
+        localStorage.setItem('activeDailyTripData', JSON.stringify(backupData));
+        try {
+            sessionStorage.setItem('activeDailyTripId', trip.id);
+            sessionStorage.setItem('activeDailyTripData', JSON.stringify(backupData));
+        } catch (e) {}
+        window.dispatchEvent(new Event('risel_daily_trip_updated'));
+        setActiveTripId(trip.id);
+        setLocalBackupTrip(backupData);
+        setEndFormData({
+            finalKm: '',
+            finalFuelLevel: trip.initialFuelLevel || FuelLevel.Full
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
 
     const availableVehicles = useMemo(() => {
         // 1. Vehicles currently in "Daily Use"
@@ -252,8 +336,31 @@ const UserDailyUseForm: React.FC = () => {
                 source: "reservas"
             });
 
+            const tripBackup = {
+                id: newTripId,
+                driverName: startFormData.driverName,
+                department: normalizeNomeSetor(startFormData.department),
+                vehicleId: startFormData.vehicleId,
+                plate: vehicle?.plate || '',
+                model: vehicle?.model || '',
+                departureDateTime: tripDate.toISOString(),
+                destinationCity: normCity,
+                destination: startFormData.destination,
+                initialKm: Number(startFormData.initialKm),
+                initialFuelLevel: startFormData.initialFuelLevel,
+                purpose: startFormData.purpose || "Atendimento Operacional"
+            };
+
             localStorage.setItem('activeDailyTripId', newTripId);
+            localStorage.setItem('activeDailyTripData', JSON.stringify(tripBackup));
+            try {
+                sessionStorage.setItem('activeDailyTripId', newTripId);
+                sessionStorage.setItem('activeDailyTripData', JSON.stringify(tripBackup));
+            } catch (e) {}
+            window.dispatchEvent(new Event('risel_daily_trip_updated'));
+
             setActiveTripId(newTripId);
+            setLocalBackupTrip(tripBackup);
             setStartFormData(initialStartFormData);
             
             // Modal de Sucesso Rico
@@ -379,7 +486,15 @@ const UserDailyUseForm: React.FC = () => {
             });
 
             localStorage.removeItem('activeDailyTripId');
+            localStorage.removeItem('activeDailyTripData');
+            try {
+                sessionStorage.removeItem('activeDailyTripId');
+                sessionStorage.removeItem('activeDailyTripData');
+            } catch (e) {}
+            window.dispatchEvent(new Event('risel_daily_trip_updated'));
+
             setActiveTripId(null);
+            setLocalBackupTrip(null);
             setEndFormData({ finalKm: '', finalFuelLevel: FuelLevel.Full });
             setStartFormData(initialStartFormData);
             
@@ -494,17 +609,30 @@ const UserDailyUseForm: React.FC = () => {
 
                 {/* CARD DE VIAGEM EM ANDAMENTO */}
                 {activeTripId && (
-                    <section className="bg-white border-2 border-emerald-600/60 rounded-2xl shadow-md overflow-hidden animate-fadeIn">
-                        <div className="bg-gradient-to-r from-[#114D38] to-[#0d3b2b] px-5 py-3.5 text-white flex items-center justify-between">
-                             <div className="flex items-center gap-2">
-                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                                <h3 className="text-sm font-black uppercase tracking-wider">
+                    <section className="bg-white border-2 border-emerald-600/80 rounded-2xl shadow-lg overflow-hidden animate-fadeIn">
+                        <div className="bg-gradient-to-r from-[#114D38] via-[#0d3b2b] to-[#08241a] px-5 py-3.5 text-white flex items-center justify-between gap-3">
+                             <div className="flex items-center gap-2.5 min-w-0">
+                                <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                                <h3 className="text-sm sm:text-base font-black uppercase tracking-wider truncate">
                                     Viagem em Andamento
                                 </h3>
+                                <span className="hidden sm:inline-block text-[11px] font-bold bg-[#F47920] text-white px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                                    Devolução Pendente
+                                </span>
                              </div>
-                             <span className="text-[11px] font-bold bg-white/20 px-2.5 py-0.5 rounded-full">
-                                Devolução Pendente
-                             </span>
+
+                             <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={handleUnlinkTrip}
+                                    title="Desvincular este veículo deste celular"
+                                    className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-emerald-100 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all border border-white/20 active:scale-95 cursor-pointer"
+                                >
+                                    <Unlink className="w-3.5 h-3.5 text-amber-300" />
+                                    <span className="hidden sm:inline">Desvincular Viagem</span>
+                                    <span className="sm:hidden">Trocar</span>
+                                </button>
+                             </div>
                         </div>
                         
                         <div className="p-5 sm:p-6 space-y-6">
@@ -515,31 +643,70 @@ const UserDailyUseForm: React.FC = () => {
                                 </div>
                             ) : (
                                 <>
-                                    <div className="bg-slate-50 p-4 sm:p-5 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                                        <div>
-                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Veículo</span>
-                                            <span className="text-sm font-extrabold text-slate-800">{getVehicleById(activeTrip.vehicleId)?.model}</span>
+                                    {/* Informações da Viagem em Destaque */}
+                                    <div className="bg-gradient-to-br from-slate-50 to-emerald-50/40 p-4 sm:p-5 rounded-2xl border border-emerald-900/10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 shadow-inner">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-[#114D38]/10 flex items-center justify-center text-[#114D38] shrink-0">
+                                                <LucideCar className="w-5 h-5" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Veículo</span>
+                                                <span className="text-sm font-extrabold text-slate-900 truncate block">
+                                                    {getVehicleById(activeTrip.vehicleId)?.model || activeTrip.model || 'Veículo'}
+                                                </span>
+                                            </div>
                                         </div>
+
                                         <div>
-                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Placa</span>
-                                            <span className="text-sm font-mono font-extrabold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200 inline-block mt-0.5">
-                                                {getVehicleById(activeTrip.vehicleId)?.plate}
+                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider mb-1">Placa</span>
+                                            {/* Placa Mercosul Estilizada */}
+                                            <div className="inline-flex flex-col border-2 border-slate-900 rounded-lg overflow-hidden bg-white shadow-xs">
+                                                <div className="bg-[#003399] px-2.5 py-0.5 flex items-center justify-between gap-2 text-[8px] font-black text-white uppercase tracking-widest leading-none">
+                                                    <span>BRASIL</span>
+                                                </div>
+                                                <div className="px-2.5 py-0.5 text-center font-mono font-black text-xs sm:text-sm tracking-wider text-slate-900 leading-tight">
+                                                    {getVehicleById(activeTrip.vehicleId)?.plate || activeTrip.plate || '---'}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Condutor</span> 
+                                            <span className="text-sm font-extrabold text-slate-900 truncate block mt-1">
+                                                {activeTrip.driverName}
                                             </span>
+                                            {activeTrip.department && (
+                                                <span className="text-[11px] font-semibold text-slate-500 block truncate">
+                                                    {activeTrip.department}
+                                                </span>
+                                            )}
                                         </div>
+
                                         <div>
-                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Motorista</span> 
-                                            <span className="text-sm font-bold text-slate-800 truncate block">{activeTrip.driverName}</span>
-                                        </div>
-                                        <div>
-                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">KM Inicial</span>
-                                            <span className="text-sm font-extrabold text-emerald-800">{formatNumber(activeTrip.initialKm)} km</span>
+                                            <span className="font-bold text-slate-400 block text-[10px] uppercase tracking-wider">Odômetro Saída</span>
+                                            <span className="text-base font-black text-emerald-800 font-mono block mt-1">
+                                                {formatNumber(activeTrip.initialKm)} km
+                                            </span>
+                                            {activeTrip.destinationCity && (
+                                                <span className="text-[11px] font-medium text-slate-600 block truncate mt-0.5">
+                                                    Destino: {activeTrip.destinationCity}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                     
-                                    <form onSubmit={handleEndSubmit} className="space-y-5 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                        <div className="border-b border-slate-100 pb-3">
-                                            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Registrar Encerramento e Devolução</h4>
-                                            <p className="text-[11px] text-slate-500 font-medium">Informe a quilometragem atual do hodômetro e o combustível</p>
+                                    {/* Formulário de Encerramento */}
+                                    <form onSubmit={handleEndSubmit} className="space-y-5 bg-white p-5 rounded-2xl border-2 border-emerald-100 shadow-sm">
+                                        <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                                            <div>
+                                                <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                                                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                                    Registrar Encerramento e Devolução
+                                                </h4>
+                                                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                                                    Digite a quilometragem atual do hodômetro no retorno e o nível do tanque
+                                                </p>
+                                            </div>
                                         </div>
 
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -547,15 +714,37 @@ const UserDailyUseForm: React.FC = () => {
                                                 <label htmlFor="finalKm" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                                                     KM Final no Retorno *
                                                 </label>
-                                                <input 
-                                                    type="number" 
-                                                    name="finalKm" 
-                                                    value={endFormData.finalKm} 
-                                                    onChange={handleEndChange} 
-                                                    required 
-                                                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all font-mono" 
-                                                    placeholder={`Mínimo: ${activeTrip.initialKm}`}
-                                                />
+                                                <div className="relative">
+                                                    <input 
+                                                        type="number" 
+                                                        name="finalKm" 
+                                                        id="finalKm"
+                                                        value={endFormData.finalKm} 
+                                                        onChange={handleEndChange} 
+                                                        required 
+                                                        min={activeTrip.initialKm}
+                                                        className="w-full px-3.5 py-3 bg-slate-50 border border-slate-300 rounded-xl text-base font-extrabold text-slate-900 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all font-mono shadow-inner" 
+                                                        placeholder={`Mínimo: ${activeTrip.initialKm}`}
+                                                    />
+                                                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 font-mono">
+                                                        KM
+                                                    </span>
+                                                </div>
+
+                                                {/* Aviso dinâmico de KM percorrido */}
+                                                {endFormData.finalKm && Number(endFormData.finalKm) >= activeTrip.initialKm && (
+                                                    <p className="text-xs text-emerald-700 font-bold mt-1.5 flex items-center gap-1">
+                                                        <LucideCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                                        Distância percorrida nesta viagem: {formatNumber(Number(endFormData.finalKm) - activeTrip.initialKm)} km
+                                                    </p>
+                                                )}
+
+                                                {endFormData.finalKm && Number(endFormData.finalKm) < activeTrip.initialKm && (
+                                                    <p className="text-xs text-red-600 font-bold mt-1.5 flex items-center gap-1">
+                                                        <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                                                        O KM Final não pode ser menor que o KM Inicial ({formatNumber(activeTrip.initialKm)} km)
+                                                    </p>
+                                                )}
                                             </div>
                                             
                                             <div>
@@ -570,8 +759,8 @@ const UserDailyUseForm: React.FC = () => {
                                         
                                         <button 
                                             type="submit" 
-                                            disabled={isLoading} 
-                                            className="w-full py-4 bg-gradient-to-r from-emerald-600 to-[#114D38] hover:from-emerald-700 hover:to-[#0d3b2b] text-white font-extrabold text-sm uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-70"
+                                            disabled={isLoading || (Boolean(endFormData.finalKm) && Number(endFormData.finalKm) < activeTrip.initialKm)} 
+                                            className="w-full py-4 bg-gradient-to-r from-emerald-600 to-[#114D38] hover:from-emerald-700 hover:to-[#0d3b2b] text-white font-extrabold text-sm sm:text-base uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2.5 disabled:opacity-70 disabled:cursor-not-allowed active:scale-[0.99]"
                                         >
                                             {isLoading ? (
                                                 <>
@@ -579,15 +768,89 @@ const UserDailyUseForm: React.FC = () => {
                                                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                                     </svg>
-                                                    <span>Finalizando Viagem...</span>
+                                                    <span>Finalizando e Liberando Veículo...</span>
                                                 </>
                                             ) : (
-                                                <span>Finalizar Viagem e Devolver Veículo</span>
+                                                <>
+                                                    <LucideCheck className="w-5 h-5 text-emerald-300" />
+                                                    <span>Finalizar Viagem e Devolver Veículo</span>
+                                                </>
                                             )}
                                         </button>
                                     </form>
                                 </>
                             )}
+                        </div>
+                    </section>
+                )}
+
+                {/* SEÇÃO DE RECUPERAÇÃO: VIAGENS EM ANDAMENTO NO SISTEMA AGUARDANDO DEVOLUÇÃO */}
+                {inUseTrips.length > 0 && !activeTripId && (
+                    <section className="bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-amber-100/40 border-2 border-[#F47920]/60 rounded-2xl p-5 sm:p-6 shadow-sm animate-fadeIn">
+                        <div className="flex items-center justify-between gap-3 mb-3 border-b border-amber-200/70 pb-3">
+                            <div className="flex items-center gap-2.5">
+                                <span className="w-3 h-3 rounded-full bg-[#F47920] animate-ping" />
+                                <h3 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-wider">
+                                    Viagens em Trânsito Aguardando Devolução ({inUseTrips.length})
+                                </h3>
+                            </div>
+                            <span className="text-[11px] font-extrabold bg-[#F47920] text-white px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                                Retorno Pendente
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-600 font-medium mb-4">
+                            Você já iniciou uma viagem anteriormente e retornou? Toque em <strong>"Finalizar Devolução"</strong> no seu veículo abaixo para preencher o KM e o combustível:
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                            {inUseTrips.map(trip => {
+                                const v = getVehicleById(trip.vehicleId);
+                                return (
+                                    <div 
+                                        key={trip.id}
+                                        className="bg-white rounded-xl p-4 border border-amber-300/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between gap-3"
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    {/* Placa Mercosul */}
+                                                    <div className="inline-flex flex-col border border-slate-900 rounded-md overflow-hidden bg-white shadow-2xs">
+                                                        <div className="bg-[#003399] px-2 py-0.2 text-[7px] font-black text-white uppercase tracking-widest leading-none">
+                                                            BRASIL
+                                                        </div>
+                                                        <div className="px-2 py-0.2 font-mono font-black text-xs tracking-wider text-slate-900 leading-tight">
+                                                            {v?.plate || (trip as any).plate || '---'}
+                                                        </div>
+                                                    </div>
+                                                    <span className="font-extrabold text-sm text-slate-800 truncate">
+                                                        {v?.model || (trip as any).model || 'Veículo'}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-2 space-y-0.5 text-xs text-slate-600">
+                                                    <p className="font-bold text-slate-900">
+                                                        Condutor: <span className="font-semibold text-slate-700">{trip.driverName}</span>
+                                                    </p>
+                                                    <p className="text-[11px] text-slate-500">
+                                                        Saída: {new Date(trip.departureDateTime).toLocaleString('pt-BR')} • {trip.destinationCity || 'Destino operacional'}
+                                                    </p>
+                                                    <p className="text-[11px] font-mono font-bold text-emerald-800">
+                                                        KM Inicial: {formatNumber(trip.initialKm)} km
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSelectTripToEnd(trip)}
+                                            className="w-full py-2.5 px-3 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-emerald-700 hover:to-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs hover:shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                                        >
+                                            <LucideCheck className="w-4 h-4 text-emerald-300" />
+                                            <span>Finalizar Devolução deste Veículo</span>
+                                        </button>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </section>
                 )}

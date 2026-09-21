@@ -14,6 +14,7 @@ import { getAccurateCoordinates, setManualCoordinateOverride } from '../../../se
 import { fetchVehiclePositionAtTime, TrackerMatchResult } from '../../../services/geoFrotasService';
 import { MercosulPlateBadge } from '../../../components/MercosulPlateBadge';
 import { formatCPF, cleanCPF } from '../../../utils/cpfHelper';
+import { ImportarMultasCsvModal } from '../components/ImportarMultasCsvModal';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -717,6 +718,14 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
   const [showCodigosDropdown, setShowCodigosDropdown] = useState(false);
   const [filteredCodigos, setFilteredCodigos] = useState<any[]>([]);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
+  const handleImportCsvSuccess = async (importedMultas: Multa[]) => {
+      for (const m of importedMultas) {
+          await saveMulta(m);
+      }
+      await loadData(true);
+  };
 
   const loadData = async (force: boolean = false) => {
       setLoading(true);
@@ -1120,6 +1129,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           case StatusMulta.AGUARDANDO_BOLETO: colors = 'bg-orange-100/50 text-orange-800 border-orange-200'; break;
           case StatusMulta.RECURSO: colors = 'bg-red-100/50 text-red-800 border-red-200'; break;
           case StatusMulta.INDICACAO_ENVIADA: colors = 'bg-blue-100/50 text-blue-800 border-blue-200'; break;
+          case StatusMulta.IMPORTACAO_VAMOS: colors = 'bg-purple-100 text-purple-800 border-purple-200'; break;
           default: colors = 'bg-gray-100/50 text-gray-800 border-gray-200'; break;
       }
       return <span className={`inline-flex items-center rounded-md px-2 py-1 text-[9px] font-bold uppercase tracking-wide border ${colors}`}>{status}</span>;
@@ -1131,6 +1141,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           case StatusMulta.AGUARDANDO_BOLETO: return 'bg-gradient-to-br from-[#022c22]/80 via-[#431407]/80 to-black/80 backdrop-blur-md border-l-4 border-l-risel-orange border-y border-r border-white/5';
           case StatusMulta.RECURSO: return 'bg-gradient-to-br from-[#022c22]/80 via-[#450a0a]/80 to-black/80 backdrop-blur-md border-l-4 border-l-red-500 border-y border-r border-white/5';
           case StatusMulta.INDICACAO_ENVIADA: return 'bg-gradient-to-br from-[#022c22]/80 via-[#172554]/80 to-black/80 backdrop-blur-md border-l-4 border-l-blue-500 border-y border-r border-white/5';
+          case StatusMulta.IMPORTACAO_VAMOS: return 'bg-gradient-to-br from-[#022c22]/80 via-[#3b0764]/80 to-black/80 backdrop-blur-md border-l-4 border-l-purple-500 border-y border-r border-white/5';
           default: return 'bg-gradient-to-br from-risel-dark/80 to-gray-900/80 border border-white/10 backdrop-blur-md';
       }
   };
@@ -1141,6 +1152,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       else if (status === StatusMulta.AGUARDANDO_BOLETO) { color = "bg-risel-orange shadow-[0_0_8px_rgba(255,155,0,0.6)]"; textColor = "text-risel-orange"; }
       else if (status === StatusMulta.RECURSO) { color = "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]"; textColor = "text-red-400"; }
       else if (status === StatusMulta.INDICACAO_ENVIADA) { color = "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]"; textColor = "text-blue-400"; }
+      else if (status === StatusMulta.IMPORTACAO_VAMOS) { color = "bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]"; textColor = "text-purple-400"; }
       return (
           <div className="flex items-center gap-1.5 bg-black/20 px-1.5 py-0.5 rounded-full border border-white/5">
               <div className={`w-1 h-1 rounded-full ${color}`}></div>
@@ -1361,6 +1373,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       const fmtDate = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') : "-";
       const fmtDateTime = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') + ' às ' + new Date(val).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "-";
       
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(data.placa || ''));
+      const baseStr = (data.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
+
       const aitLinks = parseLinks(data.linkAit);
       const aitNumero = (data.ait || (data as any).numeroAit || (data as any).numDocumento || '').trim();
       let attachmentsSection = '';
@@ -1386,6 +1401,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         </div>
       ` : '';
 
+      // Campo Observações (somente adiciona se houver conteúdo digitado)
+      const obsMulta = (data.obs && data.obs.trim()) || '';
+      const obsHtml = obsMulta ? `
+        <tr style="background-color: #fffbeb;">
+          <td style="padding: 10px 14px; font-weight: 700; color: #b45309; border-bottom: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">📝 Observações:</td>
+          <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #78350f; font-weight: 600; line-height: 1.5; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">${obsMulta.replace(/\n/g, '<br/>')}</td>
+        </tr>
+      ` : '';
+
       return `
         <!DOCTYPE html>
         <html>
@@ -1408,11 +1432,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
                     <tr>
                       <td width="56" valign="middle" style="width: 56px; vertical-align: middle;">
-                        <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" width="50" height="50" style="width: 50px; height: 50px; border-radius: 10px; display: block; border: 2px solid rgba(255,255,255,0.25); object-fit: cover;" />
+                        <img src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" alt="Logo Risel" width="56" height="24" style="width: 56px; height: 24px; display: block; object-fit: contain;" />
                       </td>
                       <td valign="middle" style="padding-left: 16px; vertical-align: middle;">
                         <h1 style="color: #ffffff !important; margin: 0; font-size: 19px; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">Notificação de Infração de Trânsito</h1>
-                        <p style="color: #86efac !important; margin: 4px 0 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda</p>
+                        <p style="color: #86efac !important; margin: 4px 0 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Sistema de Multas Risel${baseStr && baseStr !== '-' ? ` &bull; Base: ${baseStr}` : ''}</p>
                       </td>
                     </tr>
                   </table>
@@ -1445,7 +1469,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 </tr>
                 <tr>
                   <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0;">🏢 Base / Filial:</td>
-                  <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #334155;">${data.base || '-'}</td>
+                  <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #334155;">${data.base || baseStr || '-'}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
                   <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0;">📅 Data e Hora da Infração:</td>
@@ -1467,15 +1491,36 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   <td style="padding: 10px 14px; font-weight: 800; color: #be123c;">⏳ Prazo Limite para Indicação:</td>
                   <td style="padding: 10px 14px; font-weight: 900; color: #be123c;">${fmtDate(data.prazoIndicacao)}</td>
                 </tr>
+                ${obsHtml}
               </table>
 
               ${attachmentsSection}
             </div>
 
-            <!-- Rodapé Institucional -->
-            <div style="background-color: #f8fafc; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
-               <p style="color: #64748b; font-size: 11px; margin: 0; font-weight: 700;">© ${new Date().getFullYear()} Risel Combustíveis Ltda</p>
-               <p style="color: #94a3b8; font-size: 10px; margin: 3px 0 0 0;">Mensagem corporativa gerada automaticamente pelo Sistema Risel ERP.</p>
+            <!-- Assinatura Oficial Risel -->
+            <div style="background-color: #ffffff; padding: 20px 25px; border-top: 1px solid #e2e8f0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              <table cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                <tr>
+                  <td width="92" valign="middle" style="width: 92px; vertical-align: middle; padding-right: 14px; border-right: 2px solid #e2e8f0;">
+                    <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="text-decoration: none; display: block;">
+                      <img src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" alt="Risel Combustíveis" width="84" height="34" style="width: 84px; height: 34px; max-width: 84px; max-height: 34px; display: block; border: 0; outline: none;" />
+                    </a>
+                  </td>
+                  <td valign="middle" style="vertical-align: middle; padding-left: 14px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 13px; font-weight: 800; color: #0f172a; letter-spacing: -0.1px; line-height: 1.25;">
+                      Sistema de Multas Risel
+                    </div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11px; color: #64748b; margin-top: 2px; line-height: 1.25;">
+                      Risel Combustíveis Ltda
+                    </div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5px; margin-top: 3px;">
+                      <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: none; font-weight: 600;">
+                        www.risel.com.br
+                      </a>
+                    </div>
+                  </td>
+                </tr>
+              </table>
             </div>
           </div>
         </body>
@@ -1618,8 +1663,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
       };
 
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(normalizedMulta.placa || ''));
+      const baseStr = (normalizedMulta.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
+      const frotaStr = normalizedMulta.frota || (veiculoMatch as any)?.frota || normalizedMulta.placa || 'S/F';
       const dataFormatada = getFormattedSubjectDate(normalizedMulta.dataHoraInfracao);
-      const finalSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedMulta.placa || 'S/P'} - FROTA: ${normalizedMulta.frota || normalizedMulta.placa || 'S/F'} - BASE: ${normalizedMulta.base || '-'} - DATA ${dataFormatada}`;
+      const finalSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedMulta.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
 
       const smtpHost = localStorage.getItem("risel_smtp_host") || undefined;
       const smtpPort = localStorage.getItem("risel_smtp_port") || undefined;
@@ -1734,8 +1782,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
       };
 
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(normalizedData.placa || ''));
+      const baseStr = (normalizedData.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
+      const frotaStr = normalizedData.frota || (veiculoMatch as any)?.frota || normalizedData.placa || 'S/F';
       const dataFormatada = getFormattedSubjectDate(normalizedData.dataHoraInfracao);
-      const defaultSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedData.placa || 'S/P'} - FROTA: ${normalizedData.frota || normalizedData.placa || 'S/F'} - BASE: ${normalizedData.base || '-'} - DATA ${dataFormatada}`;
+      const defaultSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedData.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
 
       setEmailTo(toEmail);
       setEmailCc(ccEmail);
@@ -1824,22 +1875,27 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       }
 
       // 3. Abrir o cliente de e-mail padrão (Outlook / Webmail) pré-preenchido
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(currentMulta.placa || ''));
+      const baseStr = (currentMulta.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
+      const frotaStr = currentMulta.frota || (veiculoMatch as any)?.frota || currentMulta.placa || 'S/F';
       const dataFormatada = currentMulta.dataHoraInfracao ? currentMulta.dataHoraInfracao.split('T')[0] : '';
-      const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`;
+      const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
       const finalSubject = emailSubject.trim() || fallbackSubject;
       const subject = encodeURIComponent(finalSubject);
       
+      const obsPlainText = currentMulta.obs && currentMulta.obs.trim() ? `• Observações: ${currentMulta.obs.trim()}\n` : '';
+
       let bodyPlainText = `Prezados(as),\n\nSeguem as informações da Notificação de Infração de Trânsito para providências:\n\n` +
           `• Motorista / Condutor: ${currentMulta.responsavelNome || '-'}\n` +
           `• Auto de Infração (AIT): ${currentMulta.ait || '-'}\n` +
           `• Placa do Veículo: ${currentMulta.placa || '-'}\n` +
-          `• Frota / Unidade: ${currentMulta.frota || '-'}\n` +
-          `• Base / Filial: ${currentMulta.base || '-'}\n` +
+          `• Frota / Unidade: ${frotaStr}\n` +
+          `• Base / Filial: ${baseStr}\n` +
           `• Infração Cometida: ${currentMulta.descricaoInfracao || currentMulta.enquadramento || '-'}\n` +
           `• Valor Líquido com Desconto: ${(currentMulta.valorComDesconto || currentMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\n` +
           `• Pontuação CNH: ${currentMulta.pontosCnh || 0} Pontos\n` +
           `• Prazo Limite para Indicação: ${currentMulta.prazoIndicacao || '-'}\n` +
-          `• Observações: ${currentMulta.obs || 'Nenhuma'}\n\n`;
+          obsPlainText + `\n`;
 
       if (emailCustomMessage && emailCustomMessage.trim()) {
           bodyPlainText += `[OBSERVAÇÃO / ORIENTAÇÃO ADICIONAL]:\n${emailCustomMessage.trim()}\n\n`;
@@ -1914,8 +1970,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
       };
 
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(currentMulta.placa || ''));
+      const baseStr = (currentMulta.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
+      const frotaStr = currentMulta.frota || (veiculoMatch as any)?.frota || currentMulta.placa || 'S/F';
       const dataFormatada = getFormattedSubjectDate(currentMulta.dataHoraInfracao);
-      const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${currentMulta.frota || currentMulta.placa || 'S/F'} - BASE: ${currentMulta.base || '-'} - DATA ${dataFormatada}`;
+      const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
       const finalSubject = emailSubject.trim() || fallbackSubject;
       
       // Coleta todos os anexos (AITs anexados + Autorização de Desconto em PDF)
@@ -2363,6 +2422,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     </div>
                 </div>
                 <div className="flex items-center space-x-2 w-full md:w-auto justify-end">
+                    <button id="btn-abrir-importar-csv" onClick={() => setIsImportModalOpen(true)} className="bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><UploadCloud size={14} className="mr-1.5 text-purple-600" /> Importar CSV</button>
                     <button onClick={() => setIsExportModalOpen(true)} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><FileSpreadsheet size={14} className="mr-1.5" /> Exportar</button>
                     <button onClick={() => setShowGlobalMap(true)} className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><MapIcon size={14} className="mr-1.5 text-risel-green" /> Mapa Geral</button>
                     <button onClick={() => { setFormData(initialMulta); setErrors({}); setView('FORM'); }} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg flex items-center shadow-sm hover:shadow transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><Plus size={14} className="mr-1.5" /> Nova Multa</button>
@@ -2611,6 +2671,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
             />
 
             {renderEmailModal()}
+
+            <ImportarMultasCsvModal
+                isOpen={isImportModalOpen}
+                onClose={() => setIsImportModalOpen(false)}
+                existingMultas={multas}
+                veiculos={veiculos}
+                codigos={codigos}
+                onImportSuccess={handleImportCsvSuccess}
+            />
         </div>
     );
   }
@@ -2645,48 +2714,40 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     {formData.id ? `Registro ID: ${formData.id}` : 'Novo Registro'}
                 </div>
                 
-                {/* Botão de Envio Direto (sem modal) */}
-                <button 
-                    type="button"
-                    onClick={() => handleSendDirectEmail(formData)} 
-                    className="px-3 py-1.5 text-xs font-bold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
-                    title="Disparar e-mail diretamente para os endereços cadastrados da placa/base"
-                >
-                    <Send size={13} className="mr-1.5 text-emerald-700"/> Enviar Direto
-                </button>
-
-                {/* Botão de Confirmar Destinatários */}
-                <button 
-                    type="button"
-                    onClick={() => handleOpenEmailModal()} 
-                    className="px-3 py-1.5 text-xs font-bold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
-                    title="Visualizar ou editar os destinatários antes de enviar"
-                >
-                    <Mail size={13} className="mr-1.5 text-blue-600"/> Revisar E-mail
-                </button>
-
                 <button 
                     type="button"
                     onClick={() => setView('LIST')} 
-                    className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all shadow-xs flex items-center"
+                    className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all shadow-2xs flex items-center active:scale-95"
                 >
                     <X size={13} className="mr-1 text-slate-400"/> Cancelar
                 </button>
+
+                {/* Botão de Enviar E-mail: discreto e elegante entre Cancelar e Salvar */}
+                <button 
+                    type="button"
+                    onClick={() => handleOpenEmailModal()} 
+                    className="px-3.5 py-1.5 text-xs font-semibold text-blue-700 hover:text-blue-800 bg-blue-50/80 hover:bg-blue-100/90 border border-blue-200/90 rounded-xl transition-all shadow-2xs hover:shadow-xs flex items-center active:scale-95"
+                    title="Revisar destinatários e enviar notificação por e-mail"
+                >
+                    <Mail size={13} className="mr-1.5 text-blue-600"/> Enviar E-mail
+                </button>
+
                 <button 
                     type="button"
                     onClick={handleSave} 
-                    className="px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
-                    title="Salvar registro sem enviar e-mail"
+                    className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
+                    title="Salvar registro"
                 >
-                    <Save size={13} className="mr-1.5"/> Salvar Registro
+                    <Save size={13} className="mr-1.5"/> Salvar
                 </button>
+
                 <button 
                     type="button"
                     onClick={handleSaveAndNotify} 
-                    className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-all shadow-xs flex items-center active:scale-95"
-                    title="Salvar registro e enviar notificação direta aos e-mails cadastrados"
+                    className="px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all shadow-2xs flex items-center active:scale-95"
+                    title="Salvar registro e enviar notificação direta"
                 >
-                    <Send size={13} className="mr-1.5"/> Salvar e Enviar Direto
+                    <Send size={13} className="mr-1.5 text-emerald-700"/> Salvar e Disparar
                 </button>
             </div>
         </div>
@@ -3224,6 +3285,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
             title={pdfModalData.title}
             fileName={pdfModalData.fileName}
             multaData={pdfModalData.multaData}
+        />
+
+        <ImportarMultasCsvModal
+            isOpen={isImportModalOpen}
+            onClose={() => setIsImportModalOpen(false)}
+            existingMultas={multas}
+            veiculos={veiculos}
+            codigos={codigos}
+            onImportSuccess={handleImportCsvSuccess}
         />
     </div>
   );

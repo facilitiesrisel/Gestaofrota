@@ -113,13 +113,6 @@ const PublicSidebar: React.FC<PublicSidebarProps> = ({ currentView, onNavigate, 
             </li>
         </ul>
       </nav>
-
-      <div className="p-4 border-t border-emerald-100 bg-emerald-100/30">
-        <div onClick={() => handleNavigate('login')} className="flex items-center px-4 py-3 rounded-lg cursor-pointer text-emerald-600 hover:bg-white hover:text-primary transition-colors group border border-transparent hover:border-primary/10 hover:shadow-sm">
-            <LogoutIcon className="h-5 w-5 flex-shrink-0 transition-transform group-hover:translate-x-1" />
-            {isSidebarOpen && <span className="ml-3 font-semibold text-sm">Área Administrativa</span>}
-        </div>
-      </div>
     </aside>
   );
 };

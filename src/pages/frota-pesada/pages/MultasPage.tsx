@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import Loading from '../components/Loading';
 import emailjs from '@emailjs/browser';
+import { ImportarMultasCsvModal } from '../../multas/components/ImportarMultasCsvModal';
+import { MercosulPlateBadge } from '../../../components/MercosulPlateBadge';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -620,6 +622,15 @@ const MultasPage: React.FC = () => {
     saveUserColumnSelection(minimal);
   };
 
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
+  const handleImportCsvSuccess = async (importedMultas: Multa[]) => {
+      for (const m of importedMultas) {
+          await saveMulta(m);
+      }
+      await loadData(true);
+  };
+
   const loadData = async (force: boolean = false) => {
       setLoading(true);
       const data = await fetchAllData(force);
@@ -1165,6 +1176,7 @@ const MultasPage: React.FC = () => {
           case StatusMulta.AGUARDANDO_BOLETO: colors = 'bg-orange-100/50 text-orange-800 border-orange-200'; break;
           case StatusMulta.RECURSO: colors = 'bg-red-100/50 text-red-800 border-red-200'; break;
           case StatusMulta.INDICACAO_ENVIADA: colors = 'bg-blue-100/50 text-blue-800 border-blue-200'; break;
+          case StatusMulta.IMPORTACAO_VAMOS: colors = 'bg-purple-100 text-purple-800 border-purple-200'; break;
           default: colors = 'bg-gray-100/50 text-gray-800 border-gray-200'; break;
       }
       return <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[8.5px] font-bold uppercase tracking-wide border ${colors}`}>{status}</span>;
@@ -1176,6 +1188,7 @@ const MultasPage: React.FC = () => {
           case StatusMulta.AGUARDANDO_BOLETO: return 'bg-gradient-to-br from-[#022c22]/80 via-[#431407]/80 to-black/80 backdrop-blur-md border-l-4 border-l-risel-orange border-y border-r border-white/5';
           case StatusMulta.RECURSO: return 'bg-gradient-to-br from-[#022c22]/80 via-[#450a0a]/80 to-black/80 backdrop-blur-md border-l-4 border-l-red-500 border-y border-r border-white/5';
           case StatusMulta.INDICACAO_ENVIADA: return 'bg-gradient-to-br from-[#022c22]/80 via-[#172554]/80 to-black/80 backdrop-blur-md border-l-4 border-l-blue-500 border-y border-r border-white/5';
+          case StatusMulta.IMPORTACAO_VAMOS: return 'bg-gradient-to-br from-[#022c22]/80 via-[#3b0764]/80 to-black/80 backdrop-blur-md border-l-4 border-l-purple-500 border-y border-r border-white/5';
           default: return 'bg-gradient-to-br from-risel-dark/80 to-gray-900/80 border border-white/10 backdrop-blur-md';
       }
   };
@@ -1186,6 +1199,7 @@ const MultasPage: React.FC = () => {
       else if (status === StatusMulta.AGUARDANDO_BOLETO) { color = "bg-risel-orange shadow-[0_0_8px_rgba(255,155,0,0.6)]"; textColor = "text-risel-orange"; }
       else if (status === StatusMulta.RECURSO) { color = "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]"; textColor = "text-red-400"; }
       else if (status === StatusMulta.INDICACAO_ENVIADA) { color = "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]"; textColor = "text-blue-400"; }
+      else if (status === StatusMulta.IMPORTACAO_VAMOS) { color = "bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]"; textColor = "text-purple-400"; }
       return (
           <div className="flex items-center gap-1.5 bg-black/20 px-1.5 py-0.5 rounded-full border border-white/5">
               <div className={`w-1 h-1 rounded-full ${color}`}></div>
@@ -1310,9 +1324,6 @@ const MultasPage: React.FC = () => {
                     📎 DOCUMENTOS ANEXADOS DIRETAMENTE A ESTE E-MAIL:
                 </div>
                 ${itemsHtml}
-                <p style="margin:10px 0 0 0;font-size:11px;color:#64748b;font-style:italic;">
-                    * Os documentos acima acompanham esta mensagem diretamente como anexos do e-mail. Abra, visualize ou imprima pelo seu cliente de e-mail sem necessidade de links externos.
-                </p>
             </div>`;
       }
 
@@ -1322,9 +1333,23 @@ const MultasPage: React.FC = () => {
       // CNH Icon (Reduced Size - 18x12 approx)
       const iconCNH = `<span style="display:inline-block;width:18px;height:12px;background:#fefce8;border:1px solid #d97706;border-radius:2px;vertical-align:middle;margin-right:6px;position:relative;"><span style="position:absolute;top:1px;left:1px;width:4px;height:4px;background:#e5e7eb;border:1px solid #d1d5db;"></span><span style="position:absolute;top:2px;left:7px;width:6px;height:1px;background:#cbd5e1;"></span><span style="position:absolute;top:5px;left:7px;width:4px;height:1px;background:#cbd5e1;"></span></span>`;
 
+      // Campo Observações (somente adiciona se houver conteúdo digitado)
+      const obsHtml = data.obs && data.obs.trim() ? `
+        <tr style="background-color:#fffbeb;">
+          <td style="padding:10px;font-weight:bold;color:#b45309;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">📝 Observações:</td>
+          <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#78350f;line-height:1.5;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.obs.trim().replace(/\n/g, '<br/>')}</td>
+        </tr>
+      ` : '';
+
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(data.placa || ''));
+      const baseStr = (data.base || '').trim() || (veiculoMatch?.base || '').trim();
+
       return `
         <div style="font-family:'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif;font-size:12pt;color:#334155;max-width:650px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background-color:#ffffff;">
-          <div style="background-color:#022c22;padding:25px;text-align:center;"><h1 style="color:#00d664;margin:0;font-size:22px;font-family:'Aptos Narrow','Aptos',Calibri,'Segoe UI',sans-serif;letter-spacing:-0.5px;font-weight:bold;">NOTIFICAÇÃO DE MULTA</h1><p style="color:#cbd5e1;margin-top:5px;font-size:12px;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">Gestão de Frotas Risel</p></div>
+          <div style="background-color:#022c22;padding:25px;text-align:center;">
+            <h1 style="color:#00d664;margin:0;font-size:22px;font-family:'Aptos Narrow','Aptos',Calibri,'Segoe UI',sans-serif;letter-spacing:-0.5px;font-weight:bold;">NOTIFICAÇÃO DE MULTA</h1>
+            <p style="color:#cbd5e1;margin-top:5px;font-size:12px;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">Sistema de Multas Risel${baseStr ? ` &bull; Base: ${baseStr}` : ''}</p>
+          </div>
           <div style="padding:30px;font-family:'Aptos Narrow','Aptos',Calibri,'Segoe UI',sans-serif;">
             <p style="margin-bottom:20px;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">Olá, seguem informações referentes a Notificação aplicada ao veículo:</p>
             <p style="margin-bottom:20px;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">Gentileza, enviar cópia da CNH, e solicitar a assinatura do condutor nos documentos, idêntica a assinatura da CNH.</p>
@@ -1334,17 +1359,40 @@ const MultasPage: React.FC = () => {
               <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">👤 Motorista:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.responsavelNome || '-'}</td></tr>
               <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">📄 AIT:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.ait || '-'}</td></tr>
               <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${iconPlaca} Placa:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.placa || '-'}</td></tr>
-              <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">🏢 Base:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.base || '-'}</td></tr>
+              <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">🏢 Base:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.base || baseStr || '-'}</td></tr>
               <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">📅 Data:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${fmtDate(data.dataHoraInfracao)}</td></tr>
               <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">⚠️ Infração:</td><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.descricaoInfracao || '-'}</td></tr>
               <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">💲 Valor:</td><td style="padding:10px;color:#16a34a;font-weight:bold;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${fmtMoney(data.valorComDesconto)}</td></tr>
               <tr><td style="padding:10px;font-weight:bold;color:#022c22;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${iconCNH} Pontuação CNH:</td><td style="padding:10px;color:#334155;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${data.pontosCnh || '0'}</td></tr>
               <tr style="background-color:#f1f5f9;"><td style="padding:10px;font-weight:bold;color:#dc2626;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">⏳ Prazo:</td><td style="padding:10px;font-weight:bold;color:#dc2626;border-bottom:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">${fmtDate(data.prazoIndicacao)}</td></tr>
+              ${obsHtml}
             </table>
             ${attachmentsSection}
           </div>
-          <div style="background-color:#f8fafc;padding:20px;text-align:center;border-top:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">
-             <p style="color:#94a3b8;font-size:11px;margin:0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">Este é um e-mail automático enviado pelo sistema G F Risel.</p>
+          <!-- Assinatura Oficial Risel -->
+          <div style="background-color:#ffffff;padding:20px 25px;border-top:1px solid #e2e8f0;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">
+            <table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">
+              <tr>
+                <td width="92" valign="middle" style="width:92px;vertical-align:middle;padding-right:14px;border-right:2px solid #e2e8f0;">
+                  <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:block;">
+                    <img src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" alt="Risel Combustíveis" width="84" height="34" style="width:84px;height:34px;max-width:84px;max-height:34px;display:block;border:0;outline:none;" />
+                  </a>
+                </td>
+                <td valign="middle" style="vertical-align:middle;padding-left:14px;font-family:'Aptos Narrow','Aptos',Calibri,sans-serif;">
+                  <div style="font-family:'Aptos Narrow','Aptos',Calibri,Arial,sans-serif;font-size:13px;font-weight:800;color:#0f172a;letter-spacing:-0.1px;line-height:1.25;">
+                    Sistema de Multas Risel
+                  </div>
+                  <div style="font-family:'Aptos Narrow','Aptos',Calibri,Arial,sans-serif;font-size:11px;color:#64748b;margin-top:2px;line-height:1.25;">
+                    Risel Combustíveis Ltda
+                  </div>
+                  <div style="font-family:'Aptos Narrow','Aptos',Calibri,Arial,sans-serif;font-size:10.5px;margin-top:3px;">
+                    <a href="https://risel.com.br" target="_blank" rel="noopener noreferrer" style="color:#0284c7;text-decoration:none;font-weight:600;">
+                      www.risel.com.br
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            </table>
           </div>
         </div>`;
   };
@@ -1388,8 +1436,10 @@ const MultasPage: React.FC = () => {
           return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
       };
 
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(formData.placa));
+      const baseStr = (formData.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
       const dataFormatada = getFormattedSubjectDate(formData.dataHoraInfracao);
-      const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa} - DATA ${dataFormatada}`;
+      const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa}${formData.frota ? ' - FROTA: ' + formData.frota : ''} - BASE: ${baseStr} - DATA ${dataFormatada}`;
       const emailHtml = generateEmailHTML(formData);
 
       try {
@@ -1454,7 +1504,11 @@ const MultasPage: React.FC = () => {
         case 'status':
             return getStatusBadge(multa.status);
         case 'placa':
-            return <span className="font-mono font-bold text-gray-800 tracking-wider bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300 text-[9.5px] inline-block">{multa.placa || '-'}</span>;
+            return (
+                <div className="flex items-center justify-center py-0.5">
+                    <MercosulPlateBadge plate={multa.placa} size="sm" />
+                </div>
+            );
         case 'frota':
             return multa.frota ? <span className="font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-[9px] whitespace-nowrap">FROTA {multa.frota}</span> : <span className="text-gray-400 text-[9px]">-</span>;
         case 'base':
@@ -1566,6 +1620,7 @@ const MultasPage: React.FC = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-white/80 backdrop-blur-md px-3 py-2 rounded-xl shadow-2xs border border-slate-200/70 shrink-0">
             <div><h2 className="text-base sm:text-lg font-black bg-clip-text text-transparent bg-gradient-to-r from-rose-800 to-rose-600 tracking-tight uppercase leading-none">Gestão de Multas</h2><p className="text-slate-500 text-[10px] sm:text-[10.5px] font-semibold mt-0.5 leading-none">Controle e processamento de infrações</p></div>
             <div className="flex items-center space-x-1.5 w-full sm:w-auto justify-end flex-wrap gap-y-1">
+                <button id="btn-frota-pesada-importar-csv" onClick={() => setIsImportModalOpen(true)} className="bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 px-2.5 py-1.5 rounded-lg flex items-center shadow-2xs transition-all active:scale-95 whitespace-nowrap font-bold text-[11px]"><UploadCloud size={13} className="mr-1.5 text-purple-600" /> Importar CSV</button>
                 <button onClick={() => setIsExportModalOpen(true)} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-1.5 rounded-lg flex items-center shadow-2xs transition-all active:scale-95 whitespace-nowrap font-bold text-[11px]"><FileSpreadsheet size={13} className="mr-1.5" /> Exportar Relatório</button>
                 <button onClick={() => setShowGlobalMap(true)} className="bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg flex items-center shadow-2xs transition-all active:scale-95 whitespace-nowrap font-bold text-[11px]"><MapIcon size={13} className="mr-1.5 text-emerald-400" /> Mapa Geral</button>
                 <button onClick={() => { setFormData(initialMulta); setErrors({}); setView('FORM'); }} className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg flex items-center shadow-2xs transition-all active:scale-95 whitespace-nowrap font-bold text-[11px] uppercase"><Plus size={13} className="mr-1" /> Nova Multa</button>
@@ -1996,6 +2051,15 @@ const MultasPage: React.FC = () => {
             
             {showGlobalMap && <MapModal multas={multas} onClose={() => setShowGlobalMap(false)} title="Mapa Geral de Infrações" />}
             {mapMulta && <MapModal multas={[mapMulta]} onClose={() => setMapMulta(null)} singleMode title={`Localização: ${mapMulta.placa} - ${mapMulta.ait}`} />}
+
+            <ImportarMultasCsvModal
+                isOpen={isImportModalOpen}
+                onClose={() => setIsImportModalOpen(false)}
+                existingMultas={multas}
+                veiculos={veiculos}
+                codigos={codigos}
+                onImportSuccess={handleImportCsvSuccess}
+            />
         </div>
     );
   }
@@ -2025,7 +2089,7 @@ const MultasPage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Grupo de Ações: Identificador + Cancelar + Salvar */}
+            {/* Grupo de Ações: Identificador + Cancelar + Enviar E-mail + Salvar */}
             <div className="flex items-center gap-2 self-end sm:self-center">
                 <div className="bg-slate-100 border border-slate-200 text-slate-700 px-2.5 py-1 rounded-md text-[11px] font-semibold tracking-wide">
                     {formData.id ? `ID: ${formData.id}` : 'Novo Registro'}
@@ -2034,10 +2098,25 @@ const MultasPage: React.FC = () => {
                 <button 
                     type="button"
                     onClick={() => setView('LIST')} 
-                    className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 hover:text-gray-900 text-xs font-semibold transition-all shadow-xs active:scale-95 flex items-center gap-1.5"
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 text-xs font-semibold transition-all shadow-2xs active:scale-95 flex items-center gap-1.5"
                 >
-                    <X size={13} className="text-gray-400" />
+                    <X size={13} className="text-slate-400" />
                     <span>Cancelar</span>
+                </button>
+
+                <button 
+                    type="button"
+                    onClick={() => { 
+                        const baseKey = formData.base ? Object.keys(EMAIL_MAPPINGS).find(k => formData.base!.toUpperCase().includes(k)) : null;
+                        const recipients = baseKey ? EMAIL_MAPPINGS[baseKey] : '';
+                        setEmailTo(recipients); 
+                        setIsEmailModalOpen(true); 
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-blue-200/80 bg-blue-50/70 hover:bg-blue-100 text-blue-700 hover:text-blue-800 text-xs font-semibold transition-all shadow-2xs hover:shadow-xs active:scale-95 flex items-center gap-1.5"
+                    title="Enviar notificação da multa por e-mail"
+                >
+                    <Mail size={13} className="text-blue-600" />
+                    <span>Enviar E-mail</span>
                 </button>
 
                 <button 
@@ -2545,18 +2624,8 @@ const MultasPage: React.FC = () => {
                         </div>
                         <div>
                             <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Observações</label>
-                            <textarea className="w-full border border-gray-200 rounded-lg py-1.5 px-2.5 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs text-gray-700" rows={2} value={formData.obs || ''} onChange={e => setFormData({...formData, obs: formatInputText(e.target.value)})}/>
+                            <textarea className="w-full border border-gray-200 rounded-lg py-1.5 px-2.5 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none text-xs text-gray-700" rows={3} placeholder="Observações gerais sobre a infração..." value={formData.obs || ''} onChange={e => setFormData({...formData, obs: formatInputText(e.target.value)})}/>
                         </div>
-                        <button onClick={() => { 
-                                const baseKey = formData.base ? Object.keys(EMAIL_MAPPINGS).find(k => formData.base!.toUpperCase().includes(k)) : null;
-                                const recipients = baseKey ? EMAIL_MAPPINGS[baseKey] : '';
-                                setEmailTo(recipients); 
-                                setIsEmailModalOpen(true); 
-                            }}
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg flex justify-center items-center shadow-xs hover:shadow transition-all font-bold text-xs"
-                        >
-                            <Send size={14} className="mr-1.5"/> Enviar por E-mail
-                        </button>
                     </div>
                  </div>
             </div>
@@ -2872,6 +2941,15 @@ const MultasPage: React.FC = () => {
                 </div>
             </div>
         )}
+
+        <ImportarMultasCsvModal
+            isOpen={isImportModalOpen}
+            onClose={() => setIsImportModalOpen(false)}
+            existingMultas={multas}
+            veiculos={veiculos}
+            codigos={codigos}
+            onImportSuccess={handleImportCsvSuccess}
+        />
     </div>
   );
 };

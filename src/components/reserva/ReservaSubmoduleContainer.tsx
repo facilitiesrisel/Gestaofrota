@@ -146,24 +146,6 @@ const PublicLayout: React.FC = () => {
                         <FleetStatusView onRequestReservation={handleRequestReservationFromFleet} isAdmin={false} />
                     </div>
                 );
-            case 'login':
-                return (
-                    <div className="relative min-h-[480px] flex items-center justify-center p-4 my-6 rounded-[24px] overflow-hidden bg-[#060c09]">
-                        <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden select-none">
-                            <img 
-                                src="https://i.ibb.co/JW1Ndd5Y/c-AMINH-O.jpg" 
-                                alt="Frota Risel - Caminhão Tanque" 
-                                referrerPolicy="no-referrer"
-                                className="w-full h-full object-cover object-center scale-105 opacity-35 filter contrast-120 brightness-90"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-b from-[#060c09]/85 via-[#060c09]/65 to-[#040906]/90" />
-                            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(6,12,9,0.35)_0%,rgba(6,12,9,0.88)_100%)]" />
-                        </div>
-                        <div className="bg-white/95 backdrop-blur-md rounded-[24px] shadow-2xl p-8 max-w-md w-full relative z-10 border border-emerald-900/30">
-                            <Login />
-                        </div>
-                    </div>
-                );
             case 'request':
             default:
                  return (
@@ -256,12 +238,6 @@ const PublicLayout: React.FC = () => {
                         icon: MapPinIcon, 
                         isActive: publicView === 'fleetStatus'
                     },
-                    { 
-                        id: 'login', 
-                        label: 'Admin', 
-                        icon: LogoutIcon, 
-                        isActive: publicView === 'login'
-                    },
                 ].map(item => (
                     <button
                         key={item.id}
@@ -336,15 +312,8 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean }> = ({ forcePubli
         );
     }
 
-    // Se estiver em modo público forçado (link público para solicitantes)
+    // Se estiver em modo público forçado (link público para solicitantes), nunca expõe a área administrativa
     if (forcePublic) {
-        if (subParam === 'login' || subParam === 'admin') {
-            return isUserAdmin ? (
-                <AdminDashboard onLogout={handleLogout} />
-            ) : (
-                <PublicLayout />
-            );
-        }
         return <PublicLayout />;
     }
 
