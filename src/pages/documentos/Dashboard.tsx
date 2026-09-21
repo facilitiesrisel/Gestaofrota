@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect } from "react";
 import { motion } from "motion/react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart, Pie, Legend, LabelList, ComposedChart, Line } from "recharts";
-import { Filter, TrendingUp, TrendingDown, Clock, CheckCircle2, Users, Receipt, Calendar, Building, CreditCard, Trophy, Crown, Award, BarChart2 } from "lucide-react";
+import { Filter, TrendingUp, TrendingDown, Clock, CheckCircle2, Users, Receipt, Calendar, Building, Building2, CreditCard, Trophy, Crown, Award, BarChart2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { getLancamentosUnified, subscribeToLancamentosUnified } from "../../services/lancamentosService";
+import { normalizeCentroCustoIntelligent } from "../../utils/setorOperacional";
 
 // Inicialização zerada do módulo para lançamentos reais
 const DEFAULT_LANCAMENTOS: any[] = [];
@@ -321,7 +322,33 @@ export default function Dashboard() {
     };
   }, [lancamentosFiltrados]);
 
-  // Média de SLA Geral dos lançamentos filtrados para colocar no card
+  // Contagem analítica de fornecedores distintos (Total, Mensais, Esporádicos)
+  const fornecedoresDistintos = useMemo(() => {
+    const fornecedoresSet = new Set<string>();
+    const fornecedoresMensal = new Set<string>();
+    const fornecedoresEsporadico = new Set<string>();
+
+    lancamentosFiltrados.forEach(l => {
+      const f = (l.fornecedor || "").trim();
+      if (!f) return;
+      fornecedoresSet.add(f);
+
+      const valFreq = String(l.frequencia || l.tipo || "").trim().toLowerCase();
+      if (valFreq.includes("mensal") || valFreq.includes("recorren") || valFreq.includes("recorrên")) {
+        fornecedoresMensal.add(f);
+      } else {
+        fornecedoresEsporadico.add(f);
+      }
+    });
+
+    return {
+      total: fornecedoresSet.size,
+      mensais: fornecedoresMensal.size,
+      esporadicos: fornecedoresEsporadico.size
+    };
+  }, [lancamentosFiltrados]);
+
+  // Média de SLA Geral dos lançamentos filtrados
   const slaMedioAtual = useMemo(() => {
     const media = calcularSlaMedio(lancamentosFiltrados);
     const mediaArredondada = Math.round(media);
@@ -345,6 +372,26 @@ export default function Dashboard() {
       isIncrease: diff >= 0,
       isGood: diff >= 0,
       rawAnterior: anteriorCount,
+      numDiff: `${sign}${diff}`
+    };
+  }, [lancamentosAtivosParaTrend, lancamentosAnterioresParaTrend]);
+
+  const trendFornecedores = useMemo(() => {
+    const fornecedoresAtivos = new Set(lancamentosAtivosParaTrend.map(l => (l.fornecedor || "").trim()).filter(Boolean)).size;
+    const fornecedoresAnteriores = new Set(lancamentosAnterioresParaTrend.map(l => (l.fornecedor || "").trim()).filter(Boolean)).size;
+
+    if (fornecedoresAnteriores === 0) {
+      if (fornecedoresAtivos === 0) return { percent: "0.0%", isIncrease: false, isGood: true, rawAnterior: 0, numDiff: "+0" };
+      return { percent: "+100%", isIncrease: true, isGood: true, rawAnterior: 0, numDiff: `+${fornecedoresAtivos}` };
+    }
+    const diff = fornecedoresAtivos - fornecedoresAnteriores;
+    const pct = (diff / fornecedoresAnteriores) * 100;
+    const sign = diff >= 0 ? "+" : "";
+    return {
+      percent: `${sign}${pct.toFixed(1)}% (${sign}${diff} ${Math.abs(diff) === 1 ? 'forn' : 'forn'})`,
+      isIncrease: diff >= 0,
+      isGood: true,
+      rawAnterior: fornecedoresAnteriores,
       numDiff: `${sign}${diff}`
     };
   }, [lancamentosAtivosParaTrend, lancamentosAnterioresParaTrend]);
@@ -571,11 +618,34 @@ export default function Dashboard() {
     return Object.entries(mapEstab).map(([name, value]) => ({ name, value }));
   }, [lancamentosFiltrados]);
 
-  // Gráfico 5: Por Tipo de Documento
+  // Gráfico 5: Por Tipo de Documento (Nota de Débito abreviada como ND)
   const dataPorTipo = useMemo(() => {
     const mapTipo: Record<string, number> = {};
     lancamentosFiltrados.forEach(l => {
-      const tipo = l.tipo || "NF-e";
+      const rawTipo = (l.tipo || l.tipoDocumento || "NF-e").trim();
+      const lower = rawTipo.toLowerCase();
+      
+      let tipo = rawTipo;
+      if (
+        lower.includes("débito") || 
+        lower.includes("debito") || 
+        lower === "nd" || 
+        lower.startsWith("nota de deb") || 
+        lower.startsWith("nota de déb")
+      ) {
+        tipo = "ND";
+      } else if (lower === "nf-e" || lower === "nfs-e" || lower === "nf" || lower === "nota fiscal") {
+        tipo = "NF";
+      } else if (lower === "fatura") {
+        tipo = "Fatura";
+      } else if (lower === "recibo") {
+        tipo = "Recibo";
+      } else if (lower === "multa") {
+        tipo = "Multa";
+      } else if (lower === "outros" || lower === "outro") {
+        tipo = "Outros";
+      }
+
       mapTipo[tipo] = (mapTipo[tipo] || 0) + 1;
     });
 
@@ -618,30 +688,31 @@ export default function Dashboard() {
     return Object.entries(mapPag).map(([name, value]) => ({ name, value }));
   }, [lancamentosFiltrados]);
 
-  // Gráfico TOP 10 Custos por Centro de Custo (C.C) - Colunas Verticais em Ordem Alfabética com Destaque para o Maior
+  // Gráfico TOP 10 Custos por Centro de Custo (C.C) - Associação Semântica Inteligente sem Redundâncias
   const dataTopCentroCusto = useMemo(() => {
-    const mapCC: Record<string, number> = {};
+    const mapCC: Record<string, { canonical: string; displayName: string; value: number }> = {};
+
     lancamentosFiltrados.forEach(l => {
-      const cc = (l.centroCusto || "C.C 101 - Operacional").trim().toUpperCase();
-      const val = parseFloat((l.valor || "").replace(/[^\d,]/g, '').replace(',', '.')) || 0;
-      mapCC[cc] = (mapCC[cc] || 0) + val;
+      const rawCc = l.centroCusto || "C.C 101 - Operacional";
+      const { canonical, displayName } = normalizeCentroCustoIntelligent(rawCc);
+      const val = parseFloat(String(l.valor || "").replace(/[^\d,]/g, '').replace(',', '.')) || 0;
+
+      if (!mapCC[canonical]) {
+        mapCC[canonical] = {
+          canonical,
+          displayName,
+          value: 0
+        };
+      }
+      mapCC[canonical].value += val;
     });
 
-    const formatOnlyCcName = (fullName: string) => {
-      if (!fullName) return "";
-      let cleaned = fullName
-        .replace(/^(c\.?c\.?\s*|\d+[\s\.-]*)+/gi, '')
-        .replace(/^\d+\s*[-–—]\s*/, '')
-        .trim();
-      return cleaned || fullName;
-    };
-
-    const top10 = Object.entries(mapCC)
-      .map(([name, value]) => ({
-        name,
-        displayName: formatOnlyCcName(name),
-        value,
-        formattedValue: value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+    const top10 = Object.values(mapCC)
+      .map(item => ({
+        name: item.canonical,
+        displayName: item.displayName,
+        value: item.value,
+        formattedValue: item.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
@@ -782,14 +853,15 @@ export default function Dashboard() {
             delay={0.10}
           />
           <KpiCard 
-            title="Média SLA Aprovação" 
-            value={slaMedioAtual} 
-            icon={Clock} 
+            title="Total de Fornecedores" 
+            value={fornecedoresDistintos.total} 
+            subtitle={`${fornecedoresDistintos.mensais} Mensais • ${fornecedoresDistintos.esporadicos} Esporádicos`}
+            icon={Building2} 
             theme="violet"
             trend={{
-              percent: trendSla.percent,
-              isGood: trendSla.isGood,
-              label: `vs. ${mesReferenciaAnterior} (${trendSla.rawAnterior} ${trendSla.rawAnterior === 1 ? 'dia' : 'dias'})`
+              percent: trendFornecedores.percent,
+              isGood: trendFornecedores.isGood,
+              label: `vs. ${mesReferenciaAnterior} (${trendFornecedores.rawAnterior} ${trendFornecedores.rawAnterior === 1 ? 'forn' : 'forns'})`
             }}
             delay={0.14}
           />
@@ -1451,15 +1523,15 @@ export default function Dashboard() {
               <h3 className="font-display font-extrabold text-lg text-slate-800">Frequência</h3>
               <p className="text-xs text-slate-400 font-medium">Recorrência mensal versus faturas avulsas esporádicas.</p>
             </div>
-            <div className="h-[240px] w-full relative">
+            <div className="h-[260px] w-full relative">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={dataPorFrequencia}
+                    data={dataPorFrequencia.some(d => d.value > 0) ? dataPorFrequencia : [{ name: "Sem dados", value: 1, color: "#cbd5e1" }]}
                     cx="50%"
                     cy="50%"
-                    innerRadius={55}
-                    outerRadius={75}
+                    innerRadius={60}
+                    outerRadius={80}
                     paddingAngle={5}
                     dataKey="value"
                     stroke="none"
@@ -1475,6 +1547,10 @@ export default function Dashboard() {
                   <Legend iconType="circle" verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '11px', fontWeight: 700 }} />
                 </PieChart>
               </ResponsiveContainer>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-[-30px]">
+                <span className="text-2xl font-display font-black text-slate-800">{lancamentosFiltrados.length}</span>
+                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">lançamentos</span>
+              </div>
             </div>
           </motion.div>
 
@@ -1555,6 +1631,7 @@ export default function Dashboard() {
                   />
                   <RechartsTooltip 
                     cursor={{fill: '#f0fdf4'}} 
+                    labelFormatter={(label, payload) => payload?.[0]?.payload?.name || label}
                     formatter={(value: any) => [
                       `R$ ${parseFloat(value).toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 
                       "Custo Total"
@@ -1589,7 +1666,7 @@ export default function Dashboard() {
 }
 
 // Componente KpiCard com design moderno e premium com suporte a tendências e animações dinâmicas de transição
-function KpiCard({ title, value, icon: Icon, theme, trend, delay = 0 }: any) {
+function KpiCard({ title, value, subtitle, icon: Icon, theme, trend, delay = 0 }: any) {
   // Gradientes premium com alto contraste e design requintado
   const themes = {
     blue: {
@@ -1653,6 +1730,11 @@ function KpiCard({ title, value, icon: Icon, theme, trend, delay = 0 }: any) {
           <div className={cn("text-sm sm:text-base font-display font-black tracking-tight leading-none truncate", themes.valueText)}>
             {value}
           </div>
+          {subtitle && (
+            <div className="text-[9px] font-bold text-white/80 mt-1 truncate">
+              {subtitle}
+            </div>
+          )}
         </div>
       </div>
 

@@ -386,75 +386,230 @@ export function normalizeNomeSetor(setor: string | undefined | null, fallback = 
 }
 
 /**
- * Normaliza e padroniza o Centro de Custo para o formato "C.C XXX - Nome".
+ * Normaliza e padroniza o Centro de Custo para o formato canônico "C.C XXX - Nome".
+ * Realiza associação semântica inteligente para eliminar redundâncias como:
+ * - "Frota", "Gestão de Frota", "Frota - Frota", "Gestão de Frotas" -> "C.C 110 - Gestão de Frota"
+ * - "Comercial", "Comercial-Comercial", "Comercial - Vendas", "Vendas" -> "C.C 107 - Comercial & Vendas"
+ * - "Operacional", "Operações", "Operacional - Operacional", "Campo" -> "C.C 101 - Operacional"
  * 
- * @param centroCusto Centro de custo bruto (ex: "101", "C.C 101", "Operações", "CC 102")
+ * @param centroCusto Centro de custo bruto
  * @param fallback Valor padrão (padrão: "C.C 101 - Operacional")
  */
 export function normalizeCentroCusto(centroCusto: string | undefined | null, fallback = "C.C 101 - Operacional"): string {
+  const result = normalizeCentroCustoIntelligent(centroCusto, fallback);
+  return result.canonical;
+}
+
+/**
+ * Retorna tanto o nome canônico do Centro de Custo quanto o nome visual limpo para dashboards/gráficos.
+ */
+export function normalizeCentroCustoIntelligent(
+  centroCusto: string | undefined | null, 
+  fallback = "C.C 101 - Operacional"
+): { canonical: string; displayName: string; code: string } {
   if (!centroCusto || typeof centroCusto !== "string") {
-    return fallback;
+    return { canonical: fallback, displayName: "Operacional", code: "101" };
   }
 
   const rawTrimmed = centroCusto.trim();
-  if (!rawTrimmed || rawTrimmed === "-" || rawTrimmed.toLowerCase() === "n/a") {
-    return fallback;
+  if (!rawTrimmed || rawTrimmed === "-" || rawTrimmed.toLowerCase() === "n/a" || rawTrimmed.toLowerCase() === "null") {
+    return { canonical: fallback, displayName: "Operacional", code: "101" };
   }
 
   const cleaned = cleanString(rawTrimmed);
 
-  // Mapeamento por Código Numérico
-  if (cleaned.includes("101") || cleaned.includes("operac") || cleaned.includes("campo")) {
-    return "C.C 101 - Operacional";
-  }
-  if (cleaned.includes("102") || cleaned.includes("manut") || cleaned.includes("oficin")) {
-    return "C.C 102 - Manutenção / Oficina";
-  }
-  if (cleaned.includes("103") || cleaned.includes("logist") || cleaned.includes("transp")) {
-    return "C.C 103 - Logística & Transporte";
-  }
-  if (cleaned.includes("104") || cleaned.includes("adm") || cleaned.includes("sede")) {
-    return "C.C 104 - Administrativo / Sede";
-  }
-  if (cleaned.includes("105") || cleaned.includes("diretor") || cleaned.includes("execut")) {
-    return "C.C 105 - Diretoria / Executivo";
-  }
-  if (cleaned.includes("106") || cleaned.includes("ti") || cleaned.includes("sistem") || cleaned.includes("tecnolog")) {
-    return "C.C 106 - TI & Sistemas";
-  }
-  if (cleaned.includes("107") || cleaned.includes("comerc") || cleaned.includes("venda")) {
-    return "C.C 107 - Comercial & Vendas";
-  }
-  if (cleaned.includes("108") || cleaned.includes("rh") || cleaned.includes("dp") || cleaned.includes("recurs")) {
-    return "C.C 108 - Recursos Humanos / D.P";
-  }
-  if (cleaned.includes("109") || cleaned.includes("mkt") || cleaned.includes("market") || cleaned.includes("event")) {
-    return "C.C 109 - Marketing & Eventos";
-  }
-  if (cleaned.includes("110") || cleaned.includes("frot")) {
-    return "C.C 110 - Gestão de Frota";
-  }
-  if (cleaned.includes("111") || cleaned.includes("financ") || cleaned.includes("contab") || cleaned.includes("fiscal")) {
-    return "C.C 111 - Financeiro & Controladoria";
-  }
-  if (cleaned.includes("112") || cleaned.includes("seguranc") || cleaned.includes("sst")) {
-    return "C.C 112 - Segurança do Trabalho";
-  }
-  if (cleaned.includes("113") || cleaned.includes("suprim") || cleaned.includes("compr") || cleaned.includes("almox")) {
-    return "C.C 113 - Suprimentos & Compras";
+  // 110 - Gestão de Frota / Frotas / Veículos
+  if (
+    cleaned.includes("110") || 
+    cleaned.includes("frot") || 
+    cleaned.includes("gestao de frota") || 
+    cleaned.includes("gestao frota") ||
+    cleaned.includes("veiculo")
+  ) {
+    return { canonical: "C.C 110 - Gestão de Frota", displayName: "Gestão de Frota", code: "110" };
   }
 
-  // Se já começar com "C.C", mantém com formatação
-  if (rawTrimmed.toUpperCase().startsWith("C.C") || rawTrimmed.toUpperCase().startsWith("CC")) {
-    return rawTrimmed.replace(/^CC/i, "C.C");
+  // 107 - Comercial & Vendas / Comercial / Vendas
+  if (
+    cleaned.includes("107") || 
+    cleaned.includes("comerc") || 
+    cleaned.includes("venda") || 
+    cleaned.includes("trade")
+  ) {
+    return { canonical: "C.C 107 - Comercial & Vendas", displayName: "Comercial & Vendas", code: "107" };
+  }
+
+  // 101 - Operacional / Operações / Campo / Base / Postos
+  if (
+    cleaned.includes("101") || 
+    cleaned.includes("operac") || 
+    cleaned.includes("campo") || 
+    cleaned.includes("abastec")
+  ) {
+    return { canonical: "C.C 101 - Operacional", displayName: "Operacional", code: "101" };
+  }
+
+  // 102 - Manutenção / Oficina / Mecânica
+  if (
+    cleaned.includes("102") || 
+    cleaned.includes("manut") || 
+    cleaned.includes("oficin") || 
+    cleaned.includes("mecanic") ||
+    cleaned.includes("reparo")
+  ) {
+    return { canonical: "C.C 102 - Manutenção / Oficina", displayName: "Manutenção / Oficina", code: "102" };
+  }
+
+  // 103 - Logística & Transporte / Entregas / Cargas
+  if (
+    cleaned.includes("103") || 
+    cleaned.includes("logist") || 
+    cleaned.includes("transp") || 
+    cleaned.includes("entrega") ||
+    cleaned.includes("expedic")
+  ) {
+    return { canonical: "C.C 103 - Logística & Transporte", displayName: "Logística & Transporte", code: "103" };
+  }
+
+  // 104 - Administrativo / Sede / Facilities
+  if (
+    cleaned.includes("104") || 
+    cleaned.includes("adm") || 
+    cleaned.includes("sede") || 
+    cleaned.includes("facilities") ||
+    cleaned.includes("recepc")
+  ) {
+    return { canonical: "C.C 104 - Administrativo / Sede", displayName: "Administrativo / Sede", code: "104" };
+  }
+
+  // 105 - Diretoria / Executivo / Presidência
+  if (
+    cleaned.includes("105") || 
+    cleaned.includes("diretor") || 
+    cleaned.includes("execut") || 
+    cleaned.includes("presid") ||
+    cleaned.includes("board") ||
+    cleaned.includes("ceo")
+  ) {
+    return { canonical: "C.C 105 - Diretoria / Executivo", displayName: "Diretoria / Executivo", code: "105" };
+  }
+
+  // 106 - TI & Sistemas / Tecnologia / Informática
+  if (
+    cleaned.includes("106") || 
+    cleaned.includes("ti") || 
+    cleaned.includes("sistem") || 
+    cleaned.includes("tecnolog") || 
+    cleaned.includes("informat") ||
+    cleaned.includes("suporte ti")
+  ) {
+    return { canonical: "C.C 106 - TI & Sistemas", displayName: "TI & Sistemas", code: "106" };
+  }
+
+  // 108 - Recursos Humanos / D.P / Gente e Gestão
+  if (
+    cleaned.includes("108") || 
+    cleaned.includes("rh") || 
+    cleaned.includes("dp") || 
+    cleaned.includes("recurs") || 
+    cleaned.includes("departamento pessoal") || 
+    cleaned.includes("gente e gestao") ||
+    cleaned.includes("folha")
+  ) {
+    return { canonical: "C.C 108 - Recursos Humanos / D.P", displayName: "Recursos Humanos / D.P", code: "108" };
+  }
+
+  // 109 - Marketing & Eventos / Comunicação
+  if (
+    cleaned.includes("109") || 
+    cleaned.includes("mkt") || 
+    cleaned.includes("market") || 
+    cleaned.includes("event") || 
+    cleaned.includes("comunicac") ||
+    cleaned.includes("publicid")
+  ) {
+    return { canonical: "C.C 109 - Marketing & Eventos", displayName: "Marketing & Eventos", code: "109" };
+  }
+
+  // 111 - Financeiro & Controladoria / Fiscal / Contábil / Tesouraria
+  if (
+    cleaned.includes("111") || 
+    cleaned.includes("financ") || 
+    cleaned.includes("contab") || 
+    cleaned.includes("fiscal") || 
+    cleaned.includes("tesour") || 
+    cleaned.includes("controlad")
+  ) {
+    return { canonical: "C.C 111 - Financeiro & Controladoria", displayName: "Financeiro & Controladoria", code: "111" };
+  }
+
+  // 112 - Segurança do Trabalho / SST / SESMT / QSSMA
+  if (
+    cleaned.includes("112") || 
+    cleaned.includes("seguranc") || 
+    cleaned.includes("sst") || 
+    cleaned.includes("sesmt") || 
+    cleaned.includes("cipa") || 
+    cleaned.includes("qssma") ||
+    cleaned.includes("meio ambiente")
+  ) {
+    return { canonical: "C.C 112 - Segurança do Trabalho", displayName: "Segurança do Trabalho", code: "112" };
+  }
+
+  // 113 - Suprimentos & Compras / Almoxarifado
+  if (
+    cleaned.includes("113") || 
+    cleaned.includes("suprim") || 
+    cleaned.includes("compr") || 
+    cleaned.includes("almox") || 
+    cleaned.includes("patrimon")
+  ) {
+    return { canonical: "C.C 113 - Suprimentos & Compras", displayName: "Suprimentos & Compras", code: "113" };
+  }
+
+  // 114 - Jurídico / Legal
+  if (cleaned.includes("114") || cleaned.includes("jurid") || cleaned.includes("legal") || cleaned.includes("advoc")) {
+    return { canonical: "C.C 114 - Jurídico", displayName: "Jurídico", code: "114" };
+  }
+
+  // Limpeza de prefixos C.C / números e desduplicação de termos redundantes
+  let cleanedName = rawTrimmed
+    .replace(/^(c\.?c\.?\s*|\d+[\s\.-]*)+/gi, '')
+    .replace(/^\d+\s*[-–—]\s*/, '')
+    .trim();
+
+  // Tratar redundâncias literais (ex: "Comercial-Comercial", "Frota / Frota")
+  const subTokens = cleanedName.split(/[\s\-–—/]+/).filter(Boolean);
+  if (subTokens.length >= 2 && subTokens[0].toLowerCase() === subTokens[1].toLowerCase()) {
+    cleanedName = subTokens[0];
   }
 
   // Tenta mapear o setor pelo nome
-  const setorNormalizado = normalizeNomeSetor(rawTrimmed, "");
+  const setorNormalizado = normalizeNomeSetor(cleanedName || rawTrimmed, "");
   if (setorNormalizado) {
     const ccEncontrado = CENTROS_CUSTO_OFICIAIS.find(cc => cc.toLowerCase().includes(cleanString(setorNormalizado)));
-    if (ccEncontrado) return ccEncontrado;
+    if (ccEncontrado) {
+      const codeMatch = ccEncontrado.match(/C\.C\s*(\d+)/i);
+      return { 
+        canonical: ccEncontrado, 
+        displayName: setorNormalizado, 
+        code: codeMatch ? codeMatch[1] : "" 
+      };
+    }
   }
 
-  return rawTrimmed;
+  const capitalized = toSmartSectorTitleCase(cleanedName || rawTrimmed);
+  return {
+    canonical: `C.C - ${capitalized}`,
+    displayName: capitalized,
+    code: ""
+  };
+}
+
+/**
+ * Retorna o display name limpo para renderizar no gráfico de Centros de Custo
+ */
+export function formatCentroCustoDisplayName(centroCusto: string | undefined | null): string {
+  const { displayName } = normalizeCentroCustoIntelligent(centroCusto);
+  return displayName;
 }
