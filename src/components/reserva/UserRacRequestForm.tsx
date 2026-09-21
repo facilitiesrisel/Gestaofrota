@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RacRental } from '../../types_reserva';
-import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
+import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients, FILIAIS_RISEL } from '../../constants_reserva';
 import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 import { addRacRental, sendEmail, generateRacEmailHtml } from '../../services/firebaseService';
@@ -45,6 +45,7 @@ interface UserRacRequestFormProps {
 export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSuccess }) => {
   const [formData, setFormData] = useState({
     requesterName: '',
+    filial: 'Paulínia',
     requesterSector: '',
     requesterRole: '',
     requesterEmail: '',
@@ -60,6 +61,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
     observations: '',
   });
 
+  const [customFilial, setCustomFilial] = useState('');
   const [isDriverSameAsRequester, setIsDriverSameAsRequester] = useState(true);
   const [cnhFile, setCnhFile] = useState<{
     file: File;
@@ -274,6 +276,10 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
 
       const normPickupCity = normalizeCidade(formData.pickupCity.trim());
       const normReturnCity = normalizeCidade(formData.returnCity.trim());
+      const rawFilial = formData.filial === 'Outros'
+        ? (customFilial.trim() ? `Outros (${customFilial.trim()})` : 'Outros')
+        : (formData.filial?.trim() || 'Paulínia');
+      const finalFilial = normalizeBaseOperacional(rawFilial);
 
       // Monta objeto da locação RAC
       const newRentalData: Omit<RacRental, 'id'> = {
@@ -289,7 +295,8 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         driverName: finalDriverName.toUpperCase().trim(),
         driverRole: finalDriverRole.toUpperCase().trim(),
         status: 'Solicitada',
-        base: normalizeBaseOperacional(normPickupCity) || 'Matriz',
+        filial: finalFilial,
+        base: finalFilial,
         createdByUser: formData.requesterEmail || 'Solicitante Público RAC',
         reservationDate: new Date(),
         pickupDate: pickupDateObj,
@@ -350,7 +357,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
       // 4. Envia notificação por e-mail com anexo da CNH EXCLUSIVAMENTE para a Gestão de Frota (Administração)
       // REGRA: O solicitante NUNCA recebe o e-mail inicial de solicitação.
       // O solicitante receberá o e-mail oficial com o voucher apenas quando a locação for realizada e aprovada.
-      const emailSubject = `[NOVA SOLICITAÇÃO RAC] ${protocolNumber} - ${formData.requesterName} (${formData.pickupCity} ➔ ${formData.returnCity})`;
+      const emailSubject = `[NOVA SOLICITAÇÃO RAC] ${protocolNumber} - ${formData.requesterName} - Filial: ${finalFilial} (${formData.pickupCity} ➔ ${formData.returnCity})`;
       const emailHtml = generateRacEmailHtml(fullRental, {
         actionType: 'created',
         cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh')),
@@ -432,6 +439,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                 // Reset form
                 setFormData({
                   requesterName: '',
+                  filial: 'Paulínia',
                   requesterSector: '',
                   requesterRole: '',
                   requesterEmail: '',
@@ -446,6 +454,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                   purpose: '',
                   observations: '',
                 });
+                setCustomFilial('');
                 setCnhFile(null);
               }}
               className="w-full py-3 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm"
@@ -530,6 +539,35 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                 placeholder="Ex: João da Silva"
                 className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all uppercase"
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center justify-between">
+                <span>Filial / Base <span className="text-red-500">*</span></span>
+                <span className="text-[10px] text-emerald-700 font-semibold normal-case">Unidade Risel</span>
+              </label>
+              <select
+                required
+                name="filial"
+                value={formData.filial}
+                onChange={handleChange}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all cursor-pointer"
+              >
+                <option value="" disabled>Selecione a Filial / Base...</option>
+                {FILIAIS_RISEL.map(f => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+              {formData.filial === 'Outros' && (
+                <input
+                  type="text"
+                  required
+                  value={customFilial}
+                  onChange={e => setCustomFilial(e.target.value)}
+                  placeholder="Especifique a filial ou base..."
+                  className="mt-2 w-full px-3 py-2 bg-white border border-emerald-400 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] transition-all"
+                />
+              )}
             </div>
 
             <div>

@@ -103,6 +103,7 @@ export interface RacRental {
   driverName: string; // Condutor
   driverRole?: string; // Cargo do Condutor
   status: 'Solicitada' | 'Aguardando retirada' | 'Em Uso' | 'Finalizada' | string;
+  filial?: string; // Filial da solicitação (ex: Paulínia (Matriz), Campinas, Betim, etc)
   base?: string; // Base operacional (ex: Matriz, Filial RJ, etc)
   createdByUser: string; // Usuário de Criação da Reserva
   reservationDate: Date; // Data Reserva

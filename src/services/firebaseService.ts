@@ -701,6 +701,10 @@ export const generateRacEmailHtml = (
                   <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.requesterSector || 'Geral'}</td>
                 </tr>
                 <tr style="background-color: #ffffff;">
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Filial / Unidade:</td>
+                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.filial || rental.base || 'Paulínia (Matriz)'}</td>
+                </tr>
+                <tr style="background-color: #ffffff;">
                   <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; border-bottom: 1px solid #f1f5f9;">Cargo / Função:</td>
                   <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">${rental.requesterRole || 'Não informado'}</td>
                 </tr>
@@ -982,7 +986,7 @@ const docToRacRental = (doc: any): RacRental | null => {
     const data = doc.data();
     if (!data) return null;
 
-    const rentalCompany = data.rentalCompany || data.locadora || data.empresaLocadora || data.company || 'Localiza';
+    const rentalCompany = data.rentalCompany || data.locadora || data.empresaLocadora || data.company || '';
     const requesterName = data.requesterName || data.solicitante || data.nomeSolicitante || data.condutor || data.driverName || 'Colaborador';
     const plate = (data.plate || data.placa || '').toUpperCase().trim();
 
@@ -1515,6 +1519,7 @@ export const INITIAL_RAC_RENTALS: RacRental[] = [
     reservationNumber: 'MV-984210',
     driverName: 'Wesley Sidlei Breda',
     status: 'Em Uso',
+    filial: 'Betim',
     base: 'Betim',
     createdByUser: 'admin@risel.com.br',
     reservationDate: new Date('2026-06-15T10:00:00'),
@@ -1533,7 +1538,8 @@ export const INITIAL_RAC_RENTALS: RacRental[] = [
     reservationNumber: 'LOC-778219',
     driverName: 'Marcos Vinicius Pereira',
     status: 'Em Uso',
-    base: 'Campineira',
+    filial: 'Campinas',
+    base: 'Campinas',
     createdByUser: 'admin@risel.com.br',
     reservationDate: new Date('2026-06-20T14:30:00'),
     pickupDate: new Date('2026-06-22T09:00:00'),
@@ -1551,6 +1557,7 @@ export const INITIAL_RAC_RENTALS: RacRental[] = [
     reservationNumber: 'SM-332190',
     driverName: 'Juliana Silveira Dias',
     status: 'Finalizada',
+    filial: 'Paulínia (Matriz)',
     base: 'Matriz',
     createdByUser: 'admin@risel.com.br',
     reservationDate: new Date('2026-05-10T11:00:00'),
@@ -1569,6 +1576,7 @@ export const INITIAL_RAC_RENTALS: RacRental[] = [
     reservationNumber: 'LOC-882341',
     driverName: 'Carlos Alberto Souza',
     status: 'Aguardando retirada',
+    filial: 'Paulínia (Matriz)',
     base: 'Paulínia',
     createdByUser: 'admin@risel.com.br',
     reservationDate: new Date('2026-07-01T09:00:00'),
@@ -1587,6 +1595,7 @@ export const INITIAL_RAC_RENTALS: RacRental[] = [
     reservationNumber: 'UN-554109',
     driverName: 'Roberto Carlos Lima',
     status: 'Em Uso',
+    filial: 'Betim',
     base: 'Betim',
     createdByUser: 'admin@risel.com.br',
     reservationDate: new Date('2026-06-28T16:00:00'),

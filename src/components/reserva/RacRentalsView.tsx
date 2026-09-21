@@ -12,7 +12,10 @@ import {
   Area,
   PieChart, 
   Pie, 
-  Cell 
+  Cell,
+  ComposedChart,
+  Line,
+  Legend
 } from 'recharts';
 import { 
   subscribeToRacRentals, 
@@ -26,7 +29,7 @@ import {
   sendEmail,
   generateRacEmailHtml
 } from '../../services/firebaseService';
-import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
+import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients, FILIAIS_RISEL } from '../../constants_reserva';
 import { getAllSystemUsersEmails } from '../../services/perimeterAlertService';
 import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
@@ -427,7 +430,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
     // Approve / Reject states
     const [approveFormData, setApproveFormData] = useState({
-        rentalCompany: 'Localiza',
+        rentalCompany: '',
         reservationNumber: '',
         plate: '',
         value: '',
@@ -440,10 +443,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const [rejectAdditionalEmails, setRejectAdditionalEmails] = useState<string[]>([]);
     const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
     const [isSubmittingRejection, setIsSubmittingRejection] = useState(false);
+    const [customFilialAdmin, setCustomFilialAdmin] = useState('');
 
     // Form inputs
     const [formData, setFormData] = useState({
-        rentalCompany: 'Localiza',
+        rentalCompany: '',
         plate: '',
         requesterName: '',
         requesterSector: '',
@@ -455,7 +459,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         value: '',
         reservationNumber: '',
         status: 'Aguardando retirada' as 'Solicitada' | 'Em Uso' | 'Finalizada' | 'Aguardando retirada' | 'Recusada',
-        base: '',
+        base: 'Paulínia',
+        filial: 'Paulínia',
         createdByUser: '',
         category: '',
         purpose: '',
@@ -550,14 +555,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
             // Rental Company Filter
             if (filterCompany) {
-                if (filterCompany === 'Outras') {
-                    const known = ['localiza', 'movida', 'unidas', 'super mais'];
-                    const comp = (rental.rentalCompany || '').toLowerCase();
-                    if (known.some(k => comp.includes(k))) return false;
-                } else {
-                    const comp = (rental.rentalCompany || '').toLowerCase();
-                    if (!comp.includes(filterCompany.toLowerCase())) return false;
-                }
+                const comp = (rental.rentalCompany || '').toLowerCase();
+                if (!comp.includes(filterCompany.toLowerCase())) return false;
             }
 
             // Status Filter
@@ -784,16 +783,65 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         ];
     }, [rentals]);
 
+    // Chart 5: BI - Quantidade x Valor Total por Filial (Indicador Estratégico)
+    const filialDistributionData = useMemo(() => {
+        const filialMap: { [key: string]: { name: string; fullName: string; "Quantidade": number; "Valor (R$)": number } } = {};
+        
+        rentals.forEach(r => {
+            const rawFilial = (r.filial || r.base || 'Paulínia').trim();
+            const normalized = normalizeBaseOperacional(rawFilial) || 'Paulínia';
+            const shortName = normalized.replace(/\s*\(Matriz\)/i, '').replace(/\s*\(Posto\)/i, '').trim();
+
+            if (!filialMap[normalized]) {
+                filialMap[normalized] = {
+                    name: shortName,
+                    fullName: normalized,
+                    "Quantidade": 0,
+                    "Valor (R$)": 0
+                };
+            }
+            filialMap[normalized]["Quantidade"] += 1;
+            filialMap[normalized]["Valor (R$)"] += (Number(r.value) || 0);
+        });
+
+        const list = Object.values(filialMap);
+
+        if (list.length === 0) {
+            return FILIAIS_RISEL.slice(0, 5).map(f => ({
+                name: f.replace(/\s*\(Matriz\)/i, '').replace(/\s*\(Posto\)/i, '').trim(),
+                fullName: f,
+                "Quantidade": 0,
+                "Valor (R$)": 0
+            }));
+        }
+
+        // Ordena por maior valor ou quantidade decrescente
+        return list.sort((a, b) => b["Valor (R$)"] !== a["Valor (R$)"] ? b["Valor (R$)"] - a["Valor (R$)"] : b["Quantidade"] - a["Quantidade"]);
+    }, [rentals]);
+
+    // Lista dinâmica de locadoras cadastradas para sugestões e filtros
+    const availableCompanies = useMemo(() => {
+        const set = new Set<string>();
+        ['Localiza', 'Movida', 'Unidas', 'Foco', 'Kovi', 'Localiza Gestão de Frotas'].forEach(c => set.add(c));
+        rentals.forEach(r => {
+            if (r.rentalCompany && r.rentalCompany.trim() && r.rentalCompany !== 'A Definir (Cotação RAC)') {
+                set.add(r.rentalCompany.trim());
+            }
+        });
+        return Array.from(set).sort();
+    }, [rentals]);
+
     // Open clean form for creating new rental
     const handleOpenCreateModal = () => {
         setSelectedRental(null);
         setFormVoucherFile(null);
         setIsDraggingFormVoucher(false);
+        setCustomFilialAdmin('');
         if (formVoucherInputRef.current) {
             formVoucherInputRef.current.value = '';
         }
         setFormData({
-            rentalCompany: 'Localiza',
+            rentalCompany: '',
             plate: '',
             requesterName: '',
             requesterSector: '',
@@ -805,7 +853,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             value: '',
             reservationNumber: '',
             status: 'Aguardando retirada',
-            base: '',
+            base: 'Paulínia',
+            filial: 'Paulínia',
             createdByUser: user?.email || 'Admin',
             category: '',
             purpose: '',
@@ -826,6 +875,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
     const handleOpenEditModal = (rental: RacRental) => {
         setSelectedRental(rental);
         setIsDraggingFormVoucher(false);
+        const existingFilial = rental.filial || rental.base || 'Paulínia';
+        const isOfficialFilial = (FILIAIS_RISEL as readonly string[]).includes(existingFilial);
+        setCustomFilialAdmin(isOfficialFilial ? '' : existingFilial);
+
         if (rental.voucherBase64) {
             setFormVoucherFile({
                 fileName: rental.voucherFileName || 'Confirmacao_Reserva.pdf',
@@ -841,7 +894,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             formVoucherInputRef.current.value = '';
         }
         setFormData({
-            rentalCompany: rental.rentalCompany || 'Localiza',
+            rentalCompany: rental.rentalCompany || '',
             plate: rental.plate || '',
             requesterName: rental.requesterName || '',
             requesterSector: rental.requesterSector || '',
@@ -853,7 +906,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             value: rental.value !== undefined && rental.value !== null ? String(rental.value) : '',
             reservationNumber: rental.reservationNumber || '',
             status: (rental.status || 'Aguardando retirada') as any,
-            base: rental.base || '',
+            base: isOfficialFilial ? existingFilial : 'Outros',
+            filial: isOfficialFilial ? existingFilial : 'Outros',
             createdByUser: rental.createdByUser || user?.email || 'Admin',
             category: rental.category || '',
             purpose: rental.purpose || '',
@@ -885,7 +939,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             voucherInputRef.current.value = '';
         }
         setApproveFormData({
-            rentalCompany: rental.rentalCompany && rental.rentalCompany !== 'A Definir (Cotação RAC)' ? rental.rentalCompany : 'Localiza',
+            rentalCompany: rental.rentalCompany && rental.rentalCompany !== 'A Definir (Cotação RAC)' ? rental.rentalCompany : '',
             reservationNumber: rental.reservationNumber && !rental.reservationNumber.startsWith('RAC-') ? rental.reservationNumber : '',
             plate: rental.plate && rental.plate !== 'A DEFINIR' ? rental.plate : '',
             value: rental.value !== undefined && rental.value !== null ? String(rental.value) : '',
@@ -905,7 +959,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         try {
             const updatedData: Partial<RacRental> = {
                 status: 'Aguardando retirada',
-                rentalCompany: approveFormData.rentalCompany || 'Localiza',
+                rentalCompany: (approveFormData.rentalCompany || '').trim(),
                 reservationNumber: approveFormData.reservationNumber.trim() || selectedRental.reservationNumber,
                 plate: approveFormData.plate.toUpperCase().trim() || selectedRental.plate,
                 value: parseCurrencyInput(approveFormData.value),
@@ -1105,8 +1159,13 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         }
 
         try {
+            const targetFilial = formData.filial === 'Outros' 
+                ? (customFilialAdmin.trim() ? customFilialAdmin.trim() : 'Outros') 
+                : (formData.filial || formData.base || 'Paulínia').trim();
+            const normalizedFilial = normalizeBaseOperacional(targetFilial) || targetFilial;
+
             const dataToSave: Partial<RacRental> = {
-                rentalCompany: formData.rentalCompany || 'Localiza',
+                rentalCompany: (formData.rentalCompany || '').trim(),
                 plate: (formData.plate || '').toUpperCase().trim(),
                 requesterName: (formData.requesterName || '').trim(),
                 requesterSector: normalizeNomeSetor(formData.requesterSector),
@@ -1118,7 +1177,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 value: parseCurrencyInput(formData.value),
                 reservationNumber: (formData.reservationNumber || '').trim(),
                 status: formData.status,
-                base: (formData.base || '').trim(),
+                base: normalizedFilial,
+                filial: normalizedFilial,
                 createdByUser: (formData.createdByUser || '').trim() || user?.email || 'Admin',
                 category: (formData.category || '').trim(),
                 purpose: (formData.purpose || '').trim(),
@@ -1566,6 +1626,106 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 </div>
                             </div>
                         </div>
+
+                        {/* Gráfico 5: BI - Quantidade x Valor Total por Filial */}
+                        <div className="lg:col-span-2 bg-slate-50/70 p-5 rounded-2xl border border-slate-200 flex flex-col justify-between shadow-xs">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-200/80">
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="h-2 w-2 rounded-full bg-[#114D38]"></span>
+                                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                                            Distribuição de Locações: Quantidade x Valor por Filial
+                                        </h4>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">
+                                        Cruzamento analítico entre o volume de contratos (Barras Verdes) e o investimento total em R$ (Linha Laranja).
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-3 text-xs">
+                                    <div className="flex items-center gap-1.5 font-bold text-slate-700 bg-white px-2.5 py-1 rounded-xl border border-slate-200">
+                                        <span className="w-3 h-3 rounded-xs bg-[#114D38]"></span>
+                                        <span>Quantidade (Contratos)</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 font-bold text-slate-700 bg-white px-2.5 py-1 rounded-xl border border-slate-200">
+                                        <span className="w-3 h-0.5 bg-[#f47920] inline-block"></span>
+                                        <span className="w-2 h-2 rounded-full bg-[#f47920] -ml-1.5 inline-block"></span>
+                                        <span>Valor Total (R$)</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="h-72 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={filialDistributionData} margin={{ top: 15, right: 30, left: 0, bottom: 25 }}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                        <XAxis 
+                                            dataKey="name" 
+                                            stroke="#475569" 
+                                            fontSize={11} 
+                                            fontWeight={600}
+                                            tickLine={false}
+                                            interval={0}
+                                            angle={-15}
+                                            textAnchor="end"
+                                        />
+                                        <YAxis 
+                                            yAxisId="left" 
+                                            stroke="#114D38" 
+                                            fontSize={11} 
+                                            tickLine={false} 
+                                            axisLine={false} 
+                                            allowDecimals={false}
+                                            label={{ value: 'Quantidade', angle: -90, position: 'insideLeft', fill: '#114D38', fontSize: 10, fontWeight: 'bold' }}
+                                        />
+                                        <YAxis 
+                                            yAxisId="right" 
+                                            orientation="right" 
+                                            stroke="#ea580c" 
+                                            fontSize={10} 
+                                            tickLine={false} 
+                                            axisLine={false}
+                                            tickFormatter={(val) => `R$ ${(val / 1000).toFixed(0)}k`}
+                                            label={{ value: 'Valor (R$)', angle: 90, position: 'insideRight', fill: '#ea580c', fontSize: 10, fontWeight: 'bold' }}
+                                        />
+                                        <Tooltip 
+                                            formatter={(value: any, name: any) => {
+                                                if (name === 'Valor (R$)') return [formatCurrencyBRL(Number(value)), 'Investimento Total'];
+                                                return [`${value} contratos`, 'Quantidade de Locações'];
+                                            }}
+                                            labelFormatter={(label, payload) => {
+                                                const item = payload?.[0]?.payload;
+                                                return item ? item.fullName : label;
+                                            }}
+                                            contentStyle={{ backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '12px', fontSize: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                                            labelStyle={{ fontWeight: 'bold', color: '#0f172a', marginBottom: '4px' }}
+                                        />
+                                        <Bar yAxisId="left" dataKey="Quantidade" fill="#114D38" radius={[6, 6, 0, 0]} barSize={34} />
+                                        <Line yAxisId="right" type="monotone" dataKey="Valor (R$)" stroke="#f47920" strokeWidth={3} dot={{ r: 4, fill: '#f47920', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6, fill: '#ea580c' }} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                            {/* Tabela Resumo BI das Filiais */}
+                            <div className="mt-4 pt-3 border-t border-slate-200/80 overflow-x-auto">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                                    {filialDistributionData.slice(0, 6).map((item, idx) => (
+                                        <div key={idx} className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-2xs">
+                                            <p className="text-[10px] font-bold text-slate-500 truncate" title={item.fullName}>
+                                                {item.fullName}
+                                            </p>
+                                            <div className="flex items-baseline justify-between mt-1">
+                                                <span className="text-xs font-black text-[#114D38]">
+                                                    {item["Quantidade"]} {item["Quantidade"] === 1 ? 'locação' : 'locações'}
+                                                </span>
+                                                <span className="text-[11px] font-bold text-amber-700">
+                                                    {formatCurrencyBRL(item["Valor (R$)"])}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
@@ -1676,10 +1836,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                             className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none focus:border-emerald-600 cursor-pointer shrink-0"
                         >
                             <option value="">Locadora: Todas</option>
-                            <option value="Localiza">Localiza</option>
-                            <option value="Movida">Movida</option>
-                            <option value="Unidas">Unidas</option>
-                            <option value="Outras">Outras</option>
+                            {availableCompanies.map(comp => (
+                                <option key={comp} value={comp}>{comp}</option>
+                            ))}
                         </select>
 
                     </div>
@@ -1740,7 +1899,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     <table className="w-full text-left border-collapse">
                         <thead className="sticky top-0 z-20 shadow-xs">
                             <tr className="bg-[#114D38] text-white text-[10px] font-black uppercase tracking-wider border-b border-[#0d3b2c]">
-                                {/* 1. Data da Solicitação (antes de Locadora/Placa) */}
+                                {/* 1. Ações (no início) */}
+                                <th scope="col" className="sticky top-0 bg-[#114D38] py-4 px-4 text-center whitespace-nowrap z-20 w-28">
+                                    Ações
+                                </th>
+
+                                {/* 2. Data da Solicitação */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('reservationDate')}
@@ -1753,7 +1917,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     </div>
                                 </th>
 
-                                {/* 2. Locadora / Placa */}
+                                {/* 3. Locadora / Placa */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('rentalCompany')}
@@ -1766,20 +1930,20 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     </div>
                                 </th>
 
-                                {/* 3. Solicitante & Contato */}
+                                {/* 4. Solicitante / Filial & Contato */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('requesterName')}
                                     className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
-                                    title="Clique para ordenar por Solicitante"
+                                    title="Clique para ordenar por Solicitante ou Filial"
                                 >
                                     <div className="flex items-center gap-1.5">
-                                        <span>Solicitante & Contato</span>
+                                        <span>Solicitante / Filial</span>
                                         <SortIndicator active={sortField === 'requesterName'} direction={sortDirection} />
                                     </div>
                                 </th>
 
-                                {/* 4. Itinerário (Cidades) */}
+                                {/* 5. Itinerário (Cidades) */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('itinerary')}
@@ -1792,7 +1956,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     </div>
                                 </th>
 
-                                {/* 5. Valor (R$) */}
+                                {/* 6. Valor (R$) */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('value')}
@@ -1805,7 +1969,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     </div>
                                 </th>
 
-                                {/* 6. Condutor & CNH */}
+                                {/* 7. Condutor & CNH */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('driverName')}
@@ -1818,7 +1982,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     </div>
                                 </th>
 
-                                {/* 7. Período de Locação */}
+                                {/* 8. Período de Locação */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('period')}
@@ -1831,7 +1995,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     </div>
                                 </th>
 
-                                {/* 8. Status */}
+                                {/* 9. Status */}
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('status')}
@@ -1842,11 +2006,6 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                         <span>Status</span>
                                         <SortIndicator active={sortField === 'status'} direction={sortDirection} />
                                     </div>
-                                </th>
-
-                                {/* 9. Ações */}
-                                <th scope="col" className="sticky top-0 bg-[#114D38] py-4 px-5 text-right whitespace-nowrap z-20">
-                                    Ações
                                 </th>
                             </tr>
                         </thead>
@@ -1894,7 +2053,79 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     return (
                                         <tr key={r.id} className="hover:bg-slate-50/80 transition-colors group">
                                             
-                                            {/* 1. Data da Solicitação */}
+                                            {/* 1. Ações (no início) */}
+                                            <td className="px-3 py-4 whitespace-nowrap">
+                                                <div className="flex items-center gap-1 justify-start">
+                                                    {r.status === 'Solicitada' ? (
+                                                        <>
+                                                            <button
+                                                                onClick={() => handleOpenApproveModal(r)}
+                                                                className="p-1.5 text-white bg-[#114D38] hover:bg-[#0d3b2c] rounded-xl transition-all cursor-pointer flex items-center justify-center shadow-xs active:scale-95"
+                                                                title="Efetivar Locação RAC, Anexar Voucher e Notificar Solicitante"
+                                                                aria-label="Efetivar Locação RAC"
+                                                            >
+                                                                <CheckIcon className="h-4 w-4" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleOpenRejectModal(r)}
+                                                                className="p-1.5 text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all cursor-pointer flex items-center justify-center shadow-xs active:scale-95"
+                                                                title="Recusar Solicitação RAC com Justificativa"
+                                                                aria-label="Recusar Solicitação RAC"
+                                                            >
+                                                                <XCircleIcon className="h-4 w-4" />
+                                                            </button>
+                                                        </>
+                                                    ) : r.status === 'Recusada' ? (
+                                                        <button
+                                                            onClick={() => handleOpenApproveModal(r)}
+                                                            className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-all cursor-pointer flex items-center justify-center shadow-xs"
+                                                            title="Reabrir e Aprovar Locação RAC"
+                                                            aria-label="Reabrir e Aprovar Locação RAC"
+                                                        >
+                                                            <CheckIcon className="h-4 w-4" />
+                                                        </button>
+                                                    ) : (
+                                                        <button 
+                                                            onClick={() => handleToggleStatus(r)}
+                                                            className={`p-1.5 rounded-xl border transition-all cursor-pointer ${
+                                                                r.status === 'Aguardando retirada' 
+                                                                    ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200' 
+                                                                    : r.status === 'Em Uso' 
+                                                                        ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200' 
+                                                                        : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
+                                                            }`}
+                                                            title={
+                                                                r.status === 'Aguardando retirada' 
+                                                                    ? "Iniciar utilização (Mudar para Em Uso)" 
+                                                                    : r.status === 'Em Uso' 
+                                                                        ? "Finalizar locação (Encerrar)" 
+                                                                        : "Reabrir locação"
+                                                            }
+                                                            aria-label="Alterar Status da Locação"
+                                                        >
+                                                            <CheckIcon className="h-4 w-4" />
+                                                        </button>
+                                                    )}
+                                                    <button 
+                                                        onClick={() => handleOpenEditModal(r)}
+                                                        className="p-1.5 text-blue-600 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all cursor-pointer" 
+                                                        title="Editar Cadastro da Locação"
+                                                        aria-label="Editar Locação"
+                                                    >
+                                                        <PencilIcon className="h-4 w-4" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleOpenDeleteModal(r)}
+                                                        className="p-1.5 text-rose-600 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all cursor-pointer" 
+                                                        title="Excluir Permanentemente"
+                                                        aria-label="Excluir Locação"
+                                                    >
+                                                        <TrashIcon className="h-4 w-4" />
+                                                    </button>
+                                                </div>
+                                            </td>
+
+                                            {/* 2. Data da Solicitação */}
                                             <td className="px-5 py-4 whitespace-nowrap">
                                                 <div className="flex flex-col">
                                                     <div className="flex items-center gap-1.5 text-slate-800 font-bold text-xs">
@@ -1914,7 +2145,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                     <MercosulPlateBadge plate={r.plate} />
                                                     <div className="flex flex-col gap-1">
                                                         <span className={`px-2 py-0.5 text-[10px] font-black rounded-md border w-fit ${compBadgeClass}`}>
-                                                            {toTitleCase(r.rentalCompany) || 'A Definir'}
+                                                            {r.rentalCompany || 'A Definir'}
                                                         </span>
                                                         {r.reservationNumber && (
                                                             <span className="text-[10px] font-mono font-bold text-slate-400">
@@ -1930,10 +2161,17 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </div>
                                             </td>
 
-                                            {/* 3. Solicitante & Contato */}
+                                            {/* 3. Solicitante, Filial & Contato */}
                                             <td className="px-5 py-4">
-                                                <div className="text-sm font-black text-slate-900">{toTitleCase(r.requesterName)}</div>
-                                                <div className="text-[11px] text-slate-500 font-medium">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-sm font-black text-slate-900">{toTitleCase(r.requesterName)}</span>
+                                                    {(r.filial || r.base) && (
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-emerald-50 text-emerald-800 border border-emerald-200/80">
+                                                            🏢 {(r.filial || r.base || '').replace(/\s*\(Matriz\)/i, ' (Matriz)')}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="text-[11px] text-slate-500 font-medium mt-0.5">
                                                     {toTitleCase(r.requesterSector || 'Geral')} {r.requesterRole ? `• ${toTitleCase(r.requesterRole)}` : ''}
                                                 </div>
                                                 {r.requesterPhone && (
@@ -2082,76 +2320,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                                         {toTitleCase(r.status)}
                                                     </span>
-                                                )}
-                                            </td>
-
-                                            {/* 9. Ações */}
-                                            <td className="px-5 py-4 whitespace-nowrap text-right">
-                                                <div className="flex items-center gap-1.5 justify-end">
-                                                    {r.status === 'Solicitada' ? (
-                                                        <>
-                                                            <button
-                                                                onClick={() => handleOpenApproveModal(r)}
-                                                                className="px-2.5 py-1.5 text-xs font-black text-white bg-[#114D38] hover:bg-[#0d3b2c] rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95"
-                                                                title="Efetivar Locação RAC, Anexar Voucher e Notificar Solicitante"
-                                                            >
-                                                                <CheckIcon className="h-3.5 w-3.5" />
-                                                                Efetivar
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleOpenRejectModal(r)}
-                                                                className="px-2 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs active:scale-95"
-                                                                title="Recusar Solicitação RAC com Justificativa"
-                                                            >
-                                                                <XCircleIcon className="h-3.5 w-3.5" />
-                                                                Recusar
-                                                            </button>
-                                                        </>
-                                                    ) : r.status === 'Recusada' ? (
-                                                        <button
-                                                            onClick={() => handleOpenApproveModal(r)}
-                                                            className="px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs"
-                                                            title="Reabrir e Aprovar Locação RAC"
-                                                        >
-                                                            <CheckIcon className="h-3.5 w-3.5" />
-                                                            Reavaliar
-                                                        </button>
-                                                    ) : (
-                                                        <button 
-                                                            onClick={() => handleToggleStatus(r)}
-                                                            className={`p-2 rounded-xl border transition-all cursor-pointer ${
-                                                                r.status === 'Aguardando retirada' 
-                                                                    ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200' 
-                                                                    : r.status === 'Em Uso' 
-                                                                        ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200' 
-                                                                        : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
-                                                            }`}
-                                                            title={
-                                                                r.status === 'Aguardando retirada' 
-                                                                    ? "Iniciar utilização (Mudar para Em Uso)" 
-                                                                    : r.status === 'Em Uso' 
-                                                                        ? "Finalizar locação (Encerrar)" 
-                                                                        : "Reabrir locação"
-                                                            }
-                                                        >
-                                                            <CheckIcon className="h-4 w-4" />
-                                                        </button>
-                                                    )}
-                                                    <button 
-                                                        onClick={() => handleOpenEditModal(r)}
-                                                        className="p-2 text-blue-600 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all cursor-pointer" 
-                                                        title="Editar Cadastro da Locação"
-                                                    >
-                                                        <PencilIcon className="h-4 w-4" />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleOpenDeleteModal(r)}
-                                                        className="p-2 text-rose-600 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all cursor-pointer" 
-                                                        title="Excluir Permanentemente"
-                                                    >
-                                                        <TrashIcon className="h-4 w-4" />
-                                                    </button>
-                                                </div>
+                                                 )}
                                             </td>
                                         </tr>
                                     );
@@ -2172,27 +2341,82 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     filteredRentals.map(r => {
                         const reqDateTime = formatRequestDateTime(r.reservationDate || (r as any).createdAt);
                         return (
-                            <div key={r.id} className="p-4.5 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3.5">
-                                <div className="flex justify-between items-start">
-                                    <div className="flex items-center gap-3">
-                                        <MercosulPlateBadge plate={r.plate} />
-                                        <div>
-                                            <p className="text-sm font-black text-slate-900">
-                                                {toTitleCase(r.requesterName)}
-                                            </p>
-                                            <p className="text-xs text-slate-500 font-bold mt-0.5">
-                                                {toTitleCase(r.rentalCompany) || 'Locadora a definir'} • {toTitleCase(r.requesterSector || 'Geral')}
-                                            </p>
-                                        </div>
-                                    </div>
+                            <div key={r.id} className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3">
+                                {/* Cabeçalho com Ações Rápidas no Início */}
+                                <div className="flex justify-between items-center pb-2 border-b border-slate-100">
                                     <div className="flex items-center gap-1">
-                                        <button onClick={() => handleOpenEditModal(r)} className="p-1.5 text-blue-600 border border-blue-200 rounded-lg" title="Editar">
+                                        {r.status === 'Solicitada' && (
+                                            <>
+                                                <button
+                                                    onClick={() => handleOpenApproveModal(r)}
+                                                    className="p-2 text-white bg-[#114D38] hover:bg-[#0d3b2c] rounded-xl shadow-xs active:scale-95 transition-transform"
+                                                    title="Efetivar Locação RAC"
+                                                    aria-label="Efetivar"
+                                                >
+                                                    <CheckIcon className="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleOpenRejectModal(r)}
+                                                    className="p-2 text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl shadow-xs active:scale-95 transition-transform"
+                                                    title="Recusar Solicitação RAC"
+                                                    aria-label="Recusar"
+                                                >
+                                                    <XCircleIcon className="h-4 w-4" />
+                                                </button>
+                                            </>
+                                        )}
+                                        {r.status === 'Recusada' && (
+                                            <button
+                                                onClick={() => handleOpenApproveModal(r)}
+                                                className="p-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl shadow-xs"
+                                                title="Reabrir e Aprovar"
+                                                aria-label="Reabrir"
+                                            >
+                                                <CheckIcon className="h-4 w-4" />
+                                            </button>
+                                        )}
+                                        <button onClick={() => handleOpenEditModal(r)} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl" title="Editar">
                                             <PencilIcon className="h-4 w-4" />
                                         </button>
-                                        <button onClick={() => handleOpenDeleteModal(r)} className="p-1.5 text-rose-600 border border-rose-200 rounded-lg" title="Excluir">
+                                        <button onClick={() => handleOpenDeleteModal(r)} className="p-2 text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl" title="Excluir">
                                             <TrashIcon className="h-4 w-4" />
                                         </button>
                                     </div>
+
+                                    <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${
+                                        r.status === 'Solicitada' ? 'text-amber-800 bg-amber-100 border border-amber-300' :
+                                        r.status === 'Recusada' ? 'text-rose-800 bg-rose-100 border border-rose-200' :
+                                        r.status === 'Em Uso' ? 'text-blue-700 bg-blue-50 border border-blue-200' : 
+                                        r.status === 'Aguardando retirada' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 
+                                        'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                                    }`}>
+                                        {toTitleCase(r.status)}
+                                    </span>
+                                </div>
+
+                                {/* Identificação do Solicitante & Placa */}
+                                <div className="flex justify-between items-start">
+                                    <div className="flex items-center gap-2.5">
+                                        <MercosulPlateBadge plate={r.plate} />
+                                        <div>
+                                            <p className="text-sm font-black text-slate-900 leading-tight">
+                                                {toTitleCase(r.requesterName)}
+                                            </p>
+                                            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                                {(r.filial || r.base) && (
+                                                    <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80">
+                                                        🏢 {(r.filial || r.base || '').replace(/\s*\(Matriz\)/i, '')}
+                                                    </span>
+                                                )}
+                                                <span className="text-xs text-slate-500 font-bold">
+                                                    {r.rentalCompany || 'Locadora a definir'} • {toTitleCase(r.requesterSector || 'Geral')}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span className="text-xs font-black text-amber-700 font-mono">
+                                        {r.value ? formatCurrencyBRL(r.value) : 'R$ 0,00'}
+                                    </span>
                                 </div>
 
                                 <div className="text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1.5">
@@ -2210,89 +2434,45 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                             {toTitleCase(r.pickupCity ? normalizeCidade(r.pickupCity) : 'A definir')} ➔ {toTitleCase(r.returnCity ? normalizeCidade(r.returnCity) : 'A definir')}
                                         </span>
                                     </div>
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Status</span>
-                                        <span className={`text-[11px] font-black px-2 py-0.5 rounded-lg ${
-                                            r.status === 'Solicitada' ? 'text-amber-800 bg-amber-100 border border-amber-300' :
-                                            r.status === 'Recusada' ? 'text-rose-800 bg-rose-100 border border-rose-200' :
-                                            r.status === 'Em Uso' ? 'text-blue-700 bg-blue-50 border border-blue-200' : 
-                                            r.status === 'Aguardando retirada' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 
-                                            'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                                        }`}>
-                                            {toTitleCase(r.status)}
-                                        </span>
-                                    </div>
 
-                                <div className="flex justify-between items-center pt-1 border-t border-slate-100">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase">Confirmação RAC</span>
-                                    {r.hasVoucher || r.voucherBase64 ? (
-                                        <button
-                                            onClick={() => {
-                                                if (r.voucherBase64) {
-                                                    setViewingVoucher({
-                                                        isOpen: true,
-                                                        name: r.requesterName,
-                                                        url: r.voucherBase64,
-                                                        fileName: r.voucherFileName || `Confirmacao_${r.protocolNumber || r.reservationNumber || 'Reserva'}.pdf`
-                                                    });
-                                                } else {
-                                                    showToast("Documento de confirmação registrado.", "success");
-                                                }
-                                            }}
-                                            className="text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
-                                        >
-                                            🎫 Ver Confirmação
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={() => {
-                                                setQuickAttachRental(r);
-                                                setQuickVoucherFile(null);
-                                            }}
-                                            className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
-                                        >
-                                            📎 Anexar Confirmação
-                                        </button>
-                                    )}
+                                    <div className="flex justify-between items-center pt-1 border-t border-slate-100">
+                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Confirmação RAC</span>
+                                        {r.hasVoucher || r.voucherBase64 ? (
+                                            <button
+                                                onClick={() => {
+                                                    if (r.voucherBase64) {
+                                                        setViewingVoucher({
+                                                            isOpen: true,
+                                                            name: r.requesterName,
+                                                            url: r.voucherBase64,
+                                                            fileName: r.voucherFileName || `Confirmacao_${r.protocolNumber || r.reservationNumber || 'Reserva'}.pdf`
+                                                        });
+                                                    } else {
+                                                        showToast("Documento de confirmação registrado.", "success");
+                                                    }
+                                                }}
+                                                className="text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                                            >
+                                                🎫 Ver Confirmação
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => {
+                                                    setQuickAttachRental(r);
+                                                    setQuickVoucherFile(null);
+                                                }}
+                                                className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                                            >
+                                                📎 Anexar Confirmação
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-
-                            {/* Ações Mobile Rápidas */}
-                            {r.status === 'Solicitada' && (
-                                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
-                                    <button
-                                        onClick={() => handleOpenApproveModal(r)}
-                                        className="w-full py-2 bg-[#114D38] hover:bg-[#0d3b2c] text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-xs"
-                                    >
-                                        <CheckIcon className="h-3.5 w-3.5" />
-                                        Efetivar
-                                    </button>
-                                    <button
-                                        onClick={() => handleOpenRejectModal(r)}
-                                        className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs"
-                                    >
-                                        <XCircleIcon className="h-3.5 w-3.5" />
-                                        Recusar
-                                    </button>
-                                </div>
-                            )}
-
-                            {r.status === 'Recusada' && (
-                                <div className="pt-1 border-t border-slate-100">
-                                    <button
-                                        onClick={() => handleOpenApproveModal(r)}
-                                        className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs"
-                                    >
-                                        <CheckIcon className="h-3.5 w-3.5" />
-                                        Reavaliar & Aprovar
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    );
-                })
-            )}
-        </div>
+                        );
+                    })
+                )}
+            </div>
 
             {/* 7. Modal de Cadastro / Edição com Design Refinado */}
             <Modal 
@@ -2318,17 +2498,22 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </span>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Locadora</label>
-                                <select 
+                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                    Locadora <span className="text-[10px] font-normal text-slate-500">(Digite livremente)</span>
+                                </label>
+                                <input 
+                                    type="text" 
+                                    list="rac-admin-locadoras-list"
                                     value={formData.rentalCompany} 
                                     onChange={e => setFormData({ ...formData, rentalCompany: e.target.value })}
+                                    placeholder="Digite a locadora (Ex: Localiza, Movida, Unidas...)"
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
-                                >
-                                    <option value="Localiza">Localiza</option>
-                                    <option value="Movida">Movida</option>
-                                    <option value="Unidas">Unidas</option>
-                                    <option value="Outras">Outras (Terceirizados)</option>
-                                </select>
+                                />
+                                <datalist id="rac-admin-locadoras-list">
+                                    {availableCompanies.map(c => (
+                                        <option key={c} value={c} />
+                                    ))}
+                                </datalist>
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Placa do Veículo (Opcional)</label>
@@ -2348,9 +2533,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
                             2. Solicitante & Condutor
                         </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Nome do Solicitante</label>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Nome do Solicitante *</label>
                                 <input 
                                     type="text" 
                                     value={formData.requesterName} 
@@ -2359,6 +2544,35 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     placeholder="Ex: João da Silva"
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
                                 />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Filial / Base Solicitante *</label>
+                                <select 
+                                    value={formData.filial || formData.base} 
+                                    onChange={e => {
+                                        const val = e.target.value;
+                                        setFormData({ ...formData, filial: val, base: val });
+                                        if (val !== 'Outros') setCustomFilialAdmin('');
+                                    }}
+                                    className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none cursor-pointer"
+                                >
+                                    <option value="" disabled>Selecione a Filial / Base...</option>
+                                    {FILIAIS_RISEL.map(f => (
+                                        <option key={f} value={f}>{f}</option>
+                                    ))}
+                                    {formData.filial && !(FILIAIS_RISEL as readonly string[]).includes(formData.filial) && formData.filial !== 'Outros' && (
+                                        <option value={formData.filial}>{formData.filial}</option>
+                                    )}
+                                </select>
+                                {formData.filial === 'Outros' && (
+                                    <input 
+                                        type="text" 
+                                        value={customFilialAdmin} 
+                                        onChange={e => setCustomFilialAdmin(e.target.value)}
+                                        placeholder="Especifique a filial ou base..."
+                                        className="mt-2 w-full px-3 py-2 bg-white border border-emerald-400 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                )}
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Setor Solicitante</label>
@@ -2386,7 +2600,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
                                 />
                             </div>
-                            <div>
+                            <div className="sm:col-span-2">
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Condutor Autorizado</label>
                                 <input 
                                     type="text" 
@@ -2706,20 +2920,23 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     <div className="space-y-3">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Locadora Selecionada *</label>
-                                <select
+                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                    Locadora Contratada * <span className="text-[10px] font-normal text-slate-500">(Digite livremente)</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    list="rac-approve-locadoras-list"
                                     value={approveFormData.rentalCompany}
                                     onChange={e => setApproveFormData({ ...approveFormData, rentalCompany: e.target.value })}
+                                    placeholder="Digite a locadora (Ex: Localiza, Movida, Unidas...)"
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-emerald-600 outline-none"
                                     required
-                                >
-                                    <option value="Localiza">Localiza</option>
-                                    <option value="Movida">Movida</option>
-                                    <option value="Unidas">Unidas</option>
-                                    <option value="Foco">Foco</option>
-                                    <option value="Kovi">Kovi</option>
-                                    <option value="Outra Locadora">Outra Locadora</option>
-                                </select>
+                                />
+                                <datalist id="rac-approve-locadoras-list">
+                                    {availableCompanies.map(c => (
+                                        <option key={c} value={c} />
+                                    ))}
+                                </datalist>
                             </div>
 
                             <div>

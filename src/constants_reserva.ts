@@ -140,3 +140,17 @@ export const ALLOWED_PLATES: string[] = [
   "SJF2A58", "SJF2A93", "SJF2B23", "SJF2B57", "SJF2B63", "TEA9H58", "TXQ1D35", "TXN9A40", "TXN9A42", "TYP6J30",
   "SHT8C33"
 ];
+
+// Filiais e Bases Operacionais Risel oficiais
+export const FILIAIS_RISEL = [
+  "Aguaí",
+  "Betim",
+  "Capão Bonito",
+  "Cubatão",
+  "Jales",
+  "Ourinhos",
+  "Paulínia",
+  "São Bernardo",
+  "Outros"
+] as const;
+

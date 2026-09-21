@@ -382,10 +382,18 @@ export function normalizeBaseOperacional(rawBase?: string | null, defaultFallbac
 
   const key = getCleanSearchKey(cleaned);
 
+  // Mapeamento prioritário para as 9 opções oficiais de Filial / Base Solicitante
+  if (key === "aguai") return "Aguaí";
+  if (key === "betim") return "Betim";
+  if (key === "capao bonito") return "Capão Bonito";
+  if (key === "cubatao") return "Cubatão";
+  if (key === "jales") return "Jales";
+  if (key === "ourinhos") return "Ourinhos";
+  if (key === "paulinia" || key === "matriz" || key === "paulinia matriz" || key === "matriz paulinia") return "Paulínia";
+  if (key === "sao bernardo" || key === "sao bernardo do campo" || key === "sbc") return "São Bernardo";
+  if (key.startsWith("outro")) return cleaned; // Preserva Outros ou Outros (descrição)
+
   // Casos específicos de filiais corporativas Risel
-  if (key === "matriz" || key === "paulinia matriz" || key === "matriz paulinia") {
-    return "Paulínia (Matriz)";
-  }
   if (key === "campineira" || key.includes("campineira")) {
     return "Campineira";
   }
