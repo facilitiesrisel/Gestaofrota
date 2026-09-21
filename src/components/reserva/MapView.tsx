@@ -400,15 +400,21 @@ const MapView: React.FC = () => {
             let driverName = defaultDriver || 'Disponível / Pátio';
             let driverStatusBadge = 'Controle de Frota';
             let usageType: 'USO_DIARIO' | 'RESERVA' | 'FROTA_LEVE' = 'FROTA_LEVE';
+            let destination = '';
+            let department = '';
 
             if (activeTrip) {
-                driverName = activeTrip.driverName;
+                driverName = activeTrip.driverName || (activeTrip as any).condutor || (activeTrip as any).motorista || defaultDriver;
                 driverStatusBadge = 'Em Uso Diário';
                 usageType = 'USO_DIARIO';
+                destination = activeTrip.destination || (activeTrip as any).destino || '';
+                department = activeTrip.department || (activeTrip as any).setor || '';
             } else if (activeRes) {
-                driverName = activeRes.requesterName || (activeRes as any).condutor || (activeRes as any).driverName;
+                driverName = activeRes.requesterName || (activeRes as any).condutor || (activeRes as any).driverName || (activeRes as any).motorista || defaultDriver;
                 driverStatusBadge = 'Reservado';
                 usageType = 'RESERVA';
+                destination = activeRes.destination || (activeRes as any).destino || '';
+                department = activeRes.department || (activeRes as any).setor || '';
             }
 
             if (plateFilter && cleanPlate !== plateFilter.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()) {
@@ -417,7 +423,8 @@ const MapView: React.FC = () => {
 
             return {
                 ...vehicle,
-                lat, lng, isOffline, speed, ignition, gpsTime, driverName, driverStatusBadge, usageType, originalDriver: defaultDriver, address
+                lat, lng, isOffline, speed, ignition, gpsTime, driverName, driverStatusBadge, usageType, originalDriver: defaultDriver, address,
+                destination, department
             };
         }).filter(Boolean);
     }, [vehicles, positions, plateFilter, dailyTrips, reservations, viewMode]);
@@ -712,6 +719,16 @@ const MapView: React.FC = () => {
                                                             <SteeringWheelIcon className="h-3 w-3 text-[#114D38] shrink-0" />
                                                             <span className="text-xs font-bold text-[#114D38] truncate" title={v.driverName}>{v.driverName}</span>
                                                         </div>
+                                                        {v.destination && (
+                                                            <span className="text-[9.5px] text-slate-600 truncate mt-0.5" title={v.destination}>
+                                                                Destino: <strong className="text-slate-800">{v.destination}</strong>
+                                                            </span>
+                                                        )}
+                                                        {v.department && (
+                                                            <span className="text-[9px] text-slate-500 truncate">
+                                                                Setor: {v.department}
+                                                            </span>
+                                                        )}
                                                      </div>
                                                 </div>
 

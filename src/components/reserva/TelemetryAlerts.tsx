@@ -59,6 +59,8 @@ interface TelemetryAlertsProps {
   geoPositions: any[];
   fleetVehicles?: any[];
   reservations?: any[];
+  dailyTrips?: any[];
+  reservaVehicles?: any[];
 }
 
 const DEFAULT_ALERT_RULES: TelemetryAlertRule[] = [
@@ -157,12 +159,14 @@ const DEFAULT_ALERT_RULES: TelemetryAlertRule[] = [
 export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
   geoPositions,
   fleetVehicles = [],
-  reservations = []
+  reservations = [],
+  dailyTrips = [],
+  reservaVehicles = []
 }) => {
-  // 1. Processar frota leve permitida com condutores e reservas
+  // 1. Processar frota permitida com condutores e reservas
   const processedFleet = useMemo(() => {
-    return getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservations);
-  }, [geoPositions, fleetVehicles, reservations]);
+    return getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservations, dailyTrips, reservaVehicles);
+  }, [geoPositions, fleetVehicles, reservations, dailyTrips, reservaVehicles]);
 
   // Lista de placas permitidas da Frota Leve
   const lightFleetPlates = useMemo(() => {

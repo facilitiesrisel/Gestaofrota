@@ -101,9 +101,15 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         (data) => {
             if (data && data.length > 0) {
               setVehicles(data);
+              try {
+                localStorage.setItem('risel_reserva_vehicles', JSON.stringify(data));
+              } catch (e) {}
             } else {
               setVehicles(getInitialFleetVehicles());
             }
+            try {
+              window.dispatchEvent(new Event('risel_reserva_data_updated'));
+            } catch (e) {}
             vehiclesLoaded = true;
             checkLoadingComplete();
         },
@@ -118,6 +124,11 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
     const unsubReservations = firebaseApi.subscribeToReservations(
         (data) => {
             setReservations(data);
+            try {
+              localStorage.setItem('risel_reservations', JSON.stringify(data));
+              window.dispatchEvent(new Event('risel_reservations_updated'));
+              window.dispatchEvent(new Event('risel_reserva_data_updated'));
+            } catch (e) {}
             reservationsLoaded = true;
             checkLoadingComplete();
         },
@@ -134,6 +145,12 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
     const unsubDaily = firebaseApi.subscribeToDailyUseTrips(
         (data) => {
             setDailyTrips(data);
+            try {
+              localStorage.setItem('risel_daily_trips', JSON.stringify(data));
+              localStorage.setItem('risel_frota_daily_trips', JSON.stringify(data));
+              window.dispatchEvent(new Event('risel_daily_trip_updated'));
+              window.dispatchEvent(new Event('risel_reserva_data_updated'));
+            } catch (e) {}
             dailyLoaded = true;
             checkLoadingComplete();
         },

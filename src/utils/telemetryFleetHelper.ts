@@ -5,18 +5,22 @@ export interface ProcessedTelemetryVehicle {
   plate: string;
   code?: string;
   model: string;
-  driver: string;
-  originalDriver: string; // Nome cadastrado no Controle de Frota Leve
+  driver: string; // Nome do motorista que está utilizando no momento (por uso diário ou reserva) ou condutor cadastrado
+  originalDriver: string; // Nome cadastrado no Controle de Frota Leve / titular
   isReservationInUse: boolean;
   isDailyUseActive?: boolean;
   usageType?: 'RESERVA' | 'USO_DIARIO' | 'CADASTRO_FROTA';
+  isFromReservaFleet?: boolean; // Pertence à Frota de veículos ativos da Gestão de Reservas
   reservationDetails?: {
     driver: string;
+    department?: string;
     destination?: string;
     status: string;
     de?: string;
     ate?: string;
     type?: string;
+    initialKm?: number;
+    requesterName?: string;
   };
   speed: number;
   ignition: boolean;
@@ -38,21 +42,22 @@ export interface ProcessedTelemetryVehicle {
 
 /**
  * Função utilitária que resolve a frota de telemetria conforme a regra de negócio:
- * 1. Apenas veículos listados no Controle de Frota Leve QUE POSSUEM rastreador GeoFrotas.
- * 2. Se o veículo estiver em uso diário ativo (DailyTrip InUse), exibe o condutor do uso diário.
- * 3. Se o veículo estiver em reserva ativa (Reserva InUse / Em Andamento / Confirmada no período), exibe o condutor da reserva.
- * 4. Quando não estiver em reserva nem uso diário, exibe o condutor exatamente como cadastrado no Controle de Frota Leve.
+ * 1. Veículos listados no Controle de Frota Leve E/OU cadastrados na Frota de veículos ativos da Gestão de Reservas.
+ * 2. Se o veículo estiver em uso diário ativo (DailyTrip InUse), exibe os dados do motorista do uso diário no momento.
+ * 3. Se o veículo estiver em reserva ativa (Reserva InUse / Em Andamento / Confirmada no período), exibe os dados do motorista da reserva.
+ * 4. Quando não estiver em reserva nem uso diário, exibe o condutor cadastrado ou 'Disponível na Base'.
  */
 export function getProcessedFleetWithReservations(
   geoPositions: any[] = [],
   fleetVehiclesProp?: Veiculo[],
   reservationsProp?: any[],
-  dailyTripsProp?: any[]
+  dailyTripsProp?: any[],
+  reservaVehiclesProp?: any[]
 ): ProcessedTelemetryVehicle[] {
   // 1. Obter veículos do Controle de Frota Leve
   let fleetList: Veiculo[] = [];
   if (fleetVehiclesProp && fleetVehiclesProp.length > 0) {
-    fleetList = fleetVehiclesProp;
+    fleetList = [...fleetVehiclesProp];
   } else {
     try {
       const stored = localStorage.getItem('risel_frota_veiculos_v2');
@@ -63,9 +68,51 @@ export function getProcessedFleetWithReservations(
       console.warn('Erro ao carregar veículos do localStorage:', e);
     }
     if (!fleetList || fleetList.length === 0) {
-      fleetList = VEICULOS_REAIS;
+      fleetList = [...VEICULOS_REAIS];
     }
   }
+
+  // 1.1 Obter e integrar veículos cadastrados na Frota de veículos ativos da Gestão de Reservas
+  let reservaFleetList: any[] = [];
+  if (reservaVehiclesProp && reservaVehiclesProp.length > 0) {
+    reservaFleetList = reservaVehiclesProp;
+  } else {
+    try {
+      const storedReserva = localStorage.getItem('risel_reserva_vehicles');
+      if (storedReserva) {
+        reservaFleetList = JSON.parse(storedReserva);
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar veículos de reserva do localStorage:', e);
+    }
+  }
+
+  // Mapa de placas de veículos cadastrados na Frota da Gestão de Reservas
+  const reservaPlatesSet = new Set<string>();
+  (reservaFleetList || []).forEach((rv: any) => {
+    if (rv.isActive !== false) {
+      const rawPlate = (rv.plate || rv.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      if (rawPlate) {
+        reservaPlatesSet.add(rawPlate);
+        // Se o veículo ativo de reservas ainda não estiver na fleetList, adiciona-o para ser monitorado
+        const exists = fleetList.some(f => (f.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === rawPlate);
+        if (!exists) {
+          fleetList.push({
+            id: rv.id || `v-${rawPlate.toLowerCase()}`,
+            placa: rv.plate || rv.placa || rawPlate,
+            modelo: rv.model || rv.modelo || 'Veículo Operacional',
+            condutor: rv.driver || rv.condutor || 'Disponível (Gestão de Reservas)',
+            status: 'Ativo',
+            odometro: Number(rv.lastKm || rv.initialKm) || 0,
+            filial: rv.base || 'Paulínia',
+            locadora: 'Frota Reservas',
+            contrato: 'Risel',
+            funcao: rv.type || 'Operações'
+          } as any);
+        }
+      }
+    }
+  });
 
   // 2. Obter reservas para verificar veículos reservados no momento
   let reservasList: any[] = [];
@@ -73,7 +120,7 @@ export function getProcessedFleetWithReservations(
     reservasList = reservationsProp;
   } else {
     try {
-      const storedReservas = localStorage.getItem('risel_frota_reservas') || localStorage.getItem('risel_reservations');
+      const storedReservas = localStorage.getItem('risel_reservations') || localStorage.getItem('risel_frota_reservas');
       if (storedReservas) {
         reservasList = JSON.parse(storedReservas);
       }
@@ -110,7 +157,7 @@ export function getProcessedFleetWithReservations(
   const now = new Date();
   const processedList: ProcessedTelemetryVehicle[] = [];
 
-  // Filtrar e enriquecer APENAS os veículos do Controle de Frota Leve que possuem rastreador no GeoFrotas
+  // Filtrar e enriquecer os veículos que possuem rastreador no GeoFrotas
   fleetList.forEach((veic) => {
     if (!veic.placa) return;
     if (veic.status === 'Inativo') return;
@@ -121,6 +168,7 @@ export function getProcessedFleetWithReservations(
     // Se NÃO possui rastreador retornado pelo GeoFrotas, não exibe na telemetria ativa
     if (!pos) return;
 
+    const isFromReservaFleet = reservaPlatesSet.has(cleanPlate);
     const charCodeSum = cleanPlate.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
     const active = Boolean(pos.geoLocation && pos.geoLocation.includes(','));
     const speed = typeof pos.speed === 'number' ? pos.speed : 0;
@@ -197,7 +245,7 @@ export function getProcessedFleetWithReservations(
       return false;
     }) : null;
 
-    const originalDriver = veic.condutor || 'Sem Condutor Cadastrado';
+    const originalDriver = veic.condutor || (isFromReservaFleet ? 'Disponível na Base' : 'Sem Condutor Cadastrado');
     let currentDriver = originalDriver;
     let isReservationInUse = false;
     let isDailyUseActive = false;
@@ -205,32 +253,37 @@ export function getProcessedFleetWithReservations(
     let reservationDetails: ProcessedTelemetryVehicle['reservationDetails'] = undefined;
 
     if (matchingDailyTrip) {
-      const driverDaily = matchingDailyTrip.driverName || matchingDailyTrip.condutor || matchingDailyTrip.driver;
+      const driverDaily = matchingDailyTrip.driverName || matchingDailyTrip.condutor || matchingDailyTrip.driver || matchingDailyTrip.requesterName;
       if (driverDaily && driverDaily.trim() !== '') {
         currentDriver = driverDaily.trim();
         isDailyUseActive = true;
         usageType = 'USO_DIARIO';
         reservationDetails = {
           driver: currentDriver,
-          destination: matchingDailyTrip.destination || matchingDailyTrip.destinationCity || matchingDailyTrip.destino || 'Uso Operacional',
+          department: matchingDailyTrip.department || matchingDailyTrip.departamento || matchingDailyTrip.setor || 'Operações',
+          destination: matchingDailyTrip.destinationCity || matchingDailyTrip.destination || matchingDailyTrip.destino || 'Uso Operacional',
           status: 'Em Uso Diário',
           de: matchingDailyTrip.departureDateTime || matchingDailyTrip.startDateTime || matchingDailyTrip.data || '',
-          type: 'Uso Diário'
+          type: 'Uso Diário',
+          initialKm: matchingDailyTrip.initialKm,
+          requesterName: matchingDailyTrip.requesterName || currentDriver
         };
       }
     } else if (matchingReserva) {
-      const driverReserva = matchingReserva.condutor || matchingReserva.driverName || matchingReserva.requesterName || matchingReserva.solicitante;
+      const driverReserva = matchingReserva.driverName || matchingReserva.requesterName || matchingReserva.condutor || matchingReserva.solicitante;
       if (driverReserva && driverReserva.trim() !== '') {
         currentDriver = driverReserva.trim();
         isReservationInUse = true;
         usageType = 'RESERVA';
         reservationDetails = {
           driver: currentDriver,
-          destination: matchingReserva.destino || matchingReserva.destination || '',
+          department: matchingReserva.department || matchingReserva.departamento || matchingReserva.setor || 'Gestão de Frotas',
+          destination: matchingReserva.destino || matchingReserva.destination || 'Em Viagem',
           status: matchingReserva.status || 'Em Andamento',
-          de: matchingReserva.de || '',
-          ate: matchingReserva.ate || '',
-          type: 'Reserva'
+          de: matchingReserva.de || matchingReserva.departureDateTime || '',
+          ate: matchingReserva.ate || matchingReserva.returnDate || '',
+          type: 'Reserva',
+          requesterName: matchingReserva.requesterName || matchingReserva.solicitante || currentDriver
         };
       }
     }
@@ -244,6 +297,7 @@ export function getProcessedFleetWithReservations(
       isReservationInUse,
       isDailyUseActive,
       usageType,
+      isFromReservaFleet,
       reservationDetails,
       speed,
       ignition,

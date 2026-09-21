@@ -20,6 +20,8 @@ export interface TelemetryDashboardProps {
   geoPositions: any[];
   fleetVehicles?: any[];
   reservas?: any[];
+  dailyTrips?: any[];
+  reservaVehicles?: any[];
 }
 
 // Componente Custom Tooltip Elegante para Gráfico de Bases (Fundo Claro de Alto Contraste)
@@ -109,7 +111,9 @@ const CustomKmMesTooltip = ({ active, payload, label, viewMode }: any) => {
 export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({ 
   geoPositions, 
   fleetVehicles, 
-  reservas 
+  reservas,
+  dailyTrips,
+  reservaVehicles
 }) => {
   // Mês e data atual calculados dinamicamente
   const currentDate = useMemo(() => new Date(), []);
@@ -170,9 +174,9 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
   };
 
   // Processamento e Modelagem unificada de dados de frota para Business Intelligence
-  // Regra: Somente veículos da Frota Leve que possuem rastreador GeoFrotas e condutor associado
+  // Regra: Somente veículos que possuem rastreador GeoFrotas e condutor associado
   const processedFleet = useMemo(() => {
-    const rawList = getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservas);
+    const rawList = getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservas, dailyTrips, reservaVehicles);
     
     return rawList.map((v) => {
       const charCodeSum = v.charCodeSum;
@@ -193,6 +197,8 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
         driver: v.driver,
         originalDriver: v.originalDriver,
         isReservationInUse: v.isReservationInUse,
+        isDailyUseActive: v.isDailyUseActive,
+        isFromReservaFleet: v.isFromReservaFleet,
         reservationDetails: v.reservationDetails,
         base: v.base ? normalizeBaseOperacional(v.base) : 'Paulínia',
         locadora: v.locadora || 'Locadora',
@@ -206,7 +212,7 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
         address: v.address
       };
     });
-  }, [geoPositions, fleetVehicles, reservas]);
+  }, [geoPositions, fleetVehicles, reservas, dailyTrips, reservaVehicles]);
 
   // Lista dinâmica e unificada de bases reais extraídas dos veículos
   const availableBases = useMemo(() => {
@@ -467,7 +473,11 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
       driver: v.driver,
       active: v.active,
       speed: v.speed,
-      ignitionStatus: v.ignitionStatus
+      ignitionStatus: v.ignitionStatus,
+      isDailyUseActive: v.isDailyUseActive,
+      isReservationInUse: v.isReservationInUse,
+      isFromReservaFleet: v.isFromReservaFleet,
+      reservationDetails: v.reservationDetails
     })).sort((a, b) => b.score - a.score);
   }, [filteredFleet]);
 
@@ -1229,7 +1239,24 @@ export const TelemetryDashboard: React.FC<TelemetryDashboardProps> = ({
                           {v.plate}
                         </span>
                       </td>
-                      <td className="py-3 text-left font-bold text-slate-800">{v.driver}</td>
+                      <td className="py-3 text-left">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-bold text-slate-800">{v.driver}</span>
+                          {v.isDailyUseActive && (
+                            <span className="inline-flex items-center gap-1 text-[8px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.2 rounded w-max">
+                              Uso Diário
+                            </span>
+                          )}
+                          {v.isReservationInUse && (
+                            <span className="inline-flex items-center gap-1 text-[8px] font-black uppercase text-amber-700 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded w-max">
+                              Em Reserva
+                            </span>
+                          )}
+                          {!v.isDailyUseActive && !v.isReservationInUse && v.isFromReservaFleet && (
+                            <span className="text-[8px] text-violet-600 font-medium">Frota Reservas</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <span className={`w-2 h-2 rounded-full ${

@@ -30,7 +30,7 @@ import { ChecklistRealizados } from "../components/reserva/ChecklistRealizados";
 import { ChecklistForm } from "../components/reserva/ChecklistForm";
 import { ChecklistAlertas } from "../components/reserva/ChecklistAlertas";
 import MultasDashboard from "./multas/MultasDashboard";
-import { getFirebaseChecklists, deleteFirebaseChecklist } from "../services/firebaseService";
+import { getFirebaseChecklists, deleteFirebaseChecklist, subscribeToDailyUseTrips, subscribeToVehicles } from "../services/firebaseService";
 import { 
   fetchAbastecimentosSupabase, 
   saveAbastecimentoSupabase, 
@@ -710,6 +710,8 @@ export default function Frota() {
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [reservas, setReservas] = useState<Reserva[]>([]);
+  const [dailyTrips, setDailyTrips] = useState<any[]>([]);
+  const [reservaVehicles, setReservaVehicles] = useState<any[]>([]);
   const [multas, setMultas] = useState<Multa[]>([]);
   const [abastecimentos, setAbastecimentos] = useState<Abastecimento[]>([]);
   const [manutencoes, setManutencoes] = useState<Manutencao[]>([]);
@@ -1823,6 +1825,57 @@ export default function Frota() {
       setPedagios(parsedTolls);
     }
 
+    // 8. Uso Diário e Frota de Reservas (Carrega do cache e Firebase em tempo real)
+    try {
+      const savedTrips = localStorage.getItem('risel_reservations_daily_trips');
+      if (savedTrips) {
+        const parsedTrips = JSON.parse(savedTrips);
+        if (Array.isArray(parsedTrips)) setDailyTrips(parsedTrips);
+      }
+      const savedResVehicles = localStorage.getItem('risel_reservations_vehicles');
+      if (savedResVehicles) {
+        const parsedVehicles = JSON.parse(savedResVehicles);
+        if (Array.isArray(parsedVehicles)) setReservaVehicles(parsedVehicles);
+      }
+    } catch (e) {}
+
+    const unsubDaily = subscribeToDailyUseTrips(
+      (trips) => {
+        if (trips && trips.length > 0) {
+          setDailyTrips(trips);
+          try { localStorage.setItem('risel_reservations_daily_trips', JSON.stringify(trips)); } catch (e) {}
+        }
+      },
+      (err) => console.warn("Aviso ao sincronizar viagens de uso diário:", err)
+    );
+
+    const unsubVehicles = subscribeToVehicles(
+      (resVehs) => {
+        if (resVehs && resVehs.length > 0) {
+          setReservaVehicles(resVehs);
+          try { localStorage.setItem('risel_reservations_vehicles', JSON.stringify(resVehs)); } catch (e) {}
+        }
+      },
+      (err) => console.warn("Aviso ao sincronizar veículos de reserva:", err)
+    );
+
+    const handleStorageChange = () => {
+      try {
+        const savedTrips = localStorage.getItem('risel_reservations_daily_trips');
+        if (savedTrips) setDailyTrips(JSON.parse(savedTrips));
+        const savedResVehicles = localStorage.getItem('risel_reservations_vehicles');
+        if (savedResVehicles) setReservaVehicles(JSON.parse(savedResVehicles));
+      } catch (e) {}
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('risel_reservations_updated', handleStorageChange);
+
+    return () => {
+      if (typeof unsubDaily === 'function') unsubDaily();
+      if (typeof unsubVehicles === 'function') unsubVehicles();
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('risel_reservations_updated', handleStorageChange);
+    };
   }, []);
 
   // Auto-sync Google Sheets on mount if enabled and token exists
@@ -3833,6 +3886,8 @@ export default function Frota() {
                   geoPositions={geoPositions} 
                   fleetVehicles={veiculos}
                   reservas={reservas}
+                  dailyTrips={dailyTrips}
+                  reservaVehicles={reservaVehicles}
                 />
               )}
 
@@ -3841,6 +3896,8 @@ export default function Frota() {
                   geoPositions={geoPositions} 
                   fleetVehicles={veiculos}
                   reservations={reservas}
+                  dailyTrips={dailyTrips}
+                  reservaVehicles={reservaVehicles}
                 />
               )}
 
@@ -3849,6 +3906,8 @@ export default function Frota() {
                   geoPositions={geoPositions} 
                   fleetVehicles={veiculos}
                   reservations={reservas}
+                  dailyTrips={dailyTrips}
+                  reservaVehicles={reservaVehicles}
                 />
               )}
 
@@ -3857,6 +3916,8 @@ export default function Frota() {
                   geoPositions={geoPositions} 
                   fleetVehicles={veiculos}
                   reservations={reservas}
+                  dailyTrips={dailyTrips}
+                  reservaVehicles={reservaVehicles}
                 />
               )}
             </div>

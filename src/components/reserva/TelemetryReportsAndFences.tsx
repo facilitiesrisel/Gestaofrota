@@ -25,6 +25,8 @@ export interface TelemetryReportsAndFencesProps {
   geoPositions: any[];
   fleetVehicles?: any[];
   reservations?: any[];
+  dailyTrips?: any[];
+  reservaVehicles?: any[];
 }
 
 // Provedores dinâmicos de mapas reais sincronizados com o controle de cota (Google Maps e Mapbox Failover)
@@ -200,7 +202,9 @@ const MapEventsHandler: React.FC<{
 export const TelemetryReportsAndFences: React.FC<TelemetryReportsAndFencesProps> = ({ 
   geoPositions, 
   fleetVehicles = [], 
-  reservations = [] 
+  reservations = [],
+  dailyTrips = [],
+  reservaVehicles = []
 }) => {
   // Abas do Módulo
   const [activeTab, setActiveTab] = useState<'trajeto' | 'cercas' | 'pois' | 'analitico'>('trajeto');
@@ -218,10 +222,10 @@ export const TelemetryReportsAndFences: React.FC<TelemetryReportsAndFencesProps>
     return () => unsubscribe();
   }, []);
 
-  // Lista dos veículos do Controle de Frota Leve que possuem rastreador no GeoFrotas
+  // Lista dos veículos que possuem rastreador no GeoFrotas
   const processedFleet = useMemo(() => {
-    return getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservations);
-  }, [geoPositions, fleetVehicles, reservations]);
+    return getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservations, dailyTrips, reservaVehicles);
+  }, [geoPositions, fleetVehicles, reservations, dailyTrips, reservaVehicles]);
 
   // Placas permitidas
   const activePlatesList = useMemo(() => {

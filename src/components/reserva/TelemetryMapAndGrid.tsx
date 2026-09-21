@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   MapPin, LayoutGrid, Eye, Map, Wifi, Battery, Gauge, Compass, 
   Activity, Play, Square, Settings, RefreshCw, ChevronRight, Navigation,
-  List, Table, EyeOff, AlertTriangle, CheckCircle2, Search, Filter, Calendar, User, ChevronDown, ChevronUp, Clock
+  List, Table, EyeOff, AlertTriangle, CheckCircle2, Search, Filter, Calendar, User, ChevronDown, ChevronUp, Clock, Car
 } from 'lucide-react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
@@ -18,6 +18,8 @@ export interface TelemetryMapAndGridProps {
   geoPositions: any[];
   fleetVehicles?: any[];
   reservations?: any[];
+  dailyTrips?: any[];
+  reservaVehicles?: any[];
 }
 
 // Provedores de mapas reais de alta performance
@@ -270,7 +272,9 @@ const createPoiMapIcon = (tipo: string) => {
 export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({ 
   geoPositions, 
   fleetVehicles, 
-  reservations 
+  reservations,
+  dailyTrips,
+  reservaVehicles
 }) => {
   const [mapProvidersList, setMapProvidersList] = useState<MapProvider[]>(() => getDynamicMapProviders());
   const [mapType, setMapType] = useState('primary_road');
@@ -309,6 +313,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
   const [filtroPlaca, setFiltroPlaca] = useState('Todas');
   const [filtroCondutor, setFiltroCondutor] = useState('Todos');
   const [filtroBase, setFiltroBase] = useState('Todas');
+  const [filtroTipoUso, setFiltroTipoUso] = useState<string>('Todos');
 
   // Estados para ordenação da tabela de telemetria
   const [sortField, setSortField] = useState<'plate' | 'model' | 'driver' | 'ignition' | 'speed' | 'odometer' | 'lastUpdate' | 'address' | null>(null);
@@ -385,14 +390,14 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
     return mapProvidersList.find(m => m.id === mapType) || mapProvidersList[0];
   }, [mapType, mapProvidersList]);
 
-  // Lista unificada e filtrada estritamente: Veículos do Controle de Frota Leve QUE POSSUEM rastreador GeoFrotas
+  // Lista unificada e filtrada estritamente: Veículos do Controle de Frota Leve e Frota de Reservas QUE POSSUEM rastreador GeoFrotas
   const processedFleet = useMemo(() => {
-    return getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservations);
-  }, [geoPositions, fleetVehicles, reservations]);
+    return getProcessedFleetWithReservations(geoPositions, fleetVehicles, reservations, dailyTrips, reservaVehicles);
+  }, [geoPositions, fleetVehicles, reservations, dailyTrips, reservaVehicles]);
 
   // Lista única de motoristas ativos para carregar no filtro
   const activeDriversList = useMemo(() => {
-    const list = processedFleet.map(v => v.driver).filter(d => d && d !== 'Sem Condutor');
+    const list = processedFleet.map(v => v.driver).filter(d => d && d !== 'Sem Condutor' && d !== 'Sem Condutor Cadastrado');
     return Array.from(new Set(list)).sort();
   }, [processedFleet]);
 
@@ -439,15 +444,28 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
       list = list.filter(v => isSameCityOrBase(v.base, filtroBase));
     }
 
+    // Filtro Avançado: Tipo de Utilização
+    if (filtroTipoUso === 'USO_DIARIO') {
+      list = list.filter(v => v.isDailyUseActive);
+    } else if (filtroTipoUso === 'RESERVA') {
+      list = list.filter(v => v.isReservationInUse);
+    } else if (filtroTipoUso === 'FROTA_RESERVA') {
+      list = list.filter(v => v.isFromReservaFleet);
+    } else if (filtroTipoUso === 'DISPONIVEL') {
+      list = list.filter(v => !v.isDailyUseActive && !v.isReservationInUse);
+    }
+
     // Busca rápida textual
     if (!searchQuery.trim()) return list;
     const query = searchQuery.toLowerCase();
     return list.filter(v => 
       v.plate.toLowerCase().includes(query) ||
       v.driver.toLowerCase().includes(query) ||
-      v.model.toLowerCase().includes(query)
+      v.model.toLowerCase().includes(query) ||
+      (v.reservationDetails?.destination && v.reservationDetails.destination.toLowerCase().includes(query)) ||
+      (v.reservationDetails?.department && v.reservationDetails.department.toLowerCase().includes(query))
     );
-  }, [processedFleet, searchQuery, showOnlyWithGeoFrotas, filtroPlaca, filtroCondutor, filtroBase]);
+  }, [processedFleet, searchQuery, showOnlyWithGeoFrotas, filtroPlaca, filtroCondutor, filtroBase, filtroTipoUso]);
 
   // Contadores de unidades Online e Offline
   const onlineCount = useMemo(() => processedFleet.filter(v => v.active).length, [processedFleet]);
@@ -542,7 +560,37 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
               </div>
             </div>
 
-            {/* 2. Em Movimento */}
+            {/* 2. Em Uso Diário */}
+            <div 
+              className="flex items-center gap-2 bg-emerald-50/70 border border-emerald-200/80 px-2.5 py-1 rounded-xl shadow-2xs cursor-pointer hover:bg-emerald-100/70 transition-colors" 
+              title="Veículos atualmente em trânsito por solicitação de Uso Diário"
+              onClick={() => setFiltroTipoUso(prev => prev === 'USO_DIARIO' ? 'Todos' : 'USO_DIARIO')}
+            >
+              <Car className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <div className="flex flex-col text-left leading-tight">
+                <span className="text-[8px] text-emerald-700 font-black uppercase tracking-tight">Uso Diário</span>
+                <span className="text-[10.5px] font-black text-emerald-800">
+                  {processedFleet.filter(v => v.isDailyUseActive).length} <span className="text-[9.5px] font-medium text-emerald-600 font-sans">em uso</span>
+                </span>
+              </div>
+            </div>
+
+            {/* 3. Em Reserva */}
+            <div 
+              className="flex items-center gap-2 bg-amber-50/70 border border-amber-200/80 px-2.5 py-1 rounded-xl shadow-2xs cursor-pointer hover:bg-amber-100/70 transition-colors" 
+              title="Veículos atualmente alocados por Agendamento/Reserva ativa"
+              onClick={() => setFiltroTipoUso(prev => prev === 'RESERVA' ? 'Todos' : 'RESERVA')}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <div className="flex flex-col text-left leading-tight">
+                <span className="text-[8px] text-amber-700 font-black uppercase tracking-tight">Em Reserva</span>
+                <span className="text-[10.5px] font-black text-amber-800">
+                  {processedFleet.filter(v => v.isReservationInUse).length} <span className="text-[9.5px] font-medium text-amber-600 font-sans">em uso</span>
+                </span>
+              </div>
+            </div>
+
+            {/* 4. Em Movimento */}
             <div 
               className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 px-2.5 py-1 rounded-xl shadow-2xs" 
               title="Veículos se deslocando em tempo real com velocidade > 0 km/h"
@@ -556,7 +604,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
               </div>
             </div>
 
-            {/* 3. Sinal Médio GPS */}
+            {/* 5. Sinal Médio GPS */}
             <div 
               className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 px-2.5 py-1 rounded-xl shadow-2xs" 
               title="Média consolidada da intensidade e estabilidade dos sinais GPS e satélite"
@@ -637,7 +685,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="bg-white border border-slate-150 rounded-2xl p-5 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-4 gap-4"
+            className="bg-white border border-slate-150 rounded-2xl p-5 shadow-sm overflow-hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4"
           >
             {/* Filtro por Mês/Ano */}
             <div>
@@ -713,6 +761,25 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                     </option>
                   );
                 })}
+              </select>
+            </div>
+
+            {/* Filtro por Situação / Uso Atual */}
+            <div>
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5 mb-2">
+                <Car className="w-3.5 h-3.5 text-blue-500" />
+                Situação / Uso
+              </label>
+              <select
+                value={filtroTipoUso}
+                onChange={(e) => setFiltroTipoUso(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-xl px-3 py-2.5 outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
+              >
+                <option value="Todos">Todos os Status</option>
+                <option value="USO_DIARIO">🚗 Em Uso Diário ({processedFleet.filter(v => v.isDailyUseActive).length})</option>
+                <option value="RESERVA">🕒 Em Reserva Ativa ({processedFleet.filter(v => v.isReservationInUse).length})</option>
+                <option value="FROTA_RESERVA">🏢 Frota de Reservas ({processedFleet.filter(v => v.isFromReservaFleet).length})</option>
+                <option value="DISPONIVEL">✅ Disponíveis na Base ({processedFleet.filter(v => !v.isDailyUseActive && !v.isReservationInUse).length})</option>
               </select>
             </div>
           </motion.div>
@@ -792,15 +859,25 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                       <Popup className="custom-leaflet-popup">
                         <div className="p-1 font-sans text-xs text-white">
                           <div className="flex justify-between items-center gap-2 mb-2 border-b border-slate-700/60 pb-1.5">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <MercosulPlateBadge plate={v.plate} size="sm" />
+                              {v.isDailyUseActive && (
+                                <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase flex items-center gap-1">
+                                  <Car className="w-2.5 h-2.5" /> Uso Diário
+                                </span>
+                              )}
                               {v.isReservationInUse && (
-                                <span className="bg-amber-500/25 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase">
-                                  Em Reserva
+                                <span className="bg-amber-500/25 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase flex items-center gap-1">
+                                  <Clock className="w-2.5 h-2.5" /> Em Reserva
+                                </span>
+                              )}
+                              {!v.isDailyUseActive && !v.isReservationInUse && v.isFromReservaFleet && (
+                                <span className="bg-violet-500/25 text-violet-300 border border-violet-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase">
+                                  Frota Reservas
                                 </span>
                               )}
                             </div>
-                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded shrink-0 ${
                               v.ignition ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-700 text-slate-300'
                             }`}>
                               {v.ignition ? 'Ignição ON' : 'Desligado'}
@@ -811,12 +888,52 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                             {/* Modelo e Condutor */}
                             <div className="bg-slate-800/60 p-2 rounded-xl border border-slate-700/60">
                               <p className="font-black text-slate-100 text-xs">{v.model}</p>
-                              <div className="text-slate-300 mt-1 flex items-center justify-between gap-2">
-                                <span className="text-slate-400 font-bold text-[10px]">Motorista:</span>
-                                <span className="font-bold text-white text-[11px] text-right">{v.driver}</span>
+                              <div className="text-slate-300 mt-1.5 flex items-center justify-between gap-2">
+                                <span className="text-slate-400 font-bold text-[10px]">Motorista Atual:</span>
+                                <span className="font-extrabold text-white text-[11px] text-right">{v.driver}</span>
                               </div>
-                              {v.isReservationInUse && v.originalDriver && (
-                                <p className="text-[9.5px] text-slate-400 italic text-right mt-0.5">Titular da Frota: {v.originalDriver}</p>
+                              {v.isDailyUseActive && (
+                                <div className="mt-2 pt-1.5 border-t border-slate-700/60 text-[10px] space-y-0.5">
+                                  <div className="flex justify-between text-emerald-400 font-bold">
+                                    <span>Tipo de Uso:</span>
+                                    <span>Uso Diário em Andamento</span>
+                                  </div>
+                                  {v.reservationDetails?.destination && (
+                                    <div className="flex justify-between text-slate-300">
+                                      <span className="text-slate-400">Destino:</span>
+                                      <span className="font-medium text-right text-white max-w-[150px] truncate" title={v.reservationDetails.destination}>{v.reservationDetails.destination}</span>
+                                    </div>
+                                  )}
+                                  {v.reservationDetails?.department && (
+                                    <div className="flex justify-between text-slate-400">
+                                      <span>Setor:</span>
+                                      <span className="text-slate-200">{v.reservationDetails.department}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {v.isReservationInUse && (
+                                <div className="mt-2 pt-1.5 border-t border-slate-700/60 text-[10px] space-y-0.5">
+                                  <div className="flex justify-between text-amber-400 font-bold">
+                                    <span>Tipo de Uso:</span>
+                                    <span>Reserva em Andamento</span>
+                                  </div>
+                                  {v.reservationDetails?.destination && (
+                                    <div className="flex justify-between text-slate-300">
+                                      <span className="text-slate-400">Destino:</span>
+                                      <span className="font-medium text-right text-white max-w-[150px] truncate" title={v.reservationDetails.destination}>{v.reservationDetails.destination}</span>
+                                    </div>
+                                  )}
+                                  {v.reservationDetails?.department && (
+                                    <div className="flex justify-between text-slate-400">
+                                      <span>Setor:</span>
+                                      <span className="text-slate-200">{v.reservationDetails.department}</span>
+                                    </div>
+                                  )}
+                                  {v.originalDriver && (
+                                    <p className="text-[9.5px] text-slate-400 italic text-right mt-0.5">Titular Frota: {v.originalDriver}</p>
+                                  )}
+                                </div>
                               )}
                             </div>
                             
@@ -1184,16 +1301,48 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
 
                   <div className="space-y-2 text-slate-300 font-medium">
                     <div className="flex justify-between border-b border-slate-800 pb-1.5 items-start">
-                      <span className="text-slate-450 text-[9px] uppercase font-black shrink-0 mt-0.5">Motorista:</span>
+                      <span className="text-slate-450 text-[9px] uppercase font-black shrink-0 mt-0.5">Motorista Atual:</span>
                       <div className="text-right">
                         <span className="font-bold text-slate-100 block">{activeVehicleOnMap.driver}</span>
-                        {activeVehicleOnMap.isReservationInUse && (
-                          <span className="inline-flex items-center gap-1 bg-amber-500/25 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase mt-0.5">
-                            <Clock className="w-2.5 h-2.5" /> Reserva em Uso
-                          </span>
+                        {activeVehicleOnMap.isDailyUseActive && (
+                          <div className="flex flex-col items-end gap-0.5 mt-1">
+                            <span className="inline-flex items-center gap-1 bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase">
+                              <Car className="w-2.5 h-2.5" /> Uso Diário em Andamento
+                            </span>
+                            {activeVehicleOnMap.reservationDetails?.destination && (
+                              <span className="text-[9.5px] text-slate-300 block">
+                                Destino: <strong className="text-white">{activeVehicleOnMap.reservationDetails.destination}</strong>
+                              </span>
+                            )}
+                            {activeVehicleOnMap.reservationDetails?.department && (
+                              <span className="text-[9px] text-slate-400 block">
+                                Setor: {activeVehicleOnMap.reservationDetails.department}
+                              </span>
+                            )}
+                          </div>
                         )}
-                        {activeVehicleOnMap.isReservationInUse && activeVehicleOnMap.originalDriver && (
-                          <span className="text-[9px] text-slate-400 block mt-0.5">Titular: {activeVehicleOnMap.originalDriver}</span>
+                        {activeVehicleOnMap.isReservationInUse && (
+                          <div className="flex flex-col items-end gap-0.5 mt-1">
+                            <span className="inline-flex items-center gap-1 bg-amber-500/25 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase">
+                              <Clock className="w-2.5 h-2.5" /> Reserva em Andamento
+                            </span>
+                            {activeVehicleOnMap.reservationDetails?.destination && (
+                              <span className="text-[9.5px] text-slate-300 block">
+                                Destino: <strong className="text-white">{activeVehicleOnMap.reservationDetails.destination}</strong>
+                              </span>
+                            )}
+                            {activeVehicleOnMap.reservationDetails?.department && (
+                              <span className="text-[9px] text-slate-400 block">
+                                Setor: {activeVehicleOnMap.reservationDetails.department}
+                              </span>
+                            )}
+                            {activeVehicleOnMap.originalDriver && (
+                              <span className="text-[9px] text-slate-400 block mt-0.5 italic">Titular Frota: {activeVehicleOnMap.originalDriver}</span>
+                            )}
+                          </div>
+                        )}
+                        {!activeVehicleOnMap.isDailyUseActive && !activeVehicleOnMap.isReservationInUse && activeVehicleOnMap.isFromReservaFleet && (
+                          <span className="text-[9px] text-violet-300 block mt-0.5">Frota de Reservas (Disponível)</span>
                         )}
                       </div>
                     </div>
@@ -1379,15 +1528,35 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                             <td className="py-3 px-4">
                               <div className="flex flex-col gap-0.5">
                                 <span className="font-bold text-slate-800">{v.driver}</span>
+                                {v.isDailyUseActive && (
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase">
+                                      <Car className="w-2.5 h-2.5" /> Uso Diário
+                                    </span>
+                                    {v.reservationDetails?.destination && (
+                                      <span className="text-[9px] text-slate-500 font-semibold truncate max-w-[150px]" title={v.reservationDetails.destination}>
+                                        Destino: {v.reservationDetails.destination}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                                 {v.isReservationInUse && (
-                                   <div className="flex items-center gap-1 flex-wrap">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase">
                                       <Clock className="w-2.5 h-2.5" /> Reserva em Uso
                                     </span>
+                                    {v.reservationDetails?.destination && (
+                                      <span className="text-[9px] text-slate-500 font-semibold truncate max-w-[150px]" title={v.reservationDetails.destination}>
+                                        Destino: {v.reservationDetails.destination}
+                                      </span>
+                                    )}
                                     {v.originalDriver && (
                                       <span className="text-[9px] text-slate-400 font-semibold">(Titular: {v.originalDriver})</span>
                                     )}
                                   </div>
+                                )}
+                                {!v.isDailyUseActive && !v.isReservationInUse && v.isFromReservaFleet && (
+                                  <span className="text-[8.5px] text-violet-600 font-medium">Frota Reservas (Disponível)</span>
                                 )}
                               </div>
                             </td>
@@ -1592,10 +1761,32 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
                             <span className="text-slate-400 text-[9px] uppercase font-black shrink-0 mt-0.5">Motorista:</span>
                             <div className="text-right">
                               <span className="font-bold text-slate-800 block">{v.driver}</span>
+                              {v.isDailyUseActive && (
+                                <div className="flex flex-col items-end gap-0.5 mt-0.5">
+                                  <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-1 py-0.2 rounded text-[8px] font-black uppercase">
+                                    <Car className="w-2 h-2" /> Uso Diário
+                                  </span>
+                                  {v.reservationDetails?.destination && (
+                                    <span className="text-[8.5px] text-slate-500 font-medium text-right max-w-[150px] truncate" title={v.reservationDetails.destination}>
+                                      Dest: {v.reservationDetails.destination}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                               {v.isReservationInUse && (
-                                <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-1 py-0.2 rounded text-[8px] font-black uppercase mt-0.5">
-                                  <Clock className="w-2 h-2" /> Em Reserva
-                                </span>
+                                <div className="flex flex-col items-end gap-0.5 mt-0.5">
+                                  <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-1 py-0.2 rounded text-[8px] font-black uppercase">
+                                    <Clock className="w-2 h-2" /> Em Reserva
+                                  </span>
+                                  {v.reservationDetails?.destination && (
+                                    <span className="text-[8.5px] text-slate-500 font-medium text-right max-w-[150px] truncate" title={v.reservationDetails.destination}>
+                                      Dest: {v.reservationDetails.destination}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {!v.isDailyUseActive && !v.isReservationInUse && v.isFromReservaFleet && (
+                                <span className="text-[8px] text-violet-600 font-semibold block mt-0.5">Frota Reservas</span>
                               )}
                             </div>
                           </div>
