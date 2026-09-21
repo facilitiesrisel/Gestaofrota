@@ -125,11 +125,6 @@ const UserDailyUseForm: React.FC = () => {
         return null;
     }, [activeTripId, dailyTrips, localBackupTrip]);
 
-    // Viagens atualmente em trânsito no sistema aguardando devolução
-    const inUseTrips = useMemo(() => {
-        return dailyTrips.filter(t => t.status === ReservationStatus.InUse);
-    }, [dailyTrips]);
-
     // Validação resiliente: NUNCA apaga do storage se o banco ainda estiver sincronizando ou vazio
     useEffect(() => {
         const storedId = localStorage.getItem('activeDailyTripId') || sessionStorage.getItem('activeDailyTripId');
@@ -169,9 +164,9 @@ const UserDailyUseForm: React.FC = () => {
         }
     }, [dailyTrips, isContextLoading]);
 
-    // Permite desvincular viagem caso o condutor precise trocar ou selecionar outra
+    // Permite desvincular viagem caso o condutor precise trocar ou cancelar a tela de retorno neste aparelho
     const handleUnlinkTrip = () => {
-        if (window.confirm("Deseja desvincular esta viagem deste aparelho? Isso liberará a tela para registrar outra saída ou selecionar outro veículo em trânsito.")) {
+        if (window.confirm("Deseja desvincular esta viagem deste aparelho? Isso liberará a tela para registrar uma nova saída.")) {
             localStorage.removeItem('activeDailyTripId');
             localStorage.removeItem('activeDailyTripData');
             try {
@@ -182,38 +177,6 @@ const UserDailyUseForm: React.FC = () => {
             setLocalBackupTrip(null);
             window.dispatchEvent(new Event('risel_daily_trip_updated'));
         }
-    };
-
-    // Permite selecionar uma viagem em andamento no sistema para finalizar pelo celular
-    const handleSelectTripToEnd = (trip: any) => {
-        const v = getVehicleById(trip.vehicleId);
-        const backupData = {
-            id: trip.id,
-            vehicleId: trip.vehicleId,
-            plate: v?.plate || trip.plate || '',
-            model: v?.model || trip.model || '',
-            driverName: trip.driverName,
-            department: trip.department,
-            destinationCity: trip.destinationCity,
-            destination: trip.destination,
-            initialKm: trip.initialKm,
-            initialFuelLevel: trip.initialFuelLevel,
-            departureDateTime: trip.departureDateTime
-        };
-        localStorage.setItem('activeDailyTripId', trip.id);
-        localStorage.setItem('activeDailyTripData', JSON.stringify(backupData));
-        try {
-            sessionStorage.setItem('activeDailyTripId', trip.id);
-            sessionStorage.setItem('activeDailyTripData', JSON.stringify(backupData));
-        } catch (e) {}
-        window.dispatchEvent(new Event('risel_daily_trip_updated'));
-        setActiveTripId(trip.id);
-        setLocalBackupTrip(backupData);
-        setEndFormData({
-            finalKm: '',
-            finalFuelLevel: trip.initialFuelLevel || FuelLevel.Full
-        });
-        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const availableVehicles = useMemo(() => {
@@ -780,77 +743,6 @@ const UserDailyUseForm: React.FC = () => {
                                     </form>
                                 </>
                             )}
-                        </div>
-                    </section>
-                )}
-
-                {/* SEÇÃO DE RECUPERAÇÃO: VIAGENS EM ANDAMENTO NO SISTEMA AGUARDANDO DEVOLUÇÃO */}
-                {inUseTrips.length > 0 && !activeTripId && (
-                    <section className="bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-amber-100/40 border-2 border-[#F47920]/60 rounded-2xl p-5 sm:p-6 shadow-sm animate-fadeIn">
-                        <div className="flex items-center justify-between gap-3 mb-3 border-b border-amber-200/70 pb-3">
-                            <div className="flex items-center gap-2.5">
-                                <span className="w-3 h-3 rounded-full bg-[#F47920] animate-ping" />
-                                <h3 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-wider">
-                                    Viagens em Trânsito Aguardando Devolução ({inUseTrips.length})
-                                </h3>
-                            </div>
-                            <span className="text-[11px] font-extrabold bg-[#F47920] text-white px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                                Retorno Pendente
-                            </span>
-                        </div>
-                        <p className="text-xs text-slate-600 font-medium mb-4">
-                            Você já iniciou uma viagem anteriormente e retornou? Toque em <strong>"Finalizar Devolução"</strong> no seu veículo abaixo para preencher o KM e o combustível:
-                        </p>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                            {inUseTrips.map(trip => {
-                                const v = getVehicleById(trip.vehicleId);
-                                return (
-                                    <div 
-                                        key={trip.id}
-                                        className="bg-white rounded-xl p-4 border border-amber-300/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between gap-3"
-                                    >
-                                        <div className="flex items-start justify-between gap-2">
-                                            <div className="min-w-0">
-                                                <div className="flex items-center gap-2">
-                                                    {/* Placa Mercosul */}
-                                                    <div className="inline-flex flex-col border border-slate-900 rounded-md overflow-hidden bg-white shadow-2xs">
-                                                        <div className="bg-[#003399] px-2 py-0.2 text-[7px] font-black text-white uppercase tracking-widest leading-none">
-                                                            BRASIL
-                                                        </div>
-                                                        <div className="px-2 py-0.2 font-mono font-black text-xs tracking-wider text-slate-900 leading-tight">
-                                                            {v?.plate || (trip as any).plate || '---'}
-                                                        </div>
-                                                    </div>
-                                                    <span className="font-extrabold text-sm text-slate-800 truncate">
-                                                        {v?.model || (trip as any).model || 'Veículo'}
-                                                    </span>
-                                                </div>
-                                                <div className="mt-2 space-y-0.5 text-xs text-slate-600">
-                                                    <p className="font-bold text-slate-900">
-                                                        Condutor: <span className="font-semibold text-slate-700">{trip.driverName}</span>
-                                                    </p>
-                                                    <p className="text-[11px] text-slate-500">
-                                                        Saída: {new Date(trip.departureDateTime).toLocaleString('pt-BR')} • {trip.destinationCity || 'Destino operacional'}
-                                                    </p>
-                                                    <p className="text-[11px] font-mono font-bold text-emerald-800">
-                                                        KM Inicial: {formatNumber(trip.initialKm)} km
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <button
-                                            type="button"
-                                            onClick={() => handleSelectTripToEnd(trip)}
-                                            className="w-full py-2.5 px-3 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-emerald-700 hover:to-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs hover:shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
-                                        >
-                                            <LucideCheck className="w-4 h-4 text-emerald-300" />
-                                            <span>Finalizar Devolução deste Veículo</span>
-                                        </button>
-                                    </div>
-                                );
-                            })}
                         </div>
                     </section>
                 )}
