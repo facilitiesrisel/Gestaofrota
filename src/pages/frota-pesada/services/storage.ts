@@ -627,12 +627,12 @@ const mapMultaFromSheet = (row: any): Multa => {
     dataRecebimento: parseDate(findValue(normalizedRow, ['DATADERECEBIMENTO', 'DATARECEBIMENTO', 'RECEBIMENTO', 'DATADERECEBIMENTO'])),
     prazoIndicacao: parseDate(findValue(normalizedRow, ['PRAZODEINDICACAO', 'PRAZOINDICACAO', 'PRAZO'])),
     recebidaComPrazo: findValue(normalizedRow, ['RECEBIDACOMPRAZO']) as any || 'SIM',
-    enquadramento: findValue(normalizedRow, ['ENQUADRAMENTODAMULTA', 'ENQUADRAMENTO']),
-    artigoCtb: findValue(normalizedRow, ['ARTIGOCTB', 'ARTIGO', 'BASELEGAL']),
-    descricaoInfracao: findValue(normalizedRow, ['DESCRICAOINFRACAO', 'DESCRICAODAINFRACAO', 'DESCRICAO', 'INFRACAO']),
+    enquadramento: String(findValue(normalizedRow, ['ENQUADRAMENTODAMULTA', 'ENQUADRAMENTO']) || '').trim(),
+    artigoCtb: String(findValue(normalizedRow, ['ARTIGOCTB', 'ARTIGO', 'BASELEGAL']) || '').trim(),
+    descricaoInfracao: String(findValue(normalizedRow, ['DESCRICAOINFRACAO', 'DESCRICAODAINFRACAO', 'DESCRICAO', 'INFRACAO']) || '').trim(),
     pontosCnh: Number(findValue(normalizedRow, ['PONTOSNACNH', 'PONTOSNA', 'PONTOS', 'PONTOSCNH'])) || 0,
     responsavelCodigo: findValue(normalizedRow, ['LOGINMOTORISTA', 'LOGIN', 'RESPONSAVEL']) ? String(findValue(normalizedRow, ['LOGINMOTORISTA', 'LOGIN', 'RESPONSAVEL'])).trim() : '',
-    responsavelNome: findValue(normalizedRow, ['NOME', 'NOMEMOTORISTA', 'RESPONSAVEL']), 
+    responsavelNome: String(findValue(normalizedRow, ['NOME', 'NOMEMOTORISTA', 'RESPONSAVEL']) || '').trim(), 
     orgaoAutuador: findValue(normalizedRow, ['ORGAOAUTUADOR', 'ORGAO']),
     endereco: findValue(normalizedRow, ['ENDERECOCOMPLETO', 'ENDERECO', 'LOCAL']),
     municipio: findValue(normalizedRow, ['MUNICIPIO', 'CIDADE']),
@@ -1091,9 +1091,7 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
             if (!finalFrota || finalFrota.trim() === '') {
                 finalFrota = fleetVehicle.id || fleetVehicle.placa;
             }
-            if (!finalNome && fleetVehicle.condutor) {
-                finalNome = fleetVehicle.condutor;
-            }
+            // Não inferir condutor da frota automaticamente: o usuário edita manualmente após a importação para garantir exatidão
         }
 
         // Garante coerência entre Código e Nome do motorista

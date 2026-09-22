@@ -66,6 +66,30 @@ const initialMulta: Partial<Multa> = {
   pagoComDesconto: 'SIM',
 };
 
+const sanitizeMultaForForm = (m: Partial<Multa>): Partial<Multa> => {
+  if (!m) return { ...initialMulta };
+  return {
+    ...m,
+    id: String(m.id || m.ait || ''),
+    ait: String(m.ait || ''),
+    placa: String(m.placa || ''),
+    frota: String(m.frota || ''),
+    base: String(m.base || ''),
+    enquadramento: String(m.enquadramento ?? '').trim(),
+    artigoCtb: String(m.artigoCtb ?? '').trim(),
+    descricaoInfracao: String(m.descricaoInfracao ?? '').trim(),
+    responsavelNome: String(m.responsavelNome ?? '').trim(),
+    responsavelCodigo: String(m.responsavelCodigo ?? '').trim(),
+    orgaoAutuador: String(m.orgaoAutuador ?? '').trim(),
+    endereco: String(m.endereco ?? '').trim(),
+    municipio: String(m.municipio ?? '').trim(),
+    uf: String(m.uf ?? '').trim(),
+    obs: String(m.obs ?? '').trim(),
+    linkAit: String(m.linkAit ?? ''),
+    linkAuth: String(m.linkAuth ?? '')
+  };
+};
+
 // ... (Rest of the Map logic and helper functions remain unchanged) ...
 // --- OPÇÕES DE LAYERS DE MAPA ---
 const MAP_LAYERS = [
@@ -427,6 +451,7 @@ const MultasPage: React.FC = () => {
       dataFim: '',
       mes: '',
       base: '',
+      status: '',
       responsabilidade: '',
       descontar: ''
   });
@@ -679,6 +704,7 @@ const MultasPage: React.FC = () => {
               (m.frota && m.frota.toLowerCase().includes(lowerSearch));
 
           if (!matchSearch) return false;
+          if (filters.status && m.status !== filters.status) return false;
           if (filters.placa && !m.placa.includes(filters.placa.toUpperCase())) return false;
           if (filters.base && m.base !== filters.base) return false;
           if (filters.responsabilidade && m.empresaOuCondutor !== filters.responsabilidade) return false;
@@ -884,7 +910,7 @@ const MultasPage: React.FC = () => {
   };
 
   const handleOpenNewCodigoModal = () => {
-    const currentCod = (formData.enquadramento || '').toUpperCase().trim();
+    const currentCod = String(formData.enquadramento || '').toUpperCase().trim();
     setNewCodigoData({
       codigo: currentCod,
       baseLegal: formData.artigoCtb || 'Art. CTB',
@@ -1660,7 +1686,8 @@ const MultasPage: React.FC = () => {
                 </div>
 
                 <div className={`transition-all duration-300 ease-in-out overflow-hidden ${showFilters ? 'max-h-60 opacity-100' : 'max-h-0 opacity-0'}`}>
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-3 items-end">
+                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Status</label><select className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors cursor-pointer font-bold text-slate-700" value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})}><option value="">Todos os Status</option>{(Object.values(StatusMulta) as string[]).map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Placa</label><input type="text" className="w-full border rounded-lg p-2 text-xs font-bold uppercase" value={filters.placa} onChange={e => setFilters({...filters, placa: e.target.value})} placeholder="Todas"/></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Data Início</label><input type="date" className="w-full border rounded-lg p-2 text-xs" value={filters.dataInicio} onChange={e => setFilters({...filters, dataInicio: e.target.value})}/></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Data Fim</label><input type="date" className="w-full border rounded-lg p-2 text-xs" value={filters.dataFim} onChange={e => setFilters({...filters, dataFim: e.target.value})}/></div>
@@ -1753,7 +1780,7 @@ const MultasPage: React.FC = () => {
                                             <tr key={multa.id} className={`${rowClass} hover:bg-blue-50/60 transition-colors group`}>
                                                 <td className="px-1.5 py-1.5 text-center border-r border-gray-200/50 align-middle sticky left-0 z-10 bg-white/95 group-hover:bg-blue-50/95 backdrop-blur-sm shadow-[1px_0_3px_rgba(0,0,0,0.05)]">
                                                     <div className="flex justify-center space-x-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                        <button onClick={(e) => { e.stopPropagation(); setFormData(multa); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1 rounded-full transition-all" title="Editar"><Edit2 size={13} /></button>
+                                                        <button onClick={(e) => { e.stopPropagation(); setFormData(sanitizeMultaForForm(multa)); setErrors({}); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1 rounded-full transition-all" title="Editar"><Edit2 size={13} /></button>
                                                         <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-blue-600 p-1 rounded-full transition-all" title="Ver no Mapa"><MapPin size={13} /></button>
                                                         <button onClick={(e) => { e.stopPropagation(); handleDelete(multa.id); }} className="text-gray-400 hover:text-red-600 p-1 rounded-full transition-all" title="Excluir"><Trash2 size={13} /></button>
                                                     </div>
@@ -2385,7 +2412,7 @@ const MultasPage: React.FC = () => {
                                         </div>
                                     )}
                                 </div>
-                                {formData.enquadramento && formData.enquadramento.trim().length >= 2 && !codigos.some(c => cleanString(c.codigo) === cleanString(formData.enquadramento || '')) && (
+                                {formData.enquadramento && String(formData.enquadramento).trim().length >= 2 && !codigos.some(c => cleanString(c.codigo) === cleanString(formData.enquadramento || '')) && (
                                     <div className="mt-1 p-1.5 bg-amber-50 border border-amber-200 rounded-md flex items-center justify-between text-[10px]">
                                         <span className="text-amber-800 font-semibold truncate">Cód. não cadastrado.</span>
                                         <button 

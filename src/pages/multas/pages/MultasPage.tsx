@@ -38,6 +38,30 @@ const initialMulta: Partial<Multa> = {
   pagoComDesconto: 'SIM',
 };
 
+const sanitizeMultaForForm = (m: Partial<Multa>): Partial<Multa> => {
+  if (!m) return { ...initialMulta };
+  return {
+    ...m,
+    id: String(m.id || m.ait || ''),
+    ait: String(m.ait || ''),
+    placa: String(m.placa || ''),
+    frota: String(m.frota || ''),
+    base: String(m.base || ''),
+    enquadramento: String(m.enquadramento ?? '').trim(),
+    artigoCtb: String(m.artigoCtb ?? '').trim(),
+    descricaoInfracao: String(m.descricaoInfracao ?? '').trim(),
+    responsavelNome: String(m.responsavelNome ?? '').trim(),
+    responsavelCodigo: String(m.responsavelCodigo ?? '').trim(),
+    orgaoAutuador: String(m.orgaoAutuador ?? '').trim(),
+    endereco: String(m.endereco ?? '').trim(),
+    municipio: String(m.municipio ?? '').trim(),
+    uf: String(m.uf ?? '').trim(),
+    obs: String(m.obs ?? '').trim(),
+    linkAit: String(m.linkAit ?? ''),
+    linkAuth: String(m.linkAuth ?? '')
+  };
+};
+
 // ... (Rest of the Map logic and helper functions remain unchanged) ...
 // --- OPÇÕES DE LAYERS DE MAPA SEGUROS (Zero Custo / PT-BR) ---
 const getDynamicMultasLayers = () => {
@@ -1194,7 +1218,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     setLoading(true);
     
     // Salvar novo código de enquadramento se não existir na lista
-    const enquadramentoUpper = (formData.enquadramento || '').toUpperCase().trim();
+    const enquadramentoUpper = String(formData.enquadramento || '').toUpperCase().trim();
     if (enquadramentoUpper) {
         const exists = codigos.some(c => c && c.codigo && c.codigo.toString().toUpperCase().trim() === enquadramentoUpper);
         if (!exists) {
@@ -1231,7 +1255,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     if (!validateForm()) { alert("Por favor, preencha os campos obrigatórios antes de prosseguir."); return; }
     setLoading(true);
 
-    const enquadramentoUpper = (formData.enquadramento || '').toUpperCase().trim();
+    const enquadramentoUpper = String(formData.enquadramento || '').toUpperCase().trim();
     if (enquadramentoUpper) {
         const exists = codigos.some(c => c && c.codigo && c.codigo.toString().toUpperCase().trim() === enquadramentoUpper);
         if (!exists) {
@@ -2548,6 +2572,33 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     <div className="flex items-center w-full"><Search className="text-gray-500 mr-2 ml-2" size={18} /><input type="text" placeholder="Pesquisar Rápida (AIT, Placa, Frota...)" className="flex-1 outline-none text-gray-800 bg-transparent text-sm font-medium placeholder-gray-400" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}/>{searchTerm && <button onClick={() => setSearchTerm('')} className="text-gray-400 hover:text-red-500 transition-colors p-1 mr-2"><X size={16} /></button>}</div>
                     <button onClick={() => setShowFilters(!showFilters)} className={`ml-3 px-3 py-1.5 rounded-lg flex items-center font-bold text-xs border transition-all ${showFilters ? 'bg-risel-orange text-white border-risel-orange' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}><Filter size={14} className="mr-1"/> Filtros {showFilters ? <ChevronUp size={14} className="ml-1"/> : <ChevronDown size={14} className="ml-1"/>}</button>
                 </div>
+
+                {/* Pills de Filtro Rápido por Status */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar text-xs">
+                    <button
+                        type="button"
+                        onClick={() => setFilters(prev => ({ ...prev, status: '' }))}
+                        className={`px-2.5 py-1 rounded-lg font-bold transition-all whitespace-nowrap text-[11px] flex items-center gap-1.5 shadow-2xs ${!filters.status ? 'bg-slate-800 text-white shadow-sm' : 'bg-white/80 hover:bg-white text-slate-600 border border-slate-200'}`}
+                    >
+                        <span>Todos</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[9px] ${!filters.status ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>{multas.length}</span>
+                    </button>
+                    {(Object.values(StatusMulta) as string[]).map(st => {
+                        const count = multas.filter(m => m.status === st).length;
+                        const isSelected = filters.status === st;
+                        return (
+                            <button
+                                key={st}
+                                type="button"
+                                onClick={() => setFilters(prev => ({ ...prev, status: isSelected ? '' : st }))}
+                                className={`px-2.5 py-1 rounded-lg font-bold transition-all whitespace-nowrap text-[11px] flex items-center gap-1.5 shadow-2xs ${isSelected ? 'bg-risel-green text-black shadow-sm ring-2 ring-emerald-500/40' : 'bg-white/80 hover:bg-white text-slate-600 border border-slate-200'}`}
+                            >
+                                <span>{st}</span>
+                                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-black ${isSelected ? 'bg-black/20 text-black' : 'bg-slate-100 text-slate-600'}`}>{count}</span>
+                            </button>
+                        );
+                    })}
+                </div>
                 <div className={`transition-all duration-300 ease-in-out overflow-hidden ${showFilters ? 'max-h-60 opacity-100 animate-in fade-in slide-in-from-top-2 duration-300' : 'max-h-0 opacity-0'}`}>
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-3 items-end">
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Placa</label><input type="text" className="w-full border rounded-lg p-2 text-xs font-bold uppercase bg-slate-50 focus:bg-white transition-colors" value={filters.placa} onChange={e => setFilters({...filters, placa: e.target.value})} placeholder="Todas"/></div>
@@ -2591,7 +2642,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                         <tr key={multa.id} className={`${rowClass} hover:bg-blue-50/60 transition-colors group`}>
                                             <td className="px-2 py-2 text-center border-r border-gray-200/50 align-middle">
                                                 <div className="flex justify-center space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={(e) => { e.stopPropagation(); setFormData(multa); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setFormData(sanitizeMultaForForm(multa)); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); handleSendDirectEmail(multa); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Enviar Notificação Direto (E-mail Cadastrado)"><Send size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); handleOpenEmailModal(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Confirmar / Editar Destinatários antes do envio"><Mail size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-full transition-all relative" title="Localizar no Mapa & Rastreador GPS">
@@ -2874,7 +2925,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                         className="w-full border rounded-lg p-1.5 focus:ring-2 focus:ring-risel-green outline-none text-xs uppercase font-bold" 
                                         value={formData.enquadramento || ''} 
                                         onChange={e => handleEnquadramentoChange(e.target.value)} 
-                                        onFocus={() => { if(formData.enquadramento && formData.enquadramento.length >= 1) setShowCodigosDropdown(true); }}
+                                        onFocus={() => { if(formData.enquadramento && String(formData.enquadramento).length >= 1) setShowCodigosDropdown(true); }}
                                         onBlur={handleBlurEnquadramento}
                                         placeholder="Cód."
                                         autoComplete="off"

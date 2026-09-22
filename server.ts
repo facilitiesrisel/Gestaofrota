@@ -343,7 +343,12 @@ const APPS_SCRIPT_FILE = path.join(DATA_DIR, "apps_script_url.txt");
 const ONEDRIVE_CONFIG_FILE = path.join(DATA_DIR, "onedrive_config.json");
 const ONEDRIVE_LOGS_FILE = path.join(DATA_DIR, "onedrive_logs.json");
 const LANCAMENTOS_FILE = path.join(DATA_DIR, "lancamentos.json");
+const LANCAMENTOS_BACKUP_FILE = path.join(DATA_DIR, "lancamentos.backup.json");
 const LANCAMENTOS_DELETED_FILE = path.join(DATA_DIR, "lancamentos_deleted_ids.json");
+const LANCAMENTOS_BACKUPS_DIR = path.join(DATA_DIR, "backups_lancamentos");
+if (!fs.existsSync(LANCAMENTOS_BACKUPS_DIR)) {
+  try { fs.mkdirSync(LANCAMENTOS_BACKUPS_DIR, { recursive: true }); } catch (e) {}
+}
 const EMAIL_KEYS_FILE = path.join(DATA_DIR, "email_api_keys.json");
 
 let storedResendApiKey = (process.env.RESEND_API_KEY || "").trim();
@@ -1655,17 +1660,24 @@ async function startServer() {
 
       // 1. Ler do arquivo de persistência em disco local
       try {
+        let localList: any[] = [];
         if (fs.existsSync(LANCAMENTOS_FILE)) {
           const raw = fs.readFileSync(LANCAMENTOS_FILE, "utf-8");
-          const localList: any[] = JSON.parse(raw);
-          if (Array.isArray(localList)) {
-            localList.forEach(item => {
-              const idStr = String(item.id);
-              if (!deletedSet.has(idStr)) {
-                itemMap.set(idStr, item);
-              }
-            });
-          }
+          localList = JSON.parse(raw);
+        } else if (fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
+          // Fallback para arquivo de contingência se o principal não existir
+          const raw = fs.readFileSync(LANCAMENTOS_BACKUP_FILE, "utf-8");
+          localList = JSON.parse(raw);
+          console.info("[Server Lancamentos] Recuperado do arquivo de backup de contingência!");
+        }
+
+        if (Array.isArray(localList)) {
+          localList.forEach(item => {
+            const idStr = String(item.id);
+            if (!deletedSet.has(idStr)) {
+              itemMap.set(idStr, item);
+            }
+          });
         }
       } catch (e) {}
 
@@ -1684,7 +1696,7 @@ async function startServer() {
           }
         });
       } catch (err: any) {
-        console.warn("[Server Lancamentos] Aviso Firestore:", err.message);
+        // Firestore pode não ter permissão, segue normalmente
       }
 
       const items = Array.from(itemMap.values());
@@ -1703,6 +1715,36 @@ async function startServer() {
     }
   });
 
+  // Função utilitária para gerar snapshot datado no banco de dados do servidor
+  function createLancamentosBackupFile(items: any[], prefix = "auto") {
+    try {
+      if (!Array.isArray(items) || items.length === 0) return null;
+      const now = new Date();
+      const dateStr = now.toISOString().replace(/[:.]/g, "-");
+      const filename = `backup_${prefix}_${dateStr}_${items.length}itens.json`;
+      const fullPath = path.join(LANCAMENTOS_BACKUPS_DIR, filename);
+      fs.writeFileSync(fullPath, JSON.stringify({
+        timestamp: now.toISOString(),
+        count: items.length,
+        items
+      }, null, 2), "utf-8");
+
+      // Limita a 20 backups para otimizar espaço
+      const files = fs.readdirSync(LANCAMENTOS_BACKUPS_DIR)
+        .filter(f => f.endsWith(".json"))
+        .sort()
+        .reverse();
+      if (files.length > 20) {
+        files.slice(20).forEach(f => {
+          try { fs.unlinkSync(path.join(LANCAMENTOS_BACKUPS_DIR, f)); } catch (e) {}
+        });
+      }
+      return filename;
+    } catch (e) {
+      return null;
+    }
+  }
+
   app.post("/api/lancamentos", express.json({ limit: "50mb" }), async (req, res) => {
     try {
       const item = req.body;
@@ -1714,18 +1756,15 @@ async function startServer() {
       removeStoredDeletedLancamentoId(docId);
 
       const cleanItem = { ...item };
-      // Remove campos undefined para compatibilidade com Firestore
       Object.keys(cleanItem).forEach(k => cleanItem[k] === undefined && delete cleanItem[k]);
 
-      // 1. Grava no Firestore do Servidor
+      // 1. Grava no Firestore do Servidor (se disponível)
       try {
         const db = await getServerFirestore();
         await db.collection("lancamentos").doc(docId).set(cleanItem, { merge: true });
-      } catch (fErr: any) {
-        console.warn("[Server Lancamentos] Firestore write warning:", fErr.message);
-      }
+      } catch (fErr: any) {}
 
-      // 2. Grava no arquivo de persistência em disco local
+      // 2. Grava no arquivo principal e no backup de contingência
       try {
         let list: any[] = [];
         if (fs.existsSync(LANCAMENTOS_FILE)) {
@@ -1738,6 +1777,8 @@ async function startServer() {
           list.unshift(cleanItem);
         }
         fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(list, null, 2), "utf-8");
+        // Backup atômico
+        fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(list, null, 2), "utf-8");
       } catch (fsErr) {}
 
       console.log(`[Server Lancamentos] Lançamento ${docId} sincronizado com sucesso.`);
@@ -1745,6 +1786,69 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao salvar lançamento:", err);
       return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Rota de Salvamento em Lote (Auto-Heal e Restauração em Massa)
+  app.post("/api/lancamentos/batch", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { items } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ success: false, error: "Array de itens vazio ou inválido" });
+      }
+
+      const deletedIds = getStoredDeletedLancamentoIds();
+      const deletedSet = new Set(deletedIds);
+
+      let currentList: any[] = [];
+      if (fs.existsSync(LANCAMENTOS_FILE)) {
+        try { currentList = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8")); } catch (e) {}
+      }
+
+      const map = new Map<string, any>();
+      currentList.forEach(item => map.set(String(item.id), item));
+
+      items.forEach(newItem => {
+        const idStr = String(newItem.id);
+        if (!deletedSet.has(idStr)) {
+          const existing = map.get(idStr);
+          map.set(idStr, { ...(existing || {}), ...newItem });
+        }
+      });
+
+      const merged = Array.from(map.values()).sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+
+      fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(merged, null, 2), "utf-8");
+      fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(merged, null, 2), "utf-8");
+
+      console.info(`[Server Lancamentos] Batch salvo com sucesso: ${merged.length} itens no total.`);
+      return res.json({ success: true, count: merged.length });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Rota de Informações de Status e Segurança de Dados
+  app.get("/api/lancamentos/status", async (req, res) => {
+    try {
+      let fileCount = 0;
+      let backupCount = 0;
+      if (fs.existsSync(LANCAMENTOS_FILE)) {
+        try { fileCount = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8")).length; } catch (e) {}
+      }
+      if (fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
+        try { backupCount = JSON.parse(fs.readFileSync(LANCAMENTOS_BACKUP_FILE, "utf-8")).length; } catch (e) {}
+      }
+
+      return res.json({
+        success: true,
+        fileCount,
+        backupCount,
+        hasBackup: fs.existsSync(LANCAMENTOS_BACKUP_FILE),
+        deletedCount: getStoredDeletedLancamentoIds().length
+      });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
     }
   });
 
@@ -1762,16 +1866,15 @@ async function startServer() {
       try {
         const db = await getServerFirestore();
         await db.collection("lancamentos").doc(idStr).delete();
-      } catch (fErr: any) {
-        console.warn("[Server Lancamentos] Firestore delete warning:", fErr.message);
-      }
+      } catch (fErr: any) {}
 
-      // 2. Remove do arquivo em disco
+      // 2. Remove do arquivo em disco e do backup
       try {
         if (fs.existsSync(LANCAMENTOS_FILE)) {
           let list: any[] = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
           list = list.filter((l: any) => String(l.id) !== idStr);
           fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(list, null, 2), "utf-8");
+          fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(list, null, 2), "utf-8");
         }
       } catch (fsErr) {}
 
@@ -1780,6 +1883,135 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao excluir lançamento:", err);
       return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 1. Listar Backups do Banco de Dados no Servidor
+  app.get("/api/lancamentos/backups", async (req, res) => {
+    try {
+      const files = fs.readdirSync(LANCAMENTOS_BACKUPS_DIR)
+        .filter(f => f.endsWith(".json"))
+        .sort()
+        .reverse();
+
+      const backups = files.map(file => {
+        try {
+          const fullPath = path.join(LANCAMENTOS_BACKUPS_DIR, file);
+          const stat = fs.statSync(fullPath);
+          const raw = fs.readFileSync(fullPath, "utf-8");
+          const parsed = JSON.parse(raw);
+          return {
+            filename: file,
+            timestamp: parsed.timestamp || stat.mtime.toISOString(),
+            count: parsed.count || (Array.isArray(parsed.items) ? parsed.items.length : 0),
+            sizeBytes: stat.size
+          };
+        } catch (e) {
+          return { filename: file, timestamp: "", count: 0, sizeBytes: 0 };
+        }
+      });
+
+      return res.json({ success: true, backups });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message, backups: [] });
+    }
+  });
+
+  // 2. Criar Backup Manual Imediato no Banco de Dados
+  app.post("/api/lancamentos/backup", express.json(), async (req, res) => {
+    try {
+      let list: any[] = [];
+      if (fs.existsSync(LANCAMENTOS_FILE)) {
+        try { list = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8")); } catch (e) {}
+      } else if (fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
+        try { list = JSON.parse(fs.readFileSync(LANCAMENTOS_BACKUP_FILE, "utf-8")); } catch (e) {}
+      }
+
+      if (!list || list.length === 0) {
+        return res.status(400).json({ success: false, error: "Nenhum documento para fazer backup no momento" });
+      }
+
+      const backupName = createLancamentosBackupFile(list, "manual");
+      return res.json({ success: true, filename: backupName, count: list.length });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // 3. Restaurar Backup do Banco de Dados no Servidor
+  app.post("/api/lancamentos/restore", express.json(), async (req, res) => {
+    try {
+      const { filename } = req.body;
+      let targetFile = "";
+
+      if (filename) {
+        targetFile = path.join(LANCAMENTOS_BACKUPS_DIR, filename);
+      } else {
+        const files = fs.readdirSync(LANCAMENTOS_BACKUPS_DIR)
+          .filter(f => f.endsWith(".json"))
+          .sort()
+          .reverse();
+        if (files.length > 0) {
+          targetFile = path.join(LANCAMENTOS_BACKUPS_DIR, files[0]);
+        } else if (fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
+          targetFile = LANCAMENTOS_BACKUP_FILE;
+        }
+      }
+
+      if (!targetFile || !fs.existsSync(targetFile)) {
+        return res.status(404).json({ success: false, error: "Nenhum arquivo de backup encontrado para restauração" });
+      }
+
+      const raw = fs.readFileSync(targetFile, "utf-8");
+      const parsed = JSON.parse(raw);
+      const itemsToRestore = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.items) ? parsed.items : []);
+
+      if (itemsToRestore.length === 0) {
+        return res.status(400).json({ success: false, error: "Arquivo de backup não contém lançamentos válidos" });
+      }
+
+      // Cria backup de segurança pré-restauração
+      if (fs.existsSync(LANCAMENTOS_FILE)) {
+        try {
+          const current = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
+          if (current.length > 0) createLancamentosBackupFile(current, "pre_restore");
+        } catch (e) {}
+      }
+
+      fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(itemsToRestore, null, 2), "utf-8");
+      fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(itemsToRestore, null, 2), "utf-8");
+
+      console.info(`[Server Lancamentos] Sucesso: ${itemsToRestore.length} lançamentos restaurados do backup ${path.basename(targetFile)}.`);
+      return res.json({ success: true, count: itemsToRestore.length, items: itemsToRestore });
+    } catch (e: any) {
+      console.error("[Server Lancamentos] Erro na restauração:", e);
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // 4. Importar Lista de Lançamentos Diretamente no Banco de Dados
+  app.post("/api/lancamentos/import", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { items } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ success: false, error: "Nenhum item fornecido para importação" });
+      }
+
+      if (fs.existsSync(LANCAMENTOS_FILE)) {
+        try {
+          const current = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
+          if (current.length > 0) createLancamentosBackupFile(current, "pre_import");
+        } catch (e) {}
+      }
+
+      fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(items, null, 2), "utf-8");
+      fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(items, null, 2), "utf-8");
+      createLancamentosBackupFile(items, "post_import");
+
+      console.info(`[Server Lancamentos] ${items.length} lançamentos importados com sucesso para o banco de dados do servidor.`);
+      return res.json({ success: true, count: items.length, items });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
     }
   });
 
@@ -3049,28 +3281,52 @@ async function startServer() {
         return res.status(400).json({ error: "URL inválida. Apenas links oficiais 'https://script.google.com' são permitidos." });
       }
 
-      console.log(`Risel Backend: Sincronizando ${rows.length} multas com a planilha Google Sheets...`);
-      const gsRes = await fetch(targetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({
-          action: "save_batch",
-          type: "multa",
-          sheetTitle: "MULTAS",
-          headers: HEADERS_MULTAS_LIST,
-          rows: rows,
-          spreadsheetId: "1orv6kJ5qKxws-FJvFft706dkZOb9DizIXf6aZmHTfDY"
-        })
-      });
+      console.log(`Risel Backend: Sincronizando ${rows.length} multas com a planilha Google Sheets em lotes...`);
+      const CHUNK_SIZE = 40;
+      let totalSaved = 0;
+      let lastWarning = "";
 
-      if (gsRes.ok) {
-        console.log(`Risel Backend: ${rows.length} multas gravadas na planilha Google com sucesso!`);
-        return res.json({ success: true, count: rows.length, savedInSheets: true });
-      } else {
-        const text = await gsRes.text();
-        console.warn("Aviso ao enviar multas para Apps Script:", text);
-        return res.json({ success: true, count: rows.length, savedInSheets: false, warning: text });
+      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + CHUNK_SIZE);
+        const batchNum = Math.floor(i / CHUNK_SIZE) + 1;
+        const totalBatches = Math.ceil(rows.length / CHUNK_SIZE);
+        console.log(`Risel Backend: Enviando lote ${batchNum}/${totalBatches} (${chunk.length} multas)...`);
+
+        try {
+          const gsRes = await fetch(targetUrl, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body: JSON.stringify({
+              action: "save_batch",
+              type: "multa",
+              sheetTitle: "MULTAS",
+              headers: HEADERS_MULTAS_LIST,
+              rows: chunk,
+              spreadsheetId: "1orv6kJ5qKxws-FJvFft706dkZOb9DizIXf6aZmHTfDY"
+            })
+          });
+
+          if (gsRes.ok) {
+            totalSaved += chunk.length;
+          } else {
+            const text = await gsRes.text();
+            console.warn(`Aviso no lote ${batchNum}:`, text);
+            lastWarning = text;
+          }
+        } catch (chunkErr: any) {
+          console.warn(`Erro de conexão no lote ${batchNum}:`, chunkErr.message);
+          lastWarning = chunkErr.message;
+        }
       }
+
+      console.log(`Risel Backend: Concluído envio em lote. Total salvo no Sheets: ${totalSaved}/${rows.length}`);
+      return res.json({
+        success: true,
+        count: totalSaved,
+        totalRequested: rows.length,
+        savedInSheets: totalSaved > 0,
+        warning: lastWarning || undefined
+      });
     } catch (err: any) {
       console.warn("Aviso na rota /api/multas/sync-sheets:", err.message);
       return res.json({ success: true, count: 0, savedInSheets: false, warning: err.message });

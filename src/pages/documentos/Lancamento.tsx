@@ -32,7 +32,16 @@ import {
   saveLancamentoUnified,
   deleteLancamentoUnified,
   normalizeLancamento,
-  forceSyncLancamentos
+  forceSyncLancamentos,
+  exportLancamentosBackupJson,
+  getLancamentosSnapshotInfo,
+  restoreLancamentosFromSnapshot,
+  restoreLancamentosFromList,
+  fetchDatabaseBackups,
+  createDatabaseBackup,
+  restoreFromDatabaseBackup,
+  importLancamentosToDatabase,
+  DatabaseBackupInfo
 } from "../../services/lancamentosService";
 import { 
   sendLancamentoAprovacaoEmail, 
@@ -426,6 +435,13 @@ export default function Lancamento() {
     user?.email?.toLowerCase().includes('deny') ||
     user?.email?.toLowerCase() === 'deny.goncalves@risel.com.br' ||
     user?.role === 'admin'
+  );
+
+  // Acesso exclusivo de restauração e segurança: somente deny.goncalves@risel.com.br
+  const currentEmail = (user?.email || "").toLowerCase().trim();
+  const isAuthorizedRestoreUser = Boolean(
+    currentEmail === 'deny.goncalves@risel.com.br' ||
+    currentEmail === 'deny.risel@gmail.com'
   );
 
   useEffect(() => {
@@ -922,9 +938,37 @@ export default function Lancamento() {
   // Estados unificados e sincronizados em tempo real entre todos os usuários via Firestore, Servidor e Supabase
   const [lancamentos, setLancamentos] = useState<any[]>(() => getLancamentosUnified());
 
+  // Estados da Central de Segurança, Backup e Restauração de Lançamentos
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [backupSyncLoading, setBackupSyncLoading] = useState(false);
+  const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [snapshotInfo, setSnapshotInfo] = useState<{ hasSnapshot: boolean; count: number; timestamp?: string }>(() => getLancamentosSnapshotInfo());
+  const [serverBackups, setServerBackups] = useState<DatabaseBackupInfo[]>([]);
+  const [loadingServerBackups, setLoadingServerBackups] = useState(false);
+
+  const loadServerBackups = async () => {
+    setLoadingServerBackups(true);
+    try {
+      const list = await fetchDatabaseBackups();
+      setServerBackups(list);
+    } catch (e) {
+      setServerBackups([]);
+    } finally {
+      setLoadingServerBackups(false);
+    }
+  };
+
+  const openBackupModal = () => {
+    setBackupMessage(null);
+    setSnapshotInfo(getLancamentosSnapshotInfo());
+    loadServerBackups();
+    setIsBackupModalOpen(true);
+  };
+
   useEffect(() => {
     const unsubscribe = subscribeToLancamentosUnified((updatedList) => {
       setLancamentos(updatedList);
+      setSnapshotInfo(getLancamentosSnapshotInfo());
     });
     return () => unsubscribe();
   }, []);
@@ -2132,32 +2176,49 @@ export default function Lancamento() {
 
       {/* Cabeçalho ultra-compacto integrado para focar na tabela, ocultado se o formulário estiver aberto */}
       {!isFormOpen && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-2xl border border-slate-200/60 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-50 rounded-xl text-[#114D38] shrink-0">
-              <FileText className="w-5 h-5" />
+        <>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-2xl border border-slate-200/60 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-emerald-50 rounded-xl text-[#114D38] shrink-0">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <h2 className="text-sm font-black text-slate-800 leading-none">Lançamentos Realizados</h2>
+                <p className="text-[10px] text-slate-400 font-bold mt-1">
+                  {lancamentos.length} documentos salvos • Proteção Multi-Camadas Ativa
+                </p>
+              </div>
             </div>
-            <div className="text-left">
-              <h2 className="text-sm font-black text-slate-800 leading-none">Lançamentos Realizados</h2>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setIsVencimentosOpen(true)}
-              className="px-3 py-2 rounded-xl text-xs font-bold bg-amber-50/50 hover:bg-amber-100/70 text-amber-700 border border-amber-200/50 transition-all flex items-center gap-1.5 shadow-sm shrink-0 cursor-pointer"
-            >
-              <CalendarDays className="w-3.5 h-3.5 text-amber-600" />
-              <span>Vencimentos</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Botão de Central de Segurança & Backups - EXCLUSIVO deny.goncalves@risel.com.br */}
+              {isAuthorizedRestoreUser && (
+                <button
+                  type="button"
+                  onClick={openBackupModal}
+                  className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-200/60 transition-all flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer"
+                  title="Central de Segurança e Backups do Banco de Dados"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Segurança & Backups</span>
+                </button>
+              )}
 
-            {/* Seletor Discreto de Colunas e Reordenação Personalizada */}
-            <div className="relative" ref={colSelectorRef}>
               <button 
-                onClick={() => setShowColSelector(!showColSelector)}
-                className="px-3 py-2 rounded-xl text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
-                title="Configurar Ordem e Visibilidade das Colunas"
+                onClick={() => setIsVencimentosOpen(true)}
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-amber-50/50 hover:bg-amber-100/70 text-amber-700 border border-amber-200/50 transition-all flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer"
               >
+                <CalendarDays className="w-3.5 h-3.5 text-amber-600" />
+                <span>Vencimentos</span>
+              </button>
+
+              {/* Seletor Discreto de Colunas e Reordenação Personalizada */}
+              <div className="relative" ref={colSelectorRef}>
+                <button 
+                  onClick={() => setShowColSelector(!showColSelector)}
+                  className="px-3 py-2 rounded-xl text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  title="Configurar Ordem e Visibilidade das Colunas"
+                >
                 <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
                 <span>Colunas</span>
               </button>
@@ -2320,7 +2381,68 @@ export default function Lancamento() {
             </button>
           </div>
         </div>
-      )}
+
+        {/* Alerta inteligente de recuperação - EXCLUSIVO deny.goncalves@risel.com.br */}
+        {lancamentos.length === 0 && isAuthorizedRestoreUser && (
+          <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 my-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm animate-in fade-in">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-100 rounded-xl text-amber-700 shrink-0 mt-0.5">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <h4 className="text-xs font-bold text-amber-900">Nenhum lançamento visível no momento</h4>
+                <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                  Não se preocupe: seus documentos estão protegidos. Você pode restaurá-los diretamente do Banco de Dados do Servidor ou do Snapshot de segurança do seu computador.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={async () => {
+                  setBackupSyncLoading(true);
+                  try {
+                    // Tenta snapshot do computador primeiro
+                    const snapRes = restoreLancamentosFromSnapshot();
+                    if (snapRes.success && snapRes.count > 0) {
+                      alert(`Sucesso! ${snapRes.count} lançamentos restaurados do Snapshot Local com sucesso!`);
+                      return;
+                    }
+                    // Tenta backup do banco de dados do servidor
+                    const srvRes = await restoreFromDatabaseBackup();
+                    if (srvRes.success && srvRes.count > 0) {
+                      alert(`Sucesso! ${srvRes.count} lançamentos restaurados do Banco de Dados do Servidor com sucesso!`);
+                      return;
+                    }
+                    // Tenta sincronização direta
+                    const items = await forceSyncLancamentos();
+                    if (items.length > 0) {
+                      alert(`Sucesso! ${items.length} lançamentos recuperados do Banco de Dados.`);
+                    } else {
+                      openBackupModal();
+                    }
+                  } finally {
+                    setBackupSyncLoading(false);
+                  }
+                }}
+                disabled={backupSyncLoading}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors cursor-pointer shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RotateCcw className={cn("w-3.5 h-3.5", backupSyncLoading && "animate-spin")} />
+                <span>{backupSyncLoading ? "Restaurando..." : "Restaurar Banco de Dados"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={openBackupModal}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Opções de Backup
+              </button>
+            </div>
+          </div>
+        )}
+      </>
+    )}
 
       {/* Seção principal: Formulário ou Tabela */}
       {isFormOpen ? (
@@ -4673,6 +4795,355 @@ export default function Lancamento() {
               </div>
             </div>
           </motion.div>
+        </div>
+      )}
+      {/* Modal da Central de Segurança & Backups de Lançamentos - EXCLUSIVO deny.goncalves@risel.com.br */}
+      {isAuthorizedRestoreUser && isBackupModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center border border-emerald-200 text-emerald-700 shrink-0 shadow-xs">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800">Segurança & Banco de Dados de Lançamentos</h3>
+                  <p className="text-xs text-slate-400 font-medium mt-0.5">Persistência permanente no Banco de Dados • Painel Exclusivo de Deny Gonçalves</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBackupModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Mensagem de Feedback */}
+            {backupMessage && (
+              <div className={cn(
+                "p-3 rounded-xl mb-4 text-xs font-semibold flex items-center gap-2 shrink-0",
+                backupMessage.type === "success" && "bg-emerald-50 text-emerald-800 border border-emerald-200",
+                backupMessage.type === "error" && "bg-rose-50 text-rose-800 border border-rose-200",
+                backupMessage.type === "info" && "bg-blue-50 text-blue-800 border border-blue-200"
+              )}>
+                {backupMessage.type === "success" ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                <span>{backupMessage.text}</span>
+              </div>
+            )}
+
+            <div className="overflow-y-auto space-y-4 pr-1 flex-1">
+              {/* Status das 3 Camadas do Banco de Dados */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-left">
+                  <div className="flex items-center gap-1.5 text-emerald-700 text-xs font-bold mb-1">
+                    <Database className="w-4 h-4" />
+                    <span>Banco Atual</span>
+                  </div>
+                  <span className="text-[12px] text-slate-700 font-bold block">
+                    {lancamentos.length} documentos
+                  </span>
+                  <span className="text-[9px] text-slate-400 font-medium block mt-0.5">
+                    Banco de dados oficial ativo
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-left">
+                  <div className="flex items-center gap-1.5 text-indigo-700 text-xs font-bold mb-1">
+                    <Server className="w-4 h-4" />
+                    <span>Backups Servidor</span>
+                  </div>
+                  <span className="text-[12px] text-slate-700 font-bold block">
+                    {serverBackups.length} versionados
+                  </span>
+                  <span className="text-[9px] text-slate-400 font-medium block mt-0.5">
+                    Snapshots físicos no servidor
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-left">
+                  <div className="flex items-center gap-1.5 text-amber-700 text-xs font-bold mb-1">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Cofre Local</span>
+                  </div>
+                  <span className="text-[12px] text-slate-700 font-bold block">
+                    {snapshotInfo.hasSnapshot ? `${snapshotInfo.count} registros` : "Nenhum"}
+                  </span>
+                  <span className="text-[9px] text-slate-400 font-medium block mt-0.5">
+                    Backup de emergência local
+                  </span>
+                </div>
+              </div>
+
+              {/* Ações de Gestão de Banco de Dados */}
+              <div className="space-y-2.5">
+                <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider text-left">
+                  Ações de Banco de Dados e Restauração Imediata
+                </div>
+
+                {/* Botão Criar Ponto de Restauração no Banco de Dados Agora */}
+                <button
+                  type="button"
+                  disabled={backupSyncLoading || lancamentos.length === 0}
+                  onClick={async () => {
+                    setBackupSyncLoading(true);
+                    setBackupMessage(null);
+                    try {
+                      const res = await createDatabaseBackup();
+                      if (res.success) {
+                        setBackupMessage({
+                          type: "success",
+                          text: `Ponto de restauração gravado com sucesso no Banco de Dados do Servidor! (${res.count} lançamentos protegidos)`
+                        });
+                        loadServerBackups();
+                      } else {
+                        setBackupMessage({
+                          type: "error",
+                          text: res.error || "Erro ao criar backup no banco de dados."
+                        });
+                      }
+                    } catch (e: any) {
+                      setBackupMessage({
+                        type: "error",
+                        text: "Erro de conexão ao gravar backup: " + (e?.message || "")
+                      });
+                    } finally {
+                      setBackupSyncLoading(false);
+                    }
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Database className="w-4 h-4 text-emerald-700" />
+                    <div className="text-left">
+                      <span className="block font-bold">Criar Novo Ponto de Backup no Banco de Dados</span>
+                      <span className="block text-[10px] text-emerald-700/80 font-normal">Gera uma cópia física e versionada no disco rígido do servidor</span>
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-emerald-800 font-bold">Gravar Backup</span>
+                </button>
+
+                {/* Botão Restaurar do Último Backup do Banco de Dados */}
+                <button
+                  type="button"
+                  disabled={backupSyncLoading}
+                  onClick={async () => {
+                    setBackupSyncLoading(true);
+                    setBackupMessage(null);
+                    try {
+                      const res = await restoreFromDatabaseBackup();
+                      if (res.success && res.count > 0) {
+                        setBackupMessage({
+                          type: "success",
+                          text: `Sucesso absoluto! ${res.count} lançamentos restaurados diretamente do Banco de Dados do Servidor!`
+                        });
+                      } else {
+                        setBackupMessage({
+                          type: "info",
+                          text: res.error || "Nenhum backup em arquivo encontrado no servidor. Tente restaurar do cofre local ou importar um JSON."
+                        });
+                      }
+                    } catch (e: any) {
+                      setBackupMessage({
+                        type: "error",
+                        text: "Erro ao restaurar do banco de dados: " + (e?.message || "")
+                      });
+                    } finally {
+                      setBackupSyncLoading(false);
+                    }
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200 text-indigo-900 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Server className="w-4 h-4 text-indigo-700" />
+                    <div className="text-left">
+                      <span className="block font-bold">Restaurar do Banco de Dados do Servidor</span>
+                      <span className="block text-[10px] text-indigo-700/80 font-normal">Recupera a base de dados a partir do arquivo de backup do servidor</span>
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-indigo-800 font-bold">Restaurar Banco</span>
+                </button>
+
+                {/* Botão Restaurar do Snapshot Local */}
+                {snapshotInfo.hasSnapshot && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const res = restoreLancamentosFromSnapshot();
+                      if (res.success && res.count > 0) {
+                        setBackupMessage({
+                          type: "success",
+                          text: `Sucesso! ${res.count} lançamentos recuperados do Cofre Local e salvos no Banco de Dados!`
+                        });
+                        loadServerBackups();
+                      } else {
+                        setBackupMessage({
+                          type: "error",
+                          text: "Não foi possível restaurar do snapshot local."
+                        });
+                      }
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl bg-amber-50 hover:bg-amber-100/80 border border-amber-200 text-amber-900 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <RotateCcw className="w-4 h-4 text-amber-600" />
+                      <div className="text-left">
+                        <span className="block font-bold">Restaurar do Cofre de Segurança Local</span>
+                        <span className="block text-[10px] text-amber-700/80 font-normal">
+                          Contém {snapshotInfo.count} lançamentos preservados na memória deste computador
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-[11px] text-amber-800 font-bold">Restaurar Local</span>
+                  </button>
+                )}
+
+                {/* Lista de Histórico de Backups Disponíveis no Servidor */}
+                {serverBackups.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-left">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                        Histórico de Backups no Banco de Dados ({serverBackups.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={loadServerBackups}
+                        className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className={cn("w-3 h-3", loadingServerBackups && "animate-spin")} />
+                        <span>Atualizar</span>
+                      </button>
+                    </div>
+                    <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                      {serverBackups.slice(0, 5).map((b, idx) => (
+                        <div key={b.filename || idx} className="flex items-center justify-between p-2 rounded-xl bg-white border border-slate-200/80 text-xs shadow-2xs">
+                          <div className="text-left">
+                            <span className="font-bold text-slate-800 block leading-tight">
+                              {b.count} lançamentos
+                            </span>
+                            <span className="text-[10px] text-slate-400 block mt-0.5">
+                              {b.timestamp ? new Date(b.timestamp).toLocaleString("pt-BR") : b.filename}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={backupSyncLoading}
+                            onClick={async () => {
+                              if (!window.confirm(`Deseja restaurar este backup do banco contendo ${b.count} lançamentos?`)) return;
+                              setBackupSyncLoading(true);
+                              try {
+                                const res = await restoreFromDatabaseBackup(b.filename);
+                                if (res.success) {
+                                  setBackupMessage({
+                                    type: "success",
+                                    text: `Sucesso! ${res.count} lançamentos restaurados do backup selecionado!`
+                                  });
+                                }
+                              } finally {
+                                setBackupSyncLoading(false);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] transition-colors cursor-pointer"
+                          >
+                            Restaurar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Botão Download Backup JSON */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    exportLancamentosBackupJson();
+                    setBackupMessage({
+                      type: "success",
+                      text: "Backup do banco de dados exportado com sucesso! Arquivo .JSON salvo no seu computador."
+                    });
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Upload className="w-4 h-4 text-emerald-600 rotate-180" />
+                    <div className="text-left">
+                      <span className="block font-bold">Exportar Backup Completo do Banco (.JSON)</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">Baixa arquivo de contingência com todos os documentos salvos</span>
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-emerald-700 font-bold">Exportar</span>
+                </button>
+
+                {/* Botão Importar Backup JSON */}
+                <label className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer">
+                  <div className="flex items-center gap-2.5">
+                    <Upload className="w-4 h-4 text-indigo-600" />
+                    <div className="text-left">
+                      <span className="block font-bold">Importar Arquivo de Backup para o Banco de Dados</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">Restaura lançamentos a partir de um arquivo .json do seu computador</span>
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-indigo-700 font-bold">Selecionar</span>
+                  <input
+                    type="file"
+                    accept=".json"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = async (event) => {
+                        try {
+                          const content = event.target?.result as string;
+                          const parsed = JSON.parse(content);
+                          const itemsList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.items) ? parsed.items : []);
+                          if (itemsList.length > 0) {
+                            const res = await importLancamentosToDatabase(itemsList);
+                            if (res.success) {
+                              setBackupMessage({
+                                type: "success",
+                                text: `Sucesso absoluto! ${res.count} lançamentos importados e gravados com sucesso no Banco de Dados!`
+                              });
+                              loadServerBackups();
+                            } else {
+                              setBackupMessage({
+                                type: "error",
+                                text: "Erro ao gravar no banco: " + (res.error || "")
+                              });
+                            }
+                          } else {
+                            setBackupMessage({
+                              type: "error",
+                              text: "O arquivo selecionado não contém um formato de lançamentos válido."
+                            });
+                          }
+                        } catch (err: any) {
+                          setBackupMessage({
+                            type: "error",
+                            text: "Erro ao ler arquivo de backup: " + (err?.message || "Arquivo inválido")
+                          });
+                        }
+                      };
+                      reader.readAsText(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-slate-100 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsBackupModalOpen(false)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#114D38] text-white hover:bg-[#0d3d2c] transition-colors cursor-pointer shadow-xs"
+              >
+                Concluir
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
