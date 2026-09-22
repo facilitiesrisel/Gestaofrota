@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   UploadCloud,
   FileSpreadsheet,
@@ -55,7 +55,51 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
   const [importMessage, setImportMessage] = useState('');
   const [importCompleted, setImportCompleted] = useState(false);
 
-  if (!isOpen) return null;
+  // Hook de limpeza e sincronização de estado
+  useEffect(() => {
+    if (!isOpen) {
+      setDragActive(false);
+      setFileName(null);
+      setFileSize(null);
+      setParseResult(null);
+      setSearchTerm('');
+      setTabFilter('all');
+      setSelectedItems({});
+      setIsImporting(false);
+      setImportProgress(0);
+      setImportMessage('');
+      setImportCompleted(false);
+    }
+  }, [isOpen]);
+
+  const filteredItems = useMemo(() => {
+    if (!parseResult) return [];
+    return parseResult.items.filter((item) => {
+      if (tabFilter === 'valid' && item.isDuplicate) return false;
+      if (tabFilter === 'duplicate' && !item.isDuplicate) return false;
+      if (!searchTerm) return true;
+      const term = searchTerm.toLowerCase();
+      return (
+        item.placa.toLowerCase().includes(term) ||
+        item.ait.toLowerCase().includes(term) ||
+        item.municipio.toLowerCase().includes(term) ||
+        item.descricaoInfracao.toLowerCase().includes(term) ||
+        item.enquadramento.toLowerCase().includes(term)
+      );
+    });
+  }, [parseResult, tabFilter, searchTerm]);
+
+  const totalSelectedCount = useMemo(() => {
+    if (!parseResult) return 0;
+    return parseResult.items.filter((item) => selectedItems[item.id]).length;
+  }, [parseResult, selectedItems]);
+
+  const totalSelectedValor = useMemo(() => {
+    if (!parseResult) return 0;
+    return parseResult.items
+      .filter((item) => selectedItems[item.id])
+      .reduce((acc, it) => acc + (it.valorComDesconto || 0), 0);
+  }, [parseResult, selectedItems]);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -126,35 +170,6 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
     setSelectedItems((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const filteredItems = useMemo(() => {
-    if (!parseResult) return [];
-    return parseResult.items.filter((item) => {
-      if (tabFilter === 'valid' && item.isDuplicate) return false;
-      if (tabFilter === 'duplicate' && !item.isDuplicate) return false;
-      if (!searchTerm) return true;
-      const term = searchTerm.toLowerCase();
-      return (
-        item.placa.toLowerCase().includes(term) ||
-        item.ait.toLowerCase().includes(term) ||
-        item.municipio.toLowerCase().includes(term) ||
-        item.descricaoInfracao.toLowerCase().includes(term) ||
-        item.enquadramento.toLowerCase().includes(term)
-      );
-    });
-  }, [parseResult, tabFilter, searchTerm]);
-
-  const totalSelectedCount = useMemo(() => {
-    if (!parseResult) return 0;
-    return parseResult.items.filter((item) => selectedItems[item.id]).length;
-  }, [parseResult, selectedItems]);
-
-  const totalSelectedValor = useMemo(() => {
-    if (!parseResult) return 0;
-    return parseResult.items
-      .filter((item) => selectedItems[item.id])
-      .reduce((acc, it) => acc + (it.valorComDesconto || 0), 0);
-  }, [parseResult, selectedItems]);
-
   const handleConfirmImport = async () => {
     if (!parseResult) return;
     const itemsToImport = parseResult.items.filter((item) => selectedItems[item.id]);
@@ -223,6 +238,8 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
       setIsImporting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div

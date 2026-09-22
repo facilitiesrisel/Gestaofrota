@@ -433,6 +433,20 @@ const CustomSVGLineAreaChart = ({
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, [isFullWidth]);
+
+  const maxVal = Math.max(...(data || []).map(d => Number(d.value) || 0), 1);
+
+  // Linhas do grid horizontal evitando repetição de números inteiros quando maxVal é baixo (Regra de Hooks: chamado incondicionalmente no topo)
+  const yAxisTicks = useMemo(() => {
+    if (maxVal <= 2) {
+      return Array.from({ length: maxVal + 1 }, (_, i) => maxVal - i);
+    }
+    if (maxVal <= 4) {
+      return Array.from({ length: maxVal + 1 }, (_, i) => maxVal - i);
+    }
+    const steps = 4;
+    return Array.from({ length: steps + 1 }, (_, i) => Math.round(maxVal * (1 - i / steps)));
+  }, [maxVal]);
   
   if (!data || data.length === 0) {
     return (
@@ -462,8 +476,6 @@ const CustomSVGLineAreaChart = ({
 
   const chartWidth = Math.max(width - paddingLeft - paddingRight, 10);
   const chartHeight = Math.max(height - paddingTop - paddingBottom, 10);
-
-  const maxVal = Math.max(...data.map(d => Number(d.value) || 0), 1);
 
   const points = data.map((d, i) => {
     const x = data.length === 1
@@ -500,18 +512,6 @@ const CustomSVGLineAreaChart = ({
   const activeColors = COLOR_THEMES[colorTheme] || COLOR_THEMES['default'];
   const primaryColor = activeColors[0];
   const secondaryColor = activeColors[1] || primaryColor;
-
-  // Linhas do grid horizontal evitando repetição de números inteiros quando maxVal é baixo
-  const yAxisTicks = useMemo(() => {
-    if (maxVal <= 2) {
-      return Array.from({ length: maxVal + 1 }, (_, i) => maxVal - i);
-    }
-    if (maxVal <= 4) {
-      return Array.from({ length: maxVal + 1 }, (_, i) => maxVal - i);
-    }
-    const steps = 4;
-    return Array.from({ length: steps + 1 }, (_, i) => Math.round(maxVal * (1 - i / steps)));
-  }, [maxVal]);
 
   const gridLines = yAxisTicks.map((val) => {
     const ratio = maxVal > 0 ? (1 - val / maxVal) : 0;

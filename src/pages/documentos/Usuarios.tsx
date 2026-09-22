@@ -27,29 +27,6 @@ export default function Usuarios() {
     currentUser?.email?.toLowerCase() === "deny.goncalves@risel.com.br" ||
     currentUser?.email?.toLowerCase() === "deny.risel@gmail.com";
 
-  if (!isMasterUser) {
-    return (
-      <div className="bg-white rounded-[24px] border border-slate-200/80 shadow-sm p-8 text-center max-w-xl mx-auto mt-12 space-y-4">
-        <div className="w-16 h-16 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
-          <Lock className="w-8 h-8" />
-        </div>
-        <h2 className="text-xl font-bold text-slate-800">Acesso Restrito ao Menu de Usuários</h2>
-        <p className="text-slate-500 text-sm leading-relaxed">
-          Somente o Diretor Master Deny Gonçalves (<span className="font-semibold text-slate-700">deny.goncalves@risel.com.br</span>) possui permissão para conceder, alterar ou revogar acessos aos módulos do ERP Risel.
-        </p>
-        <div className="pt-2">
-          <a
-            href="/"
-            className="inline-flex items-center gap-2 px-6 py-2.5 bg-[#114D38] hover:bg-[#0d3b2b] text-white rounded-xl text-xs font-bold shadow-md transition-all"
-          >
-            <ArrowRight className="w-4 h-4 rotate-180" />
-            <span>Voltar ao Início</span>
-          </a>
-        </div>
-      </div>
-    );
-  }
-
   // Estados para as Configurações de E-mail SMTP do Sistema
   const [smtpHost, setSmtpHost] = useState(() => {
     return localStorage.getItem("risel_smtp_host") || "smtp.gmail.com";
@@ -569,6 +546,29 @@ export default function Usuarios() {
       setIsSavingUser(false);
     }
   };
+
+  if (!isMasterUser) {
+    return (
+      <div className="bg-white rounded-[24px] border border-slate-200/80 shadow-sm p-8 text-center max-w-xl mx-auto mt-12 space-y-4">
+        <div className="w-16 h-16 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
+          <Lock className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-800">Acesso Restrito ao Menu de Usuários</h2>
+        <p className="text-slate-500 text-sm leading-relaxed">
+          Somente o Diretor Master Deny Gonçalves (<span className="font-semibold text-slate-700">deny.goncalves@risel.com.br</span>) possui permissão para conceder, alterar ou revogar acessos aos módulos do ERP Risel.
+        </p>
+        <div className="pt-2">
+          <a
+            href="/"
+            className="inline-flex items-center gap-2 px-6 py-2.5 bg-[#114D38] hover:bg-[#0d3b2b] text-white rounded-xl text-xs font-bold shadow-md transition-all"
+          >
+            <ArrowRight className="w-4 h-4 rotate-180" />
+            <span>Voltar ao Início</span>
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
