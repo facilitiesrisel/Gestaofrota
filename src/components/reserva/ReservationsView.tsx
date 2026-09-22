@@ -9,6 +9,7 @@ import { useAuth } from '../../context/ReservationAuthContext';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
 import { getAllSystemUsersEmails } from '../../services/perimeterAlertService';
+import { resolveReservationRecipients, getAllSystemAdminEmails } from '../../services/reservaEmailHelper';
 import { AdditionalRecipientsInput } from './AdditionalRecipientsInput';
 import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
 import RacRentalsView from './RacRentalsView';
@@ -223,25 +224,23 @@ const ReservationsView: React.FC = () => {
             "#114D38"
         );
 
-        const baseRecipients = getReservasEmailRecipients();
-        const requesterEmail = (resSnapshot.email || "").trim().toLowerCase();
-        const adminCcList = Array.from(new Set([
-          'deny.goncalves@risel.com.br',
-          'lorena.padilha@risel.com.br',
-          ...baseRecipients,
-          ...additionalEmailsToSend
-        ]));
-        const isRequesterValid = Boolean(requesterEmail && requesterEmail.includes('@'));
-        const primaryTo = isRequesterValid ? [requesterEmail] : adminCcList;
-        const ccList = isRequesterValid ? adminCcList : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
+        const { primaryTo, ccList, requesterEmail, isRequesterValid } = resolveReservationRecipients(
+          resSnapshot,
+          additionalEmailsToSend
+        );
+
+        console.log(`[Reservas Frota] Enviando e-mail de aprovação. Para: ${primaryTo.join(', ')} | CC: ${ccList?.join(', ') || 'Nenhum'}`);
 
         try {
           await sendEmail(primaryTo, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
-            fromName: "Risel Combustíveis",
+            fromName: "Gestão de Reservas Risel",
             source: "reservas",
             cc: ccList
           });
-          showToast("Reserva aprovada e notificações enviadas com sucesso!", 'success');
+          const recipientFeedback = isRequesterValid 
+            ? `Reserva aprovada! E-mail enviado ao solicitante (${requesterEmail}) com cópia para os Administradores.`
+            : `Reserva aprovada! E-mail enviado para a equipe de Administração.`;
+          showToast(recipientFeedback, 'success');
         } catch (emailErr) {
           console.warn("Aviso: reserva aprovada no sistema, porém envio de e-mail oscilou:", emailErr);
           showToast("Reserva aprovada com sucesso! (Aviso: instabilidade temporária no e-mail)", 'warning');
@@ -320,25 +319,24 @@ const ReservationsView: React.FC = () => {
           `Motivo da Recusa / Parecer da Administração: ${reason}`,
           "#dc2626"
       );
-      const baseRecipients = getReservasEmailRecipients();
-      const requesterEmail = (resSnapshot.email || "").trim().toLowerCase();
-      const adminCcList = Array.from(new Set([
-        'deny.goncalves@risel.com.br',
-        'lorena.padilha@risel.com.br',
-        ...baseRecipients,
-        ...additionalEmailsToSend
-      ]));
-      const isRequesterValid = Boolean(requesterEmail && requesterEmail.includes('@'));
-      const primaryTo = isRequesterValid ? [requesterEmail] : adminCcList;
-      const ccList = isRequesterValid ? adminCcList : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
+      
+      const { primaryTo, ccList, requesterEmail, isRequesterValid } = resolveReservationRecipients(
+        resSnapshot,
+        additionalEmailsToSend
+      );
+
+      console.log(`[Reservas Frota] Enviando e-mail de recusa. Para: ${primaryTo.join(', ')} | CC: ${ccList?.join(', ') || 'Nenhum'}`);
 
       try {
         await sendEmail(primaryTo, `Solicitação de Reserva Recusada - ${resSnapshot.requesterName}`, emailHtml, {
-          fromName: "Risel Combustíveis",
+          fromName: "Gestão de Reservas Risel",
           source: "reservas",
           cc: ccList
         });
-        showToast("Reserva rejeitada e e-mail enviado com sucesso.", 'success');
+        const recipientFeedback = isRequesterValid 
+          ? `Reserva recusada! Parecer enviado ao solicitante (${requesterEmail}) com cópia para os Administradores.`
+          : `Reserva recusada! Parecer enviado aos Administradores.`;
+        showToast(recipientFeedback, 'success');
       } catch (errEmail) {
         showToast("Reserva rejeitada. (Aviso: falha temporária no disparo do e-mail)", 'warning');
       }
@@ -377,21 +375,12 @@ const ReservationsView: React.FC = () => {
                     "Caso necessite de um veículo para uma nova data, realize uma nova solicitação.",
                     "#475569"
                 );
-                const baseCancelRecipients = getReservasEmailRecipients();
-                const reqCancelEmail = (reservation.email || "").trim().toLowerCase();
-                const adminCcList = Array.from(new Set([
-                  'deny.goncalves@risel.com.br',
-                  'lorena.padilha@risel.com.br',
-                  ...baseCancelRecipients
-                ]));
-                const isCancelEmailValid = Boolean(reqCancelEmail && reqCancelEmail.includes('@'));
-                const cancelPrimaryTo = isCancelEmailValid ? [reqCancelEmail] : adminCcList;
-                const cancelCcList = isCancelEmailValid ? adminCcList : undefined;
+                const { primaryTo, ccList } = resolveReservationRecipients(reservation);
 
-                await sendEmail(cancelPrimaryTo, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml, {
-                  fromName: "Risel Combustíveis",
+                await sendEmail(primaryTo, `Reserva Cancelada - ${reservation.requesterName}`, emailHtml, {
+                  fromName: "Gestão de Reservas Risel",
                   source: "reservas",
-                  cc: cancelCcList
+                  cc: ccList
                 });
               } catch (mailErr) {
                 console.warn("Aviso ao enviar e-mail de cancelamento:", mailErr);
@@ -761,25 +750,30 @@ const ReservationsView: React.FC = () => {
             </div>
 
             {/* Inclusão de Destinatários Adicionais na Aprovação */}
-            <AdditionalRecipientsInput
-              additionalEmails={approveAdditionalEmails}
-              onChange={setApproveAdditionalEmails}
-              defaultRecipients={[
-                ...(selectedReservation.email ? [{
-                  label: 'Solicitante',
-                  email: selectedReservation.email,
-                  isPrimary: true
-                }] : []),
-                ...getReservasEmailRecipients().map(email => ({
-                  label: 'Gestão de Frotas',
-                  email
-                }))
-              ]}
-              title="Destinatários Adicionais da Aprovação (Em Cópia)"
-              description="Inclua outros e-mails de gestores ou setores que também precisam receber a confirmação de aprovação desta reserva."
-              theme="emerald"
-              quickSuggestions={getAllSystemUsersEmails()}
-            />
+            {(() => {
+              const resInfo = resolveReservationRecipients(selectedReservation);
+              return (
+                <AdditionalRecipientsInput
+                  additionalEmails={approveAdditionalEmails}
+                  onChange={setApproveAdditionalEmails}
+                  defaultRecipients={[
+                    ...(resInfo.isRequesterValid ? [{
+                      label: 'Solicitante (Para)',
+                      email: resInfo.requesterEmail,
+                      isPrimary: true
+                    }] : []),
+                    ...resInfo.adminEmails.map(email => ({
+                      label: 'Administrador (Em Cópia)',
+                      email
+                    }))
+                  ]}
+                  title="Destinatários Adicionais da Aprovação (Em Cópia)"
+                  description="Inclua outros e-mails de gestores ou setores que também precisam receber a confirmação de aprovação desta reserva."
+                  theme="emerald"
+                  quickSuggestions={getAllSystemUsersEmails()}
+                />
+              );
+            })()}
 
             <div className="flex justify-end gap-3 pt-2">
               <button 
@@ -854,25 +848,30 @@ const ReservationsView: React.FC = () => {
             </div>
 
             {/* Inclusão de Destinatários Adicionais na Recusa */}
-            <AdditionalRecipientsInput
-              additionalEmails={rejectAdditionalEmails}
-              onChange={setRejectAdditionalEmails}
-              defaultRecipients={[
-                ...(selectedReservation.email ? [{
-                  label: 'Solicitante',
-                  email: selectedReservation.email,
-                  isPrimary: true
-                }] : []),
-                ...getReservasEmailRecipients().map(email => ({
-                  label: 'Gestão de Frotas',
-                  email
-                }))
-              ]}
-              title="Destinatários Adicionais da Notificação de Recusa"
-              description="Inclua outros e-mails que devam ser notificados formalmente sobre a recusa desta solicitação."
-              theme="rose"
-              quickSuggestions={getAllSystemUsersEmails()}
-            />
+            {(() => {
+              const resInfo = resolveReservationRecipients(selectedReservation);
+              return (
+                <AdditionalRecipientsInput
+                  additionalEmails={rejectAdditionalEmails}
+                  onChange={setRejectAdditionalEmails}
+                  defaultRecipients={[
+                    ...(resInfo.isRequesterValid ? [{
+                      label: 'Solicitante (Para)',
+                      email: resInfo.requesterEmail,
+                      isPrimary: true
+                    }] : []),
+                    ...resInfo.adminEmails.map(email => ({
+                      label: 'Administrador (Em Cópia)',
+                      email
+                    }))
+                  ]}
+                  title="Destinatários Adicionais da Notificação de Recusa"
+                  description="Inclua outros e-mails que devam ser notificados formalmente sobre a recusa desta solicitação."
+                  theme="rose"
+                  quickSuggestions={getAllSystemUsersEmails()}
+                />
+              );
+            })()}
 
             <div className="flex justify-end gap-3 pt-2">
               <button 

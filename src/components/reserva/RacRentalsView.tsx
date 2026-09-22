@@ -31,6 +31,7 @@ import {
 } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients, FILIAIS_RISEL } from '../../constants_reserva';
 import { getAllSystemUsersEmails } from '../../services/perimeterAlertService';
+import { resolveReservationRecipients } from '../../services/reservaEmailHelper';
 import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 import { useAuth } from '../../context/ReservationAuthContext';
@@ -1015,15 +1016,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
-                const allUsers = getAllSystemUsersEmails();
-                const reqEmail = (fullUpdated.requesterEmail || "").trim().toLowerCase();
-                const isRequesterValid = Boolean(reqEmail && reqEmail.includes('@'));
-                const combinedCcList = Array.from(new Set([
-                    ...allUsers,
-                    ...additionalEmailsToSend
-                ]));
-                const primaryTo = isRequesterValid ? [reqEmail] : combinedCcList;
-                const ccList = isRequesterValid ? combinedCcList : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
+                const { primaryTo, ccList, requesterEmail, isRequesterValid } = resolveReservationRecipients(
+                    fullUpdated,
+                    additionalEmailsToSend
+                );
+
+                console.log(`[RAC Locações] Enviando aprovação RAC. Para: ${primaryTo.join(', ')} | CC: ${ccList?.join(', ') || 'Nenhum'}`);
 
                 await sendEmail(
                     primaryTo,
@@ -1111,17 +1109,12 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh'))
                 });
 
-                const baseRejectAdmins = getReservasEmailRecipients();
-                const allRejectRacRecipients = Array.from(new Set([
-                    'deny.goncalves@risel.com.br',
-                    'lorena.padilha@risel.com.br',
-                    ...baseRejectAdmins,
-                    ...additionalEmailsToSend
-                ]));
-                const reqEmail = (fullUpdated.requesterEmail || "").trim().toLowerCase();
-                const isRequesterValid = Boolean(reqEmail && reqEmail.includes('@'));
-                const primaryTo = isRequesterValid ? [reqEmail] : allRejectRacRecipients;
-                const ccList = isRequesterValid ? allRejectRacRecipients : (additionalEmailsToSend.length > 0 ? additionalEmailsToSend : undefined);
+                const { primaryTo, ccList, requesterEmail, isRequesterValid } = resolveReservationRecipients(
+                    fullUpdated,
+                    additionalEmailsToSend
+                );
+
+                console.log(`[RAC Locações] Enviando recusa RAC. Para: ${primaryTo.join(', ')} | CC: ${ccList?.join(', ') || 'Nenhum'}`);
 
                 await sendEmail(
                     primaryTo,
@@ -1137,7 +1130,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 console.warn("Aviso ao enviar e-mail de recusa RAC:", mailErr);
             }
 
-            showToast("Solicitação RAC recusada e e-mail enviado ao solicitante.", "success");
+            showToast("Solicitação RAC recusada e e-mail enviado ao solicitante com cópia aos administradores.", "success");
             setIsRejectModalOpen(false);
             setSelectedRental(null);
             setRejectAdditionalEmails([]);
