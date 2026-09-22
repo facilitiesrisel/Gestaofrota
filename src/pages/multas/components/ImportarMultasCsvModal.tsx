@@ -30,7 +30,10 @@ interface ImportarMultasCsvModalProps {
   existingMultas: any[];
   veiculos: any[];
   codigos: any[];
-  onImportSuccess: (importedMultas: any[]) => Promise<void>;
+  onImportSuccess: (
+    importedMultas: any[],
+    onProgress?: (percent: number, current: number, total: number) => void
+  ) => Promise<void>;
 }
 
 export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
@@ -220,21 +223,29 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
     });
 
     try {
-      setImportMessage(`Salvando ${multasParaGravar.length} multas no sistema...`);
-      setImportProgress(30);
+      setImportMessage(`Iniciando gravação de ${multasParaGravar.length} multas...`);
+      setImportProgress(20);
 
-      await onImportSuccess(multasParaGravar);
+      await onImportSuccess(multasParaGravar, (percent, current, total) => {
+        setImportProgress(percent);
+        if (current > 0) {
+          setImportMessage(`Gravando multas no sistema (${current}/${total})...`);
+        } else {
+          setImportMessage(`Processando ${total} multas...`);
+        }
+      });
 
       setImportProgress(100);
       setImportCompleted(true);
       setImportMessage(`${multasParaGravar.length} multas importadas com sucesso!`);
 
       setTimeout(() => {
+        setIsImporting(false);
         onClose();
-      }, 1400);
-    } catch (error) {
+      }, 1200);
+    } catch (error: any) {
       console.error('Erro ao importar multas:', error);
-      setImportMessage('Erro durante a gravação. Tente novamente.');
+      setImportMessage(`Erro durante a gravação: ${error?.message || 'Tente novamente.'}`);
       setIsImporting(false);
     }
   };

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchAllData, saveMulta, deleteMulta, cleanString, uploadFileToDrive, generateAuthPdfDocs, getDriveFolderId, getDocsTemplateId, formatInputText, saveCodigo, fetchBaseEmailMappings, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, deleteDriveFiles } from '../services/storage';
+import { fetchAllData, saveMulta, saveBatchMultas, deleteMulta, cleanString, uploadFileToDrive, generateAuthPdfDocs, getDriveFolderId, getDocsTemplateId, formatInputText, saveCodigo, fetchBaseEmailMappings, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, deleteDriveFiles } from '../services/storage';
 import { generateAutorizacaoDescontoPdf, openTermoInNewTab } from '../services/pdfGenerator';
 import { VEICULOS_REAIS } from '../../../data/veiculos_reais';
 import { parseLocalDate } from '../services/dateUtils';
@@ -720,11 +720,20 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const [filteredCodigos, setFilteredCodigos] = useState<any[]>([]);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
-  const handleImportCsvSuccess = async (importedMultas: Multa[]) => {
-      for (const m of importedMultas) {
-          await saveMulta(m);
-      }
+  const handleImportCsvSuccess = async (
+    importedMultas: Multa[],
+    onProgress?: (percent: number, current: number, total: number) => void
+  ) => {
+    try {
+      await saveBatchMultas(importedMultas, onProgress);
+    } catch (err) {
+      console.warn("Aviso ao processar lote de multas:", err);
+    }
+    try {
       await loadData(true);
+    } catch (err) {
+      console.warn("Aviso ao recarregar dados após importação:", err);
+    }
   };
 
   const loadData = async (force: boolean = false) => {

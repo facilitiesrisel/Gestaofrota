@@ -2091,12 +2091,83 @@ export async function clearAllMultasSupabase(): Promise<boolean> {
 
 export async function saveBatchMultasSupabase(items: any[]): Promise<{ count: number; success: boolean }> {
   if (!items || items.length === 0) return { count: 0, success: true };
-  let count = 0;
-  for (const item of items) {
-    const ok = await saveMultaSupabase(item);
-    if (ok) count++;
+  try {
+    const client = getSupabaseClient();
+    const dbRecords = items.map(item => {
+      const id = String(item.id || item.ait || `multa-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`);
+      const placa = (item.placa || '').toUpperCase().trim();
+      let dataInfracao: string | null = null;
+      if (item.dataHoraInfracao) {
+        if (item.dataHoraInfracao.includes('T')) {
+          dataInfracao = item.dataHoraInfracao.split('T')[0];
+        } else if (item.dataHoraInfracao.length === 10) {
+          dataInfracao = item.dataHoraInfracao;
+        } else if (item.dataHoraInfracao.includes(' ')) {
+          dataInfracao = item.dataHoraInfracao.split(' ')[0];
+        }
+      }
+      return {
+        id,
+        placa: placa || 'SEM-PLACA',
+        frota: item.frota || placa,
+        ait: item.ait || id,
+        tipo: item.tipo || 'AUTO',
+        status: item.status || 'AGUARDANDO BOLETO',
+        valor: Number(item.valor) || 0,
+        valor_com_desconto: Number(item.valorComDesconto) || (Number(item.valor) || 0),
+        desconto: Number(item.desconto) || 0,
+        data_infracao: dataInfracao || undefined,
+        data_recebimento: item.dataRecebimento || undefined,
+        prazo_indicacao: item.prazoIndicacao || undefined,
+        enquadramento: item.enquadramento || '',
+        artigo_ctb: item.artigoCtb || '',
+        descricao_infracao: item.descricaoInfracao || '',
+        pontos_cnh: Number(item.pontosCnh) || 0,
+        base: item.base || '',
+        nome_motorista: item.responsavelNome || '',
+        orgao_autuador: item.orgaoAutuador || '',
+        endereco: item.endereco || '',
+        municipio: item.municipio || '',
+        uf: item.uf || '',
+        rodovia_urbano: item.rodoviaOuUrbano || 'URBANO',
+        recebida_com_prazo: item.recebidaComPrazo || 'SIM',
+        retornou_com_prazo: item.retornouComPrazo || 'SIM',
+        empresa_ou_condutor: item.empresaOuCondutor || 'CONDUTOR',
+        descontar_motorista: item.descontarMotorista || 'SIM',
+        pago_com_desconto: item.pagoComDesconto || 'SIM',
+        enviado_rh: item.enviadoAoRh || 'NÃO',
+        link_ait: item.linkAit || '',
+        link_autorizacao: item.linkAuth || '',
+        obs: item.obs || ''
+      };
+    });
+
+    const CHUNK_SIZE = 50;
+    let totalSaved = 0;
+
+    for (let i = 0; i < dbRecords.length; i += CHUNK_SIZE) {
+      const chunk = dbRecords.slice(i, i + CHUNK_SIZE);
+      try {
+        const timeoutPromise = new Promise<{ error: any }>((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout ao conectar com Supabase")), 4000)
+        );
+        const upsertPromise = client.from('multas').upsert(chunk, { onConflict: 'id' });
+        const res: any = await Promise.race([upsertPromise, timeoutPromise]);
+        if (!res.error) {
+          totalSaved += chunk.length;
+        } else {
+          console.warn("Aviso ao salvar lote parcial no Supabase:", res.error.message);
+        }
+      } catch (chunkErr) {
+        console.warn("Aviso na gravação de chunk do Supabase:", chunkErr);
+      }
+    }
+
+    return { count: totalSaved, success: totalSaved > 0 };
+  } catch (err) {
+    console.warn("Aviso geral no saveBatchMultasSupabase:", err);
+    return { count: 0, success: false };
   }
-  return { count, success: count > 0 };
 }
 
 import { 

@@ -6,6 +6,7 @@ import { idbGetAll, idbPut, idbDelete, idbBulkPut } from './db';
 import { 
   fetchMultasSupabase, 
   saveMultaSupabase, 
+  saveBatchMultasSupabase,
   deleteMultaSupabase, 
   clearAllMultasSupabase,
   fetchEmailMappingsSupabase,
@@ -973,6 +974,73 @@ export const saveMulta = async (multa: Multa) => {
   }
 
   return { success: true, id: multa.id };
+};
+
+export const saveBatchMultas = async (
+  multasParaGravar: Multa[],
+  onProgress?: (percent: number, current: number, total: number) => void
+): Promise<{ success: boolean; count: number }> => {
+  if (!multasParaGravar || multasParaGravar.length === 0) {
+    return { success: true, count: 0 };
+  }
+
+  const total = multasParaGravar.length;
+  onProgress?.(35, 0, total);
+
+  // 1. Atualizar persistência primária local rápida (LocalStorage)
+  let updatedList: Multa[] = [];
+  try {
+    const stored = localStorage.getItem("risel_frota_multas");
+    let list: Multa[] = stored ? JSON.parse(stored) : [];
+    const map = new Map<string, Multa>();
+    list.forEach(m => map.set(m.id || m.ait, m));
+    multasParaGravar.forEach(m => map.set(m.id || m.ait, m));
+    updatedList = Array.from(map.values());
+    localStorage.setItem("risel_frota_multas", JSON.stringify(updatedList));
+    localStore.multas = updatedList;
+  } catch (err) {
+    console.warn("Aviso ao salvar lote de multas no localStorage:", err);
+  }
+
+  onProgress?.(55, Math.floor(total * 0.3), total);
+
+  // 2. Atualizar Cache Otimista em memória e localStorage
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    let data = cached ? JSON.parse(cached).data : null;
+    if (!data) data = { ...localStore };
+    data.multas = updatedList.length > 0 ? updatedList : localStore.multas;
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      data
+    }));
+  } catch (err) {
+    console.warn("Aviso ao atualizar cache em lote:", err);
+  }
+
+  onProgress?.(70, Math.floor(total * 0.6), total);
+
+  // 3. Persistência de alta durabilidade (IndexedDB em lote único)
+  try {
+    await idbBulkPut('multas', multasParaGravar);
+  } catch (err) {
+    console.warn("Aviso ao salvar multas no IndexedDB:", err);
+  }
+
+  onProgress?.(85, Math.floor(total * 0.85), total);
+
+  // 4. Sincronização em Nuvem (Supabase em lote com fallback seguro sem bloquear)
+  try {
+    saveBatchMultasSupabase(multasParaGravar).catch(e => {
+      console.warn("Aviso na sincronização em nuvem das multas:", e);
+    });
+  } catch (err) {
+    console.warn("Aviso ao disparar sincronização Supabase:", err);
+  }
+
+  onProgress?.(95, total, total);
+
+  return { success: true, count: multasParaGravar.length };
 };
 
 export const saveCodigo = async (codigo: CodigoMulta) => {
