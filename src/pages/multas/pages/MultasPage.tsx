@@ -725,14 +725,19 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     onProgress?: (percent: number, current: number, total: number) => void
   ) => {
     try {
-      await saveBatchMultas(importedMultas, onProgress);
+      const result = await saveBatchMultas(importedMultas, onProgress);
+      if (result && result.updatedMultas && result.updatedMultas.length > 0) {
+        setMultas(result.updatedMultas);
+      } else {
+        const stored = localStorage.getItem("risel_frota_multas");
+        if (stored) {
+          try {
+            setMultas(JSON.parse(stored));
+          } catch (e) {}
+        }
+      }
     } catch (err) {
       console.warn("Aviso ao processar lote de multas:", err);
-    }
-    try {
-      await loadData(true);
-    } catch (err) {
-      console.warn("Aviso ao recarregar dados após importação:", err);
     }
   };
 

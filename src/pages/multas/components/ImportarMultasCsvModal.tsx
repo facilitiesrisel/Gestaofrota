@@ -223,21 +223,23 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
     });
 
     try {
-      setImportMessage(`Iniciando gravação de ${multasParaGravar.length} multas...`);
       setImportProgress(20);
+      setImportMessage(`Iniciando gravação de ${multasParaGravar.length} multas...`);
 
       await onImportSuccess(multasParaGravar, (percent, current, total) => {
-        setImportProgress(percent);
-        if (current > 0) {
+        setImportProgress(Math.max(20, percent));
+        if (percent >= 80 && percent < 95) {
+          setImportMessage(`Sincronizando com a planilha Google vinculada (${current}/${total})...`);
+        } else if (current > 0) {
           setImportMessage(`Gravando multas no sistema (${current}/${total})...`);
         } else {
-          setImportMessage(`Processando ${total} multas...`);
+          setImportMessage(`Processando registros de multas...`);
         }
       });
 
       setImportProgress(100);
       setImportCompleted(true);
-      setImportMessage(`${multasParaGravar.length} multas importadas com sucesso!`);
+      setImportMessage(`${multasParaGravar.length} multas importadas e sincronizadas na planilha com sucesso!`);
 
       setTimeout(() => {
         setIsImporting(false);

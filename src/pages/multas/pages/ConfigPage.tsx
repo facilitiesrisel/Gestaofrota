@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getApiUrl, setApiUrl, testConnection, getDriveFolderId, getDocsTemplateId, setDriveConfig, clearCache, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS } from '../services/storage';
+import { getApiUrl, setApiUrl, testConnection, getDriveFolderId, getDocsTemplateId, setDriveConfig, clearCache, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, DEFAULT_API_URL } from '../services/storage';
 import { Save, Link as LinkIcon, Radio, CheckCircle, XCircle, Loader2, Code, Copy, Table, AlertTriangle, FileJson, Folder, Mail, RefreshCw, Plus, Trash2, Edit2, Check, X } from 'lucide-react';
 
 const HEADERS_MULTAS = "ID\tSTATUS\tFROTA\tPLACA\tBASE\tAIT\tTIPO\tDATA INFRACAO\tDATA RECEBIMENTO\tPRAZO INDICACAO\tRECEBIDA COM PRAZO\tENQUADRAMENTO\tARTIGO CTB\tDESCRICAO INFRACAO\tPONTOS CNH\tLOGIN MOTORISTA\tNOME MOTORISTA\tORGAO AUTUADOR\tENDERECO\tMUNICIPIO\tUF\tRODOVIA OU URBANO\tRETORNOU COM PRAZO\tVALOR\tDESCONTO\tVALOR COM DESCONTO\tEMPRESA OU CONDUTOR\tDESCONTAR MOTORISTA\tPAGO COM DESCONTO\tENVIADO AO RH\tOBS\tLINK AIT\tLINK AUTORIZACAO";
@@ -267,11 +267,22 @@ const ConfigPage: React.FC = () => {
   const [testMessage, setTestMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'script' | 'manifest'>('script');
   const [showCode, setShowCode] = useState(false);
+  const [scriptCode, setScriptCode] = useState(SCRIPT_CODE);
 
   useEffect(() => {
     setUrl(getApiUrl());
     setFolderId(getDriveFolderId());
     setTemplateId(getDocsTemplateId());
+
+    // Carrega a versão atualizada do Apps Script direto do servidor
+    fetch('/api/sheets/script-code')
+      .then(res => res.ok ? res.text() : null)
+      .then(code => {
+        if (code && code.trim().length > 100) {
+          setScriptCode(code);
+        }
+      })
+      .catch(() => {});
     
     const loadMappings = async () => {
       try {
@@ -798,8 +809,8 @@ const ConfigPage: React.FC = () => {
                  {activeTab === 'script' && (
                     <>
                         <div className="relative">
-                            <textarea readOnly className="w-full h-80 bg-slate-900 text-slate-300 font-mono text-xs p-4 rounded-lg outline-none custom-scrollbar leading-5" value={SCRIPT_CODE}/>
-                            <button onClick={() => copyCode(SCRIPT_CODE)} className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white p-2 rounded-md backdrop-blur-sm transition-colors border border-white/10 shadow-lg"><Copy size={16} /></button>
+                            <textarea readOnly className="w-full h-80 bg-slate-900 text-slate-300 font-mono text-xs p-4 rounded-lg outline-none custom-scrollbar leading-5" value={scriptCode}/>
+                            <button onClick={() => copyCode(scriptCode)} className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white p-2 rounded-md backdrop-blur-sm transition-colors border border-white/10 shadow-lg"><Copy size={16} /></button>
                         </div>
                     </>
                  )}

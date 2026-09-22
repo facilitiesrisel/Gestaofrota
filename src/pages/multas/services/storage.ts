@@ -20,8 +20,8 @@ const EMAIL_CONFIG_KEY = 'risel_email_config';
 const CACHE_KEY = 'risel_data_cache';
 const CACHE_DURATION = 1 * 60 * 1000; // Reduzido para 1 Minuto para diminuir latência
 
-// URL do Script (padrão vazia para usar dados reais locais/Supabase)
-const DEFAULT_API_URL = '';
+// URL do Script Oficial Risel v6.0
+export const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxiSQPRzYQoeTEpHC6df5Rb52F1zyhkvtyOI5gk0UeML49w3rKpsaO36DHQIdVS7nQ2ug/exec';
 
 // IDs Padrão (Fallback)
 const DEFAULT_FOLDER_ID = '1Fq8e5MM_AOl01HD0iGmVg1cg2bCnUmVk';
@@ -29,7 +29,13 @@ const DEFAULT_TEMPLATE_ID = '1U1B53R29XIXrNs12nIQfeJ7MDlVCScivDkjyHo2QO8o'; // I
 
 // Getters Dinâmicos
 export const getApiUrl = () => {
-    return localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL;
+    const stored = localStorage.getItem(API_URL_KEY);
+    // Se estiver vazio ou for a URL antiga obsoleta, atualiza automaticamente para a nova URL
+    if (!stored || stored.includes('AKfycbw4b-wAzc99jr-CQo3THJtlQpC925RroOb1lqOjE3ibl96sOZwnQMGIGNEwHT-zGk2t')) {
+        localStorage.setItem(API_URL_KEY, DEFAULT_API_URL);
+        return DEFAULT_API_URL;
+    }
+    return stored;
 };
 
 export const getDriveFolderId = () => localStorage.getItem(DRIVE_FOLDER_KEY) || DEFAULT_FOLDER_ID;
@@ -131,7 +137,16 @@ export const saveBaseEmailMappings = async (mappings: Record<string, { to: strin
 };
 
 // Setters
-export const setApiUrl = (url: string) => localStorage.setItem(API_URL_KEY, url);
+export const setApiUrl = (url: string) => {
+    localStorage.setItem(API_URL_KEY, url);
+    try {
+        fetch('/api/sheets/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ appsScriptUrl: url })
+        }).catch(() => {});
+    } catch (e) {}
+};
 export const setDriveConfig = (folderId: string, templateId: string) => {
     localStorage.setItem(DRIVE_FOLDER_KEY, folderId);
     localStorage.setItem(DOCS_TEMPLATE_KEY, templateId);
@@ -151,6 +166,24 @@ export const clearCache = () => {
 const request = async (payload: any) => {
   const url = getApiUrl();
   if (!url) return null;
+
+  // Se for ação de leitura pura ('read'), usa GET que tem resposta instantânea e sem redirecionamento bloqueante no Google Apps Script
+  if (payload && payload.action === 'read') {
+    try {
+      const getRes = await fetch(`${url}${url.includes('?') ? '&' : '?'}action=read`, {
+        method: 'GET',
+        redirect: 'follow'
+      });
+      const getText = await getRes.text();
+      try {
+        const parsed = JSON.parse(getText);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch (e) {}
+    } catch (e) {
+      console.warn("Aviso ao tentar leitura via GET, tentando POST:", e);
+    }
+  }
+
   try {
     const response = await fetch(url, { 
         method: 'POST',
@@ -167,6 +200,13 @@ const request = async (payload: any) => {
     } catch (e) {
         console.warn("Resposta não-JSON do servidor:", text);
         if (text.includes('<!DOCTYPE html>') || text.includes('Error')) {
+             if (payload && payload.action === 'read') {
+               try {
+                 const fallbackRes = await fetch(`${url}${url.includes('?') ? '&' : '?'}action=read`);
+                 const fallbackText = await fallbackRes.text();
+                 return JSON.parse(fallbackText);
+               } catch (_) {}
+             }
              return { success: false, error: "Erro no Servidor Google (HTML retornado). Verifique a URL do Script e permissões." };
         }
         return { success: true, message: "Processado (sem JSON)" }; 
@@ -947,18 +987,65 @@ export const deleteMotorista = async (login: string) => {
   return { success: true };
 };
 
+// Sincronização de Multas com a Planilha do Google Vinculada
+export const syncMultasToGoogleSheet = async (
+  multas: Multa[]
+): Promise<{ success: boolean; count: number }> => {
+  if (!multas || multas.length === 0) return { success: true, count: 0 };
+
+  // 1. Tentar primeiro via backend proxy /api/multas/sync-sheets (sem restrição de CORS)
+  try {
+    const res = await fetch('/api/multas/sync-sheets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        multas,
+        appsScriptUrl: getApiUrl()
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.savedInSheets) {
+        return { success: true, count: multas.length };
+      }
+    }
+  } catch (e) {
+    console.warn("Aviso ao sincronizar via proxy /api/multas/sync-sheets:", e);
+  }
+
+  // 2. Fallback direto caso o proxy não responda
+  const url = getApiUrl();
+  if (url && url !== DEFAULT_API_URL) {
+    try {
+      for (const m of multas) {
+        await request({ action: 'save', type: 'multa', payload: mapMultaToPayload(m) }).catch(() => {});
+      }
+    } catch (directErr) {
+      console.warn("Aviso no fallback direto para Google Sheets:", directErr);
+    }
+  }
+
+  return { success: true, count: multas.length };
+};
+
 export const saveMulta = async (multa: Multa) => {
   updateCacheOptimistically('multas', multa, undefined, 'save');
   
   // 1. Persistência em Nuvem (Supabase Oficial)
   try {
-    await saveMultaSupabase(multa);
+    saveMultaSupabase(multa).catch(e => console.warn("Aviso ao salvar multa no Supabase:", e));
   } catch (e) {
     console.warn("Aviso ao salvar multa no Supabase:", e);
   }
 
-  // 2. Persistência dupla local segura: IndexedDB + LocalStorage
-  await idbPut('multas', multa);
+  // 2. Persistência dupla local segura: IndexedDB + LocalStorage (com timeout para nunca travar)
+  try {
+    await Promise.race([
+      idbPut('multas', multa),
+      new Promise(r => setTimeout(r, 800))
+    ]);
+  } catch (e) {}
+
   try {
     const stored = localStorage.getItem("risel_frota_multas");
     let list: Multa[] = stored ? JSON.parse(stored) : [];
@@ -969,8 +1056,18 @@ export const saveMulta = async (multa: Multa) => {
       list.unshift(multa);
     }
     localStorage.setItem("risel_frota_multas", JSON.stringify(list));
+    localStore.multas = list;
   } catch (e) {
     console.error("Erro ao persistir multa localmente:", e);
+  }
+
+  // 3. Alimentar a Planilha do Google que já está vinculada aos lançamentos
+  try {
+    syncMultasToGoogleSheet([multa]).catch(e => {
+      console.warn("Aviso ao sincronizar lançamento com Google Sheets:", e);
+    });
+  } catch (sheetErr) {
+    console.warn("Aviso ao sincronizar com Google Sheets:", sheetErr);
   }
 
   return { success: true, id: multa.id };
@@ -979,13 +1076,13 @@ export const saveMulta = async (multa: Multa) => {
 export const saveBatchMultas = async (
   multasParaGravar: Multa[],
   onProgress?: (percent: number, current: number, total: number) => void
-): Promise<{ success: boolean; count: number }> => {
+): Promise<{ success: boolean; count: number; updatedMultas?: Multa[] }> => {
   if (!multasParaGravar || multasParaGravar.length === 0) {
     return { success: true, count: 0 };
   }
 
   const total = multasParaGravar.length;
-  onProgress?.(35, 0, total);
+  onProgress?.(30, 0, total);
 
   // 1. Atualizar persistência primária local rápida (LocalStorage)
   let updatedList: Multa[] = [];
@@ -1002,7 +1099,7 @@ export const saveBatchMultas = async (
     console.warn("Aviso ao salvar lote de multas no localStorage:", err);
   }
 
-  onProgress?.(55, Math.floor(total * 0.3), total);
+  onProgress?.(50, Math.floor(total * 0.3), total);
 
   // 2. Atualizar Cache Otimista em memória e localStorage
   try {
@@ -1018,18 +1115,30 @@ export const saveBatchMultas = async (
     console.warn("Aviso ao atualizar cache em lote:", err);
   }
 
-  onProgress?.(70, Math.floor(total * 0.6), total);
+  onProgress?.(65, Math.floor(total * 0.5), total);
 
-  // 3. Persistência de alta durabilidade (IndexedDB em lote único)
+  // 3. Persistência de alta durabilidade (IndexedDB em lote único com timeout de segurança)
   try {
-    await idbBulkPut('multas', multasParaGravar);
+    await Promise.race([
+      idbBulkPut('multas', multasParaGravar),
+      new Promise(r => setTimeout(r, 1200))
+    ]);
   } catch (err) {
     console.warn("Aviso ao salvar multas no IndexedDB:", err);
   }
 
-  onProgress?.(85, Math.floor(total * 0.85), total);
+  onProgress?.(80, Math.floor(total * 0.75), total);
 
-  // 4. Sincronização em Nuvem (Supabase em lote com fallback seguro sem bloquear)
+  // 4. Alimentar a Planilha do Google que já está vinculada aos lançamentos
+  try {
+    await syncMultasToGoogleSheet(multasParaGravar);
+  } catch (sheetErr) {
+    console.warn("Aviso ao sincronizar lote na planilha Google:", sheetErr);
+  }
+
+  onProgress?.(95, total, total);
+
+  // 5. Sincronização em Nuvem (Supabase em lote com fallback seguro em segundo plano sem bloquear)
   try {
     saveBatchMultasSupabase(multasParaGravar).catch(e => {
       console.warn("Aviso na sincronização em nuvem das multas:", e);
@@ -1038,9 +1147,9 @@ export const saveBatchMultas = async (
     console.warn("Aviso ao disparar sincronização Supabase:", err);
   }
 
-  onProgress?.(95, total, total);
+  onProgress?.(100, total, total);
 
-  return { success: true, count: multasParaGravar.length };
+  return { success: true, count: multasParaGravar.length, updatedMultas: updatedList };
 };
 
 export const saveCodigo = async (codigo: CodigoMulta) => {

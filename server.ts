@@ -365,7 +365,7 @@ try {
 
 const DEFAULT_APPS_SCRIPT_URL = process.env.GOOGLE_APPS_SCRIPT_URL || 
   process.env.APPS_SCRIPT_URL || 
-  "https://script.google.com/macros/s/AKfycbw4b-wAzc99jr-CQo3THJtlQpC925RroOb1lqOjE3ibl96sOZwnQMGIGNEwHT-zGk2t/exec";
+  "https://script.google.com/macros/s/AKfycbxiSQPRzYQoeTEpHC6df5Rb52F1zyhkvtyOI5gk0UeML49w3rKpsaO36DHQIdVS7nQ2ug/exec";
 
 let storedAppsScriptUrl = process.env.GOOGLE_APPS_SCRIPT_URL || process.env.APPS_SCRIPT_URL || DEFAULT_APPS_SCRIPT_URL;
 try {
@@ -2916,6 +2916,164 @@ async function startServer() {
     } catch (err: any) {
       console.error("Erro na importacao de abastecimentos:", err);
       return res.status(500).json({ error: err.message || "Erro interno ao salvar abastecimentos." });
+    }
+  });
+
+  // Cabeçalhos e Formatação de Multas para a Planilha do Google
+  const HEADERS_MULTAS_LIST = [
+    "ID", "STATUS", "FROTA", "PLACA", "BASE", "AIT", "TIPO",
+    "DATA INFRACAO", "DATA RECEBIMENTO", "PRAZO INDICACAO", "RECEBIDA COM PRAZO",
+    "ENQUADRAMENTO", "ARTIGO CTB", "DESCRICAO INFRACAO", "PONTOS CNH",
+    "LOGIN MOTORISTA", "NOME MOTORISTA", "ORGAO AUTUADOR", "ENDERECO",
+    "MUNICIPIO", "UF", "RODOVIA OU URBANO", "RETORNOU COM PRAZO",
+    "VALOR", "DESCONTO", "VALOR COM DESCONTO",
+    "EMPRESA OU CONDUTOR", "DESCONTAR MOTORISTA", "PAGO COM DESCONTO", "ENVIADO AO RH",
+    "OBS", "LINK AIT", "LINK AUTORIZACAO"
+  ];
+
+  function formatMultaForGoogleSheet(m: any): any[] {
+    const formatDate = (d: any) => {
+      if (!d) return "";
+      const str = String(d).trim();
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(str)) {
+        const [datePart, timePart] = str.split('T');
+        const [year, month, day] = datePart.split('-');
+        return `${day}/${month}/${year} ${timePart.substring(0, 5)}`;
+      }
+      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+        const [year, month, day] = str.substring(0, 10).split('-');
+        return `${day}/${month}/${year}`;
+      }
+      return str;
+    };
+
+    const formatNumber = (v: any) => {
+      if (v === undefined || v === null || v === "") return 0;
+      const n = Number(v);
+      return isNaN(n) ? 0 : Number(n.toFixed(2));
+    };
+
+    const id = String(m.id || m.ait || "");
+    const status = String(m.status || "IMPORTAÇÃO VAMOS");
+    const frota = String(m.frota || "");
+    const placa = String(m.placa || "").toUpperCase().trim();
+    const base = String(m.base || "");
+    const ait = String(m.ait || "");
+    const tipo = String(m.tipo || "NOTIFICAÇÃO");
+    const dataInfracao = formatDate(m.dataHoraInfracao);
+    const dataRecebimento = formatDate(m.dataRecebimento);
+    const prazoIndicacao = formatDate(m.prazoIndicacao);
+    const recebidaComPrazo = String(m.recebidaComPrazo || "SIM");
+    const enquadramento = String(m.enquadramento || "");
+    const artigoCtb = String(m.artigoCtb || "");
+    const descricaoInfracao = String(m.descricaoInfracao || "");
+    const pontosCnh = Number(m.pontosCnh) || 0;
+    const loginMotorista = String(m.responsavelCodigo || "");
+    const nomeMotorista = String(m.responsavelNome || "");
+    const orgaoAutuador = String(m.orgaoAutuador || "");
+    const endereco = String(m.endereco || "");
+    const municipio = String(m.municipio || "");
+    const uf = String(m.uf || "");
+    const rodoviaOuUrbano = String(m.rodoviaOuUrbano || "URBANO");
+    const retornouComPrazo = String(m.retornouComPrazo || "NÃO");
+    const valor = formatNumber(m.valor);
+    const desconto = formatNumber(m.desconto);
+    const valorComDesconto = formatNumber(m.valorComDesconto || (valor - desconto));
+    const empresaOuCondutor = String(m.empresaOuCondutor || "CONDUTOR");
+    const descontarMotorista = String(m.descontarMotorista || "SIM");
+    const pagoComDesconto = String(m.pagoComDesconto || "SIM");
+    const enviadoAoRh = String(m.descontoEnviadoRH || m.enviadoAoRh || "NÃO");
+    const obs = String(m.obs || "");
+    const linkAit = String(m.linkAit || "");
+    const linkAuth = String(m.linkAuth || "");
+
+    return [
+      id,
+      status,
+      frota,
+      placa,
+      base,
+      ait,
+      tipo,
+      dataInfracao,
+      dataRecebimento,
+      prazoIndicacao,
+      recebidaComPrazo,
+      enquadramento,
+      artigoCtb,
+      descricaoInfracao,
+      pontosCnh,
+      loginMotorista,
+      nomeMotorista,
+      orgaoAutuador,
+      endereco,
+      municipio,
+      uf,
+      rodoviaOuUrbano,
+      retornouComPrazo,
+      valor,
+      desconto,
+      valorComDesconto,
+      empresaOuCondutor,
+      descontarMotorista,
+      pagoComDesconto,
+      enviadoAoRh,
+      obs,
+      linkAit,
+      linkAuth
+    ];
+  }
+
+  // Rota para Sincronização de Multas com a Planilha Google Sheets
+  app.post("/api/multas/sync-sheets", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { multas, appsScriptUrl } = req.body;
+      if (!Array.isArray(multas) || multas.length === 0) {
+        return res.json({ success: true, count: 0, message: "Nenhum registro para sincronizar." });
+      }
+
+      const rows = multas.map(formatMultaForGoogleSheet);
+      const targetUrl = (appsScriptUrl || storedAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL || "").trim();
+
+      if (!targetUrl) {
+        return res.json({
+          success: true,
+          count: rows.length,
+          savedInSheets: false,
+          warning: "URL do Google Apps Script não configurada."
+        });
+      }
+
+      if (!validateAppsScriptUrl(targetUrl)) {
+        console.warn(`[Segurança Risel] Tentativa de SSRF em /api/multas/sync-sheets rejeitada: ${targetUrl}`);
+        return res.status(400).json({ error: "URL inválida. Apenas links oficiais 'https://script.google.com' são permitidos." });
+      }
+
+      console.log(`Risel Backend: Sincronizando ${rows.length} multas com a planilha Google Sheets...`);
+      const gsRes = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "save_batch",
+          type: "multa",
+          sheetTitle: "MULTAS",
+          headers: HEADERS_MULTAS_LIST,
+          rows: rows,
+          spreadsheetId: "1orv6kJ5qKxws-FJvFft706dkZOb9DizIXf6aZmHTfDY"
+        })
+      });
+
+      if (gsRes.ok) {
+        console.log(`Risel Backend: ${rows.length} multas gravadas na planilha Google com sucesso!`);
+        return res.json({ success: true, count: rows.length, savedInSheets: true });
+      } else {
+        const text = await gsRes.text();
+        console.warn("Aviso ao enviar multas para Apps Script:", text);
+        return res.json({ success: true, count: rows.length, savedInSheets: false, warning: text });
+      }
+    } catch (err: any) {
+      console.warn("Aviso na rota /api/multas/sync-sheets:", err.message);
+      return res.json({ success: true, count: 0, savedInSheets: false, warning: err.message });
     }
   });
 
