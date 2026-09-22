@@ -5076,19 +5076,19 @@ export default function Lancamento() {
                   <span className="text-[11px] text-emerald-700 font-bold">Exportar</span>
                 </button>
 
-                {/* Botão Importar Backup JSON */}
+                {/* Botão Importar Arquivo de Backup ou Planilha CSV/JSON para o Banco */}
                 <label className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center justify-between transition-colors cursor-pointer">
                   <div className="flex items-center gap-2.5">
                     <Upload className="w-4 h-4 text-indigo-600" />
                     <div className="text-left">
-                      <span className="block font-bold">Importar Arquivo de Backup para o Banco de Dados</span>
-                      <span className="block text-[10px] text-slate-400 font-normal">Restaura lançamentos a partir de um arquivo .json do seu computador</span>
+                      <span className="block font-bold">Importar Arquivo Real (.JSON ou .CSV) para o Banco de Dados</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">Processa e grava o histórico real diretamente no Banco de Dados</span>
                     </div>
                   </div>
-                  <span className="text-[11px] text-indigo-700 font-bold">Selecionar</span>
+                  <span className="text-[11px] text-indigo-700 font-bold">Selecionar Arquivo</span>
                   <input
                     type="file"
-                    accept=".json"
+                    accept=".json,.csv,.txt"
                     className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
@@ -5097,14 +5097,74 @@ export default function Lancamento() {
                       reader.onload = async (event) => {
                         try {
                           const content = event.target?.result as string;
-                          const parsed = JSON.parse(content);
-                          const itemsList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.items) ? parsed.items : []);
+                          let itemsList: any[] = [];
+                          
+                          if (file.name.endsWith(".json") || content.trim().startsWith("[") || content.trim().startsWith("{")) {
+                            try {
+                              const parsed = JSON.parse(content);
+                              itemsList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.items) ? parsed.items : []);
+                            } catch (errJson) {
+                              itemsList = [];
+                            }
+                          }
+
+                          // Se for CSV ou se JSON falhou
+                          if (itemsList.length === 0 && (content.includes(";") || content.includes(","))) {
+                            const lines = content.split(/\r?\n/).filter(l => l.trim().length > 0);
+                            if (lines.length > 1) {
+                              const delimiter = lines[0].includes(";") ? ";" : ",";
+                              const headers = lines[0].split(delimiter).map(h => h.trim().replace(/^["']|["']$/g, "").toUpperCase());
+                              
+                              for (let i = 1; i < lines.length; i++) {
+                                const row = lines[i].split(delimiter).map(c => c.trim().replace(/^["']|["']$/g, ""));
+                                if (row.length >= 2) {
+                                  const getCol = (names: string[]) => {
+                                    for (const name of names) {
+                                      const idx = headers.findIndex(h => h.includes(name));
+                                      if (idx !== -1 && row[idx]) return row[idx];
+                                    }
+                                    return "";
+                                  };
+
+                                  const docVal = getCol(["DOC", "NUMERO_DOC", "Nº DOC", "DOCUMENTO", "NUMERO"]);
+                                  const fornecedorVal = getCol(["FORNECEDOR", "NOME", "RAZAO", "EMPRESA"]);
+                                  const valorVal = getCol(["VALOR", "TOTAL", "PRECO", "VL"]);
+                                  const vencVal = getCol(["VENCIMENTO", "DATA_VENC", "DATA VENCIMENTO"]);
+                                  const emissaoVal = getCol(["EMISSAO", "DATA_EMISSAO", "DATA EMISSAO"]);
+                                  const statusVal = getCol(["STATUS", "SITUACAO"]);
+                                  const ccVal = getCol(["CENTRO", "CUSTO", "CC"]);
+                                  const cnpjVal = getCol(["CNPJ", "CPF"]);
+                                  const ocVal = getCol(["OC", "PEDIDO", "ORDEM"]);
+                                  const obsVal = getCol(["OBS", "OBSERVACAO", "DESCRICAO"]);
+
+                                  if (docVal || fornecedorVal || valorVal) {
+                                    itemsList.push({
+                                      id: Date.now() + i,
+                                      doc: docVal || `DOC-${i}`,
+                                      codigoLancamento: docVal,
+                                      numeroDocumento: docVal,
+                                      codLancamentoOc: ocVal,
+                                      fornecedor: fornecedorVal || "Fornecedor Importado",
+                                      cnpj: cnpjVal,
+                                      valor: valorVal ? (valorVal.startsWith("R$") ? valorVal : `R$ ${valorVal}`) : "R$ 0,00",
+                                      dataVencimento: vencVal,
+                                      dataEmissao: emissaoVal,
+                                      status: statusVal || "Aguardando Aprovação",
+                                      centroCusto: ccVal || "C.C 101 - Operacional",
+                                      observacao: obsVal
+                                    });
+                                  }
+                                }
+                              }
+                            }
+                          }
+
                           if (itemsList.length > 0) {
                             const res = await importLancamentosToDatabase(itemsList);
                             if (res.success) {
                               setBackupMessage({
                                 type: "success",
-                                text: `Sucesso absoluto! ${res.count} lançamentos importados e gravados com sucesso no Banco de Dados!`
+                                text: `Sucesso absoluto! ${res.count} lançamentos reais importados e salvos com sucesso no Banco de Dados!`
                               });
                               loadServerBackups();
                             } else {
@@ -5116,13 +5176,13 @@ export default function Lancamento() {
                           } else {
                             setBackupMessage({
                               type: "error",
-                              text: "O arquivo selecionado não contém um formato de lançamentos válido."
+                              text: "O arquivo selecionado não contém lançamentos em formato reconhecido (JSON ou CSV)."
                             });
                           }
                         } catch (err: any) {
                           setBackupMessage({
                             type: "error",
-                            text: "Erro ao ler arquivo de backup: " + (err?.message || "Arquivo inválido")
+                            text: "Erro ao processar arquivo: " + (err?.message || "Arquivo inválido")
                           });
                         }
                       };
@@ -5131,6 +5191,32 @@ export default function Lancamento() {
                     }}
                   />
                 </label>
+
+                {/* Opção de Limpar Registros Fictícios / Demonstrativos */}
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-medium">Limpeza de dados de demonstração:</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!window.confirm("Deseja remover os registros demonstrativos/fictícios para deixar o banco de dados pronto para os lançamentos reais?")) return;
+                      setBackupSyncLoading(true);
+                      try {
+                        const res = await importLancamentosToDatabase([]);
+                        if (res.success) {
+                          setBackupMessage({
+                            type: "info",
+                            text: "Registros de demonstração limpos com sucesso. O banco de dados está pronto para receber os lançamentos reais."
+                          });
+                        }
+                      } finally {
+                        setBackupSyncLoading(false);
+                      }
+                    }}
+                    className="text-[10px] text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                  >
+                    Limpar Dados Fictícios do Banco
+                  </button>
+                </div>
               </div>
             </div>
 
