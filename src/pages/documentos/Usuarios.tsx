@@ -6,6 +6,7 @@ import { motion } from "motion/react";
 import { cn } from "../../lib/utils";
 import { AdminAiAssistant } from "../../components/AdminAiAssistant";
 import { SystemDocumentation } from "../../components/SystemDocumentation";
+import { SupabaseHostingStatus } from "../../components/SupabaseHostingStatus";
 import { 
   fetchLancamentosSupabase, 
   saveBatchAbastecimentosSupabase, 
@@ -59,8 +60,8 @@ export default function Usuarios() {
   const [isDiagnosingNetwork, setIsDiagnosingNetwork] = useState(false);
   const [networkDiagnosticResult, setNetworkDiagnosticResult] = useState<any>(null);
 
-  // Aba ativa do Painel Administrativo Master: Usuários, Assistente de IA ou Documentação
-  const [adminActiveTab, setAdminActiveTab] = useState<"usuarios" | "ia_assistant" | "documentacao">("usuarios");
+  // Aba ativa do Painel Administrativo Master: Usuários, Assistente de IA, Documentação ou Status Supabase
+  const [adminActiveTab, setAdminActiveTab] = useState<"usuarios" | "ia_assistant" | "documentacao" | "supabase_status">("usuarios");
 
   // Estados e Funções de Gestão do Banco Supabase Real
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
@@ -642,6 +643,25 @@ export default function Usuarios() {
           <BookOpen className="w-4 h-4 text-emerald-300" />
           <span>Documentação do Sistema</span>
         </button>
+
+        {/* Botão Exclusivo Login Deny: Status do Plano de Hospedagem & Cotas Supabase */}
+        {isMasterUser && (
+          <button
+            onClick={() => setAdminActiveTab("supabase_status")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              adminActiveTab === "supabase_status"
+                ? "bg-gradient-to-r from-slate-900 to-[#114D38] text-emerald-300 shadow-sm font-black border border-emerald-500/40"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+            }`}
+            title="Painel de Infraestrutura: Monitoramento de cotas de largura de banda, armazenamento e consumo por módulo"
+          >
+            <Activity className="w-4 h-4 text-emerald-400" />
+            <span>Status Hospedagem & Cotas Supabase</span>
+            <span className="px-1.5 py-0.2 bg-rose-500/20 text-rose-700 text-[9px] font-black rounded-full border border-rose-300">
+              EGRESS 100%
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Renderização Condicional: Assistente de IA */}
@@ -652,6 +672,11 @@ export default function Usuarios() {
       {/* Renderização Condicional: Central de Documentação */}
       {adminActiveTab === "documentacao" && (
         <SystemDocumentation />
+      )}
+
+      {/* Renderização Condicional: Status de Hospedagem e Cotas Supabase (Exclusivo Deny) */}
+      {adminActiveTab === "supabase_status" && isMasterUser && (
+        <SupabaseHostingStatus />
       )}
 
       {/* Renderização Condicional: Módulo de Usuários e Permissões */}

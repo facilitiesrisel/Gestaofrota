@@ -63,6 +63,33 @@ let isInitialized = false;
 let unsubscribeFirestore: (() => void) | null = null;
 let pollIntervalTimer: any = null;
 
+// Função para identificar e filtrar registros fictícios/demonstrativos antigos
+export function isFictitiousLancamento(item: any): boolean {
+  if (!item) return false;
+  const numId = Number(item.id);
+  // IDs pequenos de 1 a 100 gerados nos mocks de desenvolvimento antigos
+  if (!isNaN(numId) && numId > 0 && numId <= 100) return true;
+
+  const fornecedorUpper = String(item.fornecedor || "").toUpperCase().trim();
+  const ficticiosFornecedores = [
+    "AUTO PEÇAS SÃO JOSÉ",
+    "POSTO IPIRANGA PAULÍNIA",
+    "LOCADORA UNIDAS S.A.",
+    "DISTRIBUIDORA SHELL BRASIL",
+    "OFICINA MECÂNICA CENTRAL",
+    "TRANSPORTADORA RÁPIDO SOL",
+    "FORNECEDOR EXEMPLO",
+    "FORNECEDOR TESTE"
+  ];
+  if (ficticiosFornecedores.some(f => fornecedorUpper.includes(f))) return true;
+
+  const docUpper = String(item.doc || item.codigoLancamento || "").toUpperCase().trim();
+  const ficticiosDocs = ["NF-E 8831", "NF-E 1902", "FATURA 4520", "NF-E 7634", "CT-E 11980", "BOLETO 9941"];
+  if (ficticiosDocs.includes(docUpper)) return true;
+
+  return false;
+}
+
 // Normaliza um registro de lançamento para manter consistência total e integridade absoluta dos campos
 export function normalizeLancamento(item: any): any {
   if (!item) return item;
@@ -196,6 +223,8 @@ function notifyListeners(items: any[], forceAllowEmpty: boolean = false) {
 // 1. Obter lançamentos atuais em memória ou do storage com recuperação por snapshot
 export function getLancamentosUnified(): any[] {
   if (cachedLancamentos && cachedLancamentos.length > 0) {
+    // Filtra dados fictícios residuais se houver
+    cachedLancamentos = cachedLancamentos.filter(item => !isFictitiousLancamento(item));
     return cachedLancamentos;
   }
   
@@ -207,7 +236,7 @@ export function getLancamentosUnified(): any[] {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) {
         cachedLancamentos = parsed
-          .filter((item: any) => !deletedIds.has(String(item.id)))
+          .filter((item: any) => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
           .map(normalizeLancamento);
         if (cachedLancamentos.length > 0) {
           return cachedLancamentos;
@@ -220,9 +249,8 @@ export function getLancamentosUnified(): any[] {
     if (snapshot) {
       const parsedSnap = JSON.parse(snapshot);
       if (Array.isArray(parsedSnap) && parsedSnap.length > 0) {
-        console.info(`[LancamentosSync] Recuperados ${parsedSnap.length} lançamentos do Snapshot de Segurança!`);
         cachedLancamentos = parsedSnap
-          .filter((item: any) => !deletedIds.has(String(item.id)))
+          .filter((item: any) => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
           .map(normalizeLancamento);
         // Restaura no STORAGE_KEY
         try {
@@ -353,16 +381,7 @@ export async function pullFromCloudAndServer(): Promise<any[]> {
   try {
     let deletedIds = getDeletedIds();
     const idMap = new Map<string, any>();
-
-    // Mantém itens existentes no cache local como primeira linha de defesa
-    if (cachedLancamentos && cachedLancamentos.length > 0) {
-      cachedLancamentos.forEach(item => {
-        const idStr = String(item.id);
-        if (!deletedIds.has(idStr)) {
-          idMap.set(idStr, normalizeLancamento(item));
-        }
-      });
-    }
+    let databaseFetched = false;
 
     // 1. Busca no Servidor backend (/api/lancamentos)
     try {
@@ -377,15 +396,13 @@ export async function pullFromCloudAndServer(): Promise<any[]> {
         }
 
         if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+          databaseFetched = true;
           data.items.forEach((item: any) => {
             const idStr = String(item.id);
-            if (!deletedIds.has(idStr)) {
+            if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
               idMap.set(idStr, normalizeLancamento(item));
             }
           });
-        } else if ((!data.items || data.items.length === 0) && cachedLancamentos.length > 0) {
-          // AUTO-HEAL: Se o servidor está zerado mas o cliente tem dados, repopula o banco de dados do servidor!
-          autoHealServer(cachedLancamentos).catch(() => {});
         }
       }
     } catch (e) {
@@ -398,9 +415,10 @@ export async function pullFromCloudAndServer(): Promise<any[]> {
       try {
         const supaItems = await fetchLancamentosSupabase();
         if (Array.isArray(supaItems) && supaItems.length > 0) {
+          databaseFetched = true;
           supaItems.forEach(item => {
             const idStr = String(item.id);
-            if (!deletedIds.has(idStr)) {
+            if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
               const existing = idMap.get(idStr);
               if (existing) {
                 idMap.set(idStr, normalizeLancamento({
@@ -429,13 +447,23 @@ export async function pullFromCloudAndServer(): Promise<any[]> {
       }
     }
 
-    // 3. Monta a lista oficial autoritativa
+    // Se nenhuma fonte remota respondeu, mantém itens locais legítimos
+    if (!databaseFetched && cachedLancamentos && cachedLancamentos.length > 0) {
+      cachedLancamentos.forEach(item => {
+        const idStr = String(item.id);
+        if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
+          idMap.set(idStr, normalizeLancamento(item));
+        }
+      });
+    }
+
+    // 3. Monta a lista oficial autoritativa estritamente com dados reais
     const freshItems = Array.from(idMap.values())
-      .filter(item => !deletedIds.has(String(item.id)))
+      .filter(item => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
       .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
 
-    // PROTEÇÃO ANTI-WIPE: Só atualiza se tiver itens ou se o cache local também já era vazio
-    if (freshItems.length > 0) {
+    // Atualiza o cache e notifica ouvintes
+    if (freshItems.length > 0 || databaseFetched) {
       const currentCacheStr = JSON.stringify(cachedLancamentos.map(i => i.id));
       const freshStr = JSON.stringify(freshItems.map(i => i.id));
       
