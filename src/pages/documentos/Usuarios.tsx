@@ -7,6 +7,9 @@ import { cn } from "../../lib/utils";
 import { AdminAiAssistant } from "../../components/AdminAiAssistant";
 import { SystemDocumentation } from "../../components/SystemDocumentation";
 import { SupabaseHostingStatus } from "../../components/SupabaseHostingStatus";
+import { EmailRecipientsModal } from "../../components/common/EmailRecipientsModal";
+import { LancamentosBackupModal } from "../../components/common/LancamentosBackupModal";
+import { forceSyncLancamentos } from "../../services/lancamentosService";
 import { 
   fetchLancamentosSupabase, 
   saveBatchAbastecimentosSupabase, 
@@ -62,6 +65,12 @@ export default function Usuarios() {
 
   // Aba ativa do Painel Administrativo Master: Usuários, Assistente de IA, Documentação ou Status Supabase
   const [adminActiveTab, setAdminActiveTab] = useState<"usuarios" | "ia_assistant" | "documentacao" | "supabase_status">("usuarios");
+
+  // Modais e Ações Exclusivas Deny Gonçalves: Sincronização, Segurança & Backups e Destinatários
+  const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [isSyncingLancamentos, setIsSyncingLancamentos] = useState(false);
+  const [syncSuccessNotice, setSyncSuccessNotice] = useState(false);
 
   // Estados e Funções de Gestão do Banco Supabase Real
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
@@ -581,6 +590,49 @@ export default function Usuarios() {
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Botão Sincronizar - Exclusivo Deny */}
+          <button
+            type="button"
+            onClick={async () => {
+              setIsSyncingLancamentos(true);
+              try {
+                await forceSyncLancamentos();
+                setSyncSuccessNotice(true);
+                setTimeout(() => setSyncSuccessNotice(false), 3000);
+              } finally {
+                setTimeout(() => setIsSyncingLancamentos(false), 500);
+              }
+            }}
+            disabled={isSyncingLancamentos}
+            className="px-3.5 py-2.5 bg-white hover:bg-emerald-50/70 text-slate-700 hover:text-emerald-800 font-extrabold text-xs rounded-2xl flex items-center gap-2 transition-all shadow-sm cursor-pointer shrink-0 border border-slate-200 hover:border-emerald-300 disabled:opacity-60"
+            title="Forçar sincronização em tempo real imediata dos Lançamentos com o Render e Supabase"
+          >
+            <RefreshCw className={cn("w-4 h-4 text-emerald-600", isSyncingLancamentos && "animate-spin")} />
+            <span>{isSyncingLancamentos ? "Sincronizando..." : syncSuccessNotice ? "Sincronizado!" : "Sincronizar"}</span>
+          </button>
+
+          {/* Botão Segurança & Backups - Exclusivo Deny */}
+          <button
+            type="button"
+            onClick={() => setIsBackupModalOpen(true)}
+            className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 text-emerald-900 font-extrabold text-xs rounded-2xl flex items-center gap-2 transition-all shadow-sm cursor-pointer shrink-0 border border-emerald-200/80"
+            title="Central de Segurança, Backups Físicos e Restauração de Banco de Dados"
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-700" />
+            <span>Segurança & Backups</span>
+          </button>
+
+          {/* Botão Destinatários de E-mails - Exclusivo Deny */}
+          <button
+            type="button"
+            onClick={() => setIsRecipientsModalOpen(true)}
+            className="px-3.5 py-2.5 bg-white hover:bg-emerald-50/70 text-slate-700 hover:text-[#0d4a36] font-extrabold text-xs rounded-2xl flex items-center gap-2 transition-all shadow-sm cursor-pointer shrink-0 border border-slate-200 hover:border-emerald-300"
+            title="Configurar destinatários oficiais de e-mails para cada módulo do sistema"
+          >
+            <Mail className="w-4 h-4 text-emerald-600" />
+            <span>Destinatários de E-mails</span>
+          </button>
+
           {/* Botão Discreto de Apresentação (Slides em Tela Cheia) */}
           <button
             type="button"
@@ -2023,6 +2075,20 @@ export default function Usuarios() {
             </div>
           </div>
         )}
+
+        {/* Modal da Central de Segurança & Backups de Lançamentos - Exclusivo Deny Gonçalves */}
+        <LancamentosBackupModal
+          isOpen={isBackupModalOpen}
+          onClose={() => setIsBackupModalOpen(false)}
+        />
+
+        {/* Modal de Gestão de Destinatários de E-mails - Exclusivo Deny Gonçalves */}
+        <EmailRecipientsModal
+          isOpen={isRecipientsModalOpen}
+          onClose={() => setIsRecipientsModalOpen(false)}
+          initialSubmodule="documentos"
+          currentUserEmail={currentUser?.email || "deny.goncalves@risel.com.br"}
+        />
       </div>
   );
 }

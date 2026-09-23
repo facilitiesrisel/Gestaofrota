@@ -2613,22 +2613,22 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </span>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade onde deseja Retirar</label>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade - UF onde deseja Retirar</label>
                                 <input 
                                     type="text" 
                                     value={formData.pickupCity} 
                                     onChange={e => setFormData({ ...formData, pickupCity: e.target.value })}
-                                    placeholder="Ex: Uberlândia, MG"
+                                    placeholder="Ex: Paulínia - SP, Betim - MG"
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade onde pretende Devolver</label>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade - UF onde pretende Devolver</label>
                                 <input 
                                     type="text" 
                                     value={formData.returnCity} 
                                     onChange={e => setFormData({ ...formData, returnCity: e.target.value })}
-                                    placeholder="Ex: Araguari, MG"
+                                    placeholder="Ex: Paulínia - SP, Betim - MG, Rio de Janeiro - RJ"
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
                                 />
                             </div>

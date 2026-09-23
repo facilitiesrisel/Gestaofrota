@@ -519,45 +519,6 @@ export const generateRacEmailHtml = (
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Loja de Devolução:</td>
               <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.returnStore}</td>
             </tr>` : ''}
-            ${formattedValue ? `
-            <tr>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #475569;">Custo Contratado / Aprovado:</td>
-              <td style="padding: 6px 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #059669;">${formattedValue}</td>
-            </tr>` : ''}
-          </table>
-        </td>
-      </tr>
-    </table>
-  ` : '';
-
-  // Bloco de Anexos Vinculados (Apenas se de fato houver anexo nesta mensagem)
-  const hasActualAttachments = voucherAttachedNow || cnhAttachedNow;
-  
-  const attachmentsModuleHtml = hasActualAttachments ? `
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8fafc; border: 1.5px dashed #0d9488; border-radius: 10px; margin: 18px 0;">
-      <tr>
-        <td style="padding: 14px 16px;">
-          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: #0f766e; margin-bottom: 8px;">
-            📎 Documentos e Anexos Vinculados a esta Mensagem
-          </div>
-          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #334155; line-height: 1.4; margin-bottom: 10px;">
-            Os seguintes documentos foram anexados diretamente a este e-mail para download e consulta:
-          </div>
-          <table width="100%" cellpadding="0" cellspacing="0" border="0">
-            ${voucherAttachedNow ? `
-            <tr>
-              <td style="padding: 8px 12px; background-color: #ffffff; border: 1px solid #ccfbf1; border-radius: 6px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #0f172a; font-weight: 700; margin-bottom: 6px;">
-                🎫 <span style="color: #0f766e;">Voucher Oficial da Reserva:</span> ${rental.voucherFileName || 'Voucher_Reserva.pdf'} 
-                <span style="font-size: 9.5pt; color: #059669; font-weight: 800; background: #ecfdf5; padding: 2px 8px; border-radius: 4px; margin-left: 6px;">[Anexo Incluso]</span>
-              </td>
-            </tr>` : ''}
-            ${cnhAttachedNow ? `
-            <tr>
-              <td style="padding: 8px 12px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: #0f172a; font-weight: 700; margin-top: 6px;">
-                🪪 <span style="color: #1e40af;">Habilitação do Condutor (CNH):</span> ${rental.cnhFileName || 'CNH_Condutor.pdf'}
-                <span style="font-size: 9.5pt; color: #2563eb; font-weight: 800; background: #eff6ff; padding: 2px 8px; border-radius: 4px; margin-left: 6px;">[Anexo Incluso]</span>
-              </td>
-            </tr>` : ''}
           </table>
         </td>
       </tr>
@@ -663,9 +624,6 @@ export const generateRacEmailHtml = (
 
               <!-- DADOS DA LOCADORA (SE HOUVER) -->
               ${rentalCompanyBlockHtml}
-
-              <!-- ANEXOS VINCULADOS (SE HOUVER DE FATO) -->
-              ${attachmentsModuleHtml}
 
               <!-- ITINERÁRIO EM DESTAQUE -->
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; margin: 16px 0;">
@@ -831,11 +789,33 @@ export const generateRacEmailHtml = (
 
           <!-- RODAPÉ CORPORATIVO RISEL -->
           <tr>
-            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 18px 20px; text-align: center;">
-              <p style="margin: 0 0 4px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 0.5px;">
+            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 22px 20px 18px; text-align: center;">
+              <!-- ASSINATURA SISTEMA DE RESERVAS RISEL -->
+              <table cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto 12px;">
+                <tr>
+                  <td align="center" style="vertical-align: middle; padding-right: 12px; border-right: 2px solid #00A859;">
+                    <img 
+                      src="https://risel.com.br/wp-content/uploads/2024/07/RISEL.png" 
+                      alt="Risel Combustíveis" 
+                      height="32" 
+                      style="height: 32px; width: auto; max-width: 120px; display: block; border: 0;"
+                    />
+                  </td>
+                  <td align="left" style="vertical-align: middle; padding-left: 12px;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #114D38; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.2;">
+                      Sistema de Reservas Risel
+                    </div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; font-weight: 600; color: #64748b; line-height: 1.2;">
+                      Gestão de Frotas &amp; Locações Corporativas
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0 0 4px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: 0.5px;">
                 Risel Combustíveis Ltda
               </p>
-              <p style="margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; color: #64748b;">
+              <p style="margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; color: #64748b;">
                 Mensagem automática emitida em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} &bull; Protocolo: ${protocolText}
               </p>
             </td>

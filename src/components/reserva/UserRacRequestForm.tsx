@@ -28,7 +28,20 @@ const VEHICLE_CATEGORIES = [
 ];
 
 // Cidades com bases Risel para destaque no topo
-const BASE_CITIES = ['Paulínia', 'Betim', 'Jales', 'Aguaí', 'Campinas', 'São Paulo', 'Belo Horizonte', 'Rio de Janeiro'];
+const BASE_CITIES = [
+  'Paulínia - SP', 
+  'Betim - MG', 
+  'Jales - SP', 
+  'Aguaí - SP', 
+  'Ourinhos - SP',
+  'Capão Bonito - SP',
+  'Cubatão - SP',
+  'São Bernardo - SP',
+  'Campinas - SP', 
+  'São Paulo - SP', 
+  'Belo Horizonte - MG', 
+  'Rio de Janeiro - RJ'
+];
 
 const parseDateTime = (dateTimeStr: string) => {
   if (!dateTimeStr) return new Date();
@@ -712,7 +725,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
                 <MapPinIcon className="w-4 h-4 text-emerald-600" />
-                Cidade onde deseja RETIRAR o veículo <span className="text-red-500">*</span>
+                Cidade - UF onde deseja RETIRAR o veículo <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -721,22 +734,22 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                 name="pickupCity"
                 value={formData.pickupCity}
                 onChange={handleChange}
-                placeholder="Ex: Paulínia, Campinas, São Paulo, Betim..."
+                placeholder="Ex: Paulínia - SP, Campinas - SP, Betim - MG..."
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all"
               />
               <datalist id="cidades-retirada-list">
                 {BASE_CITIES.map(c => <option key={`base_p_${c}`} value={c} />)}
-                {SP_CITIES.map(c => <option key={`sp_p_${c}`} value={c} />)}
+                {SP_CITIES.map(c => <option key={`sp_p_${c}`} value={`${c} - SP`} />)}
               </datalist>
               <p className="text-[10px] text-slate-500 mt-1">
-                Informe a cidade ou aeroporto onde a locadora deve disponibilizar o carro.
+                Informe a <strong>Cidade - UF</strong> ou aeroporto onde a locadora deve disponibilizar o carro (Ex: Paulínia - SP, Betim - MG).
               </p>
             </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
                 <MapPinIcon className="w-4 h-4 text-orange-600" />
-                Cidade onde pretende DEVOLVER o veículo <span className="text-red-500">*</span>
+                Cidade - UF onde pretende DEVOLVER o veículo <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -745,15 +758,15 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                 name="returnCity"
                 value={formData.returnCity}
                 onChange={handleChange}
-                placeholder="Ex: Paulínia, Campinas, Betim, Rio de Janeiro..."
+                placeholder="Ex: Paulínia - SP, Betim - MG, Rio de Janeiro - RJ..."
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all"
               />
               <datalist id="cidades-devolucao-list">
                 {BASE_CITIES.map(c => <option key={`base_d_${c}`} value={c} />)}
-                {SP_CITIES.map(c => <option key={`sp_d_${c}`} value={c} />)}
+                {SP_CITIES.map(c => <option key={`sp_d_${c}`} value={`${c} - SP`} />)}
               </datalist>
               <p className="text-[10px] text-slate-500 mt-1">
-                Pode ser a mesma cidade de retirada ou outra localidade (sujeito a taxa de retorno da locadora).
+                Informe a <strong>Cidade - UF</strong> de devolução. Pode ser a mesma de retirada ou outra localidade (sujeito a taxa de retorno da locadora).
               </p>
             </div>
           </div>

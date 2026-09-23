@@ -705,6 +705,19 @@ async function startServer() {
   // 4. Sanitização global de inputs contra injeção de scripts / XSS
   app.use(sanitizeRequestBody);
 
+  // 5. Middleware Anti-Cache Global para todas as rotas de API
+  // Garante que proxies intermediários (Render, Cloudflare) e navegadores em qualquer máquina
+  // nunca retornem dados cacheados (304 / disk cache) para chamadas de dados e sincronização
+  app.use("/api", (req, res, next) => {
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
+      "Surrogate-Control": "no-store"
+    });
+    next();
+  });
+
   // Armazenamento em memória + arquivo local para abastecimentos e checklists importados
   let persistentImportedAbastecimentos: any[] = loadStoredAbastecimentos();
   let persistentImportedChecklists: any[] = loadStoredChecklists();
@@ -1717,6 +1730,17 @@ async function startServer() {
   });
 
   // Endpoints para Sincronização em Tempo Real de Lançamentos de Documentos entre Usuários
+  let serverLancamentosVersion = Date.now();
+
+  // Endpoint ultra leve de verificação de versão para polling em alta frequência
+  app.get("/api/lancamentos/version", (req, res) => {
+    return res.json({
+      success: true,
+      version: serverLancamentosVersion,
+      timestamp: Date.now()
+    });
+  });
+
   app.get("/api/lancamentos", async (req, res) => {
     try {
       const deletedIds = getStoredDeletedLancamentoIds();
@@ -1772,11 +1796,12 @@ async function startServer() {
         count: items.length, 
         items,
         deletedIds,
+        version: serverLancamentosVersion,
         updatedAt: Date.now()
       });
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao carregar lançamentos:", err);
-      return res.status(500).json({ success: false, error: err.message, items: [], deletedIds: [] });
+      return res.status(500).json({ success: false, error: err.message, items: [], deletedIds: [], version: serverLancamentosVersion });
     }
   });
 
@@ -1846,8 +1871,9 @@ async function startServer() {
         fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(list, null, 2), "utf-8");
       } catch (fsErr) {}
 
-      console.log(`[Server Lancamentos] Lançamento ${docId} sincronizado com sucesso.`);
-      return res.json({ success: true, id: item.id });
+      serverLancamentosVersion = Date.now();
+      console.log(`[Server Lancamentos] Lançamento ${docId} sincronizado com sucesso. Versão: ${serverLancamentosVersion}`);
+      return res.json({ success: true, id: item.id, version: serverLancamentosVersion });
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao salvar lançamento:", err);
       return res.status(500).json({ success: false, error: err.message });
@@ -1886,8 +1912,9 @@ async function startServer() {
       fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(merged, null, 2), "utf-8");
       fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(merged, null, 2), "utf-8");
 
-      console.info(`[Server Lancamentos] Batch salvo com sucesso: ${merged.length} itens no total.`);
-      return res.json({ success: true, count: merged.length });
+      serverLancamentosVersion = Date.now();
+      console.info(`[Server Lancamentos] Batch salvo com sucesso: ${merged.length} itens no total. Versão: ${serverLancamentosVersion}`);
+      return res.json({ success: true, count: merged.length, version: serverLancamentosVersion });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -1943,8 +1970,9 @@ async function startServer() {
         }
       } catch (fsErr) {}
 
-      console.log(`[Server Lancamentos] Lançamento ${idStr} excluído permanentemente do servidor para todos os usuários.`);
-      return res.json({ success: true, id: idStr, deletedIds: getStoredDeletedLancamentoIds() });
+      serverLancamentosVersion = Date.now();
+      console.log(`[Server Lancamentos] Lançamento ${idStr} excluído permanentemente do servidor para todos os usuários. Versão: ${serverLancamentosVersion}`);
+      return res.json({ success: true, id: idStr, deletedIds: getStoredDeletedLancamentoIds(), version: serverLancamentosVersion });
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao excluir lançamento:", err);
       return res.status(500).json({ success: false, error: err.message });
@@ -2046,8 +2074,9 @@ async function startServer() {
       fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(itemsToRestore, null, 2), "utf-8");
       fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(itemsToRestore, null, 2), "utf-8");
 
-      console.info(`[Server Lancamentos] Sucesso: ${itemsToRestore.length} lançamentos restaurados do backup ${path.basename(targetFile)}.`);
-      return res.json({ success: true, count: itemsToRestore.length, items: itemsToRestore });
+      serverLancamentosVersion = Date.now();
+      console.info(`[Server Lancamentos] Sucesso: ${itemsToRestore.length} lançamentos restaurados do backup ${path.basename(targetFile)}. Versão: ${serverLancamentosVersion}`);
+      return res.json({ success: true, count: itemsToRestore.length, items: itemsToRestore, version: serverLancamentosVersion });
     } catch (e: any) {
       console.error("[Server Lancamentos] Erro na restauração:", e);
       return res.status(500).json({ success: false, error: e.message });
@@ -2073,8 +2102,9 @@ async function startServer() {
       fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(items, null, 2), "utf-8");
       createLancamentosBackupFile(items, "post_import");
 
-      console.info(`[Server Lancamentos] ${items.length} lançamentos importados com sucesso para o banco de dados do servidor.`);
-      return res.json({ success: true, count: items.length, items });
+      serverLancamentosVersion = Date.now();
+      console.info(`[Server Lancamentos] ${items.length} lançamentos importados com sucesso para o banco de dados do servidor. Versão: ${serverLancamentosVersion}`);
+      return res.json({ success: true, count: items.length, items, version: serverLancamentosVersion });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: e.message });
     }

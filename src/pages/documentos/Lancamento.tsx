@@ -416,6 +416,7 @@ export default function Lancamento() {
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
 
   // Modal de Escolha de Destinatários e Envio Oficial de E-mail de Aprovação
   const [emailDispatchModal, setEmailDispatchModal] = useState<{
@@ -2184,25 +2185,21 @@ export default function Lancamento() {
               </div>
               <div className="text-left">
                 <h2 className="text-sm font-black text-slate-800 leading-none">Lançamentos Realizados</h2>
-                <p className="text-[10px] text-slate-400 font-bold mt-1">
-                  {lancamentos.length} documentos salvos • Proteção Multi-Camadas Ativa
-                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-[10px] text-slate-400 font-bold">
+                    {lancamentos.length} documentos salvos
+                  </p>
+                  {isAuthorizedRestoreUser && (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60" title="Sincronização em tempo real ativa no Render e Supabase (Exclusivo Deny Gonçalves)">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Tempo Real Ativo
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Botão de Central de Segurança & Backups - EXCLUSIVO deny.goncalves@risel.com.br */}
-              {isAuthorizedRestoreUser && (
-                <button
-                  type="button"
-                  onClick={openBackupModal}
-                  className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-200/60 transition-all flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer"
-                  title="Central de Segurança e Backups do Banco de Dados"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Segurança & Backups</span>
-                </button>
-              )}
 
               <button 
                 onClick={() => setIsVencimentosOpen(true)}
@@ -2356,18 +2353,6 @@ export default function Lancamento() {
                 </div>
               )}
             </div>
-
-            {isDenyUser && (
-              <button
-                type="button"
-                onClick={() => setIsRecipientsModalOpen(true)}
-                title="Configurar destinatários de e-mail com sincronização no Render"
-                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-50 text-[#0d4a36] border border-emerald-300 shadow-xs hover:bg-emerald-100 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <span>✉️</span>
-                <span>Destinatários de E-mail</span>
-              </button>
-            )}
 
             <button 
               onClick={() => {

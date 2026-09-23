@@ -2,7 +2,8 @@ import { db } from "../firebaseConfig";
 import { 
   fetchLancamentosSupabase, 
   saveLancamentoSupabase, 
-  deleteLancamentoSupabase 
+  deleteLancamentoSupabase,
+  getSupabaseClient 
 } from "./supabaseService";
 
 // Evento customizado para notificar todos os componentes do sistema na mesma janela/abas
@@ -12,8 +13,53 @@ const SNAPSHOT_BACKUP_KEY = "risel_lancamentos_snapshot_backup";
 const SNAPSHOT_TIMESTAMP_KEY = "risel_lancamentos_snapshot_timestamp";
 const DELETED_IDS_KEY = "risel_lancamentos_deleted_ids";
 
+// BroadcastChannel para sincronização instantânea (<10ms) entre todas as abas e janelas abertas
+let broadcastChannel: BroadcastChannel | null = null;
+try {
+  if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+    broadcastChannel = new BroadcastChannel("risel_lancamentos_broadcast_channel");
+    broadcastChannel.onmessage = (event) => {
+      if (event.data?.type === "SYNC_LANCAMENTOS" && Array.isArray(event.data.items)) {
+        console.info("[LancamentosSync] Recebido via BroadcastChannel de outra aba.");
+        updateLocalCacheFromBroadcast(event.data.items);
+      } else if (event.data?.type === "REQUEST_PULL") {
+        pullFromCloudAndServer(true);
+      }
+    };
+  }
+} catch (e) {}
+
 // Flag para pausar chamadas ao Supabase caso atinja cota de tráfego (exceed_egress_quota)
 let supabaseQuotaExceededUntil = 0;
+let lastKnownServerVersion = 0;
+let supabaseRealtimeChannel: any = null;
+
+// Função de cálculo de assinatura de integridade para detecção instantânea de edições de campos
+export function computeLancamentosSignature(items: any[]): string {
+  if (!items || items.length === 0) return "empty_0";
+  return items.map(item => {
+    const id = item.id || "";
+    const status = item.status || "";
+    const valor = item.valor || "";
+    const venc = item.dataVencimento || item.data_vencimento || "";
+    const emiss = item.dataEmissao || item.data_emissao || "";
+    const lanc = item.dataLancamento || item.data_lancamento || "";
+    const doc = item.doc || "";
+    const codDoc = item.codigoLancamento || item.numeroDocumento || "";
+    const codOc = item.codLancamentoOc || "";
+    const forn = item.fornecedor || "";
+    const cnpj = item.cnpj || "";
+    const cc = item.centroCusto || "";
+    const alc = item.aprovadores || "";
+    const est = item.estabelecimento || "";
+    const pag = item.formaPagto || item.forma_pagto || "";
+    const apr = item.dataAprovacao || item.data_aprovacao || "";
+    const obs = (item.observacao || "").slice(0, 80);
+    const anx = Array.isArray(item.anexos) ? item.anexos.length : (item.arquivoAnexoBase64 ? 1 : 0);
+    const upd = item.updatedAt || "";
+    return `${id}:${status}:${valor}:${venc}:${emiss}:${lanc}:${doc}:${codDoc}:${codOc}:${forn}:${cnpj}:${cc}:${alc}:${est}:${pag}:${apr}:${obs}:${anx}:${upd}`;
+  }).join("|");
+}
 
 // Função para obter IDs deletados para evitar re-ressurreição
 function getDeletedIds(): Set<string> {
@@ -184,6 +230,90 @@ export function normalizeLancamento(item: any): any {
   };
 }
 
+// Função utilitária para atualizar cache local com dados recebidos via BroadcastChannel
+function updateLocalCacheFromBroadcast(items: any[]) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const deletedIds = getDeletedIds();
+  const valid = items
+    .filter(i => !deletedIds.has(String(i.id)) && !isFictitiousLancamento(i))
+    .map(normalizeLancamento);
+  
+  if (valid.length === 0) return;
+  
+  const currentSig = computeLancamentosSignature(cachedLancamentos);
+  const newSig = computeLancamentosSignature(valid);
+  if (currentSig === newSig && cachedLancamentos.length === valid.length) return;
+
+  cachedLancamentos = valid;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
+    localStorage.setItem(SNAPSHOT_BACKUP_KEY, JSON.stringify(valid));
+    localStorage.setItem(SNAPSHOT_TIMESTAMP_KEY, new Date().toISOString());
+  } catch (e) {}
+
+  activeListeners.forEach(cb => {
+    try { cb(valid); } catch (e) {}
+  });
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: valid }));
+    window.dispatchEvent(new Event("risel_lancamentos_updated"));
+  }
+}
+
+// Configura o canal Realtime do Supabase via WebSocket para refletir alterações instantâneas entre computadores
+function setupSupabaseRealtimeChannel() {
+  try {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    if (supabaseRealtimeChannel) {
+      try { client.removeChannel(supabaseRealtimeChannel); } catch (e) {}
+      supabaseRealtimeChannel = null;
+    }
+
+    supabaseRealtimeChannel = client
+      .channel("lancamentos-live-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "lancamentos" },
+        (payload) => {
+          console.info("[Supabase Realtime] Mudança detectada na tabela 'lancamentos':", payload.eventType);
+          pullFromCloudAndServer(true);
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.info("[Supabase Realtime] Inscrito e conectado na tabela 'lancamentos' com sucesso.");
+        }
+      });
+  } catch (err) {
+    console.warn("[Supabase Realtime] Aviso ao configurar canal:", err);
+  }
+}
+
+let versionPollTimer: any = null;
+
+// Verificador de versão de altíssima frequência e baixíssimo consumo no Render
+async function checkServerVersionFast() {
+  try {
+    const res = await fetch(`/api/lancamentos/version?_t=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.version && data.version > lastKnownServerVersion) {
+        if (lastKnownServerVersion > 0) {
+          console.info(`[LancamentosSync] Nova versão detectada no Servidor/Render (${data.version} > ${lastKnownServerVersion}). Sincronizando...`);
+          pullFromCloudAndServer(true);
+        }
+        lastKnownServerVersion = data.version;
+      }
+    }
+  } catch (e) {}
+}
+
 // Dispara notificação para todos os ouvintes ativos com salvamento seguro
 function notifyListeners(items: any[], forceAllowEmpty: boolean = false) {
   // REGRA DE PROTEÇÃO ANTI-WIPE:
@@ -264,7 +394,7 @@ export function getLancamentosUnified(): any[] {
   return [];
 }
 
-// 2. Iniciar sincronização em tempo real com Banco de Dados (Firestore, Servidor Database e Supabase)
+// 2. Iniciar sincronização em tempo real com Banco de Dados (Supabase Realtime, Render Backend e Firestore)
 export function initLancamentosSync(): () => void {
   if (isInitialized) {
     return () => {};
@@ -272,10 +402,13 @@ export function initLancamentosSync(): () => void {
   isInitialized = true;
   cleanupDeletedIds();
 
-  // Carrega estado inicial do cache
+  // Carrega estado inicial do cache local
   getLancamentosUnified();
 
-  // A. Listener em Tempo Real no Firestore (se disponível)
+  // A. Conexão em tempo real via WebSocket no Supabase
+  setupSupabaseRealtimeChannel();
+
+  // B. Listener em Tempo Real no Firestore (se disponível)
   try {
     const collectionRef = db.collection("lancamentos");
     unsubscribeFirestore = collectionRef.onSnapshot(
@@ -303,39 +436,55 @@ export function initLancamentosSync(): () => void {
         }
       },
       err => {
-        console.warn("[LancamentosSync] Listener Firestore operando com polling seguro:", err.message);
         pullFromCloudAndServer();
       }
     );
   } catch (e) {
-    console.warn("[LancamentosSync] Erro ao instanciar Firestore:", e);
     pullFromCloudAndServer();
   }
 
-  // B. Polling suave a cada 45 segundos (em vez de 4 segundos agressivos que estouram quotas)
+  // C. Polling contínuo de contingência a cada 20 segundos
   pullFromCloudAndServer();
   pollIntervalTimer = setInterval(() => {
     pullFromCloudAndServer();
-  }, 45000);
+  }, 20000);
 
-  // C. Dispara atualização imediata ao retomar o foco na janela
+  // D. Monitoramento ultra rápido de versões no Servidor Express / Render
+  // Checa versão a cada 4 segundos se a janela estiver ativa, ou a cada 15s em segundo plano
+  versionPollTimer = setInterval(() => {
+    const isFocused = typeof document !== "undefined" && document.hasFocus && document.hasFocus();
+    if (isFocused || Math.random() < 0.25) {
+      checkServerVersionFast();
+    }
+  }, 4000);
+
+  // E. Dispara atualização imediata ao retomar o foco na janela ou aba
   const handleVisibilityChange = () => {
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      pullFromCloudAndServer();
+      checkServerVersionFast();
+      pullFromCloudAndServer(true);
     }
   };
 
-  // D. Listener para sincronização entre abas do mesmo navegador
+  const handleWindowFocus = () => {
+    checkServerVersionFast();
+    pullFromCloudAndServer();
+  };
+
+  // F. Listener para sincronização entre abas do mesmo navegador via localStorage
   const handleStorageChange = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
         const updated = JSON.parse(e.newValue);
         const deletedIds = getDeletedIds();
         if (Array.isArray(updated) && updated.length > 0) {
-          cachedLancamentos = updated
-            .filter((item: any) => !deletedIds.has(String(item.id)))
+          const valid = updated
+            .filter((item: any) => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
             .map(normalizeLancamento);
-          notifyListeners(cachedLancamentos);
+          if (valid.length > 0) {
+            cachedLancamentos = valid;
+            activeListeners.forEach(cb => { try { cb(valid); } catch (err) {} });
+          }
         }
       } catch (err) {}
     }
@@ -350,6 +499,7 @@ export function initLancamentosSync(): () => void {
   if (typeof window !== "undefined") {
     window.addEventListener("storage", handleStorageChange);
     window.addEventListener(SYNC_EVENT, handleCustomSync);
+    window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
   }
 
@@ -362,9 +512,21 @@ export function initLancamentosSync(): () => void {
       clearInterval(pollIntervalTimer);
       pollIntervalTimer = null;
     }
+    if (versionPollTimer) {
+      clearInterval(versionPollTimer);
+      versionPollTimer = null;
+    }
+    if (supabaseRealtimeChannel) {
+      try {
+        const client = getSupabaseClient();
+        if (client) client.removeChannel(supabaseRealtimeChannel);
+      } catch (e) {}
+      supabaseRealtimeChannel = null;
+    }
     if (typeof window !== "undefined") {
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener(SYNC_EVENT, handleCustomSync);
+      window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     }
     isInitialized = false;
@@ -374,7 +536,7 @@ export function initLancamentosSync(): () => void {
 let isPulling = false;
 
 // B. Busca no Banco de Dados do Servidor, Firestore e Supabase com proteção absoluta contra perda de dados
-export async function pullFromCloudAndServer(): Promise<any[]> {
+export async function pullFromCloudAndServer(force: boolean = false): Promise<any[]> {
   if (isPulling) return cachedLancamentos;
   isPulling = true;
 
@@ -383,11 +545,21 @@ export async function pullFromCloudAndServer(): Promise<any[]> {
     const idMap = new Map<string, any>();
     let databaseFetched = false;
 
-    // 1. Busca no Servidor backend (/api/lancamentos)
+    // 1. Busca no Servidor backend (/api/lancamentos) com proteção total anti-cache
     try {
-      const res = await fetch("/api/lancamentos");
+      const res = await fetch(`/api/lancamentos?_t=${Date.now()}`, {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache"
+        }
+      });
       if (res.ok) {
         const data = await res.json();
+
+        if (data.version) {
+          lastKnownServerVersion = Math.max(lastKnownServerVersion, data.version);
+        }
 
         // Se o servidor retornou IDs deletados, sincroniza com o conjunto local
         if (data.deletedIds && Array.isArray(data.deletedIds)) {
@@ -462,12 +634,12 @@ export async function pullFromCloudAndServer(): Promise<any[]> {
       .filter(item => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
       .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
 
-    // Atualiza o cache e notifica ouvintes
+    // Atualiza o cache e notifica ouvintes se houver QUALQUER diferença de conteúdo
     if (freshItems.length > 0 || databaseFetched) {
-      const currentCacheStr = JSON.stringify(cachedLancamentos.map(i => i.id));
-      const freshStr = JSON.stringify(freshItems.map(i => i.id));
+      const currentSignature = computeLancamentosSignature(cachedLancamentos);
+      const freshSignature = computeLancamentosSignature(freshItems);
       
-      if (currentCacheStr !== freshStr || cachedLancamentos.length !== freshItems.length) {
+      if (force || currentSignature !== freshSignature || cachedLancamentos.length !== freshItems.length) {
         notifyListeners(freshItems);
       }
     }
@@ -493,7 +665,7 @@ async function autoHealServer(items: any[]) {
 
 // Força sincronização imediata manual
 export async function forceSyncLancamentos(): Promise<any[]> {
-  return await pullFromCloudAndServer();
+  return await pullFromCloudAndServer(true);
 }
 
 // 3. Subscrever para receber atualizações automáticas em componentes React
@@ -511,6 +683,7 @@ export function subscribeToLancamentosUnified(callback: (items: any[]) => void):
 // 4. Gravação / Criação / Edição de Lançamento com reflexo imediato e persistência redundante
 export async function saveLancamentoUnified(item: any): Promise<boolean> {
   const normalized = normalizeLancamento(item);
+  normalized.updatedAt = new Date().toISOString();
   const targetId = String(normalized.id);
 
   // Remove dos IDs deletados caso estivesse marcado
@@ -530,13 +703,29 @@ export async function saveLancamentoUnified(item: any): Promise<boolean> {
 
   notifyListeners(updatedList);
 
-  // 2. Persistência no Servidor Express
+  // Transmite imediatamente para outras abas locais
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({ type: "SYNC_LANCAMENTOS", items: updatedList });
+    } catch (e) {}
+  }
+
+  // 2. Persistência no Servidor Express (Render)
   try {
-    await fetch("/api/lancamentos", {
+    const res = await fetch("/api/lancamentos", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache"
+      },
       body: JSON.stringify(normalized)
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.version) {
+        lastKnownServerVersion = Math.max(lastKnownServerVersion, data.version);
+      }
+    }
   } catch (sErr) {
     console.warn("[LancamentosSync] Erro ao salvar no Servidor:", sErr);
   }
@@ -559,6 +748,13 @@ export async function saveLancamentoUnified(item: any): Promise<boolean> {
     await db.collection("lancamentos").doc(targetId).set(cleanForFirestore, { merge: true });
   } catch (fErr) {}
 
+  // Dispara aviso em Broadcast para instâncias locais puxarem se necessário
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({ type: "REQUEST_PULL" });
+    } catch (e) {}
+  }
+
   return true;
 }
 
@@ -572,9 +768,24 @@ export async function deleteLancamentoUnified(id: number | string): Promise<bool
   const updatedList = current.filter(item => String(item.id) !== idStr);
   notifyListeners(updatedList, true);
 
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({ type: "SYNC_LANCAMENTOS", items: updatedList });
+    } catch (e) {}
+  }
+
   // 2. Exclusão no Servidor Express (Banco de Dados)
   try {
-    await fetch(`/api/lancamentos/${idStr}`, { method: "DELETE" });
+    const res = await fetch(`/api/lancamentos/${idStr}`, { 
+      method: "DELETE",
+      headers: { "Cache-Control": "no-cache" }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.version) {
+        lastKnownServerVersion = Math.max(lastKnownServerVersion, data.version);
+      }
+    }
   } catch (sErr) {
     console.warn("[LancamentosSync] Erro ao excluir do Servidor:", sErr);
   }
@@ -588,6 +799,12 @@ export async function deleteLancamentoUnified(id: number | string): Promise<bool
   try {
     await db.collection("lancamentos").doc(idStr).delete();
   } catch (fErr) {}
+
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({ type: "REQUEST_PULL" });
+    } catch (e) {}
+  }
 
   return true;
 }
