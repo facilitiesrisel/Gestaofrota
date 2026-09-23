@@ -196,18 +196,29 @@ interface SendHttpEmailOptions {
  * Envio HTTP via Resend API (Porta 443 - Imune a bloqueios de portas SMTP do Render Free)
  */
 async function sendEmailViaResend(options: SendHttpEmailOptions, apiKey: string) {
-  const toList = Array.isArray(options.to) ? options.to : [options.to];
-  const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : undefined;
+  const cleanList = (input: any): string[] => {
+    if (!input) return [];
+    const arr = Array.isArray(input) ? input : [input];
+    return arr
+      .flatMap(item => String(item).split(/[;,]+/))
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s.includes('@'));
+  };
+
+  const toList = cleanList(options.to);
+  const ccList = cleanList(options.cc);
   
   // Resend aceita remetente oficial se o domínio estiver verificado ou onboarding@resend.dev em sandbox
-  const fromEmail = options.fromEmail || process.env.SMTP_EMAIL || "deny.risel@gmail.com";
-  const fromAddress = `"${options.fromName || 'Risel Combustíveis'}" <${fromEmail}>`;
+  const fromEmail = options.fromEmail || process.env.SMTP_EMAIL || "gestaodefrotarisel@gmail.com";
+  const safeName = (options.fromName || 'Gestão de Reservas Risel').replace(/["\r\n]/g, '').trim();
+  const fromAddress = `"${safeName}" <${fromEmail}>`;
 
   const payload: any = {
     from: fromAddress,
-    to: toList,
+    to: toList.length > 0 ? toList : ["gestaodefrotarisel@gmail.com"],
     subject: options.subject,
     html: options.html,
+    reply_to: "deny.goncalves@risel.com.br"
   };
 
   if (ccList && ccList.length > 0) {
@@ -273,19 +284,29 @@ async function sendEmailViaResend(options: SendHttpEmailOptions, apiKey: string)
  * Envio HTTP via Brevo API (Porta 443 - Imune a bloqueios de portas SMTP do Render Free)
  */
 async function sendEmailViaBrevo(options: SendHttpEmailOptions, apiKey: string) {
-  const toList = (Array.isArray(options.to) ? options.to : [options.to]).map(e => ({ email: e }));
-  const ccList = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]).map(e => ({ email: e })) : undefined;
+  const parseCleanEmailList = (input: any): Array<{ email: string }> => {
+    if (!input) return [];
+    const arr = Array.isArray(input) ? input : [input];
+    return arr
+      .flatMap(item => String(item).split(/[;,]+/))
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s.includes('@'))
+      .map(email => ({ email }));
+  };
 
-  const fromEmail = (options.fromEmail || process.env.SMTP_EMAIL || "deny.risel@gmail.com").trim();
+  const toList = parseCleanEmailList(options.to);
+  const ccList = options.cc ? parseCleanEmailList(options.cc) : undefined;
+
+  const fromEmail = (options.fromEmail || process.env.SMTP_EMAIL || "gestaodefrotarisel@gmail.com").trim();
   const payload: any = {
     sender: {
-      name: options.fromName || "Risel Combustíveis",
+      name: options.fromName || "Gestão de Reservas Risel",
       email: fromEmail
     },
-    to: toList,
+    to: toList.length > 0 ? toList : [{ email: "gestaodefrotarisel@gmail.com" }],
     replyTo: {
-      email: fromEmail,
-      name: options.fromName || "Risel Combustíveis"
+      email: "deny.goncalves@risel.com.br",
+      name: "Administração Risel"
     },
     headers: {
       "X-Entity-Ref-ID": `risel-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
@@ -1268,20 +1289,64 @@ async function startServer() {
     }
   });
 
+  // Cache em memória de saídas da sede registradas para evitar múltiplos disparos simultâneos
+  const perimeterExitAlertsSent = new Map<string, number>();
+
+  app.post("/api/perimeter-alert/record-exit", express.json(), (req, res) => {
+    try {
+      const { plate, distanceMeters } = req.body;
+      if (!plate) return res.status(400).json({ error: "Placa obrigatória" });
+      const normPlate = String(plate).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      perimeterExitAlertsSent.set(normPlate, Date.now());
+      console.log(`[Risel Perímetro] Alerta de saída registrado no backend para o veículo ${normPlate} a ${Math.round(distanceMeters || 1000)}m da Sede.`);
+      return res.json({ success: true, plate: normPlate });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/perimeter-alert/status/:plate", (req, res) => {
+    const normPlate = String(req.params.plate || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const lastSent = perimeterExitAlertsSent.get(normPlate) || 0;
+    return res.json({ plate: normPlate, lastSent, alreadySent: lastSent > 0 });
+  });
+
   app.post("/api/reservations/add", express.json(), async (req, res) => {
     try {
       const { data } = req.body;
-      const db = await getServerFirestore();
-      const cleanData = { ...data };
+      if (!data) return res.status(400).json({ success: false, error: "Dados da reserva ausentes." });
+
+      const targetId = data.id || `res_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const cleanData = { ...data, id: targetId };
+
       if (cleanData.departureDateTime && typeof cleanData.departureDateTime === "string") {
         cleanData.departureDateTime = new Date(cleanData.departureDateTime);
       }
       if (cleanData.returnDate && typeof cleanData.returnDate === "string") {
         cleanData.returnDate = new Date(cleanData.returnDate);
       }
-      const docRef = await db.collection("reservations").add(cleanData);
-      console.log(`[Server Firestore] Nova reserva criada com id: ${docRef.id}`);
-      return res.json({ success: true, id: docRef.id });
+
+      // 1. Tenta salvar no Firestore com ID fixo (.doc(targetId).set com merge)
+      try {
+        const db = await getServerFirestore();
+        await db.collection("reservations").doc(targetId).set(cleanData, { merge: true });
+        console.log(`[Server Firestore] Reserva salva com sucesso no documento único ID: ${targetId}`);
+      } catch (firestoreErr: any) {
+        console.warn("[Server Firestore] Firestore indisponível para salvar reserva, mantendo no storage local resiliente:", firestoreErr.message);
+      }
+
+      // 2. Persiste no arquivo local data/reservations.json sem duplicar
+      const list = loadStoredReservations();
+      const existingIdx = list.findIndex(r => r.id === targetId);
+      const itemToPersist = { ...data, id: targetId, updatedAt: new Date().toISOString() };
+      if (existingIdx !== -1) {
+        list[existingIdx] = { ...list[existingIdx], ...itemToPersist };
+      } else {
+        list.unshift(itemToPersist);
+      }
+      saveStoredReservations(list);
+
+      return res.json({ success: true, id: targetId, reservation: itemToPersist });
     } catch (err: any) {
       console.error("[Server Firestore] Erro ao criar reserva:", err);
       return res.status(500).json({ success: false, error: err.message });
@@ -2253,25 +2318,29 @@ async function startServer() {
         try {
           const transporter = await createSafeTransporter(smtpConfig);
 
-          const senderHeader = `"${finalSenderName}" <${smtpConfig.user}>`;
+          const safeSenderName = (finalSenderName || "Gestão de Reservas Risel").replace(/["\r\n]/g, "").trim();
 
           await transporter.sendMail({
-            from: senderHeader,
+            from: {
+              name: safeSenderName,
+              address: smtpConfig.user || "gestaodefrotarisel@gmail.com"
+            },
             to: emailTo,
             cc: emailCc || undefined,
+            replyTo: "deny.goncalves@risel.com.br",
             subject: emailSubject,
             html: emailHtml,
             attachments: mailAttachments
           });
 
-          console.log(`[Risel SMTP] Notificação enviada com sucesso para ${emailTo} via ${smtpConfig.user} (${finalSenderName})!`);
+          console.log(`[Risel SMTP] Notificação enviada com sucesso para To: ${emailTo} | CC: ${emailCc || 'Nenhum'} via ${smtpConfig.user} (${safeSenderName})!`);
           return res.json({ 
             success: true, 
             delivered: true, 
             provider: `Gmail SMTP Direto (${smtpConfig.user})`,
-            sender: finalSenderName,
+            sender: safeSenderName,
             host: smtpConfig.host,
-            message: `E-mail enviado com sucesso via Gmail (${finalSenderName}) para ${emailTo}!`,
+            message: `E-mail enviado com sucesso via Gmail (${safeSenderName}) para ${emailTo}!`,
             attachmentsCount: mailAttachments.length 
           });
         } catch (err: any) {
@@ -4248,27 +4317,6 @@ async function startServer() {
     }
   });
 
-  app.post("/api/reservations/add", express.json(), (req, res) => {
-    try {
-      const { data } = req.body;
-      if (!data) return res.status(400).json({ error: "Dados da reserva ausentes." });
-      const list = loadStoredReservations();
-      const id = data.id || `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const existingIdx = list.findIndex(r => r.id === id);
-      const item = { ...data, id, updatedAt: new Date().toISOString() };
-      if (existingIdx !== -1) {
-        list[existingIdx] = { ...list[existingIdx], ...item };
-      } else {
-        list.unshift(item);
-      }
-      saveStoredReservations(list);
-      console.log(`[Risel Backend] Reserva adicionada/salva: ID ${id}, Status: ${item.status || 'Pendente'}`);
-      return res.json({ success: true, id, reservation: item });
-    } catch (err: any) {
-      console.error("Erro no /api/reservations/add:", err);
-      return res.status(500).json({ error: err.message || "Erro ao salvar reserva" });
-    }
-  });
 
   app.post("/api/reservations/update", express.json(), (req, res) => {
     try {

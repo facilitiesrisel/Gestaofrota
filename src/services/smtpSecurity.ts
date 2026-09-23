@@ -118,11 +118,20 @@ export function appendRiselSignatureToHtml(html: string, moduleName: string): st
  * - Rastreamento Ativo: "Rastreamento Frota Leve Risel"
  */
 export function getSenderNameForModule(moduleOrSource?: string, subject?: string, explicitName?: string): string {
-  if (explicitName && explicitName.trim() && explicitName.trim() !== "Risel Combustíveis") {
-    return explicitName.trim();
+  const tag = `${moduleOrSource || ''} ${subject || ''} ${explicitName || ''}`.toLowerCase();
+
+  // Alerta de saída da sede sem reserva/condutor
+  if (tag.includes("saída da sede") || tag.includes("saida da sede") || tag.includes("perimeter") || tag.includes("sem condutor")) {
+    return "Gestão de Reservas Risel";
   }
 
-  const tag = `${moduleOrSource || ''} ${subject || ''}`.toLowerCase();
+  if (explicitName && explicitName.trim() && explicitName.trim() !== "Risel Combustíveis") {
+    // Remove caracteres que possam quebrar headers de e-mail (&, aspas e quebras)
+    const cleanExplicit = explicitName.replace(/&/g, "e").replace(/["\r\n]/g, "").trim();
+    if (cleanExplicit.length > 0) {
+      return cleanExplicit;
+    }
+  }
 
   if (tag.includes("checklist")) {
     return "Checklist Frota Leve - Risel";
@@ -143,7 +152,7 @@ export function getSenderNameForModule(moduleOrSource?: string, subject?: string
     return "Controle de Frotas";
   }
 
-  return explicitName || "Controle de Frotas";
+  return "Gestão de Reservas Risel";
 }
 
 /**

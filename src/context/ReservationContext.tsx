@@ -171,7 +171,22 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   const updateReservation = useCallback(async (id: string, data: Partial<Omit<Reservation, 'id'>>) => {
     setReservations(prev => prev.map(r => r.id === id ? { ...r, ...data } : r));
     await firebaseApi.updateReservation(id, data);
-  }, []);
+
+    // Se o status foi alterado para Concluída e possui KM Final, atualiza direto no cadastro do veículo
+    if (data.status === ReservationStatus.Completed && data.finalKm !== undefined && data.finalKm !== null && Number(data.finalKm) > 0) {
+      const finalKmNum = Number(data.finalKm);
+      const targetVehicleId = data.vehicleId || reservations.find(r => r.id === id)?.vehicleId;
+      if (targetVehicleId) {
+        setVehicles(prev => prev.map(v => v.id === targetVehicleId ? { ...v, lastKm: finalKmNum } : v));
+        try {
+          await firebaseApi.updateVehicle(targetVehicleId, { lastKm: finalKmNum });
+          checkAndSendMaintenanceAlert(targetVehicleId, finalKmNum);
+        } catch (vehErr) {
+          console.warn("Aviso ao atualizar KM do veículo na conclusão de reserva:", vehErr);
+        }
+      }
+    }
+  }, [reservations]);
 
   // AUTO-START RESERVATIONS Logic (com margem de tolerância operacional)
   useEffect(() => {
@@ -361,24 +376,31 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         throw new Error("Reserva não encontrada para finalizar.");
     }
 
+    if (finalKm === null || finalKm === undefined || Number(finalKm) <= 0) {
+      throw new Error("É obrigatório informar o KM Final do veículo para concluir a reserva.");
+    }
+
+    const finalKmNum = Number(finalKm);
+
     try {
       const updateData: any = {
         status: ReservationStatus.Completed,
         actualReturnDateTime,
+        finalKm: finalKmNum,
       };
 
-      // Only update KM if provided
-      if (finalKm !== null && finalKm > 0) {
-          updateData.finalKm = finalKm;
-          await firebaseApi.updateVehicle(vehicleId, { lastKm: finalKm });
-          checkAndSendMaintenanceAlert(vehicleId, finalKm);
-      }
+      // Atualiza o cadastro do veículo imediatamente na UI e no backend
+      setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, lastKm: finalKmNum } : v));
+      await firebaseApi.updateVehicle(vehicleId, { lastKm: finalKmNum });
+      checkAndSendMaintenanceAlert(vehicleId, finalKmNum);
 
+      // Atualiza a reserva na UI e no backend
+      setReservations(prev => prev.map(r => r.id === id ? { ...r, ...updateData } : r));
       await firebaseApi.updateReservation(id, updateData);
       
     } catch (error) {
       console.error("Error finalizing reservation:", error);
-      throw new Error("Ocorreu um erro ao finalizar a reserva.");
+      throw error instanceof Error ? error : new Error("Ocorreu um erro ao finalizar a reserva.");
     }
   }, [reservations, vehicles]);
 

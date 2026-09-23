@@ -4,7 +4,8 @@ import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../constants
 import { Reservation, ReservationStatus, DailyTrip } from '../types_reserva';
 
 export const SEDE_PAULINIA_COORDS = PAULINIA_BASE_COORDS; // { lat: -22.7553, lng: -47.1498 }
-export const DEFAULT_SEDE_RADIUS_METERS = 450; // Perímetro de 450 metros da sede central da Risel em Paulínia/SP
+export const DEFAULT_SEDE_RADIUS_METERS = 450; // Perímetro interno do pátio/sede central da Risel em Paulínia/SP
+export const ALERT_MIN_DISTANCE_METERS = 1000; // Limiar oficial: disparar alerta de e-mail ao atingir 1 KM fora da sede
 
 /**
  * Calcula a distância em metros entre duas coordenadas usando a fórmula de Haversine
@@ -573,8 +574,8 @@ export async function checkAndTriggerPerimeterExitAlerts(
 
     // Caso 1: Veículo está atualmente DENTRO do perímetro da sede (<= 450m)
     if (!isOutsideSede) {
-      // Registra que o veículo está na sede. Se ele estava fora ou com alerta enviado,
-      // ao retornar ao pátio da sede, resetamos o ciclo para monitorar nova saída futura.
+      // Registra que o veículo está na sede. Se ele estava fora ou com alerta já enviado anteriormente,
+      // ao retornar ao pátio da sede resetamos o ciclo para monitorar uma nova saída futura.
       const newState = {
         wasInsideSede: true,
         lastAlertSentAt: previousState.lastAlertSentAt,
@@ -589,11 +590,11 @@ export async function checkAndTriggerPerimeterExitAlerts(
     }
 
     // Caso 2: Veículo está FORA do perímetro da sede (> 450m)
-    // REGRA ESTREITA DO USUÁRIO:
-    // "Só enviar o e-mail de saída sem reserva ou uso diário, se o veículo estiver aqui na sede no momento, e constar saída sem ninguém registrado como condutor."
+    // REGRA OFICIAL DO SISTEMA:
+    // "O veículo que sair sem a reserva ou uso diário, deve ser informado uma única vez no e-mail, ao atingir 1 KM fora da sede."
 
-    // 2.1 Se não havia registro anterior no sistema (primeira leitura) ou o veículo já estava fora da sede:
-    // Significa que ele NÃO estava na sede no momento e não acabou de sair. Evita falso alerta (ex: veículos em Cosmorama ou outra base).
+    // 2.1 Se não havia registro anterior no sistema ou o veículo já estava fora da sede antes:
+    // Significa que ele não partiu da sede nesta sessão de monitoramento. Evita falsos alertas (ex: veículos alocados em outra base).
     if (!hasStoredRecord || !previousState.wasInsideSede) {
       try {
         if (typeof window !== 'undefined') {
@@ -610,7 +611,13 @@ export async function checkAndTriggerPerimeterExitAlerts(
       continue;
     }
 
-    // 2.2 Verifica se possui agendamento de Uso Diário ou Reserva aprovada/em uso cobrindo o momento
+    // 2.2 REGRA DE 1 KM: O veículo só deve ser informado por e-mail AO ATINGIR 1 KM FORA DA SEDE (>= 1000m)
+    if (distanceMeters < ALERT_MIN_DISTANCE_METERS) {
+      // Veículo saiu da sede mas ainda está a menos de 1 KM. Continua monitorando até atingir 1 KM.
+      continue;
+    }
+
+    // 2.3 Verifica se possui agendamento de Uso Diário ou Reserva aprovada/em uso cobrindo o momento
     const coverageResult = isVehicleCoveredByActiveReservationOrTrip(
       cleanPlate,
       reservations,
@@ -620,8 +627,7 @@ export async function checkAndTriggerPerimeterExitAlerts(
     );
 
     if (coverageResult.hasCoverage) {
-      // Veículo possui reserva ativa ou agendamento de uso diário ativo (possui condutor/solicitante registrado):
-      // Circulação regular e autorizada! (Conforme regra: Argo, HB20 e Mobi com reservas ativas NÃO recebem alerta)
+      // Veículo possui reserva ativa ou agendamento de uso diário ativo (circulação autorizada)
       const newState = {
         wasInsideSede: false,
         lastAlertSentAt: previousState.lastAlertSentAt,
@@ -635,9 +641,8 @@ export async function checkAndTriggerPerimeterExitAlerts(
       continue;
     }
 
-    // 2.3 VEÍCULO ATIVO DA FROTA ESTAVA NA SEDE E CONSTA SAÍDA NO MOMENTO SEM USO DIÁRIO OU RESERVA ATIVA
-    // Isto é, saiu sem condutor ou agendamento registrado no sistema!
-    // Dispara o alerta por e-mail estritamente uma única vez assim que a saída não autorizada ocorrer.
+    // 2.4 VEÍCULO ATIVO DA FROTA ESTAVA NA SEDE E ATINGIU 1 KM FORA SEM USO DIÁRIO OU RESERVA ATIVA
+    // Dispara o alerta por e-mail ESTREITAMENTE UMA ÚNICA VEZ para esta saída
     const shouldSendAlert = !previousState.alertSentForCurrentExit;
 
     const eventData: PerimeterVehicleEvent = {
@@ -657,10 +662,10 @@ export async function checkAndTriggerPerimeterExitAlerts(
 
     if (shouldSendAlert) {
       console.warn(
-        `🚨 [ALERTA DE PERÍMETRO] Veículo ativo da frota [${cleanPlate}] estava na sede e saiu sem reserva ou uso diário ativo! Distância: ${Math.round(distanceMeters)}m. Disparando e-mail único...`
+        `🚨 [ALERTA DE PERÍMETRO] Veículo ativo da frota [${cleanPlate}] estava na sede e atingiu 1 KM fora da sede sem reserva ou uso diário ativo! Distância: ${(distanceMeters / 1000).toFixed(2)} km. Disparando e-mail único...`
       );
 
-      // 1. Atualiza estado imediatamente para garantir disparo estritamente único nesta saída
+      // 1. Atualiza estado imediatamente com trava estrita para nunca reenviar nesta mesma saída
       const updatedState = {
         wasInsideSede: false,
         lastAlertSentAt: nowMs,
@@ -672,11 +677,18 @@ export async function checkAndTriggerPerimeterExitAlerts(
         }
       } catch (e) {}
 
+      // Sincroniza com o backend para proteger contra múltiplas abas abertas simultâneas
+      fetch('/api/perimeter-alert/record-exit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plate: cleanPlate, distanceMeters })
+      }).catch(() => {});
+
       // 2. Destinatários: Todos os usuários com acesso ao sistema
       const recipients = getAllSystemUsersEmails();
-      console.log(`Disparando alerta de saída da sede para ${recipients.length} usuários:`, recipients);
+      console.log(`Disparando alerta de saída da sede (1 KM atingido) para ${recipients.length} usuários:`, recipients);
 
-      // 3. Monta e envia o e-mail via API
+      // 3. Monta e envia o e-mail via API com Remetente Limpo Oficial Risel
       try {
         const emailHtml = generatePerimeterExitAlertEmailHtml(eventData);
         await sendEmail(
@@ -684,8 +696,8 @@ export async function checkAndTriggerPerimeterExitAlerts(
           `⚠️ Notificação: Saída da Sede sem Condutor / Reserva Registrada [${cleanPlate}]`,
           emailHtml,
           {
-            fromName: 'Segurança & Gestão de Frotas Risel',
-            source: 'perimeter_security_alert'
+            fromName: 'Gestão de Reservas Risel',
+            source: 'reservas'
           }
         );
         console.log(`✅ E-mail de alerta de saída da sede enviado com sucesso para: ${recipients.join(', ')}`);

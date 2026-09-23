@@ -938,7 +938,7 @@ const docToReservation = (doc: any): Reservation | null => {
         requesterName: requesterName,
         department: normalizeNomeSetor(data.department || data.setor || '', 'Operações'),
         role: data.role || data.cargo || 'N/A',
-        email: data.email || '',
+        email: data.email || data.requesterEmail || data.userEmail || data.solicitanteEmail || '',
         departureDateTime: convertFirestoreDate(data.departureDateTime || data.departureDate || data.dataSaida),
         returnDate: convertFirestoreDate(data.returnDate || data.dataRetorno || data.returnDateTime),
         destination: data.destination || data.localDestino || '',
@@ -947,11 +947,12 @@ const docToReservation = (doc: any): Reservation | null => {
         vehicleId: vehicleId,
         status: normalizeStatus(data.status),
         driverName: data.driverName || data.condutor,
-        actualReturnDateTime: convertOptionalFirestoreDate(data.actualReturnDateTime || data.dataRetornoEfetiva),
-        finalKm: data.finalKm,
+        actualReturnDateTime: convertOptionalFirestoreDate(data.actualReturnDateTime || data.dataRetornoEfetiva || data.dataRetornoEfetivo),
+        finalKm: data.finalKm !== undefined && data.finalKm !== null ? Number(data.finalKm) : undefined,
         purpose: data.purpose || data.motivo,
-        rejectReason: data.rejectReason || data.motivoRejeicao,
-        requestTimestamp: convertOptionalFirestoreDate(data.requestTimestamp || data.created)
+        rejectReason: data.rejectReason || data.motivoRejeicao || data.motivoRecusa,
+        adminNotes: data.adminNotes || data.observacoesGestao || data.notasAdmin,
+        requestTimestamp: convertOptionalFirestoreDate(data.requestTimestamp || data.created || data.createdAt)
     };
 };
 
@@ -1329,42 +1330,58 @@ export const addReservation = async (data: Omit<Reservation, 'id' | 'status' | '
         requestTimestamp: new Date(),
     };
 
-    // Atualiza imediatamente no cache local
-    const currentList = getReservationsFromLocalStorage();
-    const tempId = 'res_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    // Gera ID único determinístico antes da gravação para evitar duplicidades
+    const deterministicId = 'res_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
     const newReservation: Reservation = {
         ...reservationWithAllFields,
-        id: tempId,
+        id: deterministicId,
     };
-    currentList.unshift(newReservation);
-    saveReservationsToLocalStorage(currentList);
-    notifyReservationListeners();
+
+    // 1. Atualiza no cache local sem duplicar
+    const currentList = getReservationsFromLocalStorage();
+    const isDuplicate = currentList.some(r => 
+        r.id === deterministicId ||
+        (r.vehicleId === data.vehicleId &&
+         r.requesterName === data.requesterName &&
+         Math.abs(new Date(r.departureDateTime).getTime() - new Date(data.departureDateTime).getTime()) < 30000)
+    );
+
+    if (!isDuplicate) {
+        currentList.unshift(newReservation);
+        saveReservationsToLocalStorage(currentList);
+        notifyReservationListeners();
+    }
 
     ensureAdminFirebaseAuth().catch(() => {});
 
+    const cleanPayload = removeUndefined({ ...reservationWithAllFields, id: deterministicId });
+
     try {
-        // Envia ao endpoint de contingência no servidor com credenciais de produção
+        // Grava no Firestore com ID fixo e único (set com merge impede qualquer duplicação)
+        const addPromise = reservationsCollection.doc(deterministicId).set(cleanPayload, { merge: true });
+        const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 3000));
+        await Promise.race([addPromise, timeoutPromise]);
+
+        // Sincroniza com o arquivo de backend de contingência com o mesmo ID
         fetch('/api/reservations/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: removeUndefined(reservationWithAllFields) }),
-        }).catch(err => console.warn("Endpoint /api/reservations/add aviso:", err));
+            body: JSON.stringify({ data: cleanPayload }),
+        }).catch(() => {});
 
-        const addPromise = reservationsCollection.add(removeUndefined(reservationWithAllFields));
-        const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2500));
-        const docRef = await Promise.race([addPromise, timeoutPromise]);
-        if (docRef && docRef.id) {
-            // Substitui o ID temporário pelo ID real do Firestore
-            const updatedList = getReservationsFromLocalStorage().map(r => r.id === tempId ? { ...r, id: docRef.id } : r);
-            saveReservationsToLocalStorage(updatedList);
-            notifyReservationListeners();
-            return { id: docRef.id };
-        }
-        return { id: tempId };
+        return { id: deterministicId };
     } catch (err) {
-        console.warn("Adição no Firestore falhou ou expirou, reserva mantida no cache local:", err);
-        useReservationsLocalStorageFallback = true;
-        return { id: tempId };
+        console.warn("Salvamento direto no Firestore falhou ou expirou, sincronizando com backend:", err);
+        try {
+            await fetch('/api/reservations/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: cleanPayload }),
+            });
+        } catch (backendErr) {
+            console.warn("Aviso ao sincronizar com backend:", backendErr);
+        }
+        return { id: deterministicId };
     }
 };
 

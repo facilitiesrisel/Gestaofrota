@@ -477,16 +477,40 @@ const ReservationsView: React.FC = () => {
   };
 
   const handleFinalizeSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (selectedReservation && finalizeFormData.actualReturnDateTime) {
-            try {
-                const finalKm = finalizeFormData.finalKm ? parseInt(finalizeFormData.finalKm) : null;
-                await finalizeReservation(selectedReservation.id, selectedReservation.vehicleId, finalKm, new Date(finalizeFormData.actualReturnDateTime));
-                setIsFinalizeModalOpen(false);
-                setSelectedReservation(null);
-                showToast("Reserva finalizada!", 'success');
-            } catch (e: any) { showToast(e.message, 'error'); }
-        }
+    e.preventDefault();
+    if (!selectedReservation) return;
+
+    if (!finalizeFormData.actualReturnDateTime) {
+      showToast("Informe a data e hora de devolução efetiva.", "error");
+      return;
+    }
+
+    const finalKmNum = parseInt(finalizeFormData.finalKm, 10);
+    if (!finalizeFormData.finalKm || isNaN(finalKmNum) || finalKmNum <= 0) {
+      showToast("É obrigatório informar o KM Final do veículo para concluir a reserva.", "error");
+      return;
+    }
+
+    const currentVeh = vehicles.find(v => v.id === selectedReservation.vehicleId);
+    const minAllowedKm = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
+    if (minAllowedKm > 0 && finalKmNum < minAllowedKm) {
+      showToast(`O KM final (${finalKmNum} km) não pode ser menor que o KM atual registrado (${minAllowedKm} km).`, "error");
+      return;
+    }
+
+    try {
+      await finalizeReservation(
+        selectedReservation.id,
+        selectedReservation.vehicleId,
+        finalKmNum,
+        new Date(finalizeFormData.actualReturnDateTime)
+      );
+      setIsFinalizeModalOpen(false);
+      setSelectedReservation(null);
+      showToast(`Reserva concluída com sucesso! Cadastro do veículo atualizado para ${finalKmNum.toLocaleString('pt-BR')} km.`, 'success');
+    } catch (e: any) {
+      showToast(e.message || "Erro ao concluir reserva.", 'error');
+    }
   };
 
   const filteredReservations = useMemo(() => {
@@ -691,13 +715,81 @@ const ReservationsView: React.FC = () => {
             </div>
         </div>
       </Modal>
-      <Modal isOpen={isFinalizeModalOpen} onClose={() => setIsFinalizeModalOpen(false)} title="Finalizar">
-         {/* ... Finalize Form ... */}
-         <form onSubmit={handleFinalizeSubmit} className="space-y-4">
-             <input type="datetime-local" value={finalizeFormData.actualReturnDateTime} onChange={e => setFinalizeFormData({...finalizeFormData, actualReturnDateTime: e.target.value})} required className="w-full border p-2 rounded" />
-             <input type="number" placeholder="KM Final" value={finalizeFormData.finalKm} onChange={e => setFinalizeFormData({...finalizeFormData, finalKm: e.target.value})} className="w-full border p-2 rounded" />
-             <button type="submit" className="w-full bg-primary text-white p-2 rounded">Confirmar</button>
-         </form>
+      <Modal isOpen={isFinalizeModalOpen} onClose={() => setIsFinalizeModalOpen(false)} title="Concluir Reserva e Registrar Devolução">
+         {selectedReservation && (() => {
+           const currentVeh = vehicles.find(v => v.id === selectedReservation.vehicleId);
+           const currentKm = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
+           return (
+             <form onSubmit={handleFinalizeSubmit} className="space-y-4">
+               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5 text-slate-700">
+                 <div className="flex justify-between">
+                   <span className="text-slate-500 font-medium">Veículo:</span>
+                   <span className="font-bold text-slate-900">{currentVeh?.model || 'Veículo'} ({currentVeh?.plate || 'S/P'})</span>
+                 </div>
+                 <div className="flex justify-between">
+                   <span className="text-slate-500 font-medium">Solicitante:</span>
+                   <span className="font-bold text-slate-900">{selectedReservation.requesterName}</span>
+                 </div>
+                 <div className="flex justify-between border-t border-slate-200/80 pt-1.5 mt-1.5">
+                   <span className="text-slate-500 font-medium">Hodômetro Atual Cadastrado:</span>
+                   <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                     {currentKm.toLocaleString('pt-BR')} km
+                   </span>
+                 </div>
+               </div>
+
+               <div>
+                 <label className="block text-xs font-bold text-slate-700 mb-1">
+                   Data e Hora Efetiva de Devolução <span className="text-red-500">*</span>
+                 </label>
+                 <input 
+                   type="datetime-local" 
+                   value={finalizeFormData.actualReturnDateTime} 
+                   onChange={e => setFinalizeFormData({...finalizeFormData, actualReturnDateTime: e.target.value})} 
+                   required 
+                   className="w-full text-sm border border-slate-300 p-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none" 
+                 />
+               </div>
+
+               <div>
+                 <label className="block text-xs font-bold text-slate-700 mb-1">
+                   KM Final no Hodômetro <span className="text-red-500">* (Obrigatório)</span>
+                 </label>
+                 <div className="relative">
+                   <input 
+                     type="number" 
+                     placeholder={`Ex: ${currentKm > 0 ? currentKm + 50 : 50000}`}
+                     value={finalizeFormData.finalKm} 
+                     onChange={e => setFinalizeFormData({...finalizeFormData, finalKm: e.target.value})} 
+                     required
+                     min={currentKm > 0 ? currentKm : 1}
+                     className="w-full text-sm border border-slate-300 p-2.5 pr-14 rounded-xl font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none" 
+                   />
+                   <span className="absolute right-3.5 top-2.5 text-xs font-bold text-slate-400 pointer-events-none">KM</span>
+                 </div>
+                 <p className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1 font-medium">
+                   <span>⚡</span> Este valor atualizará diretamente o hodômetro no cadastro do veículo.
+                 </p>
+               </div>
+
+               <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                 <button 
+                   type="button"
+                   onClick={() => setIsFinalizeModalOpen(false)} 
+                   className="px-4 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                 >
+                   Cancelar
+                 </button>
+                 <button 
+                   type="submit" 
+                   className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                 >
+                   <span>✓</span> Concluir e Atualizar Veículo
+                 </button>
+               </div>
+             </form>
+           );
+         })()}
       </Modal>
       <Modal isOpen={isMaintenanceModalOpen} onClose={() => setIsMaintenanceModalOpen(false)} title="Aviso de Manutenção">
          <div className="text-center">
