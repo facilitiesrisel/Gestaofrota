@@ -200,6 +200,7 @@ const ReservationsView: React.FC = () => {
             { label: "Solicitante", value: resSnapshot.requesterName || "Colaborador" },
             { label: "Condutor", value: resSnapshot.driverName || resSnapshot.requesterName || "Não Informado" },
             { label: "Departamento", value: resSnapshot.department || "Geral" },
+            { label: "Categoria Pretendida", value: vehicle ? `${vehicle.model} (${vehicle.type || 'Passeio / Operações'})` : (resSnapshot.category || 'Hatch Compacto') },
             { label: "Veículo Aprovado", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
             { label: "Data de Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : "A Definir" },
             { label: "Retorno Previsto", value: !isNaN(returnDate.getTime()) ? returnDate.toLocaleString('pt-BR') : "A Definir" },

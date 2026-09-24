@@ -1,4 +1,6 @@
-[
+import { Sinistro } from "../pages/frota-pesada/types";
+
+export const SINISTROS_REAIS_OFICIAIS: Sinistro[] = [
   {
     "id": "sin_11_JCC3J12",
     "numeroProtocolo": "2310245789",
@@ -5019,4 +5021,4 @@
       ]
     }
   }
-]
+];

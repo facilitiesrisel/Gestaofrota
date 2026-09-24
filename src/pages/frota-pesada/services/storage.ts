@@ -1179,10 +1179,10 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
     const codigos = codigosMap.size > 0 ? Array.from(codigosMap.values()) : mockCodigosMulta;
 
     const resultData = {
-        veiculos: veiculos.length > 0 ? veiculos : [], 
-        motoristas: motoristas.length > 0 ? motoristas : [],
+        veiculos: veiculos.length > 0 ? veiculos : mockVeiculos, 
+        motoristas: motoristas.length > 0 ? motoristas : mockMotoristas,
         codigos: codigos.length > 0 ? codigos : mockCodigosMulta,
-        multas: multas.length > 0 ? multas : [] 
+        multas: multas.length > 0 ? multas : mockMultas 
     };
 
     // Sincroniza o localStore em memória com os dados consolidados

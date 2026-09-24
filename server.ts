@@ -3849,47 +3849,75 @@ async function startServer() {
 
     let buf: ArrayBuffer | null = null;
 
-    // 1. Tentar ler arquivo local colocado na pasta DATA_DIR se existir
+    // 1. Tentar ler arquivo local colocado na pasta DATA_DIR ou raiz se existir
     const localSinistrosFile = path.join(DATA_DIR, "Comunicado de Sinistro_Frota Pesada.xlsx");
-    if (fs.existsSync(localSinistrosFile)) {
+    const localSinistrosRoot = path.join(process.cwd(), "Comunicado de Sinistro_Frota Pesada.xlsx");
+    const chosenFile = fs.existsSync(localSinistrosFile) ? localSinistrosFile : (fs.existsSync(localSinistrosRoot) ? localSinistrosRoot : null);
+    if (chosenFile) {
       try {
-        const fileData = fs.readFileSync(localSinistrosFile);
+        const fileData = fs.readFileSync(chosenFile);
         buf = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
-        console.log("[Risel Sinistros Direct Sync] Arquivo local da planilha detectado e carregado.");
+        console.log(`[Risel Sinistros Direct Sync] Arquivo local da planilha detectado e carregado de ${chosenFile}.`);
       } catch (e) {}
     }
 
-    // 2. Se não houver arquivo local, tentar conexão direta com os endpoints do SharePoint / OneDrive
+    // 2. Se não houver arquivo local ou for sync forçado, tentar conexão direta com os endpoints do SharePoint / OneDrive
     if (!buf && validateOneDriveUrl(targetUrl)) {
-      const candidateUrls = [
-        targetUrl.includes("download=1") ? targetUrl : `${targetUrl}&download=1`,
-        targetUrl.replace(":x:/r/", ":x:/g/").includes("download=1") ? targetUrl.replace(":x:/r/", ":x:/g/") : `${targetUrl.replace(":x:/r/", ":x:/g/")}&download=1`,
-        targetUrl.replace(":x:/r/", ":x:/g/"),
-        `https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/_layouts/15/download.aspx?sourcedoc=%7B08C8A01A-45A5-4439-94F4-5F0505EDE3B3%7D`,
-        `https://graph.microsoft.com/v1.0/shares/${encodeSharingUrl(targetUrl)}/driveItem/content`
-      ];
+      try {
+        // Fluxo SharePoint com seguimento de redirecionamento e captura de cookies (FedAuth)
+        const r1 = await fetch(targetUrl, {
+          redirect: "manual",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          }
+        });
+        const loc1 = r1.headers.get("location");
+        const cookies1 = (r1.headers as any).getSetCookie ? (r1.headers as any).getSetCookie() : [r1.headers.get("set-cookie")];
+        const cookieHeader = (cookies1 || []).filter(Boolean).join("; ");
 
-      for (const u of candidateUrls) {
-        try {
-          const fetchRes = await fetch(u, {
+        if (loc1) {
+          const r2 = await fetch(loc1, {
             headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, application/octet-stream, */*"
+              "Cookie": cookieHeader,
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
           });
+          const html = await r2.text();
+          const personalPath = loc1.substring(0, loc1.indexOf("/_layouts"));
+          const dlCandidates: string[] = [];
 
-          if (fetchRes.ok) {
-            const rawBytes = await fetchRes.arrayBuffer();
-            const u8 = new Uint8Array(rawBytes.slice(0, 4));
-            if (rawBytes.byteLength > 2000 && u8[0] === 0x50 && u8[1] === 0x4B) {
-              buf = rawBytes;
-              console.log(`[Risel Sinistros Direct Sync] Conexão direta bem-sucedida com SharePoint via ${u.substring(0, 60)}...`);
-              break;
-            }
+          const sourcedocMatch = html.match(/sourcedoc=(%7B[a-f0-9\-]+%7D|\{[a-f0-9\-]+\})/i) || html.match(/\/download\.aspx\?UniqueId=([a-f0-9\-]+)/i);
+          if (sourcedocMatch) {
+            dlCandidates.push(`${personalPath}/_layouts/15/download.aspx?sourcedoc=${sourcedocMatch[1]}`);
           }
-        } catch (err: any) {
-          // Continua tentativa nas outras URLs
+          const allDlMatches = html.match(/https:\/\/[^\"'\s]+\/download\.aspx\?[^\"'\s]+/gi) || [];
+          dlCandidates.push(...allDlMatches);
+          dlCandidates.push(`${personalPath}/_layouts/15/download.aspx?sourcedoc=%7B08c8a01a-45a5-4439-94f4-5f0505ede3b3%7D`);
+
+          for (const dl of dlCandidates) {
+            try {
+              const r3 = await fetch(dl, {
+                headers: {
+                  "Cookie": cookieHeader,
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }
+              });
+              if (r3.ok) {
+                const rawBytes = await r3.arrayBuffer();
+                const u8 = new Uint8Array(rawBytes.slice(0, 4));
+                if (rawBytes.byteLength > 2000 && u8[0] === 0x50 && u8[1] === 0x4B) {
+                  buf = rawBytes;
+                  // Persistir cópia em disco
+                  fs.writeFileSync(localSinistrosFile, Buffer.from(rawBytes));
+                  console.log(`[Risel Sinistros Direct Sync] Download do SharePoint realizado com sucesso (${rawBytes.byteLength} bytes).`);
+                  break;
+                }
+              }
+            } catch (e) {}
+          }
         }
+      } catch (err: any) {
+        console.warn("[Risel Sinistros Direct Sync] Tentativa de download do SharePoint:", err.message);
       }
     }
 
@@ -3897,9 +3925,8 @@ async function startServer() {
     if (buf) {
       try {
         const wb = XLSX.read(Buffer.from(buf), { type: "buffer" });
-        // Localiza especificamente a aba Sheet1 informada pelo usuário
-        const targetSheetName = wb.SheetNames.find(s => s.trim().toLowerCase() === "sheet1") || "Sheet1";
-        const sheet = wb.Sheets[targetSheetName] || wb.Sheets[wb.SheetNames[0]];
+        const targetSheetName = wb.SheetNames.find(s => s.trim().toLowerCase() === "sheet1") || wb.SheetNames[0] || "Sheet1";
+        const sheet = wb.Sheets[targetSheetName];
 
         if (sheet) {
           const rawJson: any[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
@@ -3907,47 +3934,155 @@ async function startServer() {
             console.log(`[Risel Sinistros Direct Sync] ${rawJson.length} registros lidos da aba '${targetSheetName}'.`);
             const importedList: any[] = [];
 
+            const excelDateToISO = (val: any): string => {
+              if (!val) return new Date().toISOString().substring(0, 10);
+              if (typeof val === 'number') {
+                const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+                return date.toISOString().substring(0, 10);
+              }
+              const str = String(val).trim();
+              if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.substring(0, 10);
+              const parts = str.split(/[\/\-]/);
+              if (parts.length === 3) {
+                if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+                if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+              }
+              return str;
+            };
+
             for (let i = 0; i < rawJson.length; i++) {
               const row = rawJson[i];
               const keys = Object.keys(row);
               const getCol = (terms: string[]) => {
                 for (const k of keys) {
-                  const lk = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                  const cleanKey = k.toLowerCase().replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
                   for (const t of terms) {
-                    if (lk.includes(t)) return row[k];
+                    if (cleanKey.includes(t)) return row[k];
                   }
                 }
                 return "";
               };
 
-              const placa = String(getCol(["placa", "cavalo", "veiculo"])).toUpperCase().replace(/[^A-Z0-9]/g, "");
-              if (!placa) continue;
+              const placaRaw = String(getCol(["placa veiculo da frota", "placa veiculo", "placa cavalo", "placa"])).toUpperCase().replace(/[^A-Z0-9]/g, "");
+              const idNum = row["Id"] || (i + 1);
+              const protocoloRaw = String(getCol(["nº do aviso de sinistro", "numero do aviso", "aviso de sinistro", "protocolo", "nº do aviso"])).trim();
+              const protocolo = protocoloRaw || `SIN-${idNum}`;
+              const dataSinistro = excelDateToISO(getCol(["data do sinistro", "data sinistro", "data e hora", "data"]));
+              const horario = String(getCol(["horario"])).trim();
+              const dataHora = horario ? `${dataSinistro}T${horario.padStart(5, "0")}:00` : `${dataSinistro}T08:00:00`;
 
-              const dataRaw = String(getCol(["data e hora", "data do evento", "data do sinistro", "conclusao", "inicio", "data"]) || new Date().toISOString());
-              const id = `sh_${i + 1}_${placa}`;
+              const statusRaw = String(getCol(["status", "situacao"])).trim().toUpperCase();
+              let status = "Em Apuração";
+              if (statusRaw.includes("FINALIZADO") || statusRaw.includes("CONCLUIDO") || statusRaw.includes("CONCLUÍDO") || statusRaw.includes("ENCERRADO")) {
+                status = "Finalizado / Concluído";
+              } else if (statusRaw.includes("SEGURADORA") || statusRaw.includes("ENVIADO PARA SEGURADORA")) {
+                status = "Aberto na Seguradora";
+              } else if (statusRaw.includes("PENDENTE") || statusRaw.includes("DOCUMENTO PENDENTE")) {
+                status = "Aguardando Orçamento";
+              } else if (statusRaw.includes("REPARO") || statusRaw.includes("OFICINA")) {
+                status = "Em Reparo";
+              } else if (statusRaw.includes("REGUL")) {
+                status = "Regulado";
+              } else if (statusRaw.includes("INDENIZ")) {
+                status = "Indenizado";
+              }
+
+              const assumeRespRaw = String(getCol(["assume a responsabilidade", "responsabilidade", "culpa"])).trim().toUpperCase();
+              const condutorAssumiu = (assumeRespRaw === "SIM" || assumeRespRaw.includes("SIM")) ? "SIM" : "NÃO";
+              let culpabilidade = condutorAssumiu === "SIM" ? "Condutor Risel" : "Terceiro";
+
+              let gravidade = "Média";
+              const gravRaw = String(getCol(["gravidade", "severidade"])).toUpperCase();
+              if (gravRaw.includes("LEVE")) gravidade = "Leve";
+              else if (gravRaw.includes("GRAVISS")) gravidade = "Gravíssima";
+              else if (gravRaw.includes("GRAVE")) gravidade = "Grave";
+
+              const cidade = String(getCol(["cidade"])).trim();
+              const endereco = String(getCol(["endereco da ocorrencia", "endereco"])).trim();
+              const local = [endereco, cidade].filter(Boolean).join(" - ") || "Local não informado";
+              const relato = String(getCol(["relato resumido", "relato", "descricao", "dinamica"])).trim();
+              const danosVeiculo = String(getCol(["danos ao veiculo? resumido", "danos ao veiculo", "danos"])).trim();
+              const motorista = String(getCol(["motorista risel", "motorista", "condutor"])).trim() || "Motorista Risel";
+              const base = String(getCol(["base", "filial"])).trim() || "Paulínia";
+              const gestorImediato = String(getCol(["gestor imediato", "gestor"])).trim() || undefined;
+
+              const nomeTerceiro = String(getCol(["nome do terceiro"])).trim() || undefined;
+              const contatoTerceiro = String(getCol(["contato do terceiro"])).trim() || undefined;
+              const placaTerceiro = String(getCol(["placa do terceiro"])).trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || undefined;
+
+              const fotos = String(getCol(["fotos do ocorrido"]) || "").split(";").map(s => s.trim()).filter(Boolean);
+              const fotosVeiculo = String(getCol(["fotos do veiculo da frota", "fotos do veiculo"]) || "").split(";").map(s => s.trim()).filter(Boolean);
+              const boLink = String(getCol(["boletim de ocorrencia"]) || "").trim();
+              const cnhRiselLink = String(getCol(["cnh do motorista risel", "cnh do motorista"]) || "").trim();
+              const docFrotaLink = String(getCol(["documento do veiculo da frota"]) || "").trim();
+              const docTerceiroLink = String(getCol(["documento do veiculo terceiro"]) || "").trim();
+              const cnhTerceiroLink = String(getCol(["cnh do terceiro"]) || "").trim();
+              const avisoSinistroLink = String(getCol(["aviso de sinistro"]) || "").trim();
+              const declaracaoLink = String(getCol(["declaracao de proprio punho", "declaracao"]) || "").trim();
+
+              const anexosLinks = [
+                ...fotos,
+                ...fotosVeiculo,
+                boLink,
+                cnhRiselLink,
+                docFrotaLink,
+                docTerceiroLink,
+                cnhTerceiroLink,
+                avisoSinistroLink,
+                declaracaoLink
+              ].filter(Boolean);
+
+              const terceirosInfo = [
+                placaTerceiro ? `Placa: ${placaTerceiro}` : "",
+                nomeTerceiro ? `Condutor: ${nomeTerceiro}` : "",
+                contatoTerceiro ? `Tel: ${contatoTerceiro}` : ""
+              ].filter(Boolean).join(" | ");
+
               const sinItem = {
-                id,
-                numeroProtocolo: String(getCol(["protocolo", "numero", "id"]) || `SIN-2026-${String(i + 1).padStart(3, "0")}`),
-                dataHora: dataRaw,
-                dataComunicado: dataRaw.substring(0, 10),
-                placa,
+                id: `sin_${idNum}_${placaRaw || "VEIC"}`,
+                numeroProtocolo: protocolo,
+                dataHora,
+                dataComunicado: dataSinistro,
+                placa: placaRaw || "ND",
                 placaCarreta: String(getCol(["carreta", "semirreboque"])).toUpperCase().replace(/[^A-Z0-9]/g, "") || undefined,
-                base: String(getCol(["base", "filial", "unidade"]) || "Paulínia"),
-                motorista: String(getCol(["motorista", "condutor", "nome"]) || "Condutor Risel"),
-                cnhMotorista: String(getCol(["cnh"]) || ""),
-                tipoEvento: String(getCol(["tipo de evento", "tipo", "evento", "natureza"]) || "Colisão"),
-                gravidade: String(getCol(["gravidade", "severidade"]) || "Média"),
-                status: String(getCol(["status", "situacao"]) || "Em Aberto"),
-                culpabilidade: String(getCol(["culpabilidade", "responsabilidade", "culpa"]) || "Em Análise"),
-                local: String(getCol(["local", "rodovia", "km"]) || ""),
-                boletimOcorrencia: String(getCol(["boletim", "b.o"]) || ""),
+                base,
+                motorista,
+                cnhMotorista: cnhRiselLink ? "Em Anexo (SharePoint)" : "",
+                gestorImediato,
+                nomeTerceiro,
+                contatoTerceiro,
+                placaTerceiro,
+                houveTerceiros: (nomeTerceiro || placaTerceiro || contatoTerceiro) ? 'Sim' : 'Não',
+                dadosTerceiro: terceirosInfo || undefined,
+                tipoEvento: String(getCol(["tipo de evento", "tipo", "evento", "natureza"]) || "Colisão / Acidente"),
+                gravidade,
+                status,
+                culpabilidade,
+                condutorAssumiu,
+                cidade: cidade || undefined,
+                endereco: endereco || undefined,
+                local,
+                danosVeiculo: danosVeiculo || undefined,
+                boletimOcorrencia: boLink ? "B.O. Anexado" : "",
+                boletimOcorrenciaUrl: boLink || undefined,
                 valorEstimadoPrejuizo: parseFloat(String(getCol(["prejuizo", "valor estimado", "estimativa"])).replace(/[^\d.,]/g, "").replace(",", ".")) || 0,
                 valorFranquia: parseFloat(String(getCol(["franquia"])).replace(/[^\d.,]/g, "").replace(",", ".")) || 0,
                 custoEfetivoRisel: parseFloat(String(getCol(["custo risel", "custo efetivo"])).replace(/[^\d.,]/g, "").replace(",", ".")) || 0,
-                descricao: String(getCol(["descricao", "relato", "dinamica"]) || ""),
-                avariasVeiculo: String(getCol(["avarias", "danos"]) || ""),
-                driveFolderUrl: DEFAULT_SINISTROS_DRIVE_FOLDER,
-                origem: "Microsoft Forms (Sheet1)"
+                descricao: relato || danosVeiculo || "Comunicado registrado via Microsoft Forms / SharePoint",
+                origem: "Microsoft Forms (Sheet1 - SharePoint)",
+                enviadoPor: String(getCol(["enviado por"])).trim() || undefined,
+                emailEnviadoPor: String(getCol(["email", "e-mail"])).trim() || undefined,
+                anexosSharePoint: anexosLinks,
+                sharepointLinks: {
+                  avisoSinistro: avisoSinistroLink || undefined,
+                  boletim: boLink || undefined,
+                  cnhMotorista: cnhRiselLink || undefined,
+                  docVeiculoFrota: docFrotaLink || undefined,
+                  docVeiculoTerceiro: docTerceiroLink || undefined,
+                  cnhTerceiro: cnhTerceiroLink || undefined,
+                  declaracao: declaracaoLink || undefined,
+                  fotos: [...fotos, ...fotosVeiculo]
+                }
               };
 
               importedList.push(sinItem);
@@ -3978,6 +4113,50 @@ async function startServer() {
 
   // Execução na inicialização do servidor
   syncSinistrosDirectlyFromSheet1(true).catch(() => {});
+
+  app.get("/api/sinistros/config", (req, res) => {
+    try {
+      const config = loadSinistrosConfig();
+      let count = 0;
+      if (fs.existsSync(SINISTROS_FILE)) {
+        try {
+          const arr = JSON.parse(fs.readFileSync(SINISTROS_FILE, "utf-8"));
+          count = Array.isArray(arr) ? arr.length : 0;
+        } catch (e) {}
+      }
+      return res.json({ ...config, totalSinistros: count });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/sinistros/config", express.json(), async (req, res) => {
+    try {
+      const current = loadSinistrosConfig();
+      const updated = { ...current, ...req.body };
+      saveSinistrosConfig(updated);
+      const list = await syncSinistrosDirectlyFromSheet1(true);
+      return res.json({ success: true, config: updated, totalSinistros: list.length });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/sinistros/upload-sheet", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { base64 } = req.body;
+      if (!base64) return res.status(400).json({ error: "Conteúdo base64 não fornecido." });
+      const cleanBase64 = base64.includes(",") ? base64.split(",")[1] : base64;
+      const buffer = Buffer.from(cleanBase64, "base64");
+      const targetPath = path.join(DATA_DIR, "Comunicado de Sinistro_Frota Pesada.xlsx");
+      fs.writeFileSync(targetPath, buffer);
+      console.log(`[Risel Sinistros Direct Sync] Arquivo salvo em ${targetPath} (${buffer.length} bytes). Processando aba Sheet1...`);
+      const list = await syncSinistrosDirectlyFromSheet1(true);
+      return res.json({ success: true, totalSinistros: list.length });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
 
   app.post("/api/sinistros/sync-online", async (req, res) => {
     try {

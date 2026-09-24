@@ -463,6 +463,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         { label: "Solicitante", value: formData.requesterName },
         { label: "Condutor", value: finalDriverName },
         { label: "Departamento", value: normalizeNomeSetor(formData.department) },
+        { label: "Categoria Pretendida", value: vehicleToReserve.model ? `${vehicleToReserve.model} (${vehicleToReserve.type || 'Passeio / Operações'})` : 'Hatch Compacto' },
         { label: "Veículo Sugerido", value: `${vehicleToReserve.model} - ${vehicleToReserve.plate}` },
         { label: "Data de Saída", value: new Date(formData.departureDateTime).toLocaleString('pt-BR') },
         { label: "Retorno Previsto", value: returnDateFixed.toLocaleString('pt-BR') },

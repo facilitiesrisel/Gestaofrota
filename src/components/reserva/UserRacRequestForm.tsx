@@ -318,7 +318,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         returnStore: normReturnCity + ' (A definir loja)',
         pickupCity: normPickupCity,
         returnCity: normReturnCity,
-        category: 'Conforme Observações',
+        category: (formData.category || '').trim() || 'Hatch Compacto',
         purpose: formData.purpose.trim(),
         observations: formData.observations.trim(),
         hasCnhCopy: hasCnhAlready || isAttachingNow,
@@ -370,7 +370,8 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
       // 4. Envia notificação por e-mail com anexo da CNH EXCLUSIVAMENTE para a Gestão de Frota (Administração)
       // REGRA: O solicitante NUNCA recebe o e-mail inicial de solicitação.
       // O solicitante receberá o e-mail oficial com o voucher apenas quando a locação for realizada e aprovada.
-      const emailSubject = `[NOVA SOLICITAÇÃO RAC] ${protocolNumber} - ${formData.requesterName} - Filial: ${finalFilial} (${formData.pickupCity} ➔ ${formData.returnCity})`;
+      const categoryLabel = (formData.category || '').trim() || 'Hatch Compacto';
+      const emailSubject = `[NOVA SOLICITAÇÃO RAC] ${protocolNumber} - ${formData.requesterName} - Categoria: ${categoryLabel} - Filial: ${finalFilial} (${formData.pickupCity} ➔ ${formData.returnCity})`;
       const emailHtml = generateRacEmailHtml(fullRental, {
         actionType: 'created',
         cnhAttachedNow: emailAttachments.some(a => a.filename.toLowerCase().includes('cnh')),
@@ -428,6 +429,12 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
               <div className="flex justify-between">
                 <span className="text-slate-500 font-bold">Solicitante:</span>
                 <span className="font-extrabold text-slate-800">{formData.requesterName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-bold">Categoria Pretendida:</span>
+                <span className="font-extrabold text-emerald-800 bg-emerald-100/70 px-2 py-0.5 rounded border border-emerald-200">
+                  🚗 {formData.category || 'Hatch Compacto'}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-bold">Retirada:</span>
@@ -827,15 +834,71 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
           )}
         </div>
 
-        {/* SEÇÃO 5: FINALIDADE & OBSERVAÇÕES */}
+        {/* SEÇÃO 5: CATEGORIA PRETENDIDA & FINALIDADE */}
         <div>
           <div className="flex items-center gap-2 pb-2 border-b border-slate-200 mb-4">
             <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
               5
             </div>
             <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
-              Finalidade e Observações da Locação
+              Categoria Pretendida &amp; Finalidade da Locação
             </h3>
+          </div>
+
+          {/* Seletor de Categoria Pretendida */}
+          <div className="mb-4 bg-emerald-50/40 p-4 rounded-2xl border border-emerald-200/80">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+              <label className="block text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
+                <CarIcon className="w-4 h-4 text-emerald-700" />
+                Categoria Pretendida do Veículo <span className="text-red-500">*</span>
+              </label>
+              <span className="text-[11px] font-bold text-emerald-800 bg-white px-2.5 py-0.5 rounded-full border border-emerald-200 shadow-2xs">
+                Selecionado: <strong>{formData.category || 'Hatch Compacto'}</strong>
+              </span>
+            </div>
+
+            {/* Grid de Seleção Rápida por Categoria */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-3">
+              {VEHICLE_CATEGORIES.map(cat => {
+                const isSelected = formData.category === cat.id || formData.category === cat.label;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setFormData({ ...formData, category: cat.label })}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      isSelected
+                        ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-500/30'
+                        : 'bg-white hover:bg-emerald-50/60 text-slate-800 border-slate-200 hover:border-emerald-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className={`text-xs font-black ${isSelected ? 'text-white' : 'text-slate-900'}`}>
+                        {cat.label}
+                      </span>
+                      {isSelected && <CheckIcon className="w-3.5 h-3.5 text-white" />}
+                    </div>
+                    <span className={`text-[10px] line-clamp-2 leading-tight ${isSelected ? 'text-emerald-100' : 'text-slate-500'}`}>
+                      {cat.desc}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Campo Editável / Personalizado para Categoria */}
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-600 shrink-0">Ou especifique:</span>
+              <input
+                type="text"
+                required
+                name="category"
+                value={formData.category}
+                onChange={handleChange}
+                placeholder="Ex: Hatch Compacto, Sedan Médio, SUV, Picape 4x4, Van..."
+                className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:border-emerald-600 transition-all"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -856,14 +919,14 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
 
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                Observações Complementares (Categoria Desejada, Locadora, Detalhes)
+                Observações Complementares (Preferência de Locadora, Acessórios, Detalhes)
               </label>
               <textarea
                 rows={3}
                 name="observations"
                 value={formData.observations}
                 onChange={handleChange}
-                placeholder="Descreva a categoria desejada (ex: Sedan, Hatch, SUV, Picape), preferência de locadora, necessidade de cadeirinha, bagageiro extra ou outras necessidades..."
+                placeholder="Ex: Preferência por Localiza ou Movida, necessidade de cadeirinha, bagageiro extra ou outras necessidades..."
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all"
               />
             </div>

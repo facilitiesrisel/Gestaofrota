@@ -109,7 +109,7 @@ const getIconForLabel = (label: string): string => {
     if (l.includes('solicitante') || l.includes('responsável')) return '👤'; 
     if (l.includes('condutor') || l.includes('motorista')) return '🔹'; 
     if (l.includes('departamento') || l.includes('setor') || l.includes('área') || l.includes('filial') || l.includes('base')) return '🏢'; 
-    if (l.includes('veículo') || l.includes('veiculo') || l.includes('carro') || l.includes('placa') || l.includes('modelo')) return '🚗'; 
+    if (l.includes('categoria') || l.includes('veículo') || l.includes('veiculo') || l.includes('carro') || l.includes('placa') || l.includes('modelo')) return '🚗'; 
     if (l.includes('saída') || l.includes('saida') || l.includes('início') || l.includes('inicio') || l.includes('retorno') || l.includes('data') || l.includes('período') || l.includes('horário') || l.includes('prazo')) return '📅'; 
     if (l.includes('destino') || l.includes('local') || l.includes('cidade') || l.includes('origem') || l.includes('rota')) return '📍'; 
     if (l.includes('distância') || l.includes('distancia') || l.includes('km') || l.includes('odômetro') || l.includes('odometro')) return '🔹'; 
@@ -619,20 +619,24 @@ export const generateRacEmailHtml = (
                 ${statusHeroBadge}
               </div>
 
-              <!-- RESUMO EXECUTIVO (KPIS 3 COLUNAS) -->
-              <table width="100%" cellpadding="0" cellspacing="6" border="0" style="margin-bottom: 18px;">
+              <!-- RESUMO EXECUTIVO (KPIS 4 CARDS) -->
+              <table width="100%" cellpadding="0" cellspacing="4" border="0" style="margin-bottom: 18px;">
                 <tr>
-                  <td width="33%" align="center" style="width: 33.33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 8px; vertical-align: top;">
-                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Duração Prevista</div>
-                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #00753f;">⏱️ ${totalDays} diária(s)</div>
+                  <td width="25%" align="center" style="width: 25%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 6px; vertical-align: top;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Duração Prevista</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #00753f;">⏱️ ${totalDays} diária(s)</div>
                   </td>
-                  <td width="33%" align="center" style="width: 33.33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 8px; vertical-align: top;">
-                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Condutor Designado</div>
+                  <td width="25%" align="center" style="width: 25%; background-color: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 10px 6px; vertical-align: top;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; font-weight: 800; color: #166534; text-transform: uppercase; margin-bottom: 4px;">Categoria Pretendida</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #065f46;">🚗 ${rental.category || 'Hatch Compacto'}</div>
+                  </td>
+                  <td width="25%" align="center" style="width: 25%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 6px; vertical-align: top;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Condutor Designado</div>
                     <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #0f172a;">👤 ${rental.driverName || rental.requesterName}</div>
                   </td>
-                  <td width="33%" align="center" style="width: 33.33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 8px; vertical-align: top;">
-                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Tipo de Trajeto</div>
-                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt;">${itineraryBadge}</div>
+                  <td width="25%" align="center" style="width: 25%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 6px; vertical-align: top;">
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Tipo de Trajeto</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt;">${itineraryBadge}</div>
                   </td>
                 </tr>
               </table>
@@ -765,10 +769,10 @@ export const generateRacEmailHtml = (
                 </tr>
               </table>
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 6px 6px; margin-bottom: 22px; border-collapse: collapse;">
-                <tr style="background-color: #ffffff;">
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b; width: 38%; border-bottom: 1px solid #f1f5f9;">Categoria Solicitada:</td>
-                  <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155; border-bottom: 1px solid #f1f5f9;">
-                    <span style="display: inline-block; background-color: #f1f5f9; padding: 2px 8px; border-radius: 4px; border: 1px solid #e2e8f0;">${rental.category || 'Hatch / Compacto'}</span>
+                <tr style="background-color: #f0fdf4; border-bottom: 1.5px solid #86efac;">
+                  <td style="padding: 10px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #166534; width: 38%;">🚗 Categoria Pretendida:</td>
+                  <td style="padding: 10px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11.5pt; font-weight: 800; color: #065f46;">
+                    <span style="display: inline-block; background-color: #ffffff; color: #065f46; padding: 4px 12px; border-radius: 6px; border: 1.5px solid #10b981; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">${rental.category || 'Hatch Compacto'}</span>
                   </td>
                 </tr>
                 <tr style="background-color: #f8fafc;">

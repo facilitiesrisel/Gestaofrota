@@ -160,11 +160,33 @@ export interface Sinistro {
   valorPagoSeguradora: number;
   custoEfetivoRisel: number;
   descricao: string; // Dinâmica detalhada do evento
+  danosVeiculo?: string; // Danos ao veículo resumido
+  condutorAssumiu?: 'SIM' | 'NÃO' | string; // Se condutor Risel assume a responsabilidade
+  cidade?: string;
+  endereco?: string;
   avariasVeiculo?: string; // Avarias cavalo / tanque
   driveFolderId?: string;
   driveFolderUrl?: string;
   anexos?: SinistroAnexo[];
-  origem?: 'Microsoft Forms' | 'SharePoint Excel' | 'Lançamento Manual';
+  origem?: 'Microsoft Forms' | 'SharePoint Excel' | 'Lançamento Manual' | string;
+  enviadoPor?: string;
+  emailEnviadoPor?: string;
+  gestorImediato?: string;
+  nomeTerceiro?: string;
+  contatoTerceiro?: string;
+  placaTerceiro?: string;
+  boletimOcorrenciaUrl?: string;
+  anexosSharePoint?: string[];
+  sharepointLinks?: {
+    avisoSinistro?: string;
+    boletim?: string;
+    cnhMotorista?: string;
+    docVeiculoFrota?: string;
+    docVeiculoTerceiro?: string;
+    cnhTerceiro?: string;
+    declaracao?: string;
+    fotos?: string[];
+  };
 }
 
 // Navigation Types

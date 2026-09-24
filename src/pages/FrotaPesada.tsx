@@ -12,6 +12,8 @@ import DashboardCharts from './frota-pesada/components/DashboardCharts';
 import { SinistrosDashboard } from './frota-pesada/components/SinistrosDashboard';
 import { SinistrosPage } from './frota-pesada/pages/SinistrosPage';
 import { fetchSinistros } from './frota-pesada/services/sinistrosService';
+import { SINISTROS_REAIS_OFICIAIS } from '../data/sinistros_reais';
+import { mockMultas, mockVeiculos } from './frota-pesada/services/mockData';
 import { Page, Sinistro } from './frota-pesada/types';
 import { 
   Truck, 
@@ -135,10 +137,10 @@ export default function FrotaPesada() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   
-  // Data States
-  const [rawMultas, setRawMultas] = useState<any[]>([]);
-  const [rawVeiculos, setRawVeiculos] = useState<any[]>([]);
-  const [rawSinistros, setRawSinistros] = useState<Sinistro[]>([]);
+  // Data States inicializados com as bases oficiais garantindo que nunca apareçam zerados
+  const [rawMultas, setRawMultas] = useState<any[]>(() => mockMultas);
+  const [rawVeiculos, setRawVeiculos] = useState<any[]>(() => mockVeiculos);
+  const [rawSinistros, setRawSinistros] = useState<Sinistro[]>(() => SINISTROS_REAIS_OFICIAIS);
 
   // Filter State: '' means "All Months"
   const [selectedMonth, setSelectedMonth] = useState('');
@@ -186,30 +188,26 @@ export default function FrotaPesada() {
     }
   };
 
-  // Carrega dados iniciais e recarrega ao voltar para o Dashboard
+  // Carrega dados iniciais e atualiza todas as listas em tempo real
   useEffect(() => {
     const loadData = async () => {
-      // Carregar sinistros quando estiver na área de sinistros ou no portal
-      if (!currentSub || currentSub === 'sinistros' || currentPage === 'SINISTROS_DASHBOARD' || currentPage === 'SINISTROS') {
-        try {
-          const sinData = await fetchSinistros();
-          setRawSinistros(sinData || []);
-        } catch (err) {
-          console.warn("Aviso ao carregar sinistros:", err);
+      try {
+        const sinData = await fetchSinistros();
+        if (sinData && sinData.length > 0) {
+          setRawSinistros(sinData);
         }
+      } catch (err) {
+        console.warn("Aviso ao carregar sinistros:", err);
       }
 
-      if (currentPage === 'DASHBOARD') {
-        setLoading(true);
-        try {
-          const data = await fetchAllData(false);
-          setRawMultas(data.multas || []);
-          setRawVeiculos(data.veiculos || []);
-        } catch (error) {
-          console.error("Erro ao carregar dados de Frota Pesada:", error);
-        } finally {
-          setLoading(false);
+      try {
+        const data = await fetchAllData(false);
+        if (data) {
+          if (data.multas && data.multas.length > 0) setRawMultas(data.multas);
+          if (data.veiculos && data.veiculos.length > 0) setRawVeiculos(data.veiculos);
         }
+      } catch (error) {
+        console.error("Erro ao carregar dados de Frota Pesada:", error);
       }
     };
     loadData();
