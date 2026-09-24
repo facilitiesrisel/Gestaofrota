@@ -113,6 +113,8 @@ export interface RacRental {
   returnStore: string; // Loja Devolução
   pickupCity?: string; // Cidade onde deseja retirar o veículo (Obrigatório)
   returnCity?: string; // Cidade onde pretende devolver o veículo (Obrigatório)
+  destinationCity?: string; // Cidade/UF de Destino da Locação
+  destination?: string; // Destino / Itinerário
   category?: string; // Categoria do Veículo pretendido
   purpose?: string; // Finalidade / Justificativa
   observations?: string; // Observações adicionais do solicitante

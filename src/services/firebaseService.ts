@@ -482,15 +482,17 @@ export const generateRacEmailHtml = (
   }
 
   // Bloco de Parecer / Despacho da Gestão de Frota (se houver observação ou recusa)
-  const notesToDisplay = adminNotes || (actionType === 'rejected' ? rejectReason : '');
+  const notesToDisplay = (adminNotes !== undefined && adminNotes !== '') 
+    ? adminNotes 
+    : (rental.adminNotes || (actionType === 'rejected' ? (rejectReason || rental.rejectReason || '') : ''));
   const dispatchBoxHtml = notesToDisplay ? `
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: ${actionType === 'rejected' ? '#fff1f2' : '#f0fdf4'}; border-left: 5px solid ${actionType === 'rejected' ? '#e11d48' : '#16a34a'}; border-radius: 8px; margin: 18px 0; border-top: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'}; border-right: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'}; border-bottom: 1px solid ${actionType === 'rejected' ? '#ffe4e6' : '#dcfce7'};">
       <tr>
         <td style="padding: 14px 18px;">
           <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; text-transform: uppercase; color: ${actionType === 'rejected' ? '#9f1239' : '#14532d'}; margin-bottom: 6px;">
-            ${actionType === 'rejected' ? '❌ Parecer de Recusa da Gestão de Frota:' : '💬 Despacho & Orientações da Gestão de Frota:'}
+            ${actionType === 'rejected' ? '❌ Parecer de Recusa da Gestão de Frota:' : '💬 Observações da Gestão de Frota / Instruções:'}
           </div>
-          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; color: ${actionType === 'rejected' ? '#881337' : '#166534'}; line-height: 1.45; font-weight: 600; white-space: pre-wrap;">
+          <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11.5pt; color: ${actionType === 'rejected' ? '#881337' : '#166534'}; line-height: 1.5; font-weight: 700; white-space: pre-wrap;">
             ${notesToDisplay}
           </div>
         </td>
@@ -635,29 +637,29 @@ export const generateRacEmailHtml = (
                     <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #0f172a;">👤 ${rental.driverName || rental.requesterName}</div>
                   </td>
                   <td width="25%" align="center" style="width: 25%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 6px; vertical-align: top;">
-                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Tipo de Trajeto</div>
-                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9.5pt;">${itineraryBadge}</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 9pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Destino</div>
+                    <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: 800; color: #0f172a;">📍 ${rental.destinationCity || rental.returnCity || rental.destination || 'A Definir'}</div>
                   </td>
                 </tr>
               </table>
 
-              <!-- PARECER / DESPACHO (SE HOUVER) -->
+              <!-- PARECER / DESPACHO / INSTRUÇÕES DA GESTÃO DE FROTA (SE HOUVER) -->
               ${dispatchBoxHtml}
 
               <!-- DADOS DA LOCADORA (SE HOUVER) -->
               ${rentalCompanyBlockHtml}
 
-              <!-- ITINERÁRIO EM DESTAQUE -->
+              <!-- ITINERÁRIO & DESTINO EM DESTAQUE -->
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; margin: 16px 0;">
                 <tr>
                   <td align="center" style="padding: 12px 16px;">
                     <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 10pt; font-weight: 800; text-transform: uppercase; color: #475569; margin-bottom: 4px;">
-                      Itinerário de Retirada &amp; Devolução
+                      Itinerário &amp; Destino da Locação
                     </div>
                     <div style="font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 12pt; font-weight: 800; color: #0f172a;">
-                      📍 <strong>${rental.pickupCity || rental.pickupStore || 'Origem a definir'}</strong> 
+                      📍 Retirada: <strong>${rental.pickupCity || rental.pickupStore || 'Origem a definir'}</strong> 
                       &nbsp;&nbsp;➔&nbsp;&nbsp; 
-                      🏁 <strong>${rental.returnCity || rental.returnStore || 'Destino a definir'}</strong>
+                      🏁 Destino: <strong>${rental.destinationCity || rental.returnCity || rental.destination || 'Destino a definir'}</strong>
                     </div>
                   </td>
                 </tr>
@@ -788,6 +790,11 @@ export const generateRacEmailHtml = (
                 <tr style="background-color: #f8fafc;">
                   <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #1e293b;">Base Operacional Vinculada:</td>
                   <td style="padding: 8px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: normal; color: #334155;">${rental.base}</td>
+                </tr>` : ''}
+                ${notesToDisplay ? `
+                <tr style="background-color: #fefce8; border-top: 1.5px solid #fef08a;">
+                  <td style="padding: 10px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 800; color: #854d0e; width: 38%;">💬 Observações da Gestão de Frota / Instruções:</td>
+                  <td style="padding: 10px 12px; font-family: 'Aptos Narrow', 'Aptos', Calibri, Arial, sans-serif; font-size: 11pt; font-weight: 700; color: #713f12; white-space: pre-wrap;">${notesToDisplay}</td>
                 </tr>` : ''}
               </table>
 

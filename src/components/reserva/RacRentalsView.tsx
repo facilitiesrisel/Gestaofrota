@@ -469,6 +469,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         adminNotes: '',
         pickupCity: '',
         returnCity: '',
+        destinationCity: '',
         reservationDate: formatToLocalISO(new Date()),
         pickupDate: formatToLocalISO(new Date()),
         pickupStore: '',
@@ -863,6 +864,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             adminNotes: '',
             pickupCity: '',
             returnCity: '',
+            destinationCity: '',
             reservationDate: formatToLocalISO(new Date()),
             pickupDate: formatToLocalISO(new Date()),
             pickupStore: '',
@@ -915,7 +917,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             observations: rental.observations || '',
             adminNotes: rental.adminNotes || '',
             pickupCity: rental.pickupCity || '',
-            returnCity: rental.returnCity || '',
+            returnCity: rental.returnCity || rental.destinationCity || rental.destination || '',
+            destinationCity: rental.destinationCity || rental.returnCity || rental.destination || '',
             reservationDate: formatToLocalISO(new Date(rental.reservationDate || new Date())),
             pickupDate: formatToLocalISO(new Date(rental.pickupDate || new Date())),
             pickupStore: rental.pickupStore || '',
@@ -1177,8 +1180,10 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 purpose: (formData.purpose || '').trim(),
                 observations: (formData.observations || '').trim(),
                 adminNotes: (formData.adminNotes || '').trim(),
+                destinationCity: normalizeCidade((formData.destinationCity || formData.returnCity || '').trim()),
+                destination: normalizeCidade((formData.destinationCity || formData.returnCity || '').trim()),
                 pickupCity: normalizeCidade((formData.pickupCity || '').trim()),
-                returnCity: normalizeCidade((formData.returnCity || '').trim()),
+                returnCity: normalizeCidade((formData.returnCity || formData.destinationCity || '').trim()),
                 reservationDate: formData.reservationDate ? new Date(formData.reservationDate) : new Date(),
                 pickupDate: formData.pickupDate ? new Date(formData.pickupDate) : new Date(),
                 pickupStore: (formData.pickupStore || '').trim(),
@@ -1893,7 +1898,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         <thead className="sticky top-0 z-20 shadow-xs">
                             <tr className="bg-[#114D38] text-white text-[10px] font-black uppercase tracking-wider border-b border-[#0d3b2c]">
                                 {/* 1. Ações (no início) */}
-                                <th scope="col" className="sticky top-0 bg-[#114D38] py-4 px-4 text-center whitespace-nowrap z-20 w-28">
+                                <th scope="col" className="sticky top-0 bg-[#114D38] text-white py-4 px-4 text-center whitespace-nowrap z-20 w-28">
                                     Ações
                                 </th>
 
@@ -1901,7 +1906,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('reservationDate')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Data da Solicitação"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -1914,7 +1919,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('rentalCompany')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Locadora ou Placa"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -1927,7 +1932,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('requesterName')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Solicitante ou Filial"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -1940,7 +1945,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('itinerary')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Itinerário"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -1953,7 +1958,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('value')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Valor"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -1966,7 +1971,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('driverName')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Condutor"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -1979,7 +1984,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('period')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Período de Locação"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -1992,7 +1997,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 <th 
                                     scope="col" 
                                     onClick={() => handleSort('status')}
-                                    className="sticky top-0 bg-[#114D38] py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
+                                    className="sticky top-0 bg-[#114D38] text-white py-4 px-5 text-left cursor-pointer hover:bg-[#0d3b2c] transition-colors select-none whitespace-nowrap group/th z-20"
                                     title="Clique para ordenar por Status"
                                 >
                                     <div className="flex items-center gap-1.5">
@@ -2472,11 +2477,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 isOpen={isFormModalOpen} 
                 onClose={() => setIsFormModalOpen(false)} 
                 title={
-                    <div className="flex items-center gap-2 text-[#114D38]">
-                        <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-800">
-                            <CarIcon className="w-4 h-4" />
+                    <div className="flex items-center gap-2.5 text-white">
+                        <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-white">
+                            <CarIcon className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-black text-base">
+                        <span className="font-black text-base text-white">
                             {selectedRental ? "Editar / Completar Locação RAC" : "Cadastrar Nova Locação RAC"}
                         </span>
                     </div>
@@ -2484,11 +2489,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             >
                 <form onSubmit={handleFormSubmit} className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
                     
-                    {/* Seção 1: Locadora & Placa */}
+                    {/* Seção 1: Locadora & Veículo */}
                     <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
-                        <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            1. Locadora & Veículo
-                        </span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs">
+                            <span>1. Locadora &amp; Veículo</span>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -2523,9 +2528,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
 
                     {/* Seção 2: Solicitante & Condutor */}
                     <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
-                        <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            2. Solicitante & Condutor
-                        </span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs">
+                            <span>2. Solicitante &amp; Condutor</span>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                             <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Nome do Solicitante *</label>
@@ -2606,30 +2611,27 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </div>
                     </div>
 
-                    {/* Seção 3: Itinerário & Categoria */}
+                    {/* Seção 3: Destino & Categoria Pretendida */}
                     <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
-                        <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            3. Itinerário & Cidades de Retirada / Devolução
-                        </span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs">
+                            <span>3. Destino &amp; Categoria Pretendida</span>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade - UF onde deseja Retirar</label>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                    Cidade/UF de Destino * <span className="text-[10px] font-normal text-emerald-700">(Destino da Locação)</span>
+                                </label>
                                 <input 
                                     type="text" 
-                                    value={formData.pickupCity} 
-                                    onChange={e => setFormData({ ...formData, pickupCity: e.target.value })}
-                                    placeholder="Ex: Paulínia - SP, Betim - MG"
-                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Cidade - UF onde pretende Devolver</label>
-                                <input 
-                                    type="text" 
-                                    value={formData.returnCity} 
-                                    onChange={e => setFormData({ ...formData, returnCity: e.target.value })}
+                                    value={formData.destinationCity || formData.returnCity} 
+                                    onChange={e => setFormData({ 
+                                        ...formData, 
+                                        destinationCity: e.target.value,
+                                        returnCity: e.target.value 
+                                    })}
                                     placeholder="Ex: Paulínia - SP, Betim - MG, Rio de Janeiro - RJ"
-                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+                                    required
                                 />
                             </div>
                             <div>
@@ -2638,11 +2640,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     type="text" 
                                     value={formData.category} 
                                     onChange={e => setFormData({ ...formData, category: e.target.value })}
-                                    placeholder="Ex: Hatch Compacto, Sedan, SUV, Pick-up"
-                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 outline-none"
+                                    placeholder="Ex: Hatch Compacto, Sedan Médio, SUV / Utilitário, Picape"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
                                 />
                             </div>
-                            <div>
+                            <div className="sm:col-span-2">
                                 <label className="block text-xs font-bold text-slate-700 mb-1">Finalidade / Motivo</label>
                                 <input 
                                     type="text" 
@@ -2655,54 +2657,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </div>
                     </div>
 
-                    {/* Seção 4: Valores & Status */}
+                    {/* Seção 4: Retirada & Devolução */}
                     <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
-                        <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            4. Valores & Status
-                        </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Valor da Locação (R$)</label>
-                                <input 
-                                    type="text" 
-                                    value={formData.value} 
-                                    onChange={e => setFormData({ ...formData, value: e.target.value })}
-                                    placeholder="Ex: 1.250,00"
-                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Nº Reserva Locadora</label>
-                                <input 
-                                    type="text" 
-                                    value={formData.reservationNumber} 
-                                    onChange={e => setFormData({ ...formData, reservationNumber: e.target.value })}
-                                    placeholder="Ex: MV-15748a"
-                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Status</label>
-                                <select 
-                                    value={formData.status} 
-                                    onChange={e => setFormData({ ...formData, status: e.target.value as any })}
-                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
-                                >
-                                    <option value="Solicitada">Solicitada (Aguardando Cotação)</option>
-                                    <option value="Aguardando retirada">Aguardando retirada</option>
-                                    <option value="Em Uso">Em Uso</option>
-                                    <option value="Finalizada">Finalizada</option>
-                                    <option value="Recusada">Recusada</option>
-                                </select>
-                            </div>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs">
+                            <span>4. Retirada &amp; Devolução</span>
                         </div>
-                    </div>
-
-                    {/* Seção 5: Retirada & Devolução */}
-                    <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
-                        <span className="text-xs font-black uppercase tracking-wider text-[#114D38] block">
-                            5. Retirada & Devolução
-                        </span>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <div>
@@ -2746,13 +2705,56 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         </div>
                     </div>
 
+                    {/* Seção 5: Valores & Status (Após Retirada & Devolução) */}
+                    <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/60 space-y-3">
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs">
+                            <span>5. Valores &amp; Status</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Valor da Locação (R$)</label>
+                                <input 
+                                    type="text" 
+                                    value={formData.value} 
+                                    onChange={e => setFormData({ ...formData, value: e.target.value })}
+                                    placeholder="Ex: 1.250,00"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Nº Reserva Locadora</label>
+                                <input 
+                                    type="text" 
+                                    value={formData.reservationNumber} 
+                                    onChange={e => setFormData({ ...formData, reservationNumber: e.target.value })}
+                                    placeholder="Ex: MV-15748a"
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">Status</label>
+                                <select 
+                                    value={formData.status} 
+                                    onChange={e => setFormData({ ...formData, status: e.target.value as any })}
+                                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+                                >
+                                    <option value="Solicitada">Solicitada (Aguardando Cotação)</option>
+                                    <option value="Aguardando retirada">Aguardando retirada</option>
+                                    <option value="Em Uso">Em Uso</option>
+                                    <option value="Finalizada">Finalizada</option>
+                                    <option value="Recusada">Recusada</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Seção 6: Observações da Gestão de Frota */}
                     <div className="bg-amber-50/70 p-4 rounded-2xl border border-amber-200/60 space-y-3">
-                        <span className="text-xs font-black uppercase tracking-wider text-amber-900 block flex items-center gap-1.5">
-                            <span>💬</span> 6. Observações da Gestão de Frota / Instruções ao Solicitante
-                        </span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-800 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs">
+                            <span>💬 6. Observações da Gestão de Frota / Instruções ao Solicitante</span>
+                        </div>
                         <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-1">Observações / Orientações (Enviadas por e-mail)</label>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Observações / Orientações (Enviadas por e-mail com a confirmação)</label>
                             <textarea 
                                 value={formData.adminNotes || ''} 
                                 onChange={e => setFormData({ ...formData, adminNotes: e.target.value })}
@@ -2766,9 +2768,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     {/* Seção 7: Confirmação da Reserva RAC (Voucher / Documento da Locadora) */}
                     <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200/70 space-y-3">
                         <div className="flex items-center justify-between">
-                            <span className="text-xs font-black uppercase tracking-wider text-[#114D38] flex items-center gap-1.5">
-                                <span>📎</span> 7. Confirmação da Reserva (Voucher / Comprovante)
-                            </span>
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#114D38] text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-xs">
+                                <span>📎 7. Confirmação da Reserva (Voucher / Comprovante)</span>
+                            </div>
                             {formVoucherFile && (
                                 <button
                                     type="button"
@@ -2888,9 +2890,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     setSelectedRental(null);
                 }}
                 title={
-                    <div className="flex items-center gap-2 text-[#114D38]">
-                        <CheckCircleIcon className="h-5 w-5 text-emerald-600" />
-                        <span className="font-black text-base">Efetivar Locação RAC &amp; Anexar Documento da Reserva</span>
+                    <div className="flex items-center gap-2 text-white">
+                        <CheckCircleIcon className="h-5 w-5 text-emerald-300" />
+                        <span className="font-black text-base text-white">Efetivar Locação RAC &amp; Anexar Documento da Reserva</span>
                     </div>
                 }
             >
@@ -3163,9 +3165,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     setSelectedRental(null);
                 }}
                 title={
-                    <div className="flex items-center gap-2 text-rose-700">
-                        <XCircleIcon className="h-5 w-5" />
-                        <span className="font-black text-base">Recusar Solicitação de Locação RAC</span>
+                    <div className="flex items-center gap-2 text-white">
+                        <XCircleIcon className="h-5 w-5 text-rose-300" />
+                        <span className="font-black text-base text-white">Recusar Solicitação de Locação RAC</span>
                     </div>
                 }
             >
@@ -3255,9 +3257,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     isOpen={viewingCnh.isOpen}
                     onClose={() => setViewingCnh(null)}
                     title={
-                        <div className="flex items-center gap-2 text-emerald-800">
+                        <div className="flex items-center gap-2 text-white">
                             <span className="text-base">📄</span>
-                            <span className="font-bold text-sm">CNH de {viewingCnh.name}</span>
+                            <span className="font-bold text-sm text-white">CNH de {viewingCnh.name}</span>
                         </div>
                     }
                 >
@@ -3299,9 +3301,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     isOpen={viewingVoucher.isOpen}
                     onClose={() => setViewingVoucher(null)}
                     title={
-                        <div className="flex items-center gap-2 text-blue-900">
+                        <div className="flex items-center gap-2 text-white">
                             <span className="text-base">🎫</span>
-                            <span className="font-bold text-sm">Confirmação da Reserva • {viewingVoucher.name}</span>
+                            <span className="font-bold text-sm text-white">Confirmação da Reserva • {viewingVoucher.name}</span>
                         </div>
                     }
                 >
@@ -3358,11 +3360,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                         setQuickVoucherFile(null);
                     }}
                     title={
-                        <div className="flex items-center gap-2 text-[#114D38]">
-                            <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-800">
+                        <div className="flex items-center gap-2.5 text-white">
+                            <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-white">
                                 📎
                             </div>
-                            <span className="font-black text-base">
+                            <span className="font-black text-base text-white">
                                 Anexar Confirmação da Reserva • {quickAttachRental.requesterName}
                             </span>
                         </div>
