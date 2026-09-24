@@ -2390,14 +2390,12 @@ export default function Frota() {
     const cpfDigitado = (formData.get("cpfCondutor") as string || modalCpfCondutor || "").trim();
     const cleanCpfDigits = cleanCPF(cpfDigitado);
 
-    if (!cleanCpfDigits || cleanCpfDigits.length < 11) {
-      setModalCpfError("CPF do condutor é obrigatório (informe os 11 dígitos).");
-      return;
-    }
-
-    if (!isValidCPF(cleanCpfDigits)) {
-      setModalCpfError("CPF inválido. Por favor, verifique os dígitos informados.");
-      return;
+    // Validação do CPF: agora é opcional. Se preenchido, valida os 11 dígitos.
+    if (cleanCpfDigits && cleanCpfDigits.length > 0) {
+      if (cleanCpfDigits.length < 11 || !isValidCPF(cleanCpfDigits)) {
+        setModalCpfError("CPF inválido. Por favor, verifique os 11 dígitos informados ou deixe em branco.");
+        return;
+      }
     }
 
     setModalCpfError(null);
@@ -2408,7 +2406,7 @@ export default function Frota() {
       modelo: cleanUpper(formData.get("modelo")),
       vencContrato: isFrotaPropria ? "" : (formData.get("vencContrato") as string || ""),
       condutor: cleanUpper(formData.get("condutor")),
-      cpfCondutor: formatCPF(cleanCpfDigits),
+      cpfCondutor: cleanCpfDigits ? formatCPF(cleanCpfDigits) : "",
       cnhValidade: modalCnhValidade || (formData.get("cnhValidade") as string) || "",
       cnhNumero: modalCnhNumero || (formData.get("cnhNumero") as string) || "",
       cnhAnexoBase64: modalCnhAnexoBase64 || "",
@@ -4189,13 +4187,12 @@ export default function Frota() {
                 </div>
                 <div className="space-y-1">
                   <label className="block flex items-center justify-between">
-                    <span>CPF do Condutor *</span>
+                    <span>CPF do Condutor <span className="text-[10px] text-slate-400 font-normal">(Opcional)</span></span>
                     {modalCpfError && <span className="text-[10px] text-rose-500 font-bold">{modalCpfError}</span>}
                   </label>
                   <input 
-                    required 
                     name="cpfCondutor" 
-                    placeholder="000.000.000-00" 
+                    placeholder="000.000.000-00 (opcional)" 
                     value={modalCpfCondutor}
                     onChange={(e) => {
                       const formatted = formatCPF(e.target.value);
@@ -4238,7 +4235,7 @@ export default function Frota() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-black text-[#114D38] flex items-center gap-1.5 uppercase tracking-wide">
                       <FileText className="w-4 h-4 text-emerald-600" />
-                      Carteira Nacional de Habilitação (CNH)
+                      Carteira Nacional de Habilitação (CNH) <span className="text-[10px] text-emerald-700/70 lowercase font-medium tracking-normal">(opcional)</span>
                     </span>
                     {modalCnhValidade && (
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
@@ -4255,10 +4252,10 @@ export default function Frota() {
 
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="block text-[11px] text-slate-700 font-bold">Nº de Registro da CNH</label>
+                      <label className="block text-[11px] text-slate-700 font-bold">Nº de Registro da CNH <span className="text-[10px] text-slate-400 font-normal">(Opcional)</span></label>
                       <input 
                         name="cnhNumero" 
-                        placeholder="Ex: 01234567890" 
+                        placeholder="Ex: 01234567890 (opcional)" 
                         value={modalCnhNumero}
                         onChange={(e) => setModalCnhNumero(e.target.value)}
                         className="w-full border border-slate-200 bg-white px-3 py-2 rounded-lg outline-none focus:ring-1 focus:ring-emerald-600 font-mono text-xs" 
@@ -4266,7 +4263,7 @@ export default function Frota() {
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-[11px] text-slate-700 font-bold">Validade da CNH *</label>
+                      <label className="block text-[11px] text-slate-700 font-bold">Validade da CNH <span className="text-[10px] text-slate-400 font-normal">(Opcional)</span></label>
                       <input 
                         type="date" 
                         name="cnhValidade" 
@@ -4279,7 +4276,7 @@ export default function Frota() {
 
                   {/* UPLOAD / SUBSTITUIÇÃO DE ARQUIVO DA CNH */}
                   <div className="space-y-1.5 pt-1">
-                    <label className="block text-[11px] text-slate-700 font-bold">Cópia Digital da CNH (PDF, JPG ou PNG)</label>
+                    <label className="block text-[11px] text-slate-700 font-bold">Cópia Digital da CNH <span className="text-[10px] text-slate-400 font-normal">(Opcional - PDF, JPG ou PNG)</span></label>
                     {modalCnhAnexoBase64 ? (
                       <div className="bg-white border border-emerald-200 p-2.5 rounded-xl flex items-center justify-between shadow-xs">
                         <div className="flex items-center gap-2 overflow-hidden">
@@ -4346,7 +4343,7 @@ export default function Frota() {
                     ) : (
                       <label className="border-2 border-dashed border-emerald-300/80 hover:border-emerald-500 bg-white/60 hover:bg-emerald-50/40 p-3 rounded-xl flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors text-center">
                         <Upload className="w-5 h-5 text-emerald-600" />
-                        <span className="text-xs font-bold text-slate-700">Clique para anexar a cópia da CNH</span>
+                        <span className="text-xs font-bold text-slate-700">Clique para anexar a cópia da CNH (opcional)</span>
                         <span className="text-[10px] text-slate-400 font-medium">Suporta PDF, JPG e PNG (máx. 10MB)</span>
                         <input
                           type="file"

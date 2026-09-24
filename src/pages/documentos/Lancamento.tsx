@@ -414,7 +414,13 @@ export default function Lancamento() {
     lancadoPor: primeiroNome
   });
 
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem("risel_lancamento_form_open") === "true";
+    } catch (e) {
+      return false;
+    }
+  });
   const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
   const [isManualSyncing, setIsManualSyncing] = useState(false);
 
@@ -1082,6 +1088,7 @@ export default function Lancamento() {
       try {
         localStorage.removeItem("risel_is_editing_lancamento");
         sessionStorage.removeItem("risel_is_editing_lancamento");
+        sessionStorage.removeItem("risel_lancamento_form_open");
       } catch (e) {}
       return;
     }
@@ -1089,6 +1096,7 @@ export default function Lancamento() {
     try {
       localStorage.setItem("risel_is_editing_lancamento", "true");
       sessionStorage.setItem("risel_is_editing_lancamento", "true");
+      sessionStorage.setItem("risel_lancamento_form_open", "true");
     } catch (e) {}
 
     const hasContent = Boolean(
@@ -2642,9 +2650,9 @@ export default function Lancamento() {
           <form 
             onSubmit={handleSaveSubmit}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") {
-                const inputType = (e.target as HTMLInputElement).type;
-                if (inputType !== "submit" && inputType !== "button") {
+              if (e.key === "Enter") {
+                const target = e.target as HTMLElement;
+                if (target.tagName !== "TEXTAREA" && target.getAttribute("type") !== "submit") {
                   e.preventDefault();
                 }
               }

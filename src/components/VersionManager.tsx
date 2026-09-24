@@ -26,37 +26,19 @@ export const VersionManager: React.FC = () => {
     // 1. Checagem inicial ao carregar o componente
     checkServerVersion();
 
-    // 2. Checagem periódica a cada 20 segundos
+    // 2. Checagem periódica a cada 60 segundos
     const interval = setInterval(async () => {
       const { updated } = await checkServerVersion();
       if (updated) {
         setHasNewVersion(true);
-        // Se o usuário estiver preenchendo um formulário, NÃO recarrega automaticamente
-        if (!isUserBusyEditing()) {
-          setTimeout(() => {
-            if (!isUserBusyEditing()) {
-              setIsReloading(true);
-              forceHardReload();
-            }
-          }, 2000);
-        }
       }
-    }, 20000);
+    }, 60000);
 
     // 3. Checagem quando o usuário volta para a aba da Risel
     const handleFocus = async () => {
       const { updated } = await checkServerVersion();
       if (updated) {
         setHasNewVersion(true);
-        // Se o usuário estiver no meio de um lançamento, preserva a tela intacta
-        if (!isUserBusyEditing()) {
-          setTimeout(() => {
-            if (!isUserBusyEditing()) {
-              setIsReloading(true);
-              forceHardReload();
-            }
-          }, 1500);
-        }
       }
     };
 
@@ -86,16 +68,16 @@ export const VersionManager: React.FC = () => {
           <div className="text-xs text-left">
             <p className="font-bold text-white">Nova versão detectada!</p>
             <p className="text-emerald-200/90 text-[11px]">
-              {isBusy
-                ? "Conclua seu lançamento. Você pode atualizar quando finalizar."
-                : isReloading
+              {isReloading
                 ? "Sincronizando tela e atualizando sistema..."
-                : "Atualizando sistema em instantes..."}
+                : isBusy
+                ? "Existe uma atualização do sistema. Conclua seu lançamento e clique para atualizar."
+                : "Clique para atualizar o sistema com as melhorias mais recentes."}
             </p>
           </div>
         </div>
 
-        {isBusy && !isReloading && (
+        {!isReloading && (
           <button
             type="button"
             onClick={handleApplyUpdate}

@@ -9,7 +9,10 @@ import AlertasPage from './frota-pesada/pages/AlertasPage';
 import ConfigPage from './frota-pesada/pages/ConfigPage';
 import Loading from './frota-pesada/components/Loading';
 import DashboardCharts from './frota-pesada/components/DashboardCharts';
-import { Page } from './frota-pesada/types';
+import { SinistrosDashboard } from './frota-pesada/components/SinistrosDashboard';
+import { SinistrosPage } from './frota-pesada/pages/SinistrosPage';
+import { fetchSinistros } from './frota-pesada/services/sinistrosService';
+import { Page, Sinistro } from './frota-pesada/types';
 import { 
   Truck, 
   Siren, 
@@ -117,13 +120,14 @@ export default function FrotaPesada() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
 
-  // Submódulo ativo vindo de searchParams: ?sub=infracoes | ?sub=frotas | ?sub=motoristas | ?sub=config
-  // Se não houver ?sub, o portal com os 3 cards separados é apresentado!
+  // Submódulo ativo vindo de searchParams: ?sub=infracoes | ?sub=frotas | ?sub=motoristas | ?sub=sinistros | ?sub=config
+  // Se não houver ?sub, o portal com os cards separados é apresentado!
   const currentSub = searchParams.get('sub');
 
   const [currentPage, setCurrentPage] = useState<Page>(() => {
     if (currentSub === 'frotas') return 'FROTAS';
     if (currentSub === 'motoristas') return 'MOTORISTAS';
+    if (currentSub === 'sinistros') return 'SINISTROS_DASHBOARD';
     if (currentSub === 'config') return 'CONFIG';
     return 'DASHBOARD';
   });
@@ -134,6 +138,7 @@ export default function FrotaPesada() {
   // Data States
   const [rawMultas, setRawMultas] = useState<any[]>([]);
   const [rawVeiculos, setRawVeiculos] = useState<any[]>([]);
+  const [rawSinistros, setRawSinistros] = useState<Sinistro[]>([]);
 
   // Filter State: '' means "All Months"
   const [selectedMonth, setSelectedMonth] = useState('');
@@ -144,16 +149,20 @@ export default function FrotaPesada() {
       setCurrentPage('FROTAS');
     } else if (currentSub === 'motoristas') {
       setCurrentPage('MOTORISTAS');
+    } else if (currentSub === 'sinistros') {
+      if (currentPage !== 'SINISTROS' && currentPage !== 'SINISTROS_DASHBOARD') {
+        setCurrentPage('SINISTROS_DASHBOARD');
+      }
     } else if (currentSub === 'config') {
       setCurrentPage('CONFIG');
     } else if (currentSub === 'infracoes') {
-      if (currentPage === 'FROTAS' || currentPage === 'MOTORISTAS' || currentPage === 'CONFIG') {
+      if (currentPage === 'FROTAS' || currentPage === 'MOTORISTAS' || currentPage === 'CONFIG' || currentPage === 'SINISTROS_DASHBOARD' || currentPage === 'SINISTROS') {
         setCurrentPage('DASHBOARD');
       }
     }
   }, [currentSub]);
 
-  const handleSelectSubmodule = (sub: 'infracoes' | 'frotas' | 'motoristas', defaultPage: Page) => {
+  const handleSelectSubmodule = (sub: 'infracoes' | 'frotas' | 'motoristas' | 'sinistros', defaultPage: Page) => {
     setCurrentPage(defaultPage);
     setSearchParams({ sub });
   };
@@ -170,6 +179,8 @@ export default function FrotaPesada() {
       setSearchParams({ sub: 'frotas' });
     } else if (page === 'MOTORISTAS') {
       setSearchParams({ sub: 'motoristas' });
+    } else if (page === 'SINISTROS_DASHBOARD' || page === 'SINISTROS') {
+      setSearchParams({ sub: 'sinistros' });
     } else if (page === 'CONFIG') {
       setSearchParams({ sub: 'config' });
     }
@@ -178,6 +189,16 @@ export default function FrotaPesada() {
   // Carrega dados iniciais e recarrega ao voltar para o Dashboard
   useEffect(() => {
     const loadData = async () => {
+      // Carregar sinistros quando estiver na área de sinistros ou no portal
+      if (!currentSub || currentSub === 'sinistros' || currentPage === 'SINISTROS_DASHBOARD' || currentPage === 'SINISTROS') {
+        try {
+          const sinData = await fetchSinistros();
+          setRawSinistros(sinData || []);
+        } catch (err) {
+          console.warn("Aviso ao carregar sinistros:", err);
+        }
+      }
+
       if (currentPage === 'DASHBOARD') {
         setLoading(true);
         try {
@@ -192,7 +213,7 @@ export default function FrotaPesada() {
       }
     };
     loadData();
-  }, [currentPage]);
+  }, [currentPage, currentSub]);
 
   // --- EXTRACT AVAILABLE MONTHS ---
   const availableMonths = useMemo(() => {
@@ -522,6 +543,28 @@ export default function FrotaPesada() {
             <MotoristasPage />
           </div>
         );
+      case 'SINISTROS_DASHBOARD':
+        return (
+          <div className="bg-transparent h-full flex flex-col overflow-hidden">
+            <SinistrosDashboard
+              sinistros={rawSinistros}
+              onNavigateToSinistros={() => handleNavigatePage('SINISTROS')}
+              onOpenNewSinistroModal={() => handleNavigatePage('SINISTROS')}
+              onRefreshData={async () => {
+                try {
+                  const fresh = await fetchSinistros();
+                  setRawSinistros(fresh || []);
+                } catch (e) {}
+              }}
+            />
+          </div>
+        );
+      case 'SINISTROS':
+        return (
+          <div className="bg-white/90 backdrop-blur-md rounded-3xl p-4 sm:p-6 h-full shadow-lg border border-slate-200 flex flex-col overflow-hidden">
+            <SinistrosPage />
+          </div>
+        );
       case 'CONFIG':
         return (
           <div className="bg-white/90 backdrop-blur-md rounded-3xl p-6 h-full shadow-lg border border-slate-200 overflow-auto">
@@ -587,12 +630,12 @@ export default function FrotaPesada() {
               transition={{ delay: 0.1 }}
               className="text-xs sm:text-sm text-slate-600 mt-1.5 max-w-2xl mx-auto font-medium leading-relaxed"
             >
-              Selecione uma das áreas operacionais abaixo para gerenciar infrações e autuações, acompanhar a frota de caminhões com custos por placa ou consultar a base de condutores.
+              Selecione uma das áreas operacionais abaixo para gerenciar infrações, acompanhar a frota de caminhões com custos por placa, consultar a base de condutores ou gerenciar sinistros e avarias.
             </motion.p>
           </div>
 
-          {/* Grid com os 3 Cards Separados Padronizados */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 items-stretch max-w-5xl mx-auto">
+          {/* Grid com os 4 Cards Separados Padronizados */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 items-stretch max-w-6xl mx-auto">
             <SubModuleCard
               title="Infrações de Trânsito"
               badge="Dashboard, Multas & Alertas"
@@ -621,6 +664,16 @@ export default function FrotaPesada() {
               onClick={() => handleSelectSubmodule('motoristas', 'MOTORISTAS')}
               theme="blue"
               delay={0.3}
+            />
+
+            <SubModuleCard
+              title="Sinistros"
+              badge="Ocorrências & Seguros"
+              description="Registro detalhado de acidentes e avarias, dinâmicas periciais, pastas automáticas no Google Drive e controle de franquias e seguradoras."
+              icon={ShieldAlert}
+              onClick={() => handleSelectSubmodule('sinistros', 'SINISTROS_DASHBOARD')}
+              theme="rose"
+              delay={0.4}
             />
           </div>
 
@@ -689,7 +742,7 @@ export default function FrotaPesada() {
                   </button>
                   <span className="text-[10px] text-slate-300">/</span>
                   <span className="text-[10px] font-semibold text-slate-500 uppercase">
-                    {currentSub === 'infracoes' ? 'Infrações' : currentSub === 'frotas' ? 'Frotas' : currentSub === 'motoristas' ? 'Motoristas' : 'Config'}
+                    {currentSub === 'infracoes' ? 'Infrações' : currentSub === 'frotas' ? 'Frotas' : currentSub === 'motoristas' ? 'Motoristas' : currentSub === 'sinistros' ? 'Sinistros' : 'Config'}
                   </span>
                 </div>
                 <h1 className="text-base sm:text-lg font-display font-black text-slate-800 tracking-tight leading-tight mt-0.5">
@@ -701,6 +754,11 @@ export default function FrotaPesada() {
                   )}
                   {currentSub === 'frotas' && 'Gestão de Frotas & Custo por Placa'}
                   {currentSub === 'motoristas' && 'Base de Condutores & Motoristas'}
+                  {currentSub === 'sinistros' && (
+                    currentPage === 'SINISTROS_DASHBOARD' ? 'Sinistros & Avarias · Dashboard Analítico' :
+                    currentPage === 'SINISTROS' ? 'Sinistros & Avarias · Lista Geral de Ocorrências' :
+                    'Sinistros & Avarias'
+                  )}
                   {currentSub === 'config' && 'Configurações de Frota Pesada'}
                 </h1>
               </div>
@@ -714,7 +772,7 @@ export default function FrotaPesada() {
 
           {/* Barra de Menus / Abas da Frota Logo Embaixo (Padrão idêntico ao Controle de Frota Leve) */}
           <div className="flex items-center overflow-x-auto gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/80 shrink-0">
-            {/* Menu da Frota (Retorno aos 3 Cards Operacionais) */}
+            {/* Menu da Frota (Retorno aos Cards Operacionais) */}
             <button
               onClick={handleBackToPortal}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold text-slate-600 hover:text-slate-900 hover:bg-white/60 transition-all cursor-pointer"
@@ -763,7 +821,20 @@ export default function FrotaPesada() {
               <span className="whitespace-nowrap">Motoristas</span>
             </button>
 
-            {/* Sub-abas de acesso direto para Infrações (caso o usuário queira alternar rápido também pelo topo) */}
+            {/* Sinistros */}
+            <button
+              onClick={() => handleSelectSubmodule('sinistros', 'SINISTROS_DASHBOARD')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 cursor-pointer ${
+                currentSub === 'sinistros'
+                  ? "bg-white text-rose-600 shadow-2xs border border-rose-200/80 font-black"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+              }`}
+            >
+              <ShieldAlert className={`w-3.5 h-3.5 shrink-0 ${currentSub === 'sinistros' ? "text-rose-600" : "text-slate-400"}`} />
+              <span className="whitespace-nowrap">Sinistros</span>
+            </button>
+
+            {/* Sub-abas de acesso direto para Infrações */}
             {currentSub === 'infracoes' && (
               <div className="ml-auto hidden md:flex items-center gap-1 bg-white/70 px-1.5 py-0.5 rounded-lg border border-slate-200/60">
                 <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Telas:</span>
@@ -790,6 +861,29 @@ export default function FrotaPesada() {
                   }`}
                 >
                   Alertas
+                </button>
+              </div>
+            )}
+
+            {/* Sub-abas de acesso direto para Sinistros */}
+            {currentSub === 'sinistros' && (
+              <div className="ml-auto hidden md:flex items-center gap-1 bg-white/70 px-1.5 py-0.5 rounded-lg border border-slate-200/60">
+                <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Telas:</span>
+                <button
+                  onClick={() => handleNavigatePage('SINISTROS_DASHBOARD')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                    currentPage === 'SINISTROS_DASHBOARD' ? 'bg-rose-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Dashboard
+                </button>
+                <button
+                  onClick={() => handleNavigatePage('SINISTROS')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                    currentPage === 'SINISTROS' ? 'bg-rose-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Sinistros
                 </button>
               </div>
             )}

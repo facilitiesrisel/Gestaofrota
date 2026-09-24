@@ -101,5 +101,72 @@ export interface Multa {
   linkAuth?: string; // Link para o PDF de Autorização gerado
 }
 
+export type GravidadeSinistro = 'Leve' | 'Média' | 'Grave' | 'Gravíssima';
+
+export type StatusSinistro = 
+  | 'Em Apuração' 
+  | 'Aberto na Seguradora' 
+  | 'Aguardando Orçamento' 
+  | 'Em Reparo' 
+  | 'Regulado' 
+  | 'Indenizado' 
+  | 'Finalizado / Concluído';
+
+export type CulpabilidadeSinistro = 
+  | 'Condutor Risel' 
+  | 'Terceiro' 
+  | 'Sem Culpa / Condições Adversas' 
+  | 'Em Apuração';
+
+export interface SinistroAnexo {
+  id: string;
+  nome: string;
+  url?: string;
+  driveFileId?: string;
+  tamanho?: number;
+  tipo?: string;
+  dataUpload?: string;
+}
+
+export interface Sinistro {
+  id: string;
+  numeroProtocolo: string; // Ex: SIN-2026-001 ou ID do Forms
+  dataHora: string; // Data e horário do evento (ISO ou DD/MM/AAAA HH:mm)
+  dataComunicado?: string; // Data de registro no sistema
+  placa: string; // Placa do cavalo / veículo principal
+  placaCarreta?: string; // Carreta / Semirreboque envolvido (se houver)
+  base: string; // Filial / Base operacional (Paulínia, Aguaí, Santos, Betim, etc.)
+  motorista: string; // Nome do motorista / condutor
+  cnhMotorista?: string;
+  cpfMotorista?: string;
+  tipoEvento: string; // Colisão Traseira, Tombamento, Abalroamento Lateral, etc.
+  gravidade: GravidadeSinistro;
+  status: StatusSinistro;
+  culpabilidade: CulpabilidadeSinistro;
+  local: string; // Rodovia / Rua / KM
+  municipio: string;
+  uf: string;
+  rodoviaOuUrbano: 'Rodovia' | 'Urbano';
+  boletimOcorrencia?: string; // Nº do B.O.
+  orgaoPolicial?: string; // PRF, PM, Polícia Civil
+  houveVitimas: 'Não' | 'Feridos Leves' | 'Feridos Graves' | 'Óbito';
+  houveTerceiros: 'Sim' | 'Não';
+  dadosTerceiro?: string; // Placa, condutor, telefone, veículo do terceiro
+  seguradoraAcionada: 'Sim' | 'Não';
+  nomeSeguradora?: string;
+  numeroSinistroSeguradora?: string;
+  valorEstimadoPrejuizo: number;
+  valorFranquia: number;
+  valorPagoSeguradora: number;
+  custoEfetivoRisel: number;
+  descricao: string; // Dinâmica detalhada do evento
+  avariasVeiculo?: string; // Avarias cavalo / tanque
+  driveFolderId?: string;
+  driveFolderUrl?: string;
+  anexos?: SinistroAnexo[];
+  origem?: 'Microsoft Forms' | 'SharePoint Excel' | 'Lançamento Manual';
+}
+
 // Navigation Types
-export type Page = 'DASHBOARD' | 'MULTAS' | 'ALERTAS' | 'FROTAS' | 'MOTORISTAS' | 'CONFIG';
+export type Page = 'DASHBOARD' | 'MULTAS' | 'ALERTAS' | 'FROTAS' | 'MOTORISTAS' | 'SINISTROS_DASHBOARD' | 'SINISTROS' | 'CONFIG';
+

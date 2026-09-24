@@ -9,12 +9,14 @@ import {
   ArrowLeft,
   ChevronLeft, 
   ChevronRight,
-  LayoutGrid
+  LayoutGrid,
+  ShieldAlert,
+  FileSpreadsheet
 } from 'lucide-react';
 import { Page } from '../types';
 
 interface SidebarProps {
-  currentSub?: 'infracoes' | 'frotas' | 'motoristas' | 'config' | string | null;
+  currentSub?: 'infracoes' | 'frotas' | 'motoristas' | 'sinistros' | 'config' | string | null;
   currentPage: Page;
   onNavigate: (page: Page) => void;
   isOpen: boolean;
@@ -36,7 +38,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const logoUrl = "https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg";
 
   // Identificação do submódulo ativo (garante fallback inteligente baseado na página atual)
-  const activeSubmodule = currentSub === 'frotas' || currentPage === 'FROTAS'
+  const activeSubmodule = currentSub === 'sinistros' || currentPage === 'SINISTROS_DASHBOARD' || currentPage === 'SINISTROS'
+    ? 'sinistros'
+    : currentSub === 'frotas' || currentPage === 'FROTAS'
     ? 'frotas'
     : currentSub === 'motoristas' || currentPage === 'MOTORISTAS'
     ? 'motoristas'
@@ -45,7 +49,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   // Definição dos menus específicos estritamente relativos ao próprio submódulo
   let navItems: { id: Page; label: string; icon: React.ComponentType<{ className?: string; size?: number }> }[] = [];
 
-  if (activeSubmodule === 'infracoes') {
+  if (activeSubmodule === 'sinistros') {
+    navItems = [
+      { id: 'SINISTROS_DASHBOARD' as Page, label: 'Dashboard', icon: LayoutDashboard },
+      { id: 'SINISTROS' as Page, label: 'Sinistros', icon: ShieldAlert },
+    ];
+  } else if (activeSubmodule === 'infracoes') {
     navItems = [
       { id: 'DASHBOARD' as Page, label: 'Dashboard', icon: LayoutDashboard },
       { id: 'MULTAS' as Page, label: 'Multas', icon: Siren },

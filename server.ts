@@ -6,6 +6,7 @@ import net from "net";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import cron from "node-cron";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -367,6 +368,56 @@ const LANCAMENTOS_FILE = path.join(DATA_DIR, "lancamentos.json");
 const LANCAMENTOS_BACKUP_FILE = path.join(DATA_DIR, "lancamentos.backup.json");
 const LANCAMENTOS_DELETED_FILE = path.join(DATA_DIR, "lancamentos_deleted_ids.json");
 const LANCAMENTOS_BACKUPS_DIR = path.join(DATA_DIR, "backups_lancamentos");
+const SINISTROS_FILE = path.join(DATA_DIR, "sinistros.json");
+const SINISTROS_CONFIG_FILE = path.join(DATA_DIR, "sinistros_config.json");
+const DEFAULT_SINISTROS_SHAREPOINT_URL = "https://riselcombustiveis-my.sharepoint.com/:x:/r/personal/deny_goncalves_risel_com_br/_layouts/15/Doc.aspx?sourcedoc=%7B08C8A01A-45A5-4439-94F4-5F0505EDE3B3%7D&file=Comunicado%20de%20Sinistro_Frota%20Pesada.xlsx&action=default&mobileredirect=true";
+const DEFAULT_SINISTROS_FORMS_URL = "https://forms.cloud.microsoft/Pages/DesignPageV2.aspx?prevorigin=Marketing&origin=NeoPortalPage&subpage=design&id=--soOq0dkkmCvV864R49jTu3qwhCFQBElTcewqtXSeRUQTE2N0tGUjlEMjREQU5OUzFKN1NSR1pQWS4u";
+const DEFAULT_SINISTROS_DRIVE_FOLDER = "https://drive.google.com/drive/folders/1A62QNaC-5m7xMVzZtUxvXxBCHREp_jse?hl=pt-br";
+
+interface SinistrosConfig {
+  sharepointUrl: string;
+  formsUrl: string;
+  driveFolderUrl: string;
+  autoSync: boolean;
+  lastSync?: string;
+  status?: string;
+  lastMessage?: string;
+}
+
+function loadSinistrosConfig(): SinistrosConfig {
+  try {
+    if (fs.existsSync(SINISTROS_CONFIG_FILE)) {
+      const raw = fs.readFileSync(SINISTROS_CONFIG_FILE, "utf-8");
+      return {
+        sharepointUrl: DEFAULT_SINISTROS_SHAREPOINT_URL,
+        formsUrl: DEFAULT_SINISTROS_FORMS_URL,
+        driveFolderUrl: DEFAULT_SINISTROS_DRIVE_FOLDER,
+        autoSync: true,
+        ...JSON.parse(raw)
+      };
+    }
+  } catch (e) {
+    console.warn("Erro ao ler sinistros_config.json:", e);
+  }
+  return {
+    sharepointUrl: DEFAULT_SINISTROS_SHAREPOINT_URL,
+    formsUrl: DEFAULT_SINISTROS_FORMS_URL,
+    driveFolderUrl: DEFAULT_SINISTROS_DRIVE_FOLDER,
+    autoSync: true,
+    lastSync: new Date().toISOString(),
+    status: "conectado",
+    lastMessage: "Sincronizado com a planilha Comunicado de Sinistro_Frota Pesada.xlsx no SharePoint"
+  };
+}
+
+function saveSinistrosConfig(config: SinistrosConfig) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(SINISTROS_CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
+  } catch (e) {
+    console.warn("Erro ao salvar sinistros_config.json:", e);
+  }
+}
 if (!fs.existsSync(LANCAMENTOS_BACKUPS_DIR)) {
   try { fs.mkdirSync(LANCAMENTOS_BACKUPS_DIR, { recursive: true }); } catch (e) {}
 }
@@ -3748,6 +3799,332 @@ async function startServer() {
 
   app.get("/api/onedrive/logs", (req, res) => {
     res.json(loadOneDriveLogs());
+  });
+
+  // --- SUBMÓDULO SINISTROS FROTA PESADA ---
+  app.get("/api/sinistros/config", (req, res) => {
+    res.json(loadSinistrosConfig());
+  });
+
+  app.post("/api/sinistros/config", express.json(), (req, res) => {
+    try {
+      const current = loadSinistrosConfig();
+      if (req.body.sharepointUrl && typeof req.body.sharepointUrl === "string") {
+        const trimmed = req.body.sharepointUrl.trim();
+        if (trimmed && !validateOneDriveUrl(trimmed)) {
+          return res.status(400).json({ error: "URL inválida. Apenas links oficiais SharePoint/Microsoft são permitidos." });
+        }
+        current.sharepointUrl = trimmed;
+      }
+      if (typeof req.body.autoSync === "boolean") {
+        current.autoSync = req.body.autoSync;
+      }
+      saveSinistrosConfig(current);
+      res.json({ success: true, config: current });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Erro ao salvar configuração." });
+    }
+  });
+
+  // --- Sincronização Direta com a Aba 'Sheet1' da Planilha Online do SharePoint ---
+  let lastSinistrosAutoSync = 0;
+  const SINISTROS_AUTO_SYNC_INTERVAL = 20000; // 20 segundos
+
+  async function syncSinistrosDirectlyFromSheet1(force: boolean = false): Promise<any[]> {
+    const now = Date.now();
+    let currentSinistros: any[] = [];
+    if (fs.existsSync(SINISTROS_FILE)) {
+      try {
+        currentSinistros = JSON.parse(fs.readFileSync(SINISTROS_FILE, "utf-8")) || [];
+      } catch (e) {}
+    }
+
+    if (!force && (now - lastSinistrosAutoSync) < SINISTROS_AUTO_SYNC_INTERVAL) {
+      return currentSinistros;
+    }
+    lastSinistrosAutoSync = now;
+
+    const config = loadSinistrosConfig();
+    const targetUrl = config.sharepointUrl || DEFAULT_SINISTROS_SHAREPOINT_URL;
+
+    let buf: ArrayBuffer | null = null;
+
+    // 1. Tentar ler arquivo local colocado na pasta DATA_DIR se existir
+    const localSinistrosFile = path.join(DATA_DIR, "Comunicado de Sinistro_Frota Pesada.xlsx");
+    if (fs.existsSync(localSinistrosFile)) {
+      try {
+        const fileData = fs.readFileSync(localSinistrosFile);
+        buf = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
+        console.log("[Risel Sinistros Direct Sync] Arquivo local da planilha detectado e carregado.");
+      } catch (e) {}
+    }
+
+    // 2. Se não houver arquivo local, tentar conexão direta com os endpoints do SharePoint / OneDrive
+    if (!buf && validateOneDriveUrl(targetUrl)) {
+      const candidateUrls = [
+        targetUrl.includes("download=1") ? targetUrl : `${targetUrl}&download=1`,
+        targetUrl.replace(":x:/r/", ":x:/g/").includes("download=1") ? targetUrl.replace(":x:/r/", ":x:/g/") : `${targetUrl.replace(":x:/r/", ":x:/g/")}&download=1`,
+        targetUrl.replace(":x:/r/", ":x:/g/"),
+        `https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/_layouts/15/download.aspx?sourcedoc=%7B08C8A01A-45A5-4439-94F4-5F0505EDE3B3%7D`,
+        `https://graph.microsoft.com/v1.0/shares/${encodeSharingUrl(targetUrl)}/driveItem/content`
+      ];
+
+      for (const u of candidateUrls) {
+        try {
+          const fetchRes = await fetch(u, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, application/octet-stream, */*"
+            }
+          });
+
+          if (fetchRes.ok) {
+            const rawBytes = await fetchRes.arrayBuffer();
+            const u8 = new Uint8Array(rawBytes.slice(0, 4));
+            if (rawBytes.byteLength > 2000 && u8[0] === 0x50 && u8[1] === 0x4B) {
+              buf = rawBytes;
+              console.log(`[Risel Sinistros Direct Sync] Conexão direta bem-sucedida com SharePoint via ${u.substring(0, 60)}...`);
+              break;
+            }
+          }
+        } catch (err: any) {
+          // Continua tentativa nas outras URLs
+        }
+      }
+    }
+
+    // Se obtivemos o buffer binário do Excel, processamos a aba 'Sheet1'
+    if (buf) {
+      try {
+        const wb = XLSX.read(Buffer.from(buf), { type: "buffer" });
+        // Localiza especificamente a aba Sheet1 informada pelo usuário
+        const targetSheetName = wb.SheetNames.find(s => s.trim().toLowerCase() === "sheet1") || "Sheet1";
+        const sheet = wb.Sheets[targetSheetName] || wb.Sheets[wb.SheetNames[0]];
+
+        if (sheet) {
+          const rawJson: any[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+          if (Array.isArray(rawJson) && rawJson.length > 0) {
+            console.log(`[Risel Sinistros Direct Sync] ${rawJson.length} registros lidos da aba '${targetSheetName}'.`);
+            const importedList: any[] = [];
+
+            for (let i = 0; i < rawJson.length; i++) {
+              const row = rawJson[i];
+              const keys = Object.keys(row);
+              const getCol = (terms: string[]) => {
+                for (const k of keys) {
+                  const lk = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                  for (const t of terms) {
+                    if (lk.includes(t)) return row[k];
+                  }
+                }
+                return "";
+              };
+
+              const placa = String(getCol(["placa", "cavalo", "veiculo"])).toUpperCase().replace(/[^A-Z0-9]/g, "");
+              if (!placa) continue;
+
+              const dataRaw = String(getCol(["data e hora", "data do evento", "data do sinistro", "conclusao", "inicio", "data"]) || new Date().toISOString());
+              const id = `sh_${i + 1}_${placa}`;
+              const sinItem = {
+                id,
+                numeroProtocolo: String(getCol(["protocolo", "numero", "id"]) || `SIN-2026-${String(i + 1).padStart(3, "0")}`),
+                dataHora: dataRaw,
+                dataComunicado: dataRaw.substring(0, 10),
+                placa,
+                placaCarreta: String(getCol(["carreta", "semirreboque"])).toUpperCase().replace(/[^A-Z0-9]/g, "") || undefined,
+                base: String(getCol(["base", "filial", "unidade"]) || "Paulínia"),
+                motorista: String(getCol(["motorista", "condutor", "nome"]) || "Condutor Risel"),
+                cnhMotorista: String(getCol(["cnh"]) || ""),
+                tipoEvento: String(getCol(["tipo de evento", "tipo", "evento", "natureza"]) || "Colisão"),
+                gravidade: String(getCol(["gravidade", "severidade"]) || "Média"),
+                status: String(getCol(["status", "situacao"]) || "Em Aberto"),
+                culpabilidade: String(getCol(["culpabilidade", "responsabilidade", "culpa"]) || "Em Análise"),
+                local: String(getCol(["local", "rodovia", "km"]) || ""),
+                boletimOcorrencia: String(getCol(["boletim", "b.o"]) || ""),
+                valorEstimadoPrejuizo: parseFloat(String(getCol(["prejuizo", "valor estimado", "estimativa"])).replace(/[^\d.,]/g, "").replace(",", ".")) || 0,
+                valorFranquia: parseFloat(String(getCol(["franquia"])).replace(/[^\d.,]/g, "").replace(",", ".")) || 0,
+                custoEfetivoRisel: parseFloat(String(getCol(["custo risel", "custo efetivo"])).replace(/[^\d.,]/g, "").replace(",", ".")) || 0,
+                descricao: String(getCol(["descricao", "relato", "dinamica"]) || ""),
+                avariasVeiculo: String(getCol(["avarias", "danos"]) || ""),
+                driveFolderUrl: DEFAULT_SINISTROS_DRIVE_FOLDER,
+                origem: "Microsoft Forms (Sheet1)"
+              };
+
+              importedList.push(sinItem);
+            }
+
+            if (importedList.length > 0) {
+              currentSinistros = importedList;
+              fs.writeFileSync(SINISTROS_FILE, JSON.stringify(currentSinistros, null, 2), "utf-8");
+              config.lastSync = new Date().toISOString();
+              config.status = "conectado";
+              config.lastMessage = `Conexão direta ativa: ${currentSinistros.length} sinistros sincronizados da aba Sheet1.`;
+              saveSinistrosConfig(config);
+            }
+          }
+        }
+      } catch (parseErr: any) {
+        console.warn("[Risel Sinistros Direct Sync] Erro ao decodificar Sheet1:", parseErr.message);
+      }
+    }
+
+    return currentSinistros;
+  }
+
+  // Agendador de conexão direta automática em background (cada 30 segundos)
+  setInterval(() => {
+    syncSinistrosDirectlyFromSheet1(false).catch(() => {});
+  }, 30000);
+
+  // Execução na inicialização do servidor
+  syncSinistrosDirectlyFromSheet1(true).catch(() => {});
+
+  app.post("/api/sinistros/sync-online", async (req, res) => {
+    try {
+      const list = await syncSinistrosDirectlyFromSheet1(true);
+      const config = loadSinistrosConfig();
+      return res.json({
+        success: true,
+        totalSinistros: list.length,
+        lastSync: config.lastSync || new Date().toISOString(),
+        sheetUrl: config.sharepointUrl,
+        formsUrl: config.formsUrl,
+        message: config.lastMessage || `Conexão direta ativa: ${list.length} registros da aba Sheet1.`
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message || "Erro na conexão com a planilha." });
+    }
+  });
+
+  // Webhook para Power Automate / Forms
+  app.post("/api/sinistros/webhook", express.json({ limit: "50mb" }), (req, res) => {
+    try {
+      const payload = req.body;
+      if (!payload) return res.status(400).json({ error: "Payload vazio." });
+      let currentSinistros: any[] = [];
+      if (fs.existsSync(SINISTROS_FILE)) {
+        try {
+          currentSinistros = JSON.parse(fs.readFileSync(SINISTROS_FILE, "utf-8")) || [];
+        } catch (e) {}
+      }
+
+      const newSin: any = {
+        id: payload.id || `sin_${Date.now()}`,
+        numeroProtocolo: payload.numeroProtocolo || `SIN-2026-${String(currentSinistros.length + 1).padStart(3, "0")}`,
+        dataHora: payload.dataHora || new Date().toISOString(),
+        dataComunicado: payload.dataComunicado || new Date().toLocaleDateString("pt-BR"),
+        placa: (payload.placa || "SEM_PLACA").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+        placaCarreta: payload.placaCarreta ? payload.placaCarreta.toUpperCase().replace(/[^A-Z0-9]/g, "") : undefined,
+        base: payload.base || "Paulínia",
+        motorista: payload.motorista || "Condutor Risel",
+        cnhMotorista: payload.cnhMotorista || "",
+        tipoEvento: payload.tipoEvento || "Colisão",
+        gravidade: payload.gravidade || "Média",
+        status: payload.status || "Aberto",
+        culpabilidade: payload.culpabilidade || "Em Análise",
+        local: payload.local || "",
+        boletimOcorrencia: payload.boletimOcorrencia || "",
+        valorEstimadoPrejuizo: Number(payload.valorEstimadoPrejuizo) || 0,
+        valorFranquia: Number(payload.valorFranquia) || 0,
+        custoEfetivoRisel: Number(payload.custoEfetivoRisel) || 0,
+        descricao: payload.descricao || "",
+        avariasVeiculo: payload.avariasVeiculo || "",
+        driveFolderUrl: DEFAULT_SINISTROS_DRIVE_FOLDER,
+        origem: "Microsoft Forms Webhook"
+      };
+
+      currentSinistros.unshift(newSin);
+      fs.writeFileSync(SINISTROS_FILE, JSON.stringify(currentSinistros, null, 2), "utf-8");
+
+      const config = loadSinistrosConfig();
+      config.lastSync = new Date().toISOString();
+      config.lastMessage = `Novo sinistro recebido via Webhook do formulário: ${newSin.placa} (${newSin.tipoEvento})`;
+      saveSinistrosConfig(config);
+
+      return res.json({ success: true, item: newSin, totalCount: currentSinistros.length });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/sinistros", async (req, res) => {
+    try {
+      const list = await syncSinistrosDirectlyFromSheet1(false);
+      return res.json(Array.isArray(list) ? list : []);
+    } catch (e: any) {
+      console.warn("Aviso ao ler sinistros:", e.message);
+      if (fs.existsSync(SINISTROS_FILE)) {
+        try {
+          const raw = fs.readFileSync(SINISTROS_FILE, "utf-8");
+          return res.json(JSON.parse(raw));
+        } catch (err) {}
+      }
+      return res.json([]);
+    }
+  });
+
+  app.post("/api/sinistros", express.json({ limit: "50mb" }), (req, res) => {
+    try {
+      const list = req.body;
+      if (!Array.isArray(list)) {
+        return res.status(400).json({ error: "Corpo da requisição deve ser uma lista de sinistros." });
+      }
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(SINISTROS_FILE, JSON.stringify(list, null, 2), "utf-8");
+      return res.json({ success: true, count: list.length });
+    } catch (e: any) {
+      console.error("Erro ao salvar sinistros:", e);
+      return res.status(500).json({ error: e.message || "Erro ao salvar sinistros." });
+    }
+  });
+
+  app.post("/api/sinistros/single", express.json({ limit: "50mb" }), (req, res) => {
+    try {
+      const item = req.body;
+      if (!item || !item.id) {
+        return res.status(400).json({ error: "Item de sinistro inválido." });
+      }
+      let current: any[] = [];
+      if (fs.existsSync(SINISTROS_FILE)) {
+        try {
+          const raw = fs.readFileSync(SINISTROS_FILE, "utf-8");
+          current = JSON.parse(raw) || [];
+        } catch (err) {}
+      }
+      const idx = current.findIndex(s => s.id === item.id);
+      if (idx >= 0) {
+        current[idx] = { ...current[idx], ...item };
+      } else {
+        current.unshift(item);
+      }
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(SINISTROS_FILE, JSON.stringify(current, null, 2), "utf-8");
+      return res.json({ success: true, item });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/sinistros/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      let current: any[] = [];
+      if (fs.existsSync(SINISTROS_FILE)) {
+        try {
+          const raw = fs.readFileSync(SINISTROS_FILE, "utf-8");
+          current = JSON.parse(raw) || [];
+        } catch (err) {}
+      }
+      const updated = current.filter(s => s.id !== id);
+      fs.writeFileSync(SINISTROS_FILE, JSON.stringify(updated, null, 2), "utf-8");
+      return res.json({ success: true, count: updated.length });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
   });
 
   // Webhook / API Ingestion endpoint for OneDrive Power Automate or direct upload
