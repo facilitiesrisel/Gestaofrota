@@ -370,6 +370,14 @@ const LANCAMENTOS_BACKUPS_DIR = path.join(DATA_DIR, "backups_lancamentos");
 if (!fs.existsSync(LANCAMENTOS_BACKUPS_DIR)) {
   try { fs.mkdirSync(LANCAMENTOS_BACKUPS_DIR, { recursive: true }); } catch (e) {}
 }
+
+function saveStoredLancamentos(items: any[]) {
+  try {
+    fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(items, null, 2), "utf-8");
+  } catch (e) {
+    console.warn("Erro ao salvar arquivo de lançamentos:", e);
+  }
+}
 const EMAIL_KEYS_FILE = path.join(DATA_DIR, "email_api_keys.json");
 
 let storedResendApiKey = (process.env.RESEND_API_KEY || "").trim();
@@ -1305,6 +1313,39 @@ async function startServer() {
   // Cache em memória de saídas da sede registradas para evitar múltiplos disparos simultâneos
   const perimeterExitAlertsSent = new Map<string, number>();
 
+  // Endpoint atômico para garantir disparo ESTREITAMENTE ÚNICO por evento de saída
+  app.post("/api/perimeter-alert/claim-alert", express.json(), (req, res) => {
+    try {
+      const { plate, distanceMeters } = req.body;
+      if (!plate) return res.status(400).json({ allowed: false, error: "Placa obrigatória" });
+      const normPlate = String(plate).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      const lastSent = perimeterExitAlertsSent.get(normPlate) || 0;
+      const now = Date.now();
+      // Bloqueia duplicidade por 4 horas por evento de saída
+      if (lastSent > 0 && (now - lastSent) < 4 * 60 * 60 * 1000) {
+        console.log(`[Risel Perímetro] Tentativa de alerta bloqueada para ${normPlate}. Alerta já concedido há ${Math.round((now - lastSent)/60000)} min.`);
+        return res.json({ allowed: false, reason: "Alerta já enviado para esta saída." });
+      }
+      perimeterExitAlertsSent.set(normPlate, now);
+      console.log(`[Risel Perímetro] Claim concedido com exclusividade para o veículo ${normPlate} a ${Math.round(distanceMeters || 1000)}m da Sede.`);
+      return res.json({ allowed: true, plate: normPlate, timestamp: now });
+    } catch (err: any) {
+      return res.status(500).json({ allowed: false, error: err.message });
+    }
+  });
+
+  app.post("/api/perimeter-alert/reset-vehicle", express.json(), (req, res) => {
+    try {
+      const { plate } = req.body;
+      if (!plate) return res.status(400).json({ error: "Placa obrigatória" });
+      const normPlate = String(plate).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      perimeterExitAlertsSent.delete(normPlate);
+      return res.json({ success: true, plate: normPlate });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/perimeter-alert/record-exit", express.json(), (req, res) => {
     try {
       const { plate, distanceMeters } = req.body;
@@ -1747,9 +1788,9 @@ async function startServer() {
       const deletedSet = new Set(deletedIds);
       const itemMap = new Map<string, any>();
 
-      // 1. Ler do arquivo de persistência em disco local
+      // 1. Ler do arquivo de persistência em disco local (ultra rápido, < 5ms)
+      let localList: any[] = [];
       try {
-        let localList: any[] = [];
         if (fs.existsSync(LANCAMENTOS_FILE)) {
           const raw = fs.readFileSync(LANCAMENTOS_FILE, "utf-8");
           localList = JSON.parse(raw);
@@ -1770,7 +1811,42 @@ async function startServer() {
         }
       } catch (e) {}
 
-      // 2. Tentar ler do Firestore do Servidor (se disponível)
+      // Se já temos os itens salvos localmente, responde imediatamente (< 5ms) para não travar o carregamento do Dashboard
+      if (itemMap.size > 0) {
+        const items = Array.from(itemMap.values());
+        items.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+
+        // Sincronização assíncrona em segundo plano com Firestore sem bloquear resposta
+        getServerFirestore().then(db => {
+          db.collection("lancamentos").get().then(snapshot => {
+            let changed = false;
+            snapshot.forEach((doc: any) => {
+              const d = doc.data();
+              const docId = String(doc.id || d.id);
+              if (!deletedSet.has(docId) && !itemMap.has(docId)) {
+                itemMap.set(docId, { id: Number(doc.id) || Number(d.id) || doc.id, ...d });
+                changed = true;
+              }
+            });
+            if (changed) {
+              const merged = Array.from(itemMap.values());
+              saveStoredLancamentos(merged);
+              serverLancamentosVersion = Date.now();
+            }
+          }).catch(() => {});
+        }).catch(() => {});
+
+        return res.json({ 
+          success: true, 
+          count: items.length, 
+          items,
+          deletedIds,
+          version: serverLancamentosVersion,
+          updatedAt: Date.now()
+        });
+      }
+
+      // 2. Se o arquivo local estiver vazio, busca no Firestore
       try {
         const db = await getServerFirestore();
         const snapshot = await db.collection("lancamentos").get();
@@ -1784,6 +1860,9 @@ async function startServer() {
             });
           }
         });
+        if (itemMap.size > 0) {
+          saveStoredLancamentos(Array.from(itemMap.values()));
+        }
       } catch (err: any) {
         // Firestore pode não ter permissão, segue normalmente
       }
@@ -2143,17 +2222,57 @@ async function startServer() {
     // Todos os e-mails enviados através de: deny.risel@gmail.com
     const finalSenderName = getSenderNameForModule(source || req.body.module || provider, subject, fromName);
 
+    // REGRA MANDATÓRIA RISEL: Nenhum e-mail deve ser enviado para deny.risel@gmail.com
+    const cleanNoDenyGmail = (emails: any): string => {
+      let list: string[] = [];
+      if (Array.isArray(emails)) {
+        list = emails.filter(Boolean).map(s => String(s).trim()).filter(s => s.length > 0);
+      } else if (typeof emails === 'string') {
+        list = emails.split(/[;,]+/).map(s => s.trim()).filter(Boolean);
+      }
+      return list
+        .filter(e => e.toLowerCase() !== "deny.risel@gmail.com")
+        .join(", ");
+    };
+
+    // REGRA DE PROTEÇÃO CONTRA DUPLICIDADE: Alerta de saída da sede sem condutor / reserva
+    const isPerimeterAlert = String(subject || "").toLowerCase().includes("saída da sede") || 
+                             String(subject || "").toLowerCase().includes("saida da sede") ||
+                             String(subject || "").toLowerCase().includes("sem condutor") ||
+                             String(subject || "").toLowerCase().includes("aviso perímetro") ||
+                             String(subject || "").toLowerCase().includes("aviso perimetro");
+    if (isPerimeterAlert) {
+      const textToSearch = `${subject || ''} ${html || ''}`;
+      const plateMatch = textToSearch.match(/[A-Z0-9]{7}/i);
+      if (plateMatch) {
+        const normPlate = plateMatch[0].toUpperCase();
+        const lastSent = perimeterExitAlertsSent.get(normPlate) || 0;
+        const now = Date.now();
+        // Se já disparado nas últimas 4 horas para este evento de saída, bloqueia envio duplicado
+        if (lastSent > 0 && (now - lastSent) < 4 * 60 * 60 * 1000) {
+          console.log(`[Risel Perímetro] Alerta de e-mail duplicado bloqueado para o veículo ${normPlate}. Já enviado há ${Math.round((now - lastSent)/60000)} minutos.`);
+          return res.json({ 
+            success: true, 
+            delivered: true, 
+            duplicateBlocked: true, 
+            message: `Alerta para o veículo ${normPlate} já foi enviado anteriormente para este evento de saída.` 
+          });
+        }
+        perimeterExitAlertsSent.set(normPlate, now);
+      }
+    }
+
     const isChecklist = provider === "google" || 
                         source === "checklist" || 
                         (subject && String(subject).toLowerCase().includes("checklist"));
 
     if (isChecklist) {
-      const emailTo = (Array.isArray(to) ? to.join(", ") : to) || (Array.isArray(destinatarios) ? destinatarios.join(", ") : destinatarios) || "deny.risel@gmail.com";
-      const emailCc = Array.isArray(cc) ? cc.join(", ") : cc;
+      const emailTo = cleanNoDenyGmail(to) || cleanNoDenyGmail(destinatarios) || "gestaodefrotarisel@gmail.com";
+      const emailCc = cleanNoDenyGmail(cc);
       console.log(`[Risel Email Router] Roteando envio de CHECKLIST pelo e-mail do Google (Apps Script) para: ${emailTo}`);
       const resGs = await sendEmailViaAppsScript({
         to: emailTo,
-        cc: emailCc,
+        cc: emailCc || undefined,
         subject: subject || "Notificação de Checklist Frota Leve - Risel",
         html: html || "<p>Notificação automática do Checklist Risel.</p>",
         fromName: "Checklist Frota Leve - Risel"
@@ -2181,18 +2300,8 @@ async function startServer() {
 
     // Caso 1: Envio Direto de Notificação (Multas, Rastreamento, Frota, Reservas, E-mails Gerais)
     if (to || subject || html) {
-      const formatRecipients = (val: any): string => {
-        if (Array.isArray(val)) {
-          return val.filter(Boolean).map(s => String(s).trim()).filter(s => s.length > 0).join(", ");
-        }
-        if (typeof val === 'string') {
-          return val.split(/[;,]+/).map(s => s.trim()).filter(Boolean).join(", ");
-        }
-        return "";
-      };
-
-      const emailTo = formatRecipients(to) || formatRecipients(destinatarios) || "gestaodefrotarisel@gmail.com";
-      const emailCc = formatRecipients(cc);
+      const emailTo = cleanNoDenyGmail(to) || cleanNoDenyGmail(destinatarios) || "gestaodefrotarisel@gmail.com";
+      const emailCc = cleanNoDenyGmail(cc);
       const emailSubject = subject || "Notificação Risel Combustíveis";
       const rawHtml = html || "<p>Notificação automática do Sistema Risel.</p>";
       const emailHtml = appendRiselSignatureToHtml(rawHtml, finalSenderName);
@@ -4132,7 +4241,7 @@ async function startServer() {
         observacoes: [obsDianteira, obsMotorista, obsPassageiro, obsTraseira].filter(Boolean).join(" | ").trim(),
         status: status,
         timestamp: new Date().toLocaleString("pt-BR"),
-        email: email || "deny.risel@gmail.com",
+        email: (email && email.toLowerCase() !== "deny.risel@gmail.com") ? email : "gestaodefrotarisel@gmail.com",
         tipo: tipo || "MENSAL",
         base: base || "PAULÍNIA",
         marcaModelo: modelo || "",
@@ -4205,7 +4314,7 @@ async function startServer() {
             formPayload[entryKey] = String(valor || "");
           }
         }
-        formPayload["emailAddress"] = email || "deny.risel@gmail.com";
+        formPayload["emailAddress"] = (email && email.toLowerCase() !== "deny.risel@gmail.com") ? email : "gestaodefrotarisel@gmail.com";
 
         const submitUrl = `https://docs.google.com/forms/d/${formId}/formResponse`;
         const searchParams = new URLSearchParams();
@@ -4224,7 +4333,7 @@ async function startServer() {
 
       // 4. Disparo de E-mail de Notificação do Checklist via SMTP
       try {
-        const mailRecipient = email || "deny.risel@gmail.com";
+        const mailRecipient = (email && email.toLowerCase() !== "deny.risel@gmail.com") ? email : "gestaodefrotarisel@gmail.com";
         const emailSubject = `[Checklist Risel] Nova Inspeção Realizada - Placa ${cleanPlaca} (${status.toUpperCase()})`;
         
         const htmlEmail = `

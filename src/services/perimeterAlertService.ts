@@ -25,18 +25,25 @@ export function calculateDistanceMeters(lat1: number, lon1: number, lat2: number
 
 /**
  * Obtém os e-mails de todos os usuários com acesso ao sistema para notificações informativas
+ * REGRA MANDATÓRIA RISEL: deny.risel@gmail.com nunca deve receber nenhum e-mail.
  */
 export function getAllSystemUsersEmails(): string[] {
   const emailsSet = new Set<string>();
 
   // 1. Destinatários base e administradores oficiais
   ADMIN_EMAIL_RECIPIENTS.forEach(e => {
-    if (e && e.includes('@')) emailsSet.add(e.trim().toLowerCase());
+    const clean = (e || '').trim().toLowerCase();
+    if (clean && clean.includes('@') && clean !== 'deny.risel@gmail.com') {
+      emailsSet.add(clean);
+    }
   });
 
   const reservasRecipients = getReservasEmailRecipients();
   reservasRecipients.forEach(e => {
-    if (e && e.includes('@')) emailsSet.add(e.trim().toLowerCase());
+    const clean = (e || '').trim().toLowerCase();
+    if (clean && clean.includes('@') && clean !== 'deny.risel@gmail.com') {
+      emailsSet.add(clean);
+    }
   });
 
   // 2. Todos os usuários cadastrados com login ativo no sistema (AuthContext / Painel de Usuários)
@@ -48,7 +55,7 @@ export function getAllSystemUsersEmails(): string[] {
         if (Array.isArray(parsed)) {
           parsed.forEach((u: any) => {
             const email = (u?.email || '').trim().toLowerCase();
-            if (email && email.includes('@') && !email.includes('teste')) {
+            if (email && email.includes('@') && !email.includes('teste') && email !== 'deny.risel@gmail.com') {
               emailsSet.add(email);
             }
           });
@@ -60,8 +67,9 @@ export function getAllSystemUsersEmails(): string[] {
       if (currentUser) {
         try {
           const parsedUser = JSON.parse(currentUser);
-          if (parsedUser?.email && parsedUser.email.includes('@')) {
-            emailsSet.add(parsedUser.email.trim().toLowerCase());
+          const email = (parsedUser?.email || '').trim().toLowerCase();
+          if (email && email.includes('@') && email !== 'deny.risel@gmail.com') {
+            emailsSet.add(email);
           }
         } catch (e) {}
       }
@@ -75,6 +83,9 @@ export function getAllSystemUsersEmails(): string[] {
     emailsSet.add('deny.goncalves@risel.com.br');
     emailsSet.add('lorena.padilha@risel.com.br');
   }
+
+  // Exclusão estrita e irrevogável de deny.risel@gmail.com
+  emailsSet.delete('deny.risel@gmail.com');
 
   return Array.from(emailsSet);
 }
@@ -574,13 +585,25 @@ export async function checkAndTriggerPerimeterExitAlerts(
 
     // Caso 1: Veículo está atualmente DENTRO do perímetro da sede (<= 450m)
     if (!isOutsideSede) {
-      // Registra que o veículo está na sede. Se ele estava fora ou com alerta já enviado anteriormente,
-      // ao retornar ao pátio da sede resetamos o ciclo para monitorar uma nova saída futura.
+      // Histerese de segurança: Só reseta o ciclo de saída se o veículo estiver de fato estacionado ou dentro do pátio
+      // Isso impede que variações normais de GPS na portaria fiquem rearmando o alerta repetidamente
+      const isConfirmedParkedInside = distanceMeters <= 350 && (typeof pos.speed !== 'number' || pos.speed <= 5);
+      const shouldResetExit = isConfirmedParkedInside || (!previousState.alertSentForCurrentExit);
+
       const newState = {
         wasInsideSede: true,
         lastAlertSentAt: previousState.lastAlertSentAt,
-        alertSentForCurrentExit: false
+        alertSentForCurrentExit: shouldResetExit ? false : previousState.alertSentForCurrentExit
       };
+
+      if (shouldResetExit && previousState.alertSentForCurrentExit) {
+        fetch('/api/perimeter-alert/reset-vehicle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plate: cleanPlate })
+        }).catch(() => {});
+      }
+
       try {
         if (typeof window !== 'undefined') {
           localStorage.setItem(stateKey, JSON.stringify(newState));
@@ -661,11 +684,40 @@ export async function checkAndTriggerPerimeterExitAlerts(
     detectedEvents.push(eventData);
 
     if (shouldSendAlert) {
+      // 1. Tenta obter autorização exclusiva (claim) no backend para evitar disparos duplicados de múltiplas abas ou instâncias
+      let claimAllowed = true;
+      try {
+        const claimRes = await fetch('/api/perimeter-alert/claim-alert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plate: cleanPlate, distanceMeters })
+        }).then(r => r.json());
+
+        if (claimRes && claimRes.allowed === false) {
+          claimAllowed = false;
+        }
+      } catch (claimErr) {}
+
+      if (!claimAllowed) {
+        console.log(`[Perímetro] Alerta para ${cleanPlate} já concedido a outro terminal. Abortando envio duplicado.`);
+        const updatedState = {
+          wasInsideSede: false,
+          lastAlertSentAt: previousState.lastAlertSentAt || nowMs,
+          alertSentForCurrentExit: true
+        };
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(stateKey, JSON.stringify(updatedState));
+          }
+        } catch (e) {}
+        continue;
+      }
+
       console.warn(
         `🚨 [ALERTA DE PERÍMETRO] Veículo ativo da frota [${cleanPlate}] estava na sede e atingiu 1 KM fora da sede sem reserva ou uso diário ativo! Distância: ${(distanceMeters / 1000).toFixed(2)} km. Disparando e-mail único...`
       );
 
-      // 1. Atualiza estado imediatamente com trava estrita para nunca reenviar nesta mesma saída
+      // 2. Atualiza estado imediatamente com trava estrita para nunca reenviar nesta mesma saída
       const updatedState = {
         wasInsideSede: false,
         lastAlertSentAt: nowMs,
@@ -676,6 +728,15 @@ export async function checkAndTriggerPerimeterExitAlerts(
           localStorage.setItem(stateKey, JSON.stringify(updatedState));
         }
       } catch (e) {}
+
+      // Notifica outras abas locais para bloqueio imediato
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        try {
+          const bc = new BroadcastChannel('risel_perimeter_channel');
+          bc.postMessage({ type: 'PERIMETER_ALERT_CLAIMED', plate: cleanPlate });
+          bc.close();
+        } catch (e) {}
+      }
 
       // Sincroniza com o backend para proteger contra múltiplas abas abertas simultâneas
       fetch('/api/perimeter-alert/record-exit', {

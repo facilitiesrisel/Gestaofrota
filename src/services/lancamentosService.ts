@@ -314,6 +314,28 @@ async function checkServerVersionFast() {
   } catch (e) {}
 }
 
+// Função utilitária para higienizar itens salvos no localStorage (evita estouro de cota de 5MB com base64)
+function prepareItemsForLocalStorage(items: any[]): any[] {
+  if (!Array.isArray(items)) return [];
+  return items.map(item => {
+    if (!item) return item;
+    const clone = { ...item };
+    if (clone.arquivoAnexoBase64 && clone.arquivoAnexoBase64.length > 200) {
+      clone.temAnexo = true;
+      delete clone.arquivoAnexoBase64;
+    }
+    if (Array.isArray(clone.anexos) && clone.anexos.length > 0) {
+      clone.temAnexo = true;
+      clone.anexos = clone.anexos.map((anx: any) => {
+        if (!anx) return anx;
+        const { base64, ...anxRest } = anx;
+        return anxRest;
+      });
+    }
+    return clone;
+  });
+}
+
 // Dispara notificação para todos os ouvintes ativos com salvamento seguro
 function notifyListeners(items: any[], forceAllowEmpty: boolean = false) {
   // REGRA DE PROTEÇÃO ANTI-WIPE:
@@ -326,14 +348,21 @@ function notifyListeners(items: any[], forceAllowEmpty: boolean = false) {
   cachedLancamentos = items;
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    const slimItems = prepareItemsForLocalStorage(items);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slimItems));
     
     // Se a lista possui itens, atualiza o snapshot imutável de contingência
     if (items.length > 0) {
-      localStorage.setItem(SNAPSHOT_BACKUP_KEY, JSON.stringify(items));
+      localStorage.setItem(SNAPSHOT_BACKUP_KEY, JSON.stringify(slimItems));
       localStorage.setItem(SNAPSHOT_TIMESTAMP_KEY, new Date().toISOString());
     }
-  } catch (e) {}
+
+    try {
+      sessionStorage.setItem("risel_lancamentos_session", JSON.stringify(slimItems));
+    } catch (sErr) {}
+  } catch (e) {
+    console.warn("[LancamentosSync] Erro ao persistir em localStorage:", e);
+  }
 
   activeListeners.forEach(cb => {
     try {
@@ -384,8 +413,20 @@ export function getLancamentosUnified(): any[] {
           .map(normalizeLancamento);
         // Restaura no STORAGE_KEY
         try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(cachedLancamentos));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(prepareItemsForLocalStorage(cachedLancamentos)));
         } catch (e) {}
+        return cachedLancamentos;
+      }
+    }
+
+    // Fallback de contingência no sessionStorage
+    const sessionSaved = sessionStorage.getItem("risel_lancamentos_session");
+    if (sessionSaved) {
+      const parsedSession = JSON.parse(sessionSaved);
+      if (Array.isArray(parsedSession) && parsedSession.length > 0) {
+        cachedLancamentos = parsedSession
+          .filter((item: any) => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
+          .map(normalizeLancamento);
         return cachedLancamentos;
       }
     }

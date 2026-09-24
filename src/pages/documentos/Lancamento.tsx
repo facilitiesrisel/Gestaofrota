@@ -1056,6 +1056,145 @@ export default function Lancamento() {
     lancadoPor: user?.name ? user.name.split(" ")[0] : "Deny"
   }));
 
+  // Estado para recuperação de rascunho em andamento
+  const [savedDraft, setSavedDraft] = useState<{
+    formData: any;
+    editingId: number | null;
+    savedAt: number;
+  } | null>(null);
+
+  // Carregar rascunho persistido ao entrar na tela
+  useEffect(() => {
+    try {
+      const draftStr = localStorage.getItem("risel_lancamento_draft_v1");
+      if (draftStr) {
+        const draft = JSON.parse(draftStr);
+        if (draft && draft.formData && (draft.formData.fornecedor || draft.formData.valorNf || draft.formData.codigoLancamento || draft.formData.cnpj)) {
+          setSavedDraft(draft);
+        }
+      }
+    } catch (e) {}
+  }, []);
+
+  // Sinalizar edição ativa ao sistema e auto-salvar rascunho em tempo real
+  useEffect(() => {
+    if (!isFormOpen) {
+      try {
+        localStorage.removeItem("risel_is_editing_lancamento");
+        sessionStorage.removeItem("risel_is_editing_lancamento");
+      } catch (e) {}
+      return;
+    }
+
+    try {
+      localStorage.setItem("risel_is_editing_lancamento", "true");
+      sessionStorage.setItem("risel_is_editing_lancamento", "true");
+    } catch (e) {}
+
+    const hasContent = Boolean(
+      formData.fornecedor || 
+      formData.valorNf || 
+      formData.codigoLancamento || 
+      formData.cnpj ||
+      formData.descricao ||
+      (Array.isArray(formData.anexos) && formData.anexos.length > 0)
+    );
+
+    if (hasContent) {
+      const timer = setTimeout(() => {
+        try {
+          const draftToSave = {
+            formData: {
+              ...formData,
+              arquivoAnexoBase64: (formData.arquivoAnexoBase64 || "").length < 150000 ? formData.arquivoAnexoBase64 : "",
+              anexos: Array.isArray(formData.anexos) 
+                ? formData.anexos.map(a => ({
+                    ...a,
+                    base64: (a.base64 || "").length < 150000 ? a.base64 : ""
+                  }))
+                : []
+            },
+            editingId,
+            savedAt: Date.now()
+          };
+          localStorage.setItem("risel_lancamento_draft_v1", JSON.stringify(draftToSave));
+        } catch (e) {}
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
+  }, [formData, isFormOpen, editingId]);
+
+  // Prevenção de perda de dados por fechamento de aba, F5 ou recarregamento
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isFormOpen && (formData.fornecedor || formData.valorNf || formData.codigoLancamento)) {
+        e.preventDefault();
+        e.returnValue = "Você tem um lançamento em andamento. Deseja realmente sair?";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isFormOpen, formData.fornecedor, formData.valorNf, formData.codigoLancamento]);
+
+  const handleCloseForm = () => {
+    const hasData = Boolean(
+      formData.fornecedor || 
+      formData.valorNf || 
+      formData.codigoLancamento ||
+      (Array.isArray(formData.anexos) && formData.anexos.length > 0)
+    );
+
+    if (hasData) {
+      const confirmClose = window.confirm(
+        "Atenção: Os dados informados serão mantidos salvos em rascunho para você retomar a qualquer momento.\n\nDeseja realmente voltar para a lista?"
+      );
+      if (!confirmClose) return;
+    }
+
+    setIsFormOpen(false);
+    setEditingId(null);
+    try {
+      localStorage.removeItem("risel_is_editing_lancamento");
+      sessionStorage.removeItem("risel_is_editing_lancamento");
+    } catch (e) {}
+    try {
+      const draftStr = localStorage.getItem("risel_lancamento_draft_v1");
+      if (draftStr) {
+        setSavedDraft(JSON.parse(draftStr));
+      }
+    } catch (e) {}
+  };
+
+  const handleOpenNewForm = () => {
+    try {
+      const draftStr = localStorage.getItem("risel_lancamento_draft_v1");
+      if (draftStr) {
+        const draft = JSON.parse(draftStr);
+        if (draft?.formData && (draft.formData.fornecedor || draft.formData.valorNf || draft.formData.codigoLancamento)) {
+          const wantResume = window.confirm(
+            `Você possui um rascunho em andamento de lançamento (${draft.formData.fornecedor || "Fornecedor"}, R$ ${draft.formData.valorNf || "0,00"}).\n\nDeseja continuar este rascunho? (Clique em Cancelar para iniciar um novo do zero)`
+          );
+          if (wantResume) {
+            setFormData(draft.formData);
+            setEditingId(draft.editingId || null);
+            setIsFormOpen(true);
+            setSavedDraft(null);
+            return;
+          } else {
+            localStorage.removeItem("risel_lancamento_draft_v1");
+            setSavedDraft(null);
+          }
+        }
+      }
+    } catch (e) {}
+
+    setEditingId(null);
+    setFormData(getInitialFormState());
+    setIsFormOpen(true);
+  };
+
   useEffect(() => {
     if (user?.name && !editingId) {
       setFormData(prev => ({ ...prev, lancadoPor: user.name.split(" ")[0] }));
@@ -1957,6 +2096,12 @@ export default function Lancamento() {
     setCnpjSuccessMsg("");
     setCnpjWarningRisel("");
     lastCnpjDataRef.current = null;
+    try {
+      localStorage.removeItem("risel_lancamento_draft_v1");
+      localStorage.removeItem("risel_is_editing_lancamento");
+      sessionStorage.removeItem("risel_is_editing_lancamento");
+    } catch (e) {}
+    setSavedDraft(null);
   };
 
   // Estado para rastrear envio individual de e-mail de aprovação
@@ -2355,11 +2500,7 @@ export default function Lancamento() {
             </div>
 
             <button 
-              onClick={() => {
-                setEditingId(null);
-                setFormData(getInitialFormState());
-                setIsFormOpen(true);
-              }}
+              onClick={handleOpenNewForm}
               className="px-4 py-2 rounded-xl text-xs font-bold bg-[#114D38] text-white shadow-sm hover:bg-[#0d3b2b] transition-all flex items-center gap-1.5 cursor-pointer"
             >
               + Novo Lançamento
@@ -2429,6 +2570,54 @@ export default function Lancamento() {
       </>
     )}
 
+      {/* Alerta de Recuperação Inteligente de Rascunho */}
+      {savedDraft && !isFormOpen && (
+        <div className="bg-amber-50/90 border border-amber-300/80 rounded-2xl p-4 mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 border border-amber-300 text-amber-800 flex items-center justify-center shrink-0 shadow-2xs">
+              <FileText className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-bold text-amber-950">
+                  Lançamento em Andamento Salvo Automaticamente
+                </h4>
+                <span className="text-[10px] bg-amber-200/80 text-amber-900 font-bold px-2 py-0.5 rounded-full">
+                  Rascunho
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                Fornecedor: <strong className="text-amber-950">{savedDraft.formData.fornecedor || "Não informado"}</strong> • Valor: <strong className="text-amber-950">{savedDraft.formData.valorNf ? `R$ ${savedDraft.formData.valorNf}` : "0,00"}</strong> • Nº Doc: <strong className="text-amber-950">{savedDraft.formData.codigoLancamento || "S/N"}</strong>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setFormData(savedDraft.formData);
+                setEditingId(savedDraft.editingId || null);
+                setIsFormOpen(true);
+                setSavedDraft(null);
+              }}
+              className="px-3 py-1.5 bg-[#114D38] hover:bg-[#0d3b2b] text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+            >
+              <span>Restaurar Lançamento</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem("risel_lancamento_draft_v1");
+                setSavedDraft(null);
+              }}
+              className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-600 text-xs font-semibold rounded-lg border border-slate-200 transition-colors cursor-pointer"
+            >
+              Descartar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Seção principal: Formulário ou Tabela */}
       {isFormOpen ? (
         <div className="animate-in fade-in duration-300 max-w-6xl mx-auto">
@@ -2443,17 +2632,24 @@ export default function Lancamento() {
               </p>
             </div>
             <button 
-              onClick={() => {
-                setIsFormOpen(false);
-                setEditingId(null);
-              }}
+              onClick={handleCloseForm}
               className="px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors text-[10px] font-bold border border-slate-200 bg-white cursor-pointer shadow-sm"
             >
               Voltar para Lista
             </button>
           </div>
 
-          <form onSubmit={handleSaveSubmit}>
+          <form 
+            onSubmit={handleSaveSubmit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") {
+                const inputType = (e.target as HTMLInputElement).type;
+                if (inputType !== "submit" && inputType !== "button") {
+                  e.preventDefault();
+                }
+              }
+            }}
+          >
             <div className="bg-white rounded-[20px] shadow-sm border border-slate-200">
               <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
@@ -3158,10 +3354,7 @@ export default function Lancamento() {
                 <div className="flex gap-2">
                   <button 
                     type="button" 
-                    onClick={() => {
-                      setIsFormOpen(false);
-                      setEditingId(null);
-                    }} 
+                    onClick={handleCloseForm} 
                     className="px-4 py-1.5 rounded-lg font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm text-xs cursor-pointer"
                   >
                     Cancelar

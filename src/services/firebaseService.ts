@@ -319,18 +319,36 @@ export const sendEmail = async (
 
     const endpoint = typeof window !== 'undefined' ? '/api/send-email' : 'http://localhost:3000/api/send-email';
 
+    // REGRA MANDATÓRIA RISEL: Nenhum e-mail deve ser enviado para deny.risel@gmail.com
+    const sanitizeRecipients = (recipients: any): any => {
+      if (Array.isArray(recipients)) {
+        return recipients.filter(r => String(r).trim().toLowerCase() !== 'deny.risel@gmail.com');
+      }
+      if (typeof recipients === 'string') {
+        return recipients
+          .split(/[;,]+/)
+          .map(r => r.trim())
+          .filter(r => r.toLowerCase() !== 'deny.risel@gmail.com')
+          .join(', ');
+      }
+      return recipients;
+    };
+
+    const cleanTo = sanitizeRecipients(to);
+    const cleanCc = sanitizeRecipients(options?.cc);
+
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        to,
+        to: cleanTo,
         subject,
         html,
         fromName: options?.fromName || "Gestão de Reservas Risel",
         source: options?.source || "reservas",
-        cc: options?.cc,
+        cc: cleanCc,
         attachments: options?.attachments,
         smtpHost,
         smtpPort,

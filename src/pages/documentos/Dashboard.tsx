@@ -86,12 +86,25 @@ export default function Dashboard() {
 
   // Carrega os lançamentos unificados e sincronizados em tempo real entre todos os usuários
   const [lancamentos, setLancamentos] = useState<any[]>(() => getLancamentosUnified());
+  const [isSyncing, setIsSyncing] = useState<boolean>(() => getLancamentosUnified().length === 0);
 
   useEffect(() => {
     const unsubscribe = subscribeToLancamentosUnified((updated) => {
       setLancamentos(updated);
+      if (updated && updated.length > 0) {
+        setIsSyncing(false);
+      }
     });
-    return () => unsubscribe();
+
+    // Se após 800ms não houver novos dados, finaliza o estado de sincronização
+    const timer = setTimeout(() => {
+      setIsSyncing(false);
+    }, 800);
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
   }, []);
 
   // Helper robusto para extrair a Data de Emissão do documento (no formato YYYY-MM-DD)
@@ -831,6 +844,7 @@ export default function Dashboard() {
             value={stats.totalDocs} 
             icon={Receipt} 
             theme="blue"
+            loading={isSyncing && lancamentos.length === 0}
             trend={{
               percent: trendDocs.percent,
               isGood: trendDocs.isGood,
@@ -843,6 +857,7 @@ export default function Dashboard() {
             value={stats.pendentes} 
             icon={Clock} 
             theme="orange"
+            loading={isSyncing && lancamentos.length === 0}
             delay={0.06}
           />
           <KpiCard 
@@ -850,6 +865,7 @@ export default function Dashboard() {
             value={stats.finalizados} 
             icon={CheckCircle2} 
             theme="emerald"
+            loading={isSyncing && lancamentos.length === 0}
             delay={0.10}
           />
           <KpiCard 
@@ -858,6 +874,7 @@ export default function Dashboard() {
             subtitle={`${fornecedoresDistintos.mensais} Mensais • ${fornecedoresDistintos.esporadicos} Esporádicos`}
             icon={Building2} 
             theme="violet"
+            loading={isSyncing && lancamentos.length === 0}
             trend={{
               percent: trendFornecedores.percent,
               isGood: trendFornecedores.isGood,
@@ -870,6 +887,7 @@ export default function Dashboard() {
             value={stats.totalValor} 
             icon={TrendingUp} 
             theme="emerald"
+            loading={isSyncing && lancamentos.length === 0}
             trend={{
               percent: trendValor.percent,
               isGood: trendValor.isGood,
@@ -879,6 +897,15 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Se estiver no primeiro carregamento e não houver cache, exibe feedback limpo de carregamento */}
+      {isSyncing && lancamentos.length === 0 ? (
+        <div className="bg-white rounded-[24px] p-12 shadow-sm border border-slate-200 flex flex-col items-center justify-center my-8 text-center animate-pulse">
+          <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mb-4" />
+          <h3 className="font-display font-bold text-slate-700 text-base">Carregando Indicadores e Lançamentos...</h3>
+          <p className="text-slate-400 text-xs mt-1">Sincronizando banco de dados em tempo real</p>
+        </div>
+      ) : null}
 
       {/* Grid de Gráficos de alta resolução */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-4">
@@ -1666,7 +1693,7 @@ export default function Dashboard() {
 }
 
 // Componente KpiCard com design moderno e premium com suporte a tendências e animações dinâmicas de transição
-function KpiCard({ title, value, subtitle, icon: Icon, theme, trend, delay = 0 }: any) {
+function KpiCard({ title, value, subtitle, icon: Icon, theme, trend, delay = 0, loading = false }: any) {
   // Gradientes premium com alto contraste e design requintado
   const themes = {
     blue: {
@@ -1727,9 +1754,13 @@ function KpiCard({ title, value, subtitle, icon: Icon, theme, trend, delay = 0 }
           <h4 className={cn("text-[9px] sm:text-[10px] font-black uppercase tracking-wider whitespace-normal break-words leading-tight mb-0.5", themes.titleText)}>
             {title}
           </h4>
-          <div className={cn("text-sm sm:text-base font-display font-black tracking-tight leading-none truncate", themes.valueText)}>
-            {value}
-          </div>
+          {loading ? (
+            <div className="h-5 w-20 bg-white/25 rounded-md animate-pulse my-0.5" />
+          ) : (
+            <div className={cn("text-sm sm:text-base font-display font-black tracking-tight leading-none truncate", themes.valueText)}>
+              {value}
+            </div>
+          )}
           {subtitle && (
             <div className="text-[9px] font-bold text-white/80 mt-1 truncate">
               {subtitle}
