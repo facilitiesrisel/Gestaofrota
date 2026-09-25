@@ -49,6 +49,12 @@ const Login: React.FC = () => {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     clearMessages();
+
+    const cleanEmail = registerEmail.trim().toLowerCase();
+    if (!cleanEmail.endsWith("@risel.com.br")) {
+      setError("Para segurança do sistema, somente poderão ser criados acessos com e-mails corporativos @risel.com.br");
+      return;
+    }
     
     if (registerPassword !== confirmPassword) {
       setError("As senhas não coincidem.");
@@ -62,7 +68,7 @@ const Login: React.FC = () => {
 
     setIsLoading(true);
     try {
-      await firebaseApi.auth.createUserWithEmailAndPassword(registerEmail, registerPassword);
+      await firebaseApi.auth.createUserWithEmailAndPassword(cleanEmail, registerPassword);
       setMessage("Conta criada com sucesso! Você já está conectado de forma compartilhada.");
       setRegisterEmail('');
       setRegisterPassword('');

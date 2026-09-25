@@ -485,6 +485,12 @@ export default function Usuarios() {
       return;
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail.endsWith("@risel.com.br")) {
+      setError("Para segurança do sistema, somente poderão ser criados acessos com e-mails corporativos @risel.com.br");
+      return;
+    }
+
     setIsSavingUser(true);
     try {
       if (editingEmail) {

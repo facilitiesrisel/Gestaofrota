@@ -51,6 +51,7 @@ export interface CodigoMulta {
   pontos: number;
   valor: number;
   desconto: number; // Value of discount
+  isNew?: boolean;
 }
 
 export interface Multa {

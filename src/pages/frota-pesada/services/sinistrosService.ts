@@ -3,24 +3,27 @@ import { formatEventFolderName, GOOGLE_DRIVE_SINISTROS_ROOT_FOLDER_URL } from ".
 import { SINISTROS_REAIS_OFICIAIS } from "../../../data/sinistros_reais";
 import * as XLSX from "xlsx";
 
-const STORAGE_KEY = "risel_sinistros_frota_pesada_v1";
+const STORAGE_KEY = "risel_sinistros_frota_pesada_v2";
 
-// Base oficial dos 72 registros reais da planilha
+// Base oficial consolidada dos 73 registros reais da planilha
 export const SEED_SINISTROS: Sinistro[] = SINISTROS_REAIS_OFICIAIS;
 
 /**
  * Busca a lista consolidada de sinistros (servidor / localStorage / base oficial embutida)
- * Garante que os 72 sinistros reais da planilha Sheet1 nunca apareçam zerados.
+ * Garante que os 73 sinistros reais da planilha Sheet1 nunca apareçam incompletos.
  */
 export async function fetchSinistros(): Promise<Sinistro[]> {
   try {
-    const res = await fetch("/api/sinistros");
+    const res = await fetch(`/api/sinistros?_t=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "Pragma": "no-cache", "Cache-Control": "no-cache" }
+    });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         // Filtrar resquício de dados fictícios legados se existirem
         const realData = data.filter(d => d.motorista !== "Carlos Eduardo Silva" && d.id !== "sin-seed-1");
-        if (realData.length > 0) {
+        if (realData.length >= SINISTROS_REAIS_OFICIAIS.length) {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(realData));
           return realData;
         }
@@ -34,16 +37,17 @@ export async function fetchSinistros(): Promise<Sinistro[]> {
   if (local) {
     try {
       const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed) && parsed.length >= SINISTROS_REAIS_OFICIAIS.length) {
         const realData = parsed.filter((d: any) => d.motorista !== "Carlos Eduardo Silva" && d.id !== "sin-seed-1");
-        if (realData.length > 0) {
+        if (realData.length >= SINISTROS_REAIS_OFICIAIS.length) {
           return realData;
         }
       }
     } catch (e) {}
   }
 
-  // Fallback 100% garantido com os 72 sinistros reais
+  // Fallback 100% garantido com os 73 sinistros reais
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(SINISTROS_REAIS_OFICIAIS));
   return SINISTROS_REAIS_OFICIAIS;
 }
 
@@ -128,7 +132,7 @@ export async function fetchSinistrosConfig(): Promise<SinistrosOnlineConfig> {
     console.warn("Erro ao buscar config de sinistros:", e);
   }
   return {
-    sharepointUrl: "https://riselcombustiveis-my.sharepoint.com/:x:/r/personal/deny_goncalves_risel_com_br/_layouts/15/Doc.aspx?sourcedoc=%7B08C8A01A-45A5-4439-94F4-5F0505EDE3B3%7D&file=Comunicado%20de%20Sinistro_Frota%20Pesada.xlsx&action=default&mobileredirect=true",
+    sharepointUrl: "https://riselcombustiveis-my.sharepoint.com/:x:/g/personal/deny_goncalves_risel_com_br/IQAaoMgIpUU5RJT0XwUF7eOzAYV0pCLYDAlOmFtiaTpQbso?e=RIBeKX",
     formsUrl: "https://forms.cloud.microsoft/Pages/DesignPageV2.aspx?prevorigin=Marketing&origin=NeoPortalPage&subpage=design&id=--soOq0dkkmCvV864R49jTu3qwhCFQBElTcewqtXSeRUQTE2N0tGUjlEMjREQU5OUzFKN1NSR1pQWS4u",
     driveFolderUrl: "https://drive.google.com/drive/folders/1A62QNaC-5m7xMVzZtUxvXxBCHREp_jse?hl=pt-br",
     autoSync: true,
@@ -160,6 +164,34 @@ export async function syncSinistrosOnline(): Promise<SinistrosOnlineSyncResult> 
       error: e.message || "Erro de conexão com o servidor."
     };
   }
+}
+
+/**
+ * Envia o arquivo Excel (.xlsx) atualizado para o backend processar a aba Sheet1 imediatamente
+ */
+export async function uploadSinistrosSheet(file: File): Promise<{ success: boolean; totalSinistros?: number; items?: Sinistro[]; error?: string }> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const base64 = e.target?.result as string;
+        const res = await fetch("/api/sinistros/upload-sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base64 })
+        });
+        const data = await res.json();
+        if (data.success && Array.isArray(data.items)) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data.items));
+        }
+        resolve(data);
+      } catch (err: any) {
+        resolve({ success: false, error: err.message || "Erro no envio do arquivo." });
+      }
+    };
+    reader.onerror = () => resolve({ success: false, error: "Falha na leitura do arquivo local." });
+    reader.readAsDataURL(file);
+  });
 }
 
 /**

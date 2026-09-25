@@ -988,67 +988,152 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       }
   };
 
+  // Helper para buscar código compatível por código limpo, bruto ou prefixo
+  const findMatchingCodigo = (searchVal: string, list: CodigoMulta[]) => {
+    if (!searchVal || !list || list.length === 0) return null;
+    const cleanSearch = cleanString(searchVal);
+    const upperRaw = searchVal.trim().toUpperCase();
+    if (!cleanSearch) return null;
+
+    // 1. Match exato limpo (ex: "745-50" casa com "74550", "745-50")
+    const matchClean = list.find(c => c && cleanString(c.codigo) === cleanSearch);
+    if (matchClean) return matchClean;
+
+    // 2. Match exato com string bruta
+    const matchRaw = list.find(c => c && c.codigo && c.codigo.toString().toUpperCase().trim() === upperRaw);
+    if (matchRaw) return matchRaw;
+
+    // 3. Match de prefixo para códigos com ou sem hífen (ex: "7455" casa com "745-5" ou "74550")
+    if (cleanSearch.length >= 4) {
+      const prefixMatch = list.find(c => c && cleanString(c.codigo).startsWith(cleanSearch));
+      if (prefixMatch) return prefixMatch;
+    }
+
+    return null;
+  };
+
   const handleEnquadramentoChange = (val: string) => {
     const upperVal = (val || '').toUpperCase();
-    setFormData(prev => ({ ...prev, enquadramento: upperVal }));
-    const cleanSearch = upperVal.replace(/[^A-Z0-9]/g, '');
-    if (cleanSearch.length >= 2) {
-        const matches = (codigos || []).filter(c => {
-            if (!c || !c.codigo) return false;
-            const dbCodeClean = c.codigo.toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
-            const dbCodeRaw = c.codigo.toString().toUpperCase();
-            const dbDesc = (c.descricao || '').toUpperCase();
-            return dbCodeClean.startsWith(cleanSearch) || dbCodeRaw.includes(upperVal) || dbDesc.includes(upperVal);
-        });
-        
-        const exactMatchExists = (codigos || []).some(c => c && c.codigo && c.codigo.toString().toUpperCase().trim() === upperVal.trim());
-        const resultList = [...matches].slice(0, 15);
-        
-        if (!exactMatchExists && upperVal.trim().length >= 2) {
-            (resultList as any).push({
-                codigo: upperVal.trim(),
-                baseLegal: '',
-                descricao: 'CADASTRAR NOVO CÓDIGO (DIGITAÇÃO LIVRE)',
-                pontos: 0,
-                valor: 0,
-                desconto: 0,
-                isNew: true
-            });
-        }
-        
-        setFilteredCodigos(resultList);
-        setShowCodigosDropdown(true);
+    const cleanSearch = cleanString(upperVal);
+
+    // Se o valor digitado corresponder a um código de infração cadastrado, puxa os dados automaticamente!
+    const matchedCodigo = cleanSearch.length >= 3 ? findMatchingCodigo(upperVal, codigos) : null;
+
+    if (matchedCodigo && !matchedCodigo.isNew) {
+      const valorNominal = Number(matchedCodigo.valor) || 0;
+      let descVal = Number(matchedCodigo.desconto) || 0;
+      if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
+        descVal = Number((valorNominal - descVal).toFixed(2));
+      }
+      const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
+
+      setFormData(prev => ({
+        ...prev,
+        enquadramento: upperVal,
+        artigoCtb: String(matchedCodigo.baseLegal || prev.artigoCtb || '').toUpperCase(),
+        descricaoInfracao: String(matchedCodigo.descricao || prev.descricaoInfracao || '').toUpperCase(),
+        pontosCnh: Number(matchedCodigo.pontos ?? prev.pontosCnh ?? 0),
+        valor: valorNominal > 0 ? valorNominal : (prev.valor || 0),
+        desconto: descVal >= 0 ? descVal : (prev.desconto || 0),
+        valorComDesconto: valorFinal > 0 ? valorFinal : (prev.valorComDesconto || 0)
+      }));
+      clearError('enquadramento');
+      clearError('artigoCtb');
+      clearError('descricaoInfracao');
     } else {
-        setShowCodigosDropdown(false);
+      setFormData(prev => ({ ...prev, enquadramento: upperVal }));
+    }
+
+    if (cleanSearch.length >= 2 || upperVal.trim().length >= 2) {
+      const matches = (codigos || []).filter(c => {
+        if (!c || !c.codigo) return false;
+        const dbCodeClean = cleanString(c.codigo);
+        const dbCodeRaw = c.codigo.toString().toUpperCase();
+        const dbDesc = (c.descricao || '').toUpperCase();
+        return dbCodeClean.includes(cleanSearch) || dbCodeRaw.includes(upperVal) || dbDesc.includes(upperVal);
+      });
+
+      const exactMatchExists = (codigos || []).some(c => c && c.codigo && (
+        c.codigo.toString().toUpperCase().trim() === upperVal.trim() ||
+        cleanString(c.codigo) === cleanSearch
+      ));
+      const resultList = [...matches].slice(0, 15);
+
+      if (!exactMatchExists && upperVal.trim().length >= 2) {
+        (resultList as any).push({
+          codigo: upperVal.trim(),
+          baseLegal: '',
+          descricao: 'CADASTRAR NOVO CÓDIGO (DIGITAÇÃO LIVRE)',
+          pontos: 0,
+          valor: 0,
+          desconto: 0,
+          isNew: true
+        });
+      }
+
+      setFilteredCodigos(resultList);
+      setShowCodigosDropdown(true);
+    } else {
+      setShowCodigosDropdown(false);
     }
   };
 
   const selectCodigo = (codigo: any) => {
-      if (!codigo) return;
-      const valorNominal = Number(codigo.valor) || 0;
-      let descVal = Number(codigo.desconto) || 0;
-      
-      // Proteção para registros antigos onde desconto podia estar cadastrado com valor do boleto com desconto (80%)
-      if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
-        descVal = Number((valorNominal - descVal).toFixed(2));
-      }
-      
-      const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
+    if (!codigo) return;
+    const valorNominal = Number(codigo.valor) || 0;
+    let descVal = Number(codigo.desconto) || 0;
+    
+    // Proteção para registros antigos onde desconto podia estar cadastrado com valor do boleto com desconto (80%)
+    if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
+      descVal = Number((valorNominal - descVal).toFixed(2));
+    }
+    
+    const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
 
-      setFormData(prev => ({
-        ...prev, 
-        enquadramento: String(codigo.codigo || '').toUpperCase(), 
-        artigoCtb: String(codigo.baseLegal || '').toUpperCase(), 
-        descricaoInfracao: codigo.isNew ? '' : String(codigo.descricao || '').toUpperCase(),
-        pontosCnh: Number(codigo.pontos || 0), 
-        valor: valorNominal, 
-        desconto: descVal, 
-        valorComDesconto: valorFinal
-      }));
-      setShowCodigosDropdown(false);
+    setFormData(prev => ({
+      ...prev, 
+      enquadramento: String(codigo.codigo || '').toUpperCase(), 
+      artigoCtb: codigo.isNew ? prev.artigoCtb : String(codigo.baseLegal || '').toUpperCase(), 
+      descricaoInfracao: codigo.isNew ? prev.descricaoInfracao : String(codigo.descricao || '').toUpperCase(),
+      pontosCnh: codigo.isNew ? prev.pontosCnh : Number(codigo.pontos || 0), 
+      valor: codigo.isNew ? prev.valor : valorNominal, 
+      desconto: codigo.isNew ? prev.desconto : descVal, 
+      valorComDesconto: codigo.isNew ? prev.valorComDesconto : valorFinal
+    }));
+    clearError('enquadramento');
+    clearError('artigoCtb');
+    clearError('descricaoInfracao');
+    setShowCodigosDropdown(false);
   };
 
-  const handleBlurEnquadramento = () => { setTimeout(() => { setShowCodigosDropdown(false); }, 250); };
+  const handleBlurEnquadramento = () => {
+    setTimeout(() => {
+      setShowCodigosDropdown(false);
+      setFormData(prev => {
+        const enq = String(prev.enquadramento || '').trim();
+        if (!enq) return prev;
+        const match = findMatchingCodigo(enq, codigos);
+        if (match && !match.isNew) {
+          const valorNominal = Number(match.valor) || 0;
+          let descVal = Number(match.desconto) || 0;
+          if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
+            descVal = Number((valorNominal - descVal).toFixed(2));
+          }
+          const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
+          return {
+            ...prev,
+            artigoCtb: prev.artigoCtb || String(match.baseLegal || '').toUpperCase(),
+            descricaoInfracao: prev.descricaoInfracao || String(match.descricao || '').toUpperCase(),
+            pontosCnh: (prev.pontosCnh !== undefined && prev.pontosCnh !== 0) ? prev.pontosCnh : Number(match.pontos || 0),
+            valor: (prev.valor && prev.valor > 0) ? prev.valor : valorNominal,
+            desconto: (prev.desconto !== undefined && prev.desconto > 0) ? prev.desconto : descVal,
+            valorComDesconto: (prev.valorComDesconto && prev.valorComDesconto > 0) ? prev.valorComDesconto : valorFinal
+          };
+        }
+        return prev;
+      });
+    }, 250);
+  };
 
   const handleMoneyChange = (field: 'valor' | 'desconto', val: number) => {
       if (val < 0 || isNaN(val)) return;
@@ -2915,9 +3000,16 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     <div className="space-y-2">
                         <div className="grid grid-cols-2 gap-2 relative">
                             <div className="relative">
-                                <div className="flex items-center mb-0.5">
-                                    <label className="text-[10px] font-extrabold text-gray-500 uppercase">Enquadramento</label>
-                                    <FormTooltip text="Digite o código (ex: 745-50)." />
+                                <div className="flex items-center justify-between mb-0.5">
+                                    <div className="flex items-center">
+                                        <label className="text-[10px] font-extrabold text-gray-500 uppercase">Enquadramento</label>
+                                        <FormTooltip text="Digite o código (ex: 745-50) para puxar automaticamente os dados do CTB." />
+                                    </div>
+                                    {formData.enquadramento && codigos.some(c => cleanString(c.codigo) === cleanString(formData.enquadramento || '')) && (
+                                        <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                                            ✓ CTB Carregado
+                                        </span>
+                                    )}
                                 </div>
                                 <div className="relative w-full">
                                     <input 
@@ -2927,24 +3019,36 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                         onChange={e => handleEnquadramentoChange(e.target.value)} 
                                         onFocus={() => { if(formData.enquadramento && String(formData.enquadramento).length >= 1) setShowCodigosDropdown(true); }}
                                         onBlur={handleBlurEnquadramento}
-                                        placeholder="Cód."
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                if (filteredCodigos.length > 0) {
+                                                    selectCodigo(filteredCodigos[0]);
+                                                }
+                                            }
+                                        }}
+                                        placeholder="Cód. (ex: 745-50)"
                                         autoComplete="off"
                                     />
                                     {showCodigosDropdown && filteredCodigos.length > 0 && (
-                                        <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-lg shadow-2xl mt-1 z-[100] max-h-44 overflow-y-auto custom-scrollbar">
+                                        <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-lg shadow-2xl mt-1 z-[100] max-h-48 overflow-y-auto custom-scrollbar">
                                             {filteredCodigos.map((c, idx) => {
                                                 if (!c) return null;
                                                 return (
                                                     <div 
                                                         key={idx} 
+                                                        onMouseDown={(e) => { e.preventDefault(); selectCodigo(c); }}
                                                         onClick={(e) => { e.stopPropagation(); selectCodigo(c); }}
-                                                        className="px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors"
+                                                        className="px-2.5 py-1.5 hover:bg-emerald-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors"
                                                     >
                                                         <div className="flex justify-between items-center">
                                                             <span className="font-black text-slate-800 text-xs">{c.codigo}</span>
-                                                            <span className="text-[9px] text-gray-400 font-bold bg-gray-100 px-1 rounded">{c.pontos || 0} Pts</span>
+                                                            <span className="text-[9px] text-emerald-800 font-bold bg-emerald-100 px-1 rounded">{c.pontos || 0} Pts</span>
                                                         </div>
                                                         <p className="text-[9px] text-gray-600 line-clamp-1 uppercase font-medium">{c.descricao}</p>
+                                                        {c.baseLegal && (
+                                                            <span className="text-[8px] text-gray-400 font-mono block mt-0.5">{c.baseLegal}</span>
+                                                        )}
                                                     </div>
                                                 );
                                             })}

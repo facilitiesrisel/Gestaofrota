@@ -464,6 +464,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
         return;
     }
 
+    const cleanAccessEmail = accessEmail.trim().toLowerCase();
+    if (!cleanAccessEmail.endsWith("@risel.com.br")) {
+        setAccessError("Para segurança do sistema, somente poderão ser criados acessos com e-mails corporativos @risel.com.br");
+        setIsAccessLoading(false);
+        return;
+    }
+
     if (accessTempPassword.length < 6) {
         setAccessError("A senha provisória deve ter pelo menos 6 caracteres.");
         setIsAccessLoading(false);
@@ -474,7 +481,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ customCharts, onChartsCha
     try {
         secondaryApp = firebase.initializeApp(firebaseConfig, "SecondaryApp_" + Date.now());
         
-        const userCredential = await secondaryApp.auth().createUserWithEmailAndPassword(accessEmail.trim(), accessTempPassword.trim());
+        const userCredential = await secondaryApp.auth().createUserWithEmailAndPassword(cleanAccessEmail, accessTempPassword.trim());
         
         if (userCredential.user) {
             await userCredential.user.updateProfile({

@@ -640,6 +640,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     mustChangePassword: boolean = true
   ): Promise<boolean> => {
     const cleanEmail = email.toLowerCase().trim();
+
+    // Validação rígida de segurança: apenas domínio corporativo @risel.com.br
+    if (!cleanEmail.endsWith("@risel.com.br")) {
+      console.warn("[Segurança] Tentativa de criação de usuário com domínio inválido:", cleanEmail);
+      return false;
+    }
+
     if (usersList.some(u => u.email.toLowerCase() === cleanEmail)) {
       return false; // Usuário já existe
     }

@@ -144,21 +144,21 @@ export interface Sinistro {
   status: StatusSinistro;
   culpabilidade: CulpabilidadeSinistro;
   local: string; // Rodovia / Rua / KM
-  municipio: string;
-  uf: string;
-  rodoviaOuUrbano: 'Rodovia' | 'Urbano';
+  municipio?: string;
+  uf?: string;
+  rodoviaOuUrbano?: 'Rodovia' | 'Urbano' | string;
   boletimOcorrencia?: string; // Nº do B.O.
   orgaoPolicial?: string; // PRF, PM, Polícia Civil
-  houveVitimas: 'Não' | 'Feridos Leves' | 'Feridos Graves' | 'Óbito';
-  houveTerceiros: 'Sim' | 'Não';
+  houveVitimas?: 'Não' | 'Feridos Leves' | 'Feridos Graves' | 'Óbito' | string;
+  houveTerceiros?: 'Sim' | 'Não' | string;
   dadosTerceiro?: string; // Placa, condutor, telefone, veículo do terceiro
-  seguradoraAcionada: 'Sim' | 'Não';
+  seguradoraAcionada?: 'Sim' | 'Não' | string;
   nomeSeguradora?: string;
   numeroSinistroSeguradora?: string;
-  valorEstimadoPrejuizo: number;
-  valorFranquia: number;
-  valorPagoSeguradora: number;
-  custoEfetivoRisel: number;
+  valorEstimadoPrejuizo?: number;
+  valorFranquia?: number;
+  valorPagoSeguradora?: number;
+  custoEfetivoRisel?: number;
   descricao: string; // Dinâmica detalhada do evento
   danosVeiculo?: string; // Danos ao veículo resumido
   condutorAssumiu?: 'SIM' | 'NÃO' | string; // Se condutor Risel assume a responsabilidade
@@ -191,4 +191,53 @@ export interface Sinistro {
 
 // Navigation Types
 export type Page = 'DASHBOARD' | 'MULTAS' | 'ALERTAS' | 'FROTAS' | 'MOTORISTAS' | 'SINISTROS_DASHBOARD' | 'SINISTROS' | 'CONFIG';
+
+const LOWERCASE_WORDS = new Set(["de", "da", "do", "dos", "das", "e", "em", "para", "com", "no", "na", "nos", "nas", "ao", "aos"]);
+const UPPERCASE_WORDS = new Set(["SP", "PR", "MG", "RJ", "SC", "RS", "GO", "DF", "BA", "B.O.", "BO", "CNH", "CRLV", "SBC", "N/D", "N/A", "AV", "ROD", "KM", "BR", "SIM", "NÃO", "NAO"]);
+
+export function toTitleCase(str?: string): string {
+  if (!str) return "";
+  const trimmed = str.trim();
+  if (!trimmed) return "";
+  
+  // Placa de veículo (Mercosul ou antiga)
+  if (/^[A-Z]{3}-?[0-9][A-Z0-9][0-9]{2}$/i.test(trimmed)) {
+    return trimmed.toUpperCase();
+  }
+
+  const words = trimmed.split(/\s+/);
+  return words.map((word, index) => {
+    if (word.includes("-")) {
+      return word.split("-").map((part, pIdx) => {
+        const clean = part.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (UPPERCASE_WORDS.has(clean)) return clean;
+        const lower = part.toLowerCase();
+        if (pIdx > 0 && LOWERCASE_WORDS.has(lower)) return lower;
+        return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+      }).join("-");
+    }
+
+    const cleanWord = word.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (UPPERCASE_WORDS.has(cleanWord)) {
+      return word.toUpperCase();
+    }
+
+    const lower = word.toLowerCase();
+    if (index > 0 && LOWERCASE_WORDS.has(lower)) {
+      return lower;
+    }
+
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }).join(" ");
+}
+
+export function getPrimeiroNomeGestor(nome?: string): string {
+  if (!nome || !nome.trim()) return "-";
+  const trimmed = nome.trim();
+  const firstWord = trimmed.split(/[\s/]+/)[0];
+  if (!firstWord) return "-";
+  const formatted = firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
+  if (formatted === "Daniela") return "Daniele";
+  return formatted;
+}
 

@@ -845,10 +845,62 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
       }
     } catch (e) {}
 
+    // Carregar códigos de infração: base padrão + IndexedDB + localStorage + histórico de multas
+    const codigosMap = new Map<string, CodigoMulta>();
+    
+    // 1. Base oficial de códigos do CTB
+    mockCodigosMulta.forEach(c => {
+      if (c && c.codigo) {
+        codigosMap.set(cleanString(c.codigo), c);
+      }
+    });
+
+    // 2. Do IndexedDB
+    try {
+      const idbCodigos = await idbGetAll<CodigoMulta>('codigos');
+      if (idbCodigos && idbCodigos.length > 0) {
+        idbCodigos.forEach(c => {
+          if (c && c.codigo) codigosMap.set(cleanString(c.codigo), c);
+        });
+      }
+    } catch (e) {}
+
+    // 3. Do localStorage
+    try {
+      const storedCodigos = localStorage.getItem('risel_codigos_multas');
+      if (storedCodigos) {
+        const parsed: CodigoMulta[] = JSON.parse(storedCodigos);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(c => {
+            if (c && c.codigo) codigosMap.set(cleanString(c.codigo), c);
+          });
+        }
+      }
+    } catch (e) {}
+
+    // 4. Do histórico de multas (aprende novos códigos informados)
+    finalMultas.forEach(m => {
+      if (m.enquadramento && String(m.enquadramento).trim().length >= 2) {
+        const key = cleanString(m.enquadramento);
+        if (key && !codigosMap.has(key)) {
+          codigosMap.set(key, {
+            codigo: String(m.enquadramento).toUpperCase().trim(),
+            baseLegal: String(m.artigoCtb || '').trim(),
+            descricao: String(m.descricaoInfracao || '').trim(),
+            pontos: Number(m.pontosCnh) || 0,
+            valor: Number(m.valor) || 0,
+            desconto: Number(m.desconto) || 0
+          });
+        }
+      }
+    });
+
+    const finalCodigos = Array.from(codigosMap.values());
+
     const resultData = {
         veiculos: finalVeiculos, 
         motoristas: motoristas.length > 0 ? motoristas : [],
-        codigos: mockCodigosMulta,
+        codigos: finalCodigos,
         multas: finalMultas
     };
 
@@ -1154,9 +1206,21 @@ export const saveBatchMultas = async (
 
 export const saveCodigo = async (codigo: CodigoMulta) => {
   clearCache();
-  await idbPut('codigos', codigo);
-  const idx = localStore.codigos.findIndex(c => c.codigo === codigo.codigo);
-  if(idx >= 0) localStore.codigos[idx] = codigo; else localStore.codigos.push(codigo);
+  try {
+    await idbPut('codigos', codigo);
+  } catch (e) {}
+  try {
+    const stored = localStorage.getItem('risel_codigos_multas');
+    let list: CodigoMulta[] = stored ? JSON.parse(stored) : [];
+    const idx = list.findIndex(c => cleanString(c.codigo) === cleanString(codigo.codigo));
+    if (idx >= 0) list[idx] = codigo;
+    else list.push(codigo);
+    localStorage.setItem('risel_codigos_multas', JSON.stringify(list));
+  } catch (e) {}
+
+  const idx = localStore.codigos.findIndex(c => cleanString(c.codigo) === cleanString(codigo.codigo));
+  if(idx >= 0) localStore.codigos[idx] = codigo; 
+  else localStore.codigos.push(codigo);
   return { success: true };
 };
 

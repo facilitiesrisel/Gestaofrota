@@ -370,7 +370,7 @@ const LANCAMENTOS_DELETED_FILE = path.join(DATA_DIR, "lancamentos_deleted_ids.js
 const LANCAMENTOS_BACKUPS_DIR = path.join(DATA_DIR, "backups_lancamentos");
 const SINISTROS_FILE = path.join(DATA_DIR, "sinistros.json");
 const SINISTROS_CONFIG_FILE = path.join(DATA_DIR, "sinistros_config.json");
-const DEFAULT_SINISTROS_SHAREPOINT_URL = "https://riselcombustiveis-my.sharepoint.com/:x:/r/personal/deny_goncalves_risel_com_br/_layouts/15/Doc.aspx?sourcedoc=%7B08C8A01A-45A5-4439-94F4-5F0505EDE3B3%7D&file=Comunicado%20de%20Sinistro_Frota%20Pesada.xlsx&action=default&mobileredirect=true";
+const DEFAULT_SINISTROS_SHAREPOINT_URL = "https://riselcombustiveis-my.sharepoint.com/:x:/g/personal/deny_goncalves_risel_com_br/IQAaoMgIpUU5RJT0XwUF7eOzAYV0pCLYDAlOmFtiaTpQbso?e=RIBeKX";
 const DEFAULT_SINISTROS_FORMS_URL = "https://forms.cloud.microsoft/Pages/DesignPageV2.aspx?prevorigin=Marketing&origin=NeoPortalPage&subpage=design&id=--soOq0dkkmCvV864R49jTu3qwhCFQBElTcewqtXSeRUQTE2N0tGUjlEMjREQU5OUzFKN1NSR1pQWS4u";
 const DEFAULT_SINISTROS_DRIVE_FOLDER = "https://drive.google.com/drive/folders/1A62QNaC-5m7xMVzZtUxvXxBCHREp_jse?hl=pt-br";
 
@@ -3848,57 +3848,51 @@ async function startServer() {
     const targetUrl = config.sharepointUrl || DEFAULT_SINISTROS_SHAREPOINT_URL;
 
     let buf: ArrayBuffer | null = null;
-
-    // 1. Tentar ler arquivo local colocado na pasta DATA_DIR ou raiz se existir
     const localSinistrosFile = path.join(DATA_DIR, "Comunicado de Sinistro_Frota Pesada.xlsx");
     const localSinistrosRoot = path.join(process.cwd(), "Comunicado de Sinistro_Frota Pesada.xlsx");
-    const chosenFile = fs.existsSync(localSinistrosFile) ? localSinistrosFile : (fs.existsSync(localSinistrosRoot) ? localSinistrosRoot : null);
-    if (chosenFile) {
-      try {
-        const fileData = fs.readFileSync(chosenFile);
-        buf = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
-        console.log(`[Risel Sinistros Direct Sync] Arquivo local da planilha detectado e carregado de ${chosenFile}.`);
-      } catch (e) {}
-    }
 
-    // 2. Se não houver arquivo local ou for sync forçado, tentar conexão direta com os endpoints do SharePoint / OneDrive
-    if (!buf && validateOneDriveUrl(targetUrl)) {
+    // 1. Tentar download direto dos endpoints do SharePoint / OneDrive com o link liberado
+    if (validateOneDriveUrl(targetUrl)) {
       try {
-        // Fluxo SharePoint com seguimento de redirecionamento e captura de cookies (FedAuth)
         const r1 = await fetch(targetUrl, {
           redirect: "manual",
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
           }
         });
+        const cookies = (r1.headers as any).getSetCookie ? (r1.headers as any).getSetCookie() : [r1.headers.get("set-cookie")].filter(Boolean);
         const loc1 = r1.headers.get("location");
-        const cookies1 = (r1.headers as any).getSetCookie ? (r1.headers as any).getSetCookie() : [r1.headers.get("set-cookie")];
-        const cookieHeader = (cookies1 || []).filter(Boolean).join("; ");
 
         if (loc1) {
+          const cookieHeader1 = cookies.map((c: string) => c.split(";")[0]).join("; ");
           const r2 = await fetch(loc1, {
             headers: {
-              "Cookie": cookieHeader,
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              "Cookie": cookieHeader1,
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
           });
-          const html = await r2.text();
-          const personalPath = loc1.substring(0, loc1.indexOf("/_layouts"));
-          const dlCandidates: string[] = [];
+          const c2 = (r2.headers as any).getSetCookie ? (r2.headers as any).getSetCookie() : [r2.headers.get("set-cookie")].filter(Boolean);
+          cookies.push(...c2);
+          const cookieHeader2 = cookies.map((c: string) => c.split(";")[0]).join("; ");
 
+          const personalPath = loc1.substring(0, loc1.indexOf("/_layouts"));
+          const dlCandidates: string[] = [
+            `${personalPath}/_layouts/15/download.aspx?UniqueId=08c8a01a-45a5-4439-94f4-5f0505ede3b3`,
+            `${personalPath}/_layouts/15/download.aspx?sourcedoc=%7B08c8a01a-45a5-4439-94f4-5f0505ede3b3%7D`
+          ];
+
+          const html = await r2.text();
           const sourcedocMatch = html.match(/sourcedoc=(%7B[a-f0-9\-]+%7D|\{[a-f0-9\-]+\})/i) || html.match(/\/download\.aspx\?UniqueId=([a-f0-9\-]+)/i);
           if (sourcedocMatch) {
-            dlCandidates.push(`${personalPath}/_layouts/15/download.aspx?sourcedoc=${sourcedocMatch[1]}`);
+            const cleanId = sourcedocMatch[1].replace(/%7B|\{|%7D|\}/gi, "");
+            dlCandidates.unshift(`${personalPath}/_layouts/15/download.aspx?UniqueId=${cleanId}`);
           }
-          const allDlMatches = html.match(/https:\/\/[^\"'\s]+\/download\.aspx\?[^\"'\s]+/gi) || [];
-          dlCandidates.push(...allDlMatches);
-          dlCandidates.push(`${personalPath}/_layouts/15/download.aspx?sourcedoc=%7B08c8a01a-45a5-4439-94f4-5f0505ede3b3%7D`);
 
           for (const dl of dlCandidates) {
             try {
               const r3 = await fetch(dl, {
                 headers: {
-                  "Cookie": cookieHeader,
+                  "Cookie": cookieHeader2,
                   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 }
               });
@@ -3907,9 +3901,9 @@ async function startServer() {
                 const u8 = new Uint8Array(rawBytes.slice(0, 4));
                 if (rawBytes.byteLength > 2000 && u8[0] === 0x50 && u8[1] === 0x4B) {
                   buf = rawBytes;
-                  // Persistir cópia em disco
+                  // Persistir cópia atualizada em disco
                   fs.writeFileSync(localSinistrosFile, Buffer.from(rawBytes));
-                  console.log(`[Risel Sinistros Direct Sync] Download do SharePoint realizado com sucesso (${rawBytes.byteLength} bytes).`);
+                  console.log(`[Risel Sinistros Direct Sync] Download do SharePoint realizado com sucesso via Link Aberto (${rawBytes.byteLength} bytes).`);
                   break;
                 }
               }
@@ -3918,6 +3912,18 @@ async function startServer() {
         }
       } catch (err: any) {
         console.warn("[Risel Sinistros Direct Sync] Tentativa de download do SharePoint:", err.message);
+      }
+    }
+
+    // 2. Se falhar ou estiver sem rede, ler arquivo local colocado na pasta DATA_DIR ou raiz
+    if (!buf) {
+      const chosenFile = fs.existsSync(localSinistrosFile) ? localSinistrosFile : (fs.existsSync(localSinistrosRoot) ? localSinistrosRoot : null);
+      if (chosenFile) {
+        try {
+          const fileData = fs.readFileSync(chosenFile);
+          buf = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
+          console.log(`[Risel Sinistros Direct Sync] Arquivo local utilizado como contingência: ${chosenFile}.`);
+        } catch (e) {}
       }
     }
 
@@ -4089,7 +4095,19 @@ async function startServer() {
             }
 
             if (importedList.length > 0) {
-              currentSinistros = importedList;
+              const existingMap = new Map<string, any>();
+              currentSinistros.forEach(s => {
+                const k = String(s.numeroProtocolo || s.id).trim();
+                if (k) existingMap.set(k, s);
+              });
+
+              importedList.forEach(imp => {
+                const k = String(imp.numeroProtocolo || imp.id).trim();
+                const prev = existingMap.get(k) || {};
+                existingMap.set(k, { ...prev, ...imp });
+              });
+
+              currentSinistros = Array.from(existingMap.values());
               fs.writeFileSync(SINISTROS_FILE, JSON.stringify(currentSinistros, null, 2), "utf-8");
               config.lastSync = new Date().toISOString();
               config.status = "conectado";
@@ -4152,7 +4170,7 @@ async function startServer() {
       fs.writeFileSync(targetPath, buffer);
       console.log(`[Risel Sinistros Direct Sync] Arquivo salvo em ${targetPath} (${buffer.length} bytes). Processando aba Sheet1...`);
       const list = await syncSinistrosDirectlyFromSheet1(true);
-      return res.json({ success: true, totalSinistros: list.length });
+      return res.json({ success: true, totalSinistros: list.length, items: list });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
@@ -4227,6 +4245,9 @@ async function startServer() {
   });
 
   app.get("/api/sinistros", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     try {
       const list = await syncSinistrosDirectlyFromSheet1(false);
       return res.json(Array.isArray(list) ? list : []);
