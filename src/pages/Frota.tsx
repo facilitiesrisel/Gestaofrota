@@ -707,7 +707,16 @@ export default function Frota() {
   };
 
   // Core States
-  const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
+  const [veiculos, setVeiculos] = useState<Veiculo[]>(() => {
+    try {
+      const stored = localStorage.getItem("risel_frota_veiculos_v2");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return VEICULOS_REAIS;
+  });
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [dailyTrips, setDailyTrips] = useState<any[]>([]);
@@ -1676,26 +1685,28 @@ export default function Frota() {
         setVeiculos(supabaseVehicles);
         localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(supabaseVehicles));
       } else {
-        // Se a tabela no Supabase estiver vazia, grava os 75 veículos reais e contratos automaticamente no Supabase
-        setVeiculos(VEICULOS_REAIS);
-        localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(VEICULOS_REAIS));
-        saveBatchVeiculosSupabase(VEICULOS_REAIS).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
-        
-        const contratosBatch = VEICULOS_REAIS.filter(v => Boolean(v.vencContrato)).map(v => ({
-          id: `cto-${v.placa}`,
-          numero: v.contrato || `CTO-${v.placa}`,
-          veiculoPlaca: v.placa,
-          fornecedor: v.locadora || "Locadora",
-          tipoContrato: "Locação",
-          dataVencimento: v.vencContrato,
-          status: "Ativo"
-        }));
-        saveBatchContratosSupabase(contratosBatch).catch(e => console.warn("Aviso ao salvar contratos no Supabase:", e));
+        // Se a tabela no Supabase estiver vazia e não houver cache local, inicializa com VEICULOS_REAIS
+        const cached = localStorage.getItem("risel_frota_veiculos_v2");
+        if (!cached) {
+          setVeiculos(VEICULOS_REAIS);
+          localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(VEICULOS_REAIS));
+          saveBatchVeiculosSupabase(VEICULOS_REAIS).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
+          
+          const contratosBatch = VEICULOS_REAIS.filter(v => Boolean(v.vencContrato)).map(v => ({
+            id: `cto-${v.placa}`,
+            numero: v.contrato || `CTO-${v.placa}`,
+            veiculoPlaca: v.placa,
+            fornecedor: v.locadora || "Locadora",
+            tipoContrato: "Locação",
+            dataVencimento: v.vencContrato,
+            status: "Ativo"
+          }));
+          saveBatchContratosSupabase(contratosBatch).catch(e => console.warn("Aviso ao salvar contratos no Supabase:", e));
+        }
       }
     }).catch(err => {
       console.warn("Aviso ao buscar veículos do Supabase:", err);
-      setVeiculos(VEICULOS_REAIS);
-      localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(VEICULOS_REAIS));
+      // Mantém os veículos já em memória / localStorage sem sobrescrever com lista vazia
     });
 
     // 2. Checklists
@@ -2089,10 +2100,21 @@ export default function Frota() {
           });
 
           setVeiculos(prev => {
-            const currentList = prev.length > 0 ? prev : VEICULOS_REAIS;
+            let currentList = prev;
+            if (!currentList || currentList.length === 0) {
+              try {
+                const stored = localStorage.getItem("risel_frota_veiculos_v2");
+                if (stored) {
+                  const parsed = JSON.parse(stored);
+                  if (Array.isArray(parsed) && parsed.length > 0) currentList = parsed;
+                }
+              } catch (e) {}
+            }
+            if (!currentList || currentList.length === 0) currentList = VEICULOS_REAIS;
+
             const updated = currentList.map(v => {
-              const cleanV = v.placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-              const matchingGeo = apiVehicles.find(a => a.placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanV);
+              const cleanV = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+              const matchingGeo = apiVehicles.find(a => (a.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanV);
               if (matchingGeo) {
                 return {
                   ...v,
@@ -2131,6 +2153,13 @@ export default function Frota() {
 
     // Salvar/Sincronizar de imediato no banco Supabase (Veículos e Contratos)
     saveBatchVeiculosSupabase(data).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
+    try {
+      fetch("/api/veiculos/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      }).catch(() => {});
+    } catch (e) {}
     const contratosBatch = data.filter(v => Boolean(v.vencContrato)).map(v => ({
       id: `cto-${v.placa}`,
       numero: v.contrato || `CTO-${v.placa}`,
@@ -2430,13 +2459,26 @@ export default function Frota() {
         : (((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() || "Contrato") as "Contrato" | "Provisório"),
     };
 
-    let updated;
+    let updated: Veiculo[];
+    const cleanCurrentPlaca = placaFinal.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     if (editingVeh) {
-      updated = veiculos.map(v => v.id === id ? data : v);
+      updated = veiculos.map(v => {
+        const vPlaca = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        return (v.id === id || vPlaca === cleanCurrentPlaca) ? data : v;
+      });
     } else {
       updated = [...veiculos, data];
     }
     saveVeiculos(updated);
+    // Persistência imediata e direta do veículo editado
+    saveVeiculoSupabase(data).catch(e => console.warn("Aviso ao salvar veículo editado no Supabase:", e));
+    try {
+      fetch("/api/veiculos/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      }).catch(() => {});
+    } catch (e) {}
     setIsVehModalOpen(false);
     setEditingVeh(null);
   };

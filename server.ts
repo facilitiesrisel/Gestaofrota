@@ -370,6 +370,8 @@ const LANCAMENTOS_DELETED_FILE = path.join(DATA_DIR, "lancamentos_deleted_ids.js
 const LANCAMENTOS_BACKUPS_DIR = path.join(DATA_DIR, "backups_lancamentos");
 const SINISTROS_FILE = path.join(DATA_DIR, "sinistros.json");
 const SINISTROS_CONFIG_FILE = path.join(DATA_DIR, "sinistros_config.json");
+const MULTAS_FILE = path.join(DATA_DIR, "multas_frota_leve.json");
+const VEICULOS_FILE = path.join(DATA_DIR, "veiculos_frota_leve.json");
 const DEFAULT_SINISTROS_SHAREPOINT_URL = "https://riselcombustiveis-my.sharepoint.com/:x:/g/personal/deny_goncalves_risel_com_br/IQAaoMgIpUU5RJT0XwUF7eOzAYV0pCLYDAlOmFtiaTpQbso?e=RIBeKX";
 const DEFAULT_SINISTROS_FORMS_URL = "https://forms.cloud.microsoft/Pages/DesignPageV2.aspx?prevorigin=Marketing&origin=NeoPortalPage&subpage=design&id=--soOq0dkkmCvV864R49jTu3qwhCFQBElTcewqtXSeRUQTE2N0tGUjlEMjREQU5OUzFKN1NSR1pQWS4u";
 const DEFAULT_SINISTROS_DRIVE_FOLDER = "https://drive.google.com/drive/folders/1A62QNaC-5m7xMVzZtUxvXxBCHREp_jse?hl=pt-br";
@@ -4324,6 +4326,155 @@ async function startServer() {
       return res.json({ success: true, count: updated.length });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- ENDPOINTS MULTAS FROTA LEVE (COMPARTILHAMENTO ENTRE TODOS OS USUÁRIOS) ---
+  app.get("/api/multas", (req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    try {
+      if (fs.existsSync(MULTAS_FILE)) {
+        const raw = fs.readFileSync(MULTAS_FILE, "utf-8");
+        const list = JSON.parse(raw);
+        return res.json(Array.isArray(list) ? list : []);
+      }
+      return res.json([]);
+    } catch (e: any) {
+      console.warn("Aviso ao ler multas:", e.message);
+      return res.json([]);
+    }
+  });
+
+  app.post("/api/multas", express.json({ limit: "50mb" }), (req, res) => {
+    try {
+      const item = req.body;
+      if (!item || (!item.id && !item.ait)) {
+        return res.status(400).json({ error: "Multa inválida." });
+      }
+      let current: any[] = [];
+      if (fs.existsSync(MULTAS_FILE)) {
+        try {
+          const raw = fs.readFileSync(MULTAS_FILE, "utf-8");
+          current = JSON.parse(raw) || [];
+        } catch (err) {}
+      }
+      const searchKey = String(item.id || item.ait || "").trim().toUpperCase();
+      const idx = current.findIndex(m => String(m.id || m.ait || "").trim().toUpperCase() === searchKey);
+      if (idx >= 0) {
+        current[idx] = { ...current[idx], ...item };
+      } else {
+        current.unshift(item);
+      }
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(MULTAS_FILE, JSON.stringify(current, null, 2), "utf-8");
+      return res.json({ success: true, item, count: current.length });
+    } catch (e: any) {
+      console.error("Erro ao salvar multa no servidor:", e);
+      return res.status(500).json({ error: e.message || "Erro ao salvar multa." });
+    }
+  });
+
+  app.post("/api/multas/batch", express.json({ limit: "50mb" }), (req, res) => {
+    try {
+      const items = req.body;
+      if (!Array.isArray(items)) {
+        return res.status(400).json({ error: "Lote de multas inválido." });
+      }
+      let current: any[] = [];
+      if (fs.existsSync(MULTAS_FILE)) {
+        try {
+          const raw = fs.readFileSync(MULTAS_FILE, "utf-8");
+          current = JSON.parse(raw) || [];
+        } catch (err) {}
+      }
+      const map = new Map<string, any>();
+      current.forEach(m => {
+        const k = String(m.id || m.ait || "").trim().toUpperCase();
+        if (k) map.set(k, m);
+      });
+      items.forEach(m => {
+        const k = String(m.id || m.ait || "").trim().toUpperCase();
+        if (k) map.set(k, { ...(map.get(k) || {}), ...m });
+      });
+      const updatedList = Array.from(map.values());
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(MULTAS_FILE, JSON.stringify(updatedList, null, 2), "utf-8");
+      return res.json({ success: true, count: updatedList.length });
+    } catch (e: any) {
+      console.error("Erro ao salvar lote de multas no servidor:", e);
+      return res.status(500).json({ error: e.message || "Erro ao salvar lote de multas." });
+    }
+  });
+
+  app.delete("/api/multas/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      let current: any[] = [];
+      if (fs.existsSync(MULTAS_FILE)) {
+        try {
+          const raw = fs.readFileSync(MULTAS_FILE, "utf-8");
+          current = JSON.parse(raw) || [];
+        } catch (err) {}
+      }
+      const searchKey = String(id || "").trim().toUpperCase();
+      const updated = current.filter(m => String(m.id || m.ait || "").trim().toUpperCase() !== searchKey);
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(MULTAS_FILE, JSON.stringify(updated, null, 2), "utf-8");
+      return res.json({ success: true, count: updated.length });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- PERSISTÊNCIA COMPARTILHADA DE VEÍCULOS FROTA LEVE ---
+  app.post("/api/veiculos/save", express.json({ limit: "50mb" }), (req, res) => {
+    try {
+      const payload = req.body;
+      let current: any[] = [];
+      if (fs.existsSync(VEICULOS_FILE)) {
+        try {
+          const raw = fs.readFileSync(VEICULOS_FILE, "utf-8");
+          current = JSON.parse(raw) || [];
+        } catch (e) {}
+      }
+      if (Array.isArray(payload)) {
+        const map = new Map<string, any>();
+        current.forEach(v => {
+          const cleanPlaca = String(v.placa || v.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+          if (cleanPlaca) map.set(cleanPlaca, v);
+        });
+        payload.forEach(v => {
+          const cleanPlaca = String(v.placa || v.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+          if (cleanPlaca) map.set(cleanPlaca, { ...(map.get(cleanPlaca) || {}), ...v });
+        });
+        current = Array.from(map.values());
+      } else if (payload && (payload.placa || payload.id)) {
+        const cleanPlaca = String(payload.placa || payload.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+        const idx = current.findIndex(v => String(v.placa || v.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanPlaca);
+        if (idx >= 0) {
+          current[idx] = { ...current[idx], ...payload };
+        } else {
+          current.push(payload);
+        }
+      }
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(VEICULOS_FILE, JSON.stringify(current, null, 2), "utf-8");
+      return res.json({ success: true, count: current.length });
+    } catch (e: any) {
+      console.error("Erro ao salvar veículos no servidor:", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/veiculos/local", (req, res) => {
+    try {
+      if (fs.existsSync(VEICULOS_FILE)) {
+        const raw = fs.readFileSync(VEICULOS_FILE, "utf-8");
+        return res.json(JSON.parse(raw));
+      }
+      return res.json([]);
+    } catch (e: any) {
+      return res.json([]);
     }
   });
 

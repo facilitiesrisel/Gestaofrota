@@ -23,6 +23,8 @@ export interface Veiculo {
   ano?: string; // ANO
   filial: string; // FILIAL
   base?: string; // BASE / FILIAL alias
+  condutor?: string; // Condutor / Motorista cadastrado
+  cpfCondutor?: string; // CPF do Condutor
   email?: string; // E-mail cadastrado
   regiao?: string; // REGIÃO
   tipo?: string; // TIPO
@@ -42,6 +44,7 @@ export interface Motorista {
   login: string; // ID/Code
   nome: string;
   base?: string; // Coluna C
+  cpf?: string;
 }
 
 export interface CodigoMulta {

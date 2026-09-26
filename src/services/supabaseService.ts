@@ -1056,6 +1056,7 @@ export interface SupabaseVeiculo {
 
 export async function fetchVeiculosSupabase(): Promise<any[]> {
   try {
+    const cleanPlateKey = (p: string) => String(p || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
     const client = getSupabaseClient();
     const { data, error } = await client
       .from('veiculos')
@@ -1064,15 +1065,29 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
 
     if (error) {
       console.warn("Aviso ao buscar veículos no Supabase:", error.message);
-      return [];
     }
 
-    const dbMap = new Map((data || []).map(row => [row.placa, row]));
+    let records = data || [];
+
+    // Fallback para servidor local se Supabase retornar vazio
+    if (!records || records.length === 0) {
+      try {
+        const localRes = await fetch("/api/veiculos/local");
+        if (localRes.ok) {
+          const localData = await localRes.json();
+          if (Array.isArray(localData) && localData.length > 0) {
+            records = localData;
+          }
+        }
+      } catch (e) {}
+    }
+
+    const dbMap = new Map((records || []).map(row => [cleanPlateKey(row.placa), row]));
     let needsSync = false;
 
-    // Garante que todos os 75 veículos reais façam parte da lista
+    // Garante que todos os 75 veículos reais façam parte da lista com dados atualizados
     const mergedList = VEICULOS_REAIS.map(real => {
-      const row = dbMap.get(real.placa);
+      const row = dbMap.get(cleanPlateKey(real.placa));
       if (!row) {
         needsSync = true;
         return real;
@@ -1085,33 +1100,28 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
         } catch (e) {}
       }
 
-      // Se no Supabase a filial veio como CAMPINEIRA ou vazia, mas existe filial original em VEICULOS_REAIS, restaura a filial cadastrada originalmente
       const realFilial = real.filial;
       const rawFilial = row.filial || row.base || extra.filial;
       const filialFinal = (rawFilial && rawFilial !== "CAMPINEIRA" && rawFilial !== "Campineira") 
         ? rawFilial 
         : (realFilial || rawFilial || "CAMPINEIRA");
 
-      if (!row.venc_contrato || !row.gestor_resp || !row.email || !row.filial || !row.locadora || row.filial !== filialFinal) {
-        needsSync = true;
-      }
-
       return {
-        id: row.placa,
-        placa: row.placa,
+        id: row.placa || real.placa,
+        placa: real.placa || row.placa,
         modelo: row.modelo || real.modelo || "Veículo Frota",
         vencContrato: row.venc_contrato || row.vencContrato || extra.vencContrato || real.vencContrato || "",
-        condutor: row.condutor || real.condutor || "Disponível",
-        cpfCondutor: row.cpf_condutor || row.cpfCondutor || extra.cpfCondutor || real.cpfCondutor || "",
-        cnhValidade: row.cnh_validade || row.cnhValidade || extra.cnhValidade || "",
-        cnhNumero: row.cnh_numero || row.cnhNumero || extra.cnhNumero || "",
-        cnhAnexoBase64: row.cnh_anexo_base64 || row.cnhAnexoBase64 || extra.cnhAnexoBase64 || "",
-        cnhNomeArquivo: row.cnh_nome_arquivo || row.cnhNomeArquivo || extra.cnhNomeArquivo || "",
+        condutor: row.condutor || extra.condutor || real.condutor || "Disponível",
+        cpfCondutor: extra.cpfCondutor || row.cpf_condutor || row.cpfCondutor || real.cpfCondutor || "",
+        cnhValidade: extra.cnhValidade || row.cnh_validade || row.cnhValidade || "",
+        cnhNumero: extra.cnhNumero || row.cnh_numero || row.cnhNumero || "",
+        cnhAnexoBase64: extra.cnhAnexoBase64 || row.cnh_anexo_base64 || row.cnhAnexoBase64 || "",
+        cnhNomeArquivo: extra.cnhNomeArquivo || row.cnh_nome_arquivo || row.cnhNomeArquivo || "",
         funcao: row.funcao || extra.funcao || real.funcao || "Motorista",
-        setor: row.setor || extra.setor || (real as any).setor || "",
+        setor: extra.setor || row.setor || (real as any).setor || "",
         contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || real.contatoMotorista || "",
         gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || real.gestorResp || "",
-        email: row.email || extra.email || real.email || "",
+        email: row.email !== undefined && row.email !== null && row.email !== "" ? row.email : (extra.email !== undefined && extra.email !== null && extra.email !== "" ? extra.email : (real.email || "")),
         filial: filialFinal,
         base: filialFinal,
         locadora: row.locadora || extra.locadora || real.locadora || "Frota Própria",
@@ -1120,16 +1130,17 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
         combustivel: row.combustivel || row.combustivel_padrao || extra.combustivel || real.combustivel || "Flex",
         status: row.status || real.status || "Ativo",
         dataTrocaCondutor: row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || real.dataTrocaCondutor || "",
-        dataInativacao: row.data_inativacao || row.dataInativacao || extra.dataInativacao || (real as any).dataInativacao || "",
-        motivoInativacao: row.motivo_inativacao || row.motivoInativacao || extra.motivoInativacao || (real as any).motivoInativacao || "",
-        tipoVinculo: row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.tipoVinculo !== undefined ? row.tipoVinculo : (extra.tipoVinculo !== undefined ? extra.tipoVinculo : ((row.locadora === "FROTA PRÓPRIA" || (real && real.locadora === "FROTA PRÓPRIA")) ? "" : "Contrato"))),
+        dataInativacao: extra.dataInativacao || row.data_inativacao || row.dataInativacao || (real as any).dataInativacao || "",
+        motivoInativacao: extra.motivoInativacao || row.motivo_inativacao || row.motivoInativacao || (real as any).motivoInativacao || "",
+        tipoVinculo: extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.locadora === "FROTA PRÓPRIA" || (real && real.locadora === "FROTA PRÓPRIA") ? "" : "Contrato")),
         observacoes: row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || (real as any).observacoes || "")
       };
     });
 
-    // Inclui também veículos que foram criados manualmente diretamente no Supabase e que não estão na lista padrão
-    (data || []).forEach(row => {
-      if (!VEICULOS_REAIS.some(v => v.placa === row.placa)) {
+    // Inclui também veículos extras cadastrados manualmente diretamente
+    (records || []).forEach(row => {
+      const cleanR = cleanPlateKey(row.placa);
+      if (!VEICULOS_REAIS.some(v => cleanPlateKey(v.placa) === cleanR)) {
         let extra: any = {};
         if (row.observacoes && typeof row.observacoes === "string" && row.observacoes.startsWith("{")) {
           try { extra = JSON.parse(row.observacoes); } catch (e) {}
@@ -1139,10 +1150,14 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
           placa: row.placa,
           modelo: row.modelo || "Veículo Frota",
           vencContrato: row.venc_contrato || row.vencContrato || extra.vencContrato || "",
-          condutor: row.condutor || "Disponível",
-          cpfCondutor: row.cpf_condutor || row.cpfCondutor || extra.cpfCondutor || "",
+          condutor: row.condutor || extra.condutor || "Disponível",
+          cpfCondutor: extra.cpfCondutor || row.cpf_condutor || row.cpfCondutor || "",
+          cnhValidade: extra.cnhValidade || "",
+          cnhNumero: extra.cnhNumero || "",
+          cnhAnexoBase64: extra.cnhAnexoBase64 || "",
+          cnhNomeArquivo: extra.cnhNomeArquivo || "",
           funcao: row.funcao || extra.funcao || "Motorista",
-          setor: row.setor || extra.setor || "",
+          setor: extra.setor || row.setor || "",
           contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || "",
           gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || "",
           email: row.email || extra.email || "",
@@ -1153,17 +1168,17 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
           combustivel: row.combustivel || row.combustivel_padrao || extra.combustivel || "Flex",
           status: row.status || "Ativo",
           dataTrocaCondutor: row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || "",
-          dataInativacao: row.data_inativacao || row.dataInativacao || extra.dataInativacao || "",
-          motivoInativacao: row.motivo_inativacao || row.motivoInativacao || extra.motivoInativacao || "",
-          tipoVinculo: row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.tipoVinculo !== undefined ? row.tipoVinculo : (extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"))),
+          dataInativacao: extra.dataInativacao || row.data_inativacao || row.dataInativacao || "",
+          motivoInativacao: extra.motivoInativacao || row.motivo_inativacao || row.motivoInativacao || "",
+          tipoVinculo: extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.locadora === "FROTA PRÓPRIA" ? "" : "Contrato")),
           observacoes: row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || "")
         });
       }
     });
 
-    // Se identificou dados que vieram com campos ausentes/NULL no Supabase, atualiza todos em lote para preencher as novas colunas
-    if (needsSync || (data || []).length < VEICULOS_REAIS.length) {
-      saveBatchVeiculosSupabase(mergedList).catch(err => console.warn("Aviso ao sincronizar campos dos veículos no Supabase:", err));
+    // Se identificou veículos faltantes no banco, salva os faltantes
+    if (needsSync && (data || []).length === 0) {
+      saveBatchVeiculosSupabase(mergedList).catch(err => console.warn("Aviso ao inicializar veículos no Supabase:", err));
     }
 
     return mergedList;
@@ -1206,9 +1221,9 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       observacoes: item.observacoes || ""
     });
 
-    const dbRecord = {
+    const dbRecord: any = {
       placa: cleanPlaca,
-      modelo: item.modelo || "Veículo Frota",
+      modelo: item.modelo || (realVeh ? realVeh.modelo : "Veículo Frota"),
       marca: item.marca || "",
       ano: Number(item.ano) || new Date().getFullYear(),
       tipo: item.tipo || "Leve",
@@ -1217,15 +1232,8 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       status: item.status || "Ativo",
       km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
       combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
-      // Campos detalhados explícitos no Supabase
       venc_contrato: item.vencContrato || "",
-      cpf_condutor: item.cpfCondutor || "",
-      cnh_validade: item.cnhValidade || "",
-      cnh_numero: item.cnhNumero || "",
-      cnh_anexo_base64: item.cnhAnexoBase64 || "",
-      cnh_nome_arquivo: item.cnhNomeArquivo || "",
       funcao: item.funcao || "Motorista",
-      setor: item.setor || "",
       contato_motorista: item.contatoMotorista || "",
       gestor_resp: item.gestorResp || "",
       email: item.email || "",
@@ -1235,8 +1243,6 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       odometro: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
       combustivel: item.combustivel || item.combustivelPadrao || "Flex",
       data_troca_condutor: item.dataTrocaCondutor || "",
-      data_inativacao: item.dataInativacao || "",
-      motivo_inativacao: item.motivoInativacao || "",
       observacoes: extraData
     };
 
@@ -1244,7 +1250,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       .from('veiculos')
       .upsert(dbRecord, { onConflict: 'placa' });
 
-    // Fallback caso a tabela no Supabase não contenha colunas mais recentes
+    // Fallback caso colunas opcionais falhem
     if (error) {
       const standardRecord = {
         placa: cleanPlaca,
@@ -1257,6 +1263,8 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
         status: item.status || "Ativo",
         km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
         combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
+        email: item.email || "",
+        gestor_resp: item.gestorResp || "",
         observacoes: extraData
       };
       const fallbackRes = await client
@@ -1269,6 +1277,16 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       }
       return true;
     }
+
+    // Persistência adicional no backend local
+    try {
+      fetch("/api/veiculos/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...item, filial: resolvedFilial, email: item.email || "" })
+      }).catch(() => {});
+    } catch (e) {}
+
     return true;
   } catch (err) {
     console.error("Erro no saveVeiculoSupabase:", err);
@@ -1324,13 +1342,7 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
         combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
         venc_contrato: item.vencContrato || "",
-        cpf_condutor: item.cpfCondutor || "",
-        cnh_validade: item.cnhValidade || "",
-        cnh_numero: item.cnhNumero || "",
-        cnh_anexo_base64: item.cnhAnexoBase64 || "",
-        cnh_nome_arquivo: item.cnhNomeArquivo || "",
         funcao: item.funcao || "Motorista",
-        setor: item.setor || "",
         contato_motorista: item.contatoMotorista || "",
         gestor_resp: item.gestorResp || "",
         email: item.email || "",
@@ -1340,8 +1352,6 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         odometro: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
         combustivel: item.combustivel || item.combustivelPadrao || "Flex",
         data_troca_condutor: item.dataTrocaCondutor || "",
-        data_inativacao: item.dataInativacao || "",
-        motivo_inativacao: item.motivoInativacao || "",
         observacoes: extraData
       };
     });
@@ -1361,7 +1371,13 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
 
         const extraData = JSON.stringify({
           vencContrato: item.vencContrato || "",
+          cpfCondutor: item.cpfCondutor || "",
+          cnhValidade: item.cnhValidade || "",
+          cnhNumero: item.cnhNumero || "",
+          cnhAnexoBase64: item.cnhAnexoBase64 || "",
+          cnhNomeArquivo: item.cnhNomeArquivo || "",
           funcao: item.funcao || "",
+          setor: item.setor || "",
           contatoMotorista: item.contatoMotorista || "",
           gestorResp: item.gestorResp || "",
           email: item.email || "",
@@ -1387,6 +1403,8 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
           status: item.status || "Ativo",
           km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
           combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
+          email: item.email || "",
+          gestor_resp: item.gestorResp || "",
           observacoes: extraData
         };
       });
@@ -1399,13 +1417,24 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         console.warn("Aviso ao gravar lote padrão de veículos no Supabase:", fallbackRes.error.message);
         return { count: 0, success: false };
       }
+      try {
+        fetch("/api/veiculos/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(items)
+        }).catch(() => {});
+      } catch (e) {}
       return { count: standardBatch.length, success: true };
     }
 
-    if (error) {
-      console.error("Erro ao gravar lote de veículos no Supabase:", error.message || error);
-      return { count: 0, success: false };
-    }
+    // Persistência adicional no backend local
+    try {
+      fetch("/api/veiculos/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(items)
+      }).catch(() => {});
+    } catch (e) {}
 
     return { count: dbRecords.length, success: true };
   } catch (err) {

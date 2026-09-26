@@ -781,7 +781,24 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       setLoading(false);
   };
 
-  useEffect(() => { loadData(false); }, []);
+  useEffect(() => { 
+    loadData(false); 
+
+    // Sincronização periódica entre usuários a cada 20 segundos
+    const syncTimer = setInterval(() => {
+      loadData(false);
+    }, 20000);
+
+    const onFocus = () => {
+      loadData(false);
+    };
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      clearInterval(syncTimer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
 
   const clearError = (field: string) => { if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n; }); };
 
@@ -939,7 +956,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           let foundFrota = '';
           let foundCpf = '';
 
-          // 1. Procurar em veiculos
+          // 1. Procurar em veiculos (exato ou prefixo)
           const veiculo = veiculos.find(v => cleanString(v.placa) === cleanVal);
           if (veiculo) {
               foundFrota = veiculo.id || veiculo.placa;
@@ -948,19 +965,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               foundCpf = (veiculo as any).cpfCondutor || (veiculo as any).cpf || '';
           }
 
-          // 2. Procurar em VEICULOS_REAIS se não encontrou condutor/filial
-          if ((!foundFilial || !foundMotorista) && Array.isArray(VEICULOS_REAIS)) {
-              const vr = VEICULOS_REAIS.find(v => cleanString(v.placa) === cleanVal);
-              if (vr) {
-                  if (!foundFrota) foundFrota = vr.placa;
-                  if (!foundFilial) foundFilial = vr.filial || '';
-                  if (!foundMotorista) foundMotorista = vr.condutor || (vr as any).motorista || '';
-                  if (!foundCpf) foundCpf = (vr as any).cpfCondutor || '';
-              }
-          }
-
-          // 3. Procurar em risel_frota_veiculos_v2 no LocalStorage
-          if (!foundFilial || !foundMotorista) {
+          // 2. Procurar em risel_frota_veiculos_v2 no LocalStorage (sempre checa se faltar CPF ou condutor)
+          if (!foundCpf || !foundFilial || !foundMotorista) {
               try {
                   const storedV = localStorage.getItem("risel_frota_veiculos_v2");
                   if (storedV) {
@@ -976,13 +982,36 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               } catch (e) {}
           }
 
+          // 3. Procurar em VEICULOS_REAIS
+          if ((!foundFilial || !foundMotorista || !foundCpf) && Array.isArray(VEICULOS_REAIS)) {
+              const vr = VEICULOS_REAIS.find(v => cleanString(v.placa) === cleanVal);
+              if (vr) {
+                  if (!foundFrota) foundFrota = vr.placa;
+                  if (!foundFilial) foundFilial = vr.filial || '';
+                  if (!foundMotorista) foundMotorista = vr.condutor || (vr as any).motorista || '';
+                  if (!foundCpf) foundCpf = (vr as any).cpfCondutor || '';
+              }
+          }
+
+          // 4. Se encontrou o motorista mas ainda não tem o CPF, busca no cadastro de motoristas
+          if (!foundCpf && foundMotorista) {
+              const cleanMot = cleanString(foundMotorista);
+              const driver = motoristas.find(m => cleanString(m.nome) === cleanMot || cleanString(m.nome).includes(cleanMot) || cleanMot.includes(cleanString(m.nome)));
+              if (driver && driver.cpf) {
+                  foundCpf = driver.cpf;
+              }
+          }
+
+          const cleanDigits = cleanCPF(foundCpf);
+          const formattedCpf = cleanDigits && cleanDigits.length === 11 ? formatCPF(cleanDigits) : foundCpf;
+
           setFormData(prev => ({ 
               ...prev, 
               placa: rawText, 
               frota: foundFrota || prev.frota || rawText, 
               base: foundFilial || prev.base || '',
               responsavelNome: foundMotorista || prev.responsavelNome || '',
-              responsavelCodigo: foundCpf || prev.responsavelCodigo || ''
+              responsavelCodigo: formattedCpf || prev.responsavelCodigo || ''
           }));
           clearError('frota');
       }
@@ -2770,18 +2799,17 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             </td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 text-center align-middle whitespace-nowrap">
                                                 <div className="flex items-center justify-center space-x-1.5">
-                                                    {multa.linkAuth && (
-                                                        <button 
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                openTermoInNewTab(multa, multa.linkAuth);
-                                                            }}
-                                                            className="text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-1 rounded-md transition-colors"
-                                                            title="Visualizar Termo de Desconto em Nova Aba"
-                                                        >
-                                                            <FileText size={14} />
-                                                        </button>
-                                                    )}
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            openPdfViewer(multa.linkAuth, "Termo de Autorização de Desconto em Folha", `Autorizacao_Desconto_${multa.placa || 'MULTA'}.pdf`, multa);
+                                                        }}
+                                                        className="text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer font-bold text-[10px]"
+                                                        title="Visualizar Termo de Autorização de Desconto na Tela"
+                                                    >
+                                                        <Eye size={13} className="text-emerald-700" />
+                                                        <span>Ver Termo</span>
+                                                    </button>
                                                     {atts.length > 0 && (
                                                         <button 
                                                             onClick={(e) => {
@@ -2793,9 +2821,6 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                                         >
                                                             <Paperclip size={14} />
                                                         </button>
-                                                    )}
-                                                    {!multa.linkAuth && atts.length === 0 && (
-                                                        <span className="text-[10px] text-slate-300">-</span>
                                                     )}
                                                 </div>
                                             </td>
@@ -2818,6 +2843,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 pdfUrlOrData={pdfModalData.url}
                 title={pdfModalData.title}
                 fileName={pdfModalData.fileName}
+                multaData={pdfModalData.multaData}
             />
 
             {renderEmailModal()}
@@ -3390,37 +3416,51 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                     <FileText size={13} className={formData.linkAuth ? "text-emerald-700" : "text-slate-600"}/> 
                                     <span className="text-[11px] font-black text-slate-800">Termo de Desconto em Folha (PDF)</span>
                                 </div>
-                                {formData.linkAuth && (
+                                {formData.linkAuth ? (
                                     <div className="mt-0.5 flex items-center space-x-2">
                                         <span className="inline-flex items-center text-[9px] font-black text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-200">
                                             <CheckCircle2 size={10} className="mr-1 text-emerald-600"/> Anexado
                                         </span>
                                         <button 
                                             type="button"
-                                            onClick={() => openTermoInNewTab(formData, formData.linkAuth)} 
-                                            className="text-[10px] text-emerald-700 font-bold underline hover:text-emerald-900 flex items-center"
-                                            title="Abrir Termo em nova aba do navegador"
+                                            onClick={() => openPdfViewer(formData.linkAuth, "Termo de Autorização de Desconto em Folha", `Autorizacao_Desconto_${formData.placa || 'MULTA'}.pdf`, formData)} 
+                                            className="text-[10px] text-emerald-700 font-bold underline hover:text-emerald-900 flex items-center cursor-pointer"
+                                            title="Ver o Termo diretamente na tela"
                                         >
-                                            <Eye size={11} className="mr-1"/> Visualizar
+                                            <Eye size={11} className="mr-1"/> Visualizar na Tela
                                         </button>
                                     </div>
+                                ) : (
+                                    <span className="text-[9px] text-slate-500 mt-0.5">
+                                        Visualização fiel na tela disponível
+                                    </span>
                                 )}
                             </div>
-                            <button 
-                                type="button"
-                                onClick={() => { generateAuthPDF(); }} 
-                                disabled={generatingPdf} 
-                                className={`text-[10px] px-2 py-1 rounded-lg flex items-center font-black shadow-xs transition-all shrink-0 ${
-                                    generatingPdf 
-                                        ? 'bg-slate-300 text-white cursor-not-allowed' 
-                                        : formData.linkAuth
-                                            ? 'bg-emerald-800 text-white hover:bg-emerald-900 active:scale-95'
-                                            : 'bg-emerald-700 text-white hover:bg-emerald-800 hover:shadow active:scale-95'
-                                }`}
-                            >
-                                {generatingPdf ? <Loader2 size={11} className="animate-spin mr-1"/> : <Download size={11} className="mr-1"/>} 
-                                {generatingPdf ? 'Gerando...' : (formData.linkAuth ? 'Regerar' : 'Gerar PDF')}
-                            </button>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                <button 
+                                    type="button"
+                                    onClick={() => openPdfViewer(formData.linkAuth, "Termo de Autorização de Desconto em Folha", `Autorizacao_Desconto_${formData.placa || 'MULTA'}.pdf`, formData)} 
+                                    className="text-[10px] px-2.5 py-1 rounded-lg flex items-center font-bold bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-50 transition-all cursor-pointer shadow-xs"
+                                    title="Ver a autorização de desconto diretamente na tela sem distorção"
+                                >
+                                    <Eye size={12} className="mr-1 text-emerald-700"/> Ver na Tela
+                                </button>
+                                <button 
+                                    type="button"
+                                    onClick={() => { generateAuthPDF(); }} 
+                                    disabled={generatingPdf} 
+                                    className={`text-[10px] px-2 py-1 rounded-lg flex items-center font-black shadow-xs transition-all shrink-0 cursor-pointer ${
+                                        generatingPdf 
+                                            ? 'bg-slate-300 text-white cursor-not-allowed' 
+                                            : formData.linkAuth
+                                                ? 'bg-emerald-800 text-white hover:bg-emerald-900 active:scale-95'
+                                                : 'bg-emerald-700 text-white hover:bg-emerald-800 hover:shadow active:scale-95'
+                                    }`}
+                                >
+                                    {generatingPdf ? <Loader2 size={11} className="animate-spin mr-1"/> : <Download size={11} className="mr-1"/>} 
+                                    {generatingPdf ? 'Gerando...' : (formData.linkAuth ? 'Regerar' : 'Gerar PDF')}
+                                </button>
+                            </div>
                         </div>
                     </div>
 

@@ -10,7 +10,8 @@ import {
   deleteMultaSupabase, 
   clearAllMultasSupabase,
   fetchEmailMappingsSupabase,
-  saveEmailMappingsSupabase
+  saveEmailMappingsSupabase,
+  fetchVeiculosSupabase
 } from '../../../services/supabaseService';
 
 const API_URL_KEY = 'risel_api_url';
@@ -699,27 +700,53 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
         }
     }
 
-    // Carregar veículos do Controle de Frota Leve
+    // Carregar veículos com dados completos do Supabase / Controle de Frota Leve
     let localVeiculos: Veiculo[] = [];
+    try {
+      const cloudVehicles = await fetchVeiculosSupabase();
+      if (Array.isArray(cloudVehicles) && cloudVehicles.length > 0) {
+        localVeiculos = cloudVehicles.map((v: any) => ({
+          id: v.placa || v.id,
+          status: (v.status || 'ATIVO').toUpperCase() === 'INATIVO' ? 'INATIVO' : 'ATIVO',
+          placa: cleanString(v.placa || ''),
+          filial: v.filial || v.base || 'Sede',
+          base: v.filial || v.base || 'Sede',
+          condutor: v.condutor || (v as any).motorista || '',
+          cpfCondutor: v.cpfCondutor || (v as any).cpf || '',
+          marca: v.marca || '',
+          modelo: v.modelo || '',
+          ano: String(v.ano || ''),
+          tipo: v.tipo || 'Passeio',
+          capacidade: v.capacidade || '',
+          regiao: v.regiao || '',
+          proprietario: v.locadora || v.proprietario || 'Próprio',
+          validadeLicenciamento: v.vencContrato || '',
+          email: v.email || ''
+        }));
+      }
+    } catch (e) {
+      console.warn("Aviso ao buscar veículos do Supabase no módulo de multas:", e);
+    }
+
+    // Mesclar dados enriquecidos de risel_frota_veiculos_v2 para garantir que cpfCondutor e email estejam presentes
     try {
       const storedV = localStorage.getItem("risel_frota_veiculos_v2");
       if (storedV) {
         const parsedV = JSON.parse(storedV);
-        if (Array.isArray(parsedV) && parsedV.length > 0) {
-          localVeiculos = parsedV.map((v: any) => ({
-            id: v.placa || v.id,
-            status: (v.status || 'ATIVO').toUpperCase() === 'INATIVO' ? 'INATIVO' : 'ATIVO',
-            placa: cleanString(v.placa || ''),
-            filial: v.filial || v.base || 'Sede',
-            marca: v.marca || '',
-            modelo: v.modelo || '',
-            ano: String(v.ano || ''),
-            tipo: v.tipo || 'Passeio',
-            capacidade: v.capacidade || '',
-            regiao: v.regiao || '',
-            proprietario: v.locadora || v.proprietario || 'Próprio',
-            validadeLicenciamento: v.vencContrato || ''
-          }));
+        if (Array.isArray(parsedV)) {
+          const storedMap = new Map(parsedV.map((item: any) => [cleanString(item.placa), item]));
+          localVeiculos = localVeiculos.map(v => {
+            const extra = storedMap.get(cleanString(v.placa));
+            if (extra) {
+              return {
+                ...v,
+                cpfCondutor: v.cpfCondutor || extra.cpfCondutor || extra.cpf || '',
+                email: v.email || extra.email || '',
+                condutor: v.condutor || extra.condutor || ''
+              };
+            }
+            return v;
+          });
         }
       }
     } catch (e) {}
@@ -730,6 +757,9 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
         status: (v.status || 'ATIVO').toUpperCase() === 'INATIVO' ? 'INATIVO' : 'ATIVO',
         placa: cleanString(v.placa || ''),
         filial: v.filial || 'Sede',
+        base: v.filial || 'Sede',
+        condutor: v.condutor || '',
+        cpfCondutor: v.cpfCondutor || '',
         marca: '',
         modelo: v.modelo || '',
         ano: '',
@@ -737,64 +767,64 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
         capacidade: '',
         regiao: '',
         proprietario: v.locadora || 'Próprio',
-        validadeLicenciamento: v.vencContrato || ''
+        validadeLicenciamento: v.vencContrato || '',
+        email: v.email || ''
       }));
     }
 
-    // Carregar multas DIRETAMENTE E EXCLUSIVAMENTE do Supabase e Banco Local (100% desconectado de planilhas)
+    // Carregar multas (1º: API Servidor Express Compartilhada, 2º: Supabase Cloud, 3º: LocalStorage/IndexedDB)
     let localMultas: Multa[] = [];
 
-    // Reset solicitado: Limpa os 59 registros de teste/antigos mantendo o banco zerado e sem tocar em planilhas
-    const resetExecuted = localStorage.getItem("risel_multas_cleared_v1");
-    if (!resetExecuted) {
-      try {
-        await clearAllMultasSupabase();
-      } catch (e) {}
-      localStorage.removeItem("risel_frota_multas");
-      localStorage.setItem("risel_multas_cleared_v1", "true");
-      try {
-        const idbOld = await idbGetAll<Multa>('multas');
-        if (idbOld && idbOld.length > 0) {
-          for (const m of idbOld) {
-            if (m.id) await idbDelete('multas', m.id);
-            if (m.ait) await idbDelete('multas', m.ait);
-          }
+    // 1. Tentar ler do Servidor Compartilhado Express (/api/multas)
+    try {
+      const resp = await fetch("/api/multas", { cache: "no-store" });
+      if (resp.ok) {
+        const serverMultas = await resp.json();
+        if (Array.isArray(serverMultas) && serverMultas.length > 0) {
+          localMultas = serverMultas;
         }
-      } catch (e) {}
-    } else {
-      try {
-        const dbMultas = await fetchMultasSupabase();
-        if (Array.isArray(dbMultas) && dbMultas.length > 0) {
-          localMultas = dbMultas;
-        }
-      } catch (e) {
-        console.warn("Aviso ao buscar multas do Supabase:", e);
       }
-
-      try {
-        const storedM = localStorage.getItem("risel_frota_multas");
-        if (storedM) {
-          const parsedM = JSON.parse(storedM);
-          if (Array.isArray(parsedM) && parsedM.length > 0) {
-            const map = new Map<string, Multa>();
-            parsedM.forEach((m: Multa) => map.set(m.id || m.ait, m));
-            localMultas.forEach((m: Multa) => map.set(m.id || m.ait, m));
-            localMultas = Array.from(map.values());
-          }
-        }
-      } catch (e) {}
-
-      // Tentar mesclar do IndexedDB se disponível
-      try {
-        const idbMultas = await idbGetAll<Multa>('multas');
-        if (idbMultas && idbMultas.length > 0) {
-          const idbMap = new Map<string, Multa>();
-          localMultas.forEach(m => idbMap.set(m.id || m.ait, m));
-          idbMultas.forEach(m => idbMap.set(m.id || m.ait, m));
-          localMultas = Array.from(idbMap.values());
-        }
-      } catch (e) {}
+    } catch (e) {
+      console.warn("Aviso ao buscar multas do servidor compartilhado:", e);
     }
+
+    // 2. Tentar mesclar com Supabase
+    try {
+      const dbMultas = await fetchMultasSupabase();
+      if (Array.isArray(dbMultas) && dbMultas.length > 0) {
+        const map = new Map<string, Multa>();
+        localMultas.forEach(m => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
+        dbMultas.forEach(m => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
+        localMultas = Array.from(map.values());
+      }
+    } catch (e) {
+      console.warn("Aviso ao buscar multas do Supabase:", e);
+    }
+
+    // 3. Mesclar do LocalStorage
+    try {
+      const storedM = localStorage.getItem("risel_frota_multas");
+      if (storedM) {
+        const parsedM = JSON.parse(storedM);
+        if (Array.isArray(parsedM) && parsedM.length > 0) {
+          const map = new Map<string, Multa>();
+          parsedM.forEach((m: Multa) => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
+          localMultas.forEach((m: Multa) => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
+          localMultas = Array.from(map.values());
+        }
+      }
+    } catch (e) {}
+
+    // 4. Mesclar do IndexedDB se disponível
+    try {
+      const idbMultas = await idbGetAll<Multa>('multas');
+      if (idbMultas && idbMultas.length > 0) {
+        const idbMap = new Map<string, Multa>();
+        localMultas.forEach(m => idbMap.set(String(m.id || m.ait).toUpperCase().trim(), m));
+        idbMultas.forEach(m => idbMap.set(String(m.id || m.ait).toUpperCase().trim(), m));
+        localMultas = Array.from(idbMap.values());
+      }
+    } catch (e) {}
 
     // Função de saneamento rigorosa para descartar multas de teste estáticas, resíduos ou abas incorretas
     const isMockOrTestMulta = (m: Multa) => {
@@ -1090,6 +1120,17 @@ export const saveMulta = async (multa: Multa) => {
     console.warn("Aviso ao salvar multa no Supabase:", e);
   }
 
+  // 1.1 Persistência Compartilhada Centralizada (API Express /api/multas para todos os usuários)
+  try {
+    await fetch("/api/multas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(multa)
+    });
+  } catch (apiErr) {
+    console.warn("Aviso ao persistir multa na API compartilhada:", apiErr);
+  }
+
   // 2. Persistência dupla local segura: IndexedDB + LocalStorage (com timeout para nunca travar)
   try {
     await Promise.race([
@@ -1199,6 +1240,17 @@ export const saveBatchMultas = async (
     console.warn("Aviso ao disparar sincronização Supabase:", err);
   }
 
+  // 6. Persistência Compartilhada Centralizada em Lote (/api/multas/batch) para todos os usuários
+  try {
+    await fetch("/api/multas/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(multasParaGravar)
+    });
+  } catch (apiErr) {
+    console.warn("Aviso ao persistir lote na API compartilhada:", apiErr);
+  }
+
   onProgress?.(100, total, total);
 
   return { success: true, count: multasParaGravar.length, updatedMultas: updatedList };
@@ -1232,6 +1284,15 @@ export const deleteMulta = async (id: string) => {
     await deleteMultaSupabase(id);
   } catch (e) {
     console.warn("Aviso ao deletar multa no Supabase:", e);
+  }
+
+  // Excluir do Servidor Compartilhado Express
+  try {
+    await fetch(`/api/multas/${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    });
+  } catch (apiErr) {
+    console.warn("Aviso ao deletar multa no servidor compartilhado:", apiErr);
   }
 
   await idbDelete('multas', id);
