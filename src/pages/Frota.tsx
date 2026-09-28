@@ -70,6 +70,7 @@ import {
 } from "../services/googleSheetsService";
 import { useAuth, hasSubmoduleAccess } from "../context/AuthContext";
 import { UserProfileBadge } from "../components/UserProfileBadge";
+import { safeSetItem, safeGetItem } from "../utils/safeStorage";
 
 // BENCHMARK DATE FOR CONTRACT EXPIRY COMPARISONS
 const HOJE_REF = "2026-07-03";
@@ -700,7 +701,7 @@ export default function Frota() {
       } catch (e) {}
     }
     parsed[tab] = true;
-    localStorage.setItem("risel_auth_submodules", JSON.stringify(parsed));
+    safeSetItem("risel_auth_submodules", JSON.stringify(parsed));
     setAuthenticatedTabs(parsed);
     // Notifica o MainLayout sobre a alteração do estado de autenticação
     window.dispatchEvent(new Event("risel_submodule_auth_change"));
@@ -709,7 +710,7 @@ export default function Frota() {
   // Core States
   const [veiculos, setVeiculos] = useState<Veiculo[]>(() => {
     try {
-      const stored = localStorage.getItem("risel_frota_veiculos_v2");
+      const stored = safeGetItem("risel_frota_veiculos_v2");
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -948,7 +949,7 @@ export default function Frota() {
   const handleUpdateAbastecimento = async (updatedItem: Abastecimento) => {
     const updatedList = abastecimentos.map(a => a.id === updatedItem.id ? updatedItem : a);
     setAbastecimentos(updatedList);
-    localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(updatedList));
+    safeSetItem("risel_frota_abastecimentos", JSON.stringify(updatedList));
 
     // Salva no Banco Supabase Real se configurado
     saveAbastecimentoSupabase(updatedItem).catch(e => console.warn("Supabase update error:", e));
@@ -970,7 +971,7 @@ export default function Frota() {
   const handleDeleteAbastecimento = async (id: string) => {
     const updatedList = abastecimentos.filter(a => a.id !== id);
     setAbastecimentos(updatedList);
-    localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(updatedList));
+    safeSetItem("risel_frota_abastecimentos", JSON.stringify(updatedList));
 
     // Remove do Banco Supabase Real
     deleteAbastecimentoSupabase(id).catch(e => console.warn("Supabase delete error:", e));
@@ -995,7 +996,7 @@ export default function Frota() {
       : [updatedItem, ...manutencoes];
     
     setManutencoes(updatedList);
-    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(updatedList));
+    safeSetItem("risel_frota_manutencoes", JSON.stringify(updatedList));
 
     saveManutencaoSupabase(updatedItem)
       .then(() => {
@@ -1010,7 +1011,7 @@ export default function Frota() {
   const handleDeleteManutencao = async (id: string) => {
     const updatedList = manutencoes.filter(m => String(m.id) !== String(id));
     setManutencoes(updatedList);
-    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(updatedList));
+    safeSetItem("risel_frota_manutencoes", JSON.stringify(updatedList));
 
     deleteManutencaoSupabase(id)
       .then(() => {
@@ -1422,7 +1423,7 @@ export default function Frota() {
       });
 
       setAbastecimentos(current);
-      localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(current));
+      safeSetItem("risel_frota_abastecimentos", JSON.stringify(current));
 
       showToast(
         "success", 
@@ -1444,7 +1445,7 @@ export default function Frota() {
     }
     if (window.confirm("Tem certeza que deseja zerar as informações de abastecimento para reiniciar a carga a partir dos arquivos CSV no Supabase?")) {
       setAbastecimentos([]);
-      localStorage.setItem("risel_frota_abastecimentos", "[]");
+      safeSetItem("risel_frota_abastecimentos", "[]");
       showToast("info", "Abastecimentos Zerados", "Os registros de abastecimento foram limpados. Importe seus arquivos CSV para gravar no Supabase.");
     }
   };
@@ -1459,7 +1460,7 @@ export default function Frota() {
         const sheetVehicles = await readVehiclesFromSheets();
         if (sheetVehicles.length > 0) {
           setVeiculos(sheetVehicles);
-          localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(sheetVehicles));
+          safeSetItem("risel_frota_veiculos_v2", JSON.stringify(sheetVehicles));
           console.log(`Carregados ${sheetVehicles.length} veículos da Planilha Google (gid=0).`);
         }
       } catch (vErr) {
@@ -1470,7 +1471,7 @@ export default function Frota() {
       const sheetFuel = await readFuelFromSheets(token);
       
       // Mesclar com abastecimentos locais/servidor para preservar novos arquivos CSV importados
-      const localStored: Abastecimento[] = JSON.parse(localStorage.getItem("risel_frota_abastecimentos") || "[]");
+      const localStored: Abastecimento[] = JSON.parse(safeGetItem("risel_frota_abastecimentos") || "[]");
       const existingKeys = new Set(sheetFuel.map(a => `${a.placa}-${a.data}-${a.litros}-${a.valorTotal}`));
       const mergedFuel = [...sheetFuel];
 
@@ -1485,7 +1486,7 @@ export default function Frota() {
       });
 
       setAbastecimentos(mergedFuel);
-      localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(mergedFuel));
+      safeSetItem("risel_frota_abastecimentos", JSON.stringify(mergedFuel));
       console.log(`Sincronização concluída: ${mergedFuel.length} abastecimentos consolidados (${sheetFuel.length} da planilha + ${mergedFuel.length - sheetFuel.length} locais).`);
     } catch (err: any) {
       console.error("Erro na sincronização:", err);
@@ -1683,13 +1684,13 @@ export default function Frota() {
     fetchVeiculosSupabase().then(supabaseVehicles => {
       if (supabaseVehicles && supabaseVehicles.length > 0) {
         setVeiculos(supabaseVehicles);
-        localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(supabaseVehicles));
+        safeSetItem("risel_frota_veiculos_v2", JSON.stringify(supabaseVehicles));
       } else {
         // Se a tabela no Supabase estiver vazia e não houver cache local, inicializa com VEICULOS_REAIS
-        const cached = localStorage.getItem("risel_frota_veiculos_v2");
+        const cached = safeGetItem("risel_frota_veiculos_v2");
         if (!cached) {
           setVeiculos(VEICULOS_REAIS);
-          localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(VEICULOS_REAIS));
+          safeSetItem("risel_frota_veiculos_v2", JSON.stringify(VEICULOS_REAIS));
           saveBatchVeiculosSupabase(VEICULOS_REAIS).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
           
           const contratosBatch = VEICULOS_REAIS.filter(v => Boolean(v.vencContrato)).map(v => ({
@@ -1706,11 +1707,11 @@ export default function Frota() {
       }
     }).catch(err => {
       console.warn("Aviso ao buscar veículos do Supabase:", err);
-      // Mantém os veículos já em memória / localStorage sem sobrescrever com lista vazia
+      // Mantém os veículos já em memória / safeStorage sem sobrescrever com lista vazia
     });
 
     // 2. Checklists
-    const savedCheck = localStorage.getItem("risel_frota_checklists");
+    const savedCheck = safeGetItem("risel_frota_checklists");
     let parsedCheck: Checklist[] = [];
     if (savedCheck) {
       try { parsedCheck = JSON.parse(savedCheck); } catch (e) {}
@@ -1723,13 +1724,13 @@ export default function Frota() {
         { id: "c3", placa: "SYL0A69", condutor: "Roberto Carlos Lima", data: "2026-06-28", odometro: 92380, itens: { pneus: "OK", freios: "Crítico", farois: "OK", seguranca: "OK", fluidos: "Atenção", lataria: "OK" }, status: "Retido", observacoes: "Pastilhas de freio fazendo muito barulho. Nível do óleo do motor abaixo do mínimo recomendado." },
       ];
       setChecklists(initialCheck);
-      localStorage.setItem("risel_frota_checklists", JSON.stringify(initialCheck));
+      safeSetItem("risel_frota_checklists", JSON.stringify(initialCheck));
     } else {
       setChecklists(parsedCheck);
     }
 
     // 3. Reservas (Local + Sincronização Supabase Cloud)
-    const savedRes = localStorage.getItem("risel_frota_reservas");
+    const savedRes = safeGetItem("risel_frota_reservas");
     let parsedRes: Reserva[] = [];
     if (savedRes) {
       try { parsedRes = JSON.parse(savedRes); } catch (e) {}
@@ -1742,7 +1743,7 @@ export default function Frota() {
         { id: "r3", placa: "SIL3B70", condutor: "Pedro Henrique Albuquerque", de: "2026-07-06T08:00", ate: "2026-07-10T18:00", destino: "Auditoria Interna Base Paulínia", status: "Confirmada" },
       ];
       setReservas(initialRes);
-      localStorage.setItem("risel_frota_reservas", JSON.stringify(initialRes));
+      safeSetItem("risel_frota_reservas", JSON.stringify(initialRes));
     } else {
       setReservas(parsedRes);
     }
@@ -1751,12 +1752,12 @@ export default function Frota() {
     fetchReservasSupabase().then(cloudRes => {
       if (cloudRes && cloudRes.length > 0) {
         setReservas(cloudRes);
-        localStorage.setItem("risel_frota_reservas", JSON.stringify(cloudRes));
+        safeSetItem("risel_frota_reservas", JSON.stringify(cloudRes));
       }
     }).catch(e => console.warn("Aviso ao carregar reservas do Supabase:", e));
 
     // 4. Multas (Inicia zerado para receber dados reais)
-    const savedFines = localStorage.getItem("risel_frota_multas");
+    const savedFines = safeGetItem("risel_frota_multas");
     let parsedFines: Multa[] = [];
     if (savedFines) {
       try { 
@@ -1765,22 +1766,22 @@ export default function Frota() {
       } catch (e) {}
     }
     setMultas(parsedFines);
-    localStorage.setItem("risel_frota_multas", JSON.stringify(parsedFines));
+    safeSetItem("risel_frota_multas", JSON.stringify(parsedFines));
 
     // 5. Abastecimentos (Banco Supabase Real por padrão)
     fetchAbastecimentosSupabase().then(supabaseData => {
       if (supabaseData && supabaseData.length > 0) {
         setAbastecimentos(supabaseData);
-        localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(supabaseData));
+        safeSetItem("risel_frota_abastecimentos", JSON.stringify(supabaseData));
       } else {
         // Se não houver dados no Supabase, inicia zerado para importar dos CSVs
         setAbastecimentos([]);
-        localStorage.setItem("risel_frota_abastecimentos", "[]");
+        safeSetItem("risel_frota_abastecimentos", "[]");
       }
     }).catch(err => {
       console.warn("Aviso ao buscar abastecimentos do Supabase:", err);
       setAbastecimentos([]);
-      localStorage.setItem("risel_frota_abastecimentos", "[]");
+      safeSetItem("risel_frota_abastecimentos", "[]");
     });
 
     // 6. Manutenções (Sincronizado com Supabase Real e cache local - Apenas Dados Reais)
@@ -1788,9 +1789,9 @@ export default function Frota() {
       const realList = (supabaseMaint || []).filter(m => !["mn1", "mn2", "mn3"].includes(String(m.id)));
       if (realList.length > 0) {
         setManutencoes(realList as Manutencao[]);
-        localStorage.setItem("risel_frota_manutencoes", JSON.stringify(realList));
+        safeSetItem("risel_frota_manutencoes", JSON.stringify(realList));
       } else {
-        const savedMaint = localStorage.getItem("risel_frota_manutencoes");
+        const savedMaint = safeGetItem("risel_frota_manutencoes");
         let parsedMaint: Manutencao[] = [];
         if (savedMaint) {
           try {
@@ -1801,11 +1802,11 @@ export default function Frota() {
           } catch (e) {}
         }
         setManutencoes(parsedMaint);
-        localStorage.setItem("risel_frota_manutencoes", JSON.stringify(parsedMaint));
+        safeSetItem("risel_frota_manutencoes", JSON.stringify(parsedMaint));
       }
     }).catch(err => {
       console.warn("Aviso ao buscar manutenções do Supabase:", err);
-      const savedMaint = localStorage.getItem("risel_frota_manutencoes");
+      const savedMaint = safeGetItem("risel_frota_manutencoes");
       let parsedMaint: Manutencao[] = [];
       if (savedMaint) {
         try {
@@ -1816,11 +1817,11 @@ export default function Frota() {
         } catch (e) {}
       }
       setManutencoes(parsedMaint);
-      localStorage.setItem("risel_frota_manutencoes", JSON.stringify(parsedMaint));
+      safeSetItem("risel_frota_manutencoes", JSON.stringify(parsedMaint));
     });
 
     // 7. Pedagios
-    const savedTolls = localStorage.getItem("risel_frota_pedagios");
+    const savedTolls = safeGetItem("risel_frota_pedagios");
     let parsedTolls: Pedagio[] = [];
     if (savedTolls) {
       try { parsedTolls = JSON.parse(savedTolls); } catch (e) {}
@@ -1831,7 +1832,7 @@ export default function Frota() {
         { id: "pd2", placa: "SYL0A68", data: "2026-06-25", valor: 10.20, base: "Base Macaé", condutor: "Ana Beatriz Nogueira", locadora: "Movida" }
       ];
       setPedagios(initialTolls);
-      localStorage.setItem("risel_frota_pedagios", JSON.stringify(initialTolls));
+      safeSetItem("risel_frota_pedagios", JSON.stringify(initialTolls));
     } else {
       setPedagios(parsedTolls);
     }
@@ -2002,24 +2003,24 @@ export default function Frota() {
     setChecklists(prev => prev.filter(c => c.id !== id));
 
     // 2. Registrar ID deletado localmente para garantir filtragem permanente
-    const deletedIdsStr = localStorage.getItem("risel_frota_deleted_checklist_ids");
+    const deletedIdsStr = safeGetItem("risel_frota_deleted_checklist_ids");
     let deletedIdsList: string[] = [];
     if (deletedIdsStr) {
       try { deletedIdsList = JSON.parse(deletedIdsStr); } catch (e) {}
     }
     if (!deletedIdsList.includes(id)) {
       deletedIdsList.push(id);
-      localStorage.setItem("risel_frota_deleted_checklist_ids", JSON.stringify(deletedIdsList));
+      safeSetItem("risel_frota_deleted_checklist_ids", JSON.stringify(deletedIdsList));
     }
 
-    const savedCheck = localStorage.getItem("risel_frota_checklists");
+    const savedCheck = safeGetItem("risel_frota_checklists");
     if (savedCheck) {
       try {
         const parsed: any[] = JSON.parse(savedCheck);
         const filtered = parsed.filter(c => c.id !== id);
-        localStorage.setItem("risel_frota_checklists", JSON.stringify(filtered));
+        safeSetItem("risel_frota_checklists", JSON.stringify(filtered));
       } catch (e) {
-        console.error("Erro ao remover checklist do localStorage:", e);
+        console.error("Erro ao remover checklist do safeStorage:", e);
       }
     }
 
@@ -2123,7 +2124,7 @@ export default function Frota() {
               }
               return v;
             });
-            localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(updated));
+            safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updated));
             return updated;
           });
         }
@@ -2149,7 +2150,7 @@ export default function Frota() {
 
   const saveVeiculos = (data: Veiculo[]) => {
     setVeiculos(data);
-    localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(data));
+    safeSetItem("risel_frota_veiculos_v2", JSON.stringify(data));
 
     // Salvar/Sincronizar de imediato no banco Supabase (Veículos e Contratos)
     saveBatchVeiculosSupabase(data).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
@@ -2182,7 +2183,7 @@ export default function Frota() {
 
   const saveChecklists = (data: Checklist[]) => {
     setChecklists(data);
-    localStorage.setItem("risel_frota_checklists", JSON.stringify(data));
+    safeSetItem("risel_frota_checklists", JSON.stringify(data));
     if (data && data.length > 0) {
       saveChecklistSupabase(data[0]).catch(e => console.warn("Aviso ao salvar checklist no Supabase:", e));
     }
@@ -2190,25 +2191,25 @@ export default function Frota() {
 
   const saveReservas = (data: Reserva[]) => {
     setReservas(data);
-    localStorage.setItem("risel_frota_reservas", JSON.stringify(data));
+    safeSetItem("risel_frota_reservas", JSON.stringify(data));
     saveBatchReservasSupabase(data).catch(e => console.warn("Aviso ao salvar reservas no Supabase:", e));
   };
 
   const saveMultas = (data: Multa[]) => {
     setMultas(data);
-    localStorage.setItem("risel_frota_multas", JSON.stringify(data));
+    safeSetItem("risel_frota_multas", JSON.stringify(data));
   };
 
   const saveAbastecimentos = (data: Abastecimento[]) => {
     setAbastecimentos(data);
-    localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(data));
+    safeSetItem("risel_frota_abastecimentos", JSON.stringify(data));
     saveBatchAbastecimentosSupabase(data).catch(e => console.warn("Aviso ao salvar abastecimentos no Supabase:", e));
   };
 
   const saveManutencoes = (data: Manutencao[]) => {
     const realData = data.filter(m => !["mn1", "mn2", "mn3"].includes(String(m.id)));
     setManutencoes(realData);
-    localStorage.setItem("risel_frota_manutencoes", JSON.stringify(realData));
+    safeSetItem("risel_frota_manutencoes", JSON.stringify(realData));
     saveBatchManutencoesSupabase(realData).catch(e => console.warn("Aviso ao salvar manutenções no Supabase:", e));
   };
 

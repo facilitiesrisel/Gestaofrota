@@ -1,6 +1,8 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { AlertTriangle, RefreshCw, Home, RotateCcw } from "lucide-react";
 
+import { performStorageEmergencyEviction } from "../utils/safeStorage";
+
 interface Props {
   children: ReactNode;
 }
@@ -41,12 +43,16 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   private handleHardReload = () => {
+    try {
+      performStorageEmergencyEviction();
+    } catch (e) {}
     window.location.reload();
   };
 
   private handleClearCacheAndReload = () => {
     try {
-      // Limpa dados transitórios preservando sessões principais se possível
+      // Limpa dados transitórios e caches pesados preservando sessões principais
+      performStorageEmergencyEviction();
       sessionStorage.clear();
       localStorage.removeItem("risel_temp_state");
     } catch (e) {

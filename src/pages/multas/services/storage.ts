@@ -13,6 +13,7 @@ import {
   saveEmailMappingsSupabase,
   fetchVeiculosSupabase
 } from '../../../services/supabaseService';
+import { safeSetItem, safeGetItem } from '../../../utils/safeStorage';
 
 const API_URL_KEY = 'risel_api_url';
 const DRIVE_FOLDER_KEY = 'risel_drive_folder_id';
@@ -965,16 +966,16 @@ export const saveVeiculo = async (veiculo: Veiculo, originalId?: string) => {
     await idbDelete('veiculos', originalId);
   }
 
-  // Atualizar no localStorage
+  // Atualizar no storage
   try {
-    const storedV = localStorage.getItem("risel_frota_veiculos_v2");
+    const storedV = safeGetItem("risel_frota_veiculos_v2");
     let list: Veiculo[] = storedV ? JSON.parse(storedV) : [];
     if (originalId && originalId !== veiculo.id) {
       list = list.filter(v => v.id !== originalId);
     }
     const idx = list.findIndex(v => v.id === veiculo.id);
     if (idx >= 0) list[idx] = veiculo; else list.unshift(veiculo);
-    localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(list));
+    safeSetItem("risel_frota_veiculos_v2", JSON.stringify(list));
   } catch (e) {}
 
   // Se houver alteração de ID (Renomeação de Frota), excluir o antigo primeiro
@@ -1020,11 +1021,11 @@ export const deleteVeiculo = async (id: string) => {
   updateCacheOptimistically('veiculos', null, id, 'delete');
   await idbDelete('veiculos', id);
   try {
-    const storedV = localStorage.getItem("risel_frota_veiculos_v2");
+    const storedV = safeGetItem("risel_frota_veiculos_v2");
     if (storedV) {
       let list: Veiculo[] = JSON.parse(storedV);
       list = list.filter(v => v.id !== id);
-      localStorage.setItem("risel_frota_veiculos_v2", JSON.stringify(list));
+      safeSetItem("risel_frota_veiculos_v2", JSON.stringify(list));
     }
   } catch (e) {}
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { checkServerVersion, forceHardReload } from "../services/appVersionService";
-import { RefreshCw, CheckCircle2 } from "lucide-react";
+import { RefreshCw, CheckCircle2, X } from "lucide-react";
 
 export const VersionManager: React.FC = () => {
   const [hasNewVersion, setHasNewVersion] = useState(false);
@@ -20,19 +20,25 @@ export const VersionManager: React.FC = () => {
   const handleApplyUpdate = () => {
     setIsReloading(true);
     forceHardReload();
+    // Timeout de segurança para evitar que a tela fique congelada
+    setTimeout(() => {
+      try {
+        window.location.reload();
+      } catch (e) {}
+    }, 2000);
   };
 
   useEffect(() => {
     // 1. Checagem inicial ao carregar o componente
     checkServerVersion();
 
-    // 2. Checagem periódica a cada 60 segundos
+    // 2. Checagem periódica a cada 90 segundos
     const interval = setInterval(async () => {
       const { updated } = await checkServerVersion();
       if (updated) {
         setHasNewVersion(true);
       }
-    }, 60000);
+    }, 90000);
 
     // 3. Checagem quando o usuário volta para a aba da Risel
     const handleFocus = async () => {
@@ -77,15 +83,28 @@ export const VersionManager: React.FC = () => {
           </div>
         </div>
 
-        {!isReloading && (
-          <button
-            type="button"
-            onClick={handleApplyUpdate}
-            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-colors shadow-sm cursor-pointer whitespace-nowrap shrink-0"
-          >
-            Atualizar agora
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {!isReloading && (
+            <button
+              type="button"
+              onClick={handleApplyUpdate}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-colors shadow-sm cursor-pointer whitespace-nowrap"
+            >
+              Atualizar agora
+            </button>
+          )}
+
+          {!isReloading && (
+            <button
+              type="button"
+              onClick={() => setHasNewVersion(false)}
+              className="p-1 text-emerald-400 hover:text-white hover:bg-emerald-900/60 rounded-lg cursor-pointer transition-colors"
+              title="Fechar aviso"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
     );
   }
