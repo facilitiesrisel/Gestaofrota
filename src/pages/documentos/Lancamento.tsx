@@ -433,6 +433,7 @@ export default function Lancamento() {
     ccRecipients: string[];
     newToInput: string;
     newCcInput: string;
+    editingId?: number | string | null;
     isSaving?: boolean;
     isSending?: boolean;
     isManualResendOnly?: boolean;
@@ -1894,7 +1895,7 @@ export default function Lancamento() {
     // Verificar se já existe lançamento com o mesmo documento/numeração (excluindo o próprio se estiver editando)
     const duplicate = lancamentos.find(item => 
       item.doc.toLowerCase() === docName.toLowerCase() && 
-      item.id !== editingId
+      String(item.id) !== String(editingId)
     );
 
     if (duplicate) {
@@ -1902,13 +1903,14 @@ export default function Lancamento() {
       setDuplicateWarning({
         isOpen: true,
         existingDoc: duplicate,
-        data: { ...formData, docName }
+        data: { ...formData, docName, id: editingId }
       });
     } else {
       // Ao salvar, em vez de disparar o e-mail direto, abre modal para o usuário escolher destinatários e cópias
       setEmailDispatchModal({
         isOpen: true,
-        docData: { ...formData },
+        editingId: editingId,
+        docData: { ...formData, id: editingId },
         calculatedDocName: docName,
         toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
         ccRecipients: [...DEFAULT_LANCAMENTO_CC_EMAILS],
@@ -1921,6 +1923,50 @@ export default function Lancamento() {
     }
   };
 
+  // Salva diretamente o formulário sem disparar o e-mail (garante persistência dos dados)
+  const handleSaveWithoutEmailDirectly = async () => {
+    const docClean = (formData.cnpj || "").replace(/\D/g, "");
+    if (!formData.cnpj || (docClean.length !== 11 && docClean.length !== 14)) {
+      alert("Por favor, informe um CPF ou CNPJ válido de 11 ou 14 dígitos.");
+      return;
+    }
+
+    if (!formData.fornecedor || !formData.valorNf) {
+      alert("Por favor, preencha os campos Fornecedor e Valor da Nota.");
+      return;
+    }
+
+    const numDocInformado = (formData.codigoLancamento || "").trim();
+    if (!numDocInformado) {
+      alert("Por favor, preencha o campo Nº Documento.");
+      return;
+    }
+
+    const prefixoTipo = (formData.tipoDocumento || "NF-e").trim();
+    const docName = numDocInformado.toLowerCase().startsWith(prefixoTipo.toLowerCase())
+      ? numDocInformado
+      : `${prefixoTipo} ${numDocInformado}`;
+
+    const duplicate = lancamentos.find(item => 
+      item.doc.toLowerCase() === docName.toLowerCase() && 
+      String(item.id) !== String(editingId)
+    );
+
+    if (duplicate) {
+      setDuplicateWarning({
+        isOpen: true,
+        existingDoc: duplicate,
+        data: { ...formData, docName, id: editingId }
+      });
+      return;
+    }
+
+    await executeSave(formData, docName, {
+      sendEmail: false,
+      targetEditingId: editingId
+    });
+  };
+
   const executeSave = async (
     data: typeof formData, 
     calculatedDocName: string,
@@ -1928,6 +1974,7 @@ export default function Lancamento() {
       sendEmail?: boolean;
       toRecipients?: string[];
       ccRecipients?: string[];
+      targetEditingId?: number | string | null;
     }
   ) => {
     const numVal = parseCurrencyToNumber(data.valorNf);
@@ -1941,10 +1988,10 @@ export default function Lancamento() {
 
     // Persiste imediatamente no banco de dados Supabase e Firestore a Base e o Centro de Custo Principal
     if (finalEstabelecimento.trim()) {
-      saveBaseSupabase(finalEstabelecimento.trim());
+      saveBaseSupabase(finalEstabelecimento.trim()).catch(() => {});
     }
     if (finalCentroCusto.trim()) {
-      saveCentroCustoSupabase(finalCentroCusto.trim());
+      saveCentroCustoSupabase(finalCentroCusto.trim()).catch(() => {});
     }
 
     let savedItem: any = null;
@@ -1958,10 +2005,14 @@ export default function Lancamento() {
 
     // Se a intenção do salvamento é disparar e-mail de aprovação, força estritamente "Aguardando Aprovação"
     const isDispatchingEmail = Boolean(options?.sendEmail);
+    const targetEditingId = options?.targetEditingId !== undefined ? options.targetEditingId : editingId;
 
-    if (editingId !== null) {
+    if (targetEditingId !== null && targetEditingId !== undefined) {
       // Editar lançamento existente com preservação total de campos e ID
-      const existing = lancamentos.find(item => Number(item.id) === Number(editingId));
+      const existing = lancamentos.find(item => 
+        String(item.id) === String(targetEditingId) || 
+        Number(item.id) === Number(targetEditingId)
+      );
       const isNowApproved = !isDispatchingEmail && data.status === "Aprovado";
       const wasApproved = existing?.status === "Aprovado";
       let dataAprovacao = existing?.dataAprovacao || "";
@@ -1976,8 +2027,10 @@ export default function Lancamento() {
         ? "Aguardando Aprovação" 
         : ((data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status);
 
+      const parsedId = isNaN(Number(targetEditingId)) ? targetEditingId : Number(targetEditingId);
+
       savedItem = {
-        id: Number(editingId),
+        id: parsedId,
         status: statusCalculado,
         dataLancamento: existing?.dataLancamento || hojeLocalBr,
         dataVencimento: formatVencimiento,
@@ -2052,6 +2105,20 @@ export default function Lancamento() {
       await saveLancamentoUnified(savedItem);
     }
 
+    // Atualização otimista imediata no estado da página
+    if (savedItem) {
+      setLancamentos(prev => {
+        const idStr = String(savedItem.id);
+        const idx = prev.findIndex(item => String(item.id) === idStr);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = savedItem;
+          return next;
+        }
+        return [savedItem, ...prev];
+      });
+    }
+
     // Disparo oficial com destinatários e cópias escolhidos no modal
     if (options?.sendEmail) {
       // Garante que o status salvo esteja como Aguardando Aprovação
@@ -2079,6 +2146,14 @@ export default function Lancamento() {
       }).catch(err => {
         console.warn("Falha no disparo de e-mail de aprovação:", err);
       });
+    } else {
+      // Feedback claro e visual quando salvo SEM envio de e-mail
+      const isEdit = (targetEditingId !== null && targetEditingId !== undefined);
+      setEmailSentNotice({
+        title: isEdit ? "Alterações Salvas (Sem Envio de E-mail)" : "Lançamento Salvo (Sem Envio de E-mail)",
+        desc: `O documento ${calculatedDocName} foi salvo no banco de dados com segurança. Nenhum e-mail foi disparado. Para enviar a aprovação posteriormente, basta editar o lançamento e clicar em Salvar ou utilizar o botão de e-mail na tabela.`
+      });
+      setTimeout(() => setEmailSentNotice(null), 8000);
     }
 
     // Notificar o sistema para atualizar notificações em tempo real
@@ -2659,15 +2734,47 @@ export default function Lancamento() {
             }}
           >
             <div className="bg-white rounded-[20px] shadow-sm border border-slate-200">
-              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                    <span className="text-emerald-600">📄</span> Dados do Lançamento
-                 </h3>
-                  {editingId && (
-                    <span className="bg-[#114D38]/10 text-[#114D38] border border-[#114D38]/20 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase">
-                      ID Lançamento: {editingId}
-                    </span>
-                  )}
+              <div className="px-4 py-2.5 border-b border-slate-150 flex flex-wrap items-center justify-between gap-2 bg-slate-50/70">
+                 <div className="flex items-center gap-2">
+                   <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                      <span className="text-emerald-600">📄</span> {editingId ? "Editar Lançamento" : "Dados do Lançamento"}
+                   </h3>
+                   {editingId && (
+                     <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                       Modo de Edição
+                     </span>
+                   )}
+                 </div>
+
+                 {/* Ações de Cancelar e Salvar no Canto Superior Direito */}
+                 <div className="flex items-center gap-2">
+                   <button 
+                     type="button" 
+                     onClick={handleCloseForm} 
+                     className="px-3 py-1.5 rounded-lg font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors shadow-2xs text-xs cursor-pointer"
+                   >
+                     Cancelar
+                   </button>
+
+                   <button 
+                     type="button" 
+                     onClick={handleSaveWithoutEmailDirectly}
+                     className="px-3.5 py-1.5 rounded-lg font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition-all flex items-center gap-1.5 text-xs cursor-pointer shadow-2xs"
+                     title="Salvar todos os dados no banco sem disparar o e-mail agora"
+                   >
+                     <Save className="w-3.5 h-3.5 text-slate-600" />
+                     <span>Salvar Sem Enviar E-mail</span>
+                   </button>
+
+                   <button 
+                     type="submit" 
+                     className="px-4 py-1.5 rounded-lg font-bold bg-[#114D38] hover:bg-[#0d3b2b] text-white shadow-sm transition-all flex items-center gap-1.5 text-xs cursor-pointer"
+                     title="Avançar para definir destinatários e disparar e-mail de aprovação"
+                   >
+                     <Send className="w-3.5 h-3.5" /> 
+                     <span>{editingId ? "Salvar e Enviar E-mail" : "Salvar e Enviar E-mail"}</span>
+                   </button>
+                 </div>
               </div>
               
               <div className="p-3 grid lg:grid-cols-3 gap-3">
@@ -3359,7 +3466,7 @@ export default function Lancamento() {
                 <div className="text-[10px] text-slate-500 font-medium leading-tight">
                   Campos flegados com * são de preenchimento obrigatório para a validação das faturas.
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
                   <button 
                     type="button" 
                     onClick={handleCloseForm} 
@@ -3367,12 +3474,24 @@ export default function Lancamento() {
                   >
                     Cancelar
                   </button>
+
+                  <button 
+                    type="button" 
+                    onClick={handleSaveWithoutEmailDirectly}
+                    className="px-4 py-1.5 rounded-lg font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition-all flex items-center gap-1.5 text-xs cursor-pointer shadow-xs"
+                    title="Salvar todos os dados no banco sem disparar o e-mail agora"
+                  >
+                    <Save className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Salvar Sem Enviar E-mail</span>
+                  </button>
+
                   <button 
                     type="submit" 
                     className="px-5 py-1.5 rounded-lg font-bold bg-[#114D38] hover:bg-[#0d3b2b] text-white shadow-sm transition-all flex items-center gap-1.5 text-xs cursor-pointer"
+                    title="Avançar para definir destinatários e disparar e-mail de aprovação"
                   >
-                    <Save className="w-3.5 h-3.5" /> 
-                    <span>{editingId ? "Salvar Alterações" : "Salvar Lançamento"}</span>
+                    <Send className="w-3.5 h-3.5" /> 
+                    <span>{editingId ? "Salvar e Enviar E-mail" : "Salvar e Enviar E-mail"}</span>
                   </button>
                 </div>
               </div>
@@ -3959,17 +4078,36 @@ export default function Lancamento() {
               Essa numeração de documento pode se referir ao mesmo produto/serviço duplicado ou a uma numeração coincidente de outro fornecedor. Deseja prosseguir mesmo assim?
             </p>
 
-            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
+            <div className="flex flex-wrap justify-end gap-2.5 mt-6 pt-4 border-t border-slate-100">
               <button
+                type="button"
                 onClick={() => setDuplicateWarning(null)}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 cursor-pointer"
               >
                 Parar Lançamento (Ajustar número)
               </button>
               <button
+                type="button"
+                onClick={async () => {
+                  const dataToSave = duplicateWarning.data;
+                  const docName = duplicateWarning.data.docName;
+                  const targetEditId = duplicateWarning.data.id !== undefined ? duplicateWarning.data.id : editingId;
+                  setDuplicateWarning(null);
+                  await executeSave(dataToSave, docName, {
+                    sendEmail: false,
+                    targetEditingId: targetEditId
+                  });
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-700 hover:bg-slate-800 text-white cursor-pointer transition-colors shadow-xs"
+              >
+                Salvar Sem Enviar E-mail
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setEmailDispatchModal({
                     isOpen: true,
+                    editingId: duplicateWarning.data.id !== undefined ? duplicateWarning.data.id : editingId,
                     docData: duplicateWarning.data,
                     calculatedDocName: duplicateWarning.data.docName,
                     toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
@@ -4885,22 +5023,29 @@ export default function Lancamento() {
                 {!emailDispatchModal.isManualResendOnly && (
                   <button
                     type="button"
-                    disabled={emailDispatchModal.isSaving}
+                    disabled={emailDispatchModal.isSaving || emailDispatchModal.isSending}
                     onClick={async () => {
                       setEmailDispatchModal((prev) => (prev ? { ...prev, isSaving: true } : null));
                       try {
                         await executeSave(
                           emailDispatchModal.docData,
                           emailDispatchModal.calculatedDocName,
-                          { sendEmail: false }
+                          {
+                            sendEmail: false,
+                            targetEditingId: emailDispatchModal.editingId !== undefined ? emailDispatchModal.editingId : editingId
+                          }
                         );
+                      } catch (err: any) {
+                        console.error("Erro ao salvar sem enviar:", err);
+                        alert("Erro ao salvar lançamento: " + (err?.message || "Falha inesperada"));
                       } finally {
                         setEmailDispatchModal(null);
                       }
                     }}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 cursor-pointer transition-colors"
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 cursor-pointer transition-colors flex items-center gap-1.5 shadow-xs"
                   >
-                    Salvar Sem Enviar E-mail
+                    <Save className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Salvar Sem Enviar E-mail</span>
                   </button>
                 )}
 
@@ -4956,7 +5101,8 @@ export default function Lancamento() {
                           {
                             sendEmail: true,
                             toRecipients: emailDispatchModal.toRecipients,
-                            ccRecipients: emailDispatchModal.ccRecipients
+                            ccRecipients: emailDispatchModal.ccRecipients,
+                            targetEditingId: emailDispatchModal.editingId !== undefined ? emailDispatchModal.editingId : editingId
                           }
                         );
                       }
@@ -4975,6 +5121,8 @@ export default function Lancamento() {
                       ? "Enviando..."
                       : emailDispatchModal.isManualResendOnly
                       ? "Confirmar e Reenviar E-mail"
+                      : (emailDispatchModal.editingId || editingId)
+                      ? "Salvar Alterações e Enviar E-mail"
                       : "Salvar e Enviar E-mail"}
                   </span>
                 </button>
