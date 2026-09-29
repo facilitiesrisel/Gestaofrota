@@ -173,6 +173,16 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
 
     // --- Filtering Logic ---
     const applyFilters = (trips: DailyTrip[]) => {
+        const searchTerms = filterSearch
+            ? filterSearch
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .trim()
+                .split(/\s+/)
+                .filter(Boolean)
+            : [];
+
         return trips.filter(t => {
              // Date Range (Start Date)
              if (filterStartDate) {
@@ -187,16 +197,62 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                 fEnd.setHours(23,59,59,999);
                 if (tDate > fEnd) return false;
             }
-            // Vehicle
-            if (filterVehicleId && t.vehicleId !== filterVehicleId) return false;
-            // Search (Driver, Department, Destination)
-            if (filterSearch) {
-                const term = filterSearch.toLowerCase();
-                const match = (t.driverName || '').toLowerCase().includes(term) ||
-                              (t.department || '').toLowerCase().includes(term) ||
-                              (t.destination || '').toLowerCase().includes(term) ||
-                              (t.destinationCity || '').toLowerCase().includes(term);
-                if (!match) return false;
+
+            // Filtro por Veículo (suporta ID interno ou Placa)
+            if (filterVehicleId) {
+                const selectedVeh = vehicles.find(v => v.id === filterVehicleId);
+                const selPlate = selectedVeh ? (selectedVeh.plate || (selectedVeh as any).placa || selectedVeh.id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
+                const tripVeh = getVehicleById(t.vehicleId);
+                const tripPlate = tripVeh ? (tripVeh.plate || (tripVeh as any).placa || tripVeh.id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : (t.vehicleId || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+                const matchId = t.vehicleId === filterVehicleId;
+                const matchPlate = Boolean(selPlate && tripPlate && (selPlate === tripPlate));
+                if (!matchId && !matchPlate) return false;
+            }
+
+            // Busca Livre: aceita QUALQUER argumento (placa, modelo, motorista, setor, destino, motivo, KM, etc.)
+            if (searchTerms.length > 0) {
+                const vehicle = getVehicleById(t.vehicleId);
+                const vehiclePlate = (vehicle?.plate || (vehicle as any)?.placa || t.vehicleId || '').toLowerCase();
+                const vehiclePlateClean = vehiclePlate.replace(/[^a-z0-9]/g, '');
+                const vehicleModel = (vehicle?.model || (vehicle as any)?.modelo || '').toLowerCase();
+                const departureFormatted = t.departureDateTime ? new Date(t.departureDateTime).toLocaleDateString('pt-BR') : '';
+                const returnFormatted = t.actualReturnDateTime ? new Date(t.actualReturnDateTime).toLocaleDateString('pt-BR') : '';
+
+                const consolidatedSearchText = [
+                    t.id,
+                    t.driverName,
+                    t.requesterName,
+                    t.department,
+                    t.destination,
+                    t.destinationCity,
+                    t.purpose,
+                    t.status,
+                    t.vehicleId,
+                    vehiclePlate,
+                    vehiclePlateClean,
+                    vehicleModel,
+                    t.initialKm ? `${t.initialKm}` : '',
+                    t.finalKm ? `${t.finalKm}` : '',
+                    t.distanceKm ? `${t.distanceKm}` : '',
+                    departureFormatted,
+                    returnFormatted
+                ]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase()
+                    .normalize("NFD")
+                    .replace(/[\u0300-\u036f]/g, "");
+
+                const matchesAllTerms = searchTerms.every(term => {
+                    const cleanTerm = term.replace(/[^a-z0-9]/g, '');
+                    return (
+                        consolidatedSearchText.includes(term) ||
+                        (cleanTerm.length >= 3 && consolidatedSearchText.includes(cleanTerm))
+                    );
+                });
+
+                if (!matchesAllTerms) return false;
             }
             return true;
         });
@@ -635,17 +691,38 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                             <input type="date" value={filterEndDate} onChange={(e) => setFilterEndDate(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50 w-full"/>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-450 uppercase tracking-wider mb-1">Veículo</label>
+                            <label className="block text-[10px] font-bold text-slate-450 uppercase tracking-wider mb-1">Veículo (Placa)</label>
                             <select value={filterVehicleId} onChange={(e) => setFilterVehicleId(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50 w-full">
-                                <option value="">Todos</option>
-                                {vehicles.filter(v => {
-                                  return v.isActive !== false || v.id === filterVehicleId;
-                                }).map(v => <option key={v.id} value={v.id}>{v.model} - {v.plate}</option>)}
+                                <option value="">Todas as Placas</option>
+                                {[...vehicles]
+                                  .filter(v => v.isActive !== false || v.id === filterVehicleId)
+                                  .sort((a, b) => (a.plate || '').localeCompare(b.plate || ''))
+                                  .map(v => {
+                                    const plate = (v.plate || (v as any).placa || v.id || '').toUpperCase().trim();
+                                    const model = v.model || (v as any).modelo || '';
+                                    return (
+                                      <option key={v.id} value={v.id}>
+                                        {plate}{model ? ` - ${model}` : ''}
+                                      </option>
+                                    );
+                                  })}
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-450 uppercase tracking-wider mb-1">Buscar (Motorista/Setor)</label>
-                            <input type="text" placeholder="Nome, setor ou destino..." value={filterSearch} onChange={(e) => setFilterSearch(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50 w-full"/>
+                            <label className="block text-[10px] font-bold text-slate-450 uppercase tracking-wider mb-1">Busca Livre (Qualquer termo)</label>
+                            <div className="relative flex items-center">
+                                <input type="text" placeholder="Buscar qualquer argumento..." value={filterSearch} onChange={(e) => setFilterSearch(e.target.value)} className="border border-slate-200 pl-3 pr-7 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50 w-full"/>
+                                {filterSearch && (
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setFilterSearch('')} 
+                                        className="absolute right-2 text-slate-400 hover:text-slate-700 text-xs font-bold p-0.5 cursor-pointer"
+                                        title="Limpar busca"
+                                    >
+                                        ✕
+                                    </button>
+                                )}
+                            </div>
                         </div>
                         {(filterStartDate || filterEndDate || filterVehicleId || filterSearch) && (
                             <div className="lg:col-span-4 flex justify-end">

@@ -514,7 +514,27 @@ const ReservationsView: React.FC = () => {
     }
   };
 
+  // Veículos ordenados por placa para exibição nos filtros
+  const sortedVehiclesByPlate = useMemo(() => {
+    return [...vehicles].sort((a, b) => {
+      const plateA = (a.plate || (a as any).placa || a.id || '').toUpperCase().trim();
+      const plateB = (b.plate || (b as any).placa || b.id || '').toUpperCase().trim();
+      return plateA.localeCompare(plateB);
+    });
+  }, [vehicles]);
+
   const filteredReservations = useMemo(() => {
+    // Termos de busca livre higienizados e normalizados (sem acentos e minúsculos)
+    const searchTerms = filterSearch
+      ? filterSearch
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+      : [];
+
     return reservations.filter(res => {
         // Aba ativa x histórico
         if (activeTab === 'active') {
@@ -526,11 +546,77 @@ const ReservationsView: React.FC = () => {
         if (filterStartDate && new Date(res.departureDateTime) < new Date(filterStartDate)) return false;
         if (filterEndDate) { const end = new Date(filterEndDate); end.setHours(23,59,59); if (new Date(res.departureDateTime) > end) return false; }
         if (filterStatus && res.status !== filterStatus) return false;
-        if (filterVehicleId && res.vehicleId !== filterVehicleId) return false;
-        if (filterSearch && !res.requesterName.toLowerCase().includes(filterSearch.toLowerCase()) && !res.department.toLowerCase().includes(filterSearch.toLowerCase())) return false;
+
+        // Filtro por Veículo (suporta ID interno ou Placa)
+        if (filterVehicleId) {
+          const selectedVeh = vehicles.find(v => v.id === filterVehicleId);
+          const selPlate = selectedVeh ? (selectedVeh.plate || (selectedVeh as any).placa || selectedVeh.id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
+          const resVeh = getVehicleById(res.vehicleId);
+          const resPlate = resVeh ? (resVeh.plate || (resVeh as any).placa || resVeh.id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : (res.vehicleId || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+          const matchId = res.vehicleId === filterVehicleId;
+          const matchPlate = Boolean(selPlate && resPlate && (selPlate === resPlate));
+          if (!matchId && !matchPlate) return false;
+        }
+
+        // Filtro de Busca Livre: aceita QUALQUER argumento (placa, modelo, solicitante, departamento, destino, justificativa, datas, notas, status, etc.)
+        if (searchTerms.length > 0) {
+          const vehicle = getVehicleById(res.vehicleId);
+          const vehiclePlate = (vehicle?.plate || (vehicle as any)?.placa || res.vehicleId || '').toLowerCase();
+          const vehiclePlateClean = vehiclePlate.replace(/[^a-z0-9]/g, '');
+          const vehicleModel = (vehicle?.model || (vehicle as any)?.modelo || '').toLowerCase();
+          const departureFormatted = res.departureDateTime ? new Date(res.departureDateTime).toLocaleDateString('pt-BR') : '';
+          const returnFormatted = res.returnDate ? new Date(res.returnDate).toLocaleDateString('pt-BR') : '';
+          const actualReturnFormatted = res.actualReturnDateTime ? new Date(res.actualReturnDateTime).toLocaleDateString('pt-BR') : '';
+
+          const consolidatedSearchText = [
+            res.id,
+            res.requesterName,
+            res.department,
+            res.role,
+            res.email,
+            res.destination,
+            res.destinationCity,
+            res.driverName,
+            res.purpose,
+            (res as any).reason,
+            res.rejectReason,
+            res.adminNotes,
+            (res as any).observations,
+            (res as any).notes,
+            res.status,
+            res.vehicleId,
+            vehiclePlate,
+            vehiclePlateClean,
+            vehicleModel,
+            vehicle?.year ? String(vehicle.year) : '',
+            vehicle?.type || '',
+            res.finalKm ? `${res.finalKm}` : '',
+            res.distanceKm ? `${res.distanceKm}` : '',
+            departureFormatted,
+            returnFormatted,
+            actualReturnFormatted
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+
+          const matchesAllTerms = searchTerms.every(term => {
+            const cleanTerm = term.replace(/[^a-z0-9]/g, '');
+            return (
+              consolidatedSearchText.includes(term) ||
+              (cleanTerm.length >= 3 && consolidatedSearchText.includes(cleanTerm))
+            );
+          });
+
+          if (!matchesAllTerms) return false;
+        }
+
         return true;
     }).sort((a, b) => (b.requestTimestamp ? new Date(b.requestTimestamp).getTime() : 0) - (a.requestTimestamp ? new Date(a.requestTimestamp).getTime() : 0));
-  }, [reservations, filterStartDate, filterEndDate, filterStatus, filterVehicleId, filterSearch, activeTab]);
+  }, [reservations, vehicles, getVehicleById, filterStartDate, filterEndDate, filterStatus, filterVehicleId, filterSearch, activeTab]);
 
   const handleExport = () => { /* ... Export Logic ... */ };
 
@@ -1122,10 +1208,26 @@ const ReservationsView: React.FC = () => {
 
         {/* Barra de Filtros Retrátil */}
         {isFiltersOpen && (
-            <div className="bg-white p-4 rounded-2xl border border-slate-150 shadow-sm grid grid-cols-1 md:grid-cols-5 gap-3">
-                <input type="date" value={filterStartDate} onChange={e => setFilterStartDate(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50" />
-                <input type="date" value={filterEndDate} onChange={e => setFilterEndDate(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50" />
-                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50">
+            <div className="bg-white p-4 rounded-2xl border border-slate-150 shadow-sm grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+                <input 
+                  type="date" 
+                  value={filterStartDate} 
+                  onChange={e => setFilterStartDate(e.target.value)} 
+                  title="Data Início"
+                  className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50" 
+                />
+                <input 
+                  type="date" 
+                  value={filterEndDate} 
+                  onChange={e => setFilterEndDate(e.target.value)} 
+                  title="Data Fim"
+                  className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50" 
+                />
+                <select 
+                  value={filterStatus} 
+                  onChange={e => setFilterStatus(e.target.value)} 
+                  className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50"
+                >
                     <option value="">Status: Todos</option>
                     {Object.values(ReservationStatus)
                         .filter(s => activeTab === 'active' 
@@ -1134,8 +1236,62 @@ const ReservationsView: React.FC = () => {
                         )
                         .map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-                <select value={filterVehicleId} onChange={e => setFilterVehicleId(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50"><option value="">Veículo: Todos</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.model}</option>)}</select>
-                <input type="text" placeholder="Buscar..." value={filterSearch} onChange={e => setFilterSearch(e.target.value)} className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50" />
+                <select 
+                  value={filterVehicleId} 
+                  onChange={e => setFilterVehicleId(e.target.value)} 
+                  className="border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50"
+                >
+                    <option value="">Veículo: Todas as Placas</option>
+                    {sortedVehiclesByPlate.map(v => {
+                      const plate = (v.plate || (v as any).placa || v.id || '').toUpperCase().trim();
+                      const model = v.model || (v as any).modelo || '';
+                      return (
+                        <option key={v.id} value={v.id}>
+                          {plate}{model ? ` - ${model}` : ''}
+                        </option>
+                      );
+                    })}
+                </select>
+                <div className="relative flex items-center">
+                  <input 
+                    type="text" 
+                    placeholder="Buscar qualquer argumento (placa, solicitante, destino...)" 
+                    value={filterSearch} 
+                    onChange={e => setFilterSearch(e.target.value)} 
+                    className="w-full border border-slate-200 pl-3 pr-7 py-1.5 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#114D38] bg-slate-50/50" 
+                  />
+                  {filterSearch && (
+                    <button 
+                      type="button" 
+                      onClick={() => setFilterSearch('')} 
+                      className="absolute right-2 text-slate-400 hover:text-slate-700 text-xs font-bold p-0.5 cursor-pointer"
+                      title="Limpar busca"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {(filterStartDate || filterEndDate || filterStatus || filterVehicleId || filterSearch) && (
+                    <div className="sm:col-span-2 md:col-span-5 flex items-center justify-between pt-1 border-t border-slate-100">
+                        <span className="text-[11px] font-bold text-slate-500">
+                            {filteredReservations.length} {filteredReservations.length === 1 ? 'registro encontrado' : 'registros encontrados'}
+                        </span>
+                        <button 
+                            type="button"
+                            onClick={() => {
+                                setFilterStartDate('');
+                                setFilterEndDate('');
+                                setFilterStatus('');
+                                setFilterVehicleId('');
+                                setFilterSearch('');
+                            }}
+                            className="text-xs text-rose-600 hover:text-rose-800 font-bold underline cursor-pointer"
+                        >
+                            Limpar Filtros
+                        </button>
+                    </div>
+                )}
             </div>
         )}
       </div>
