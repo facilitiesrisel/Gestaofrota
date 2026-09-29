@@ -23,7 +23,12 @@ const DISPOSABLE_KEYS = [
   "risel_supabase_last_ping",
   "risel_supabase_ping_count",
   "risel_temp_state",
-  "readOverdueNotifications"
+  "readOverdueNotifications",
+  "risel_data_cache",
+  "risel_multas_geocache_v3",
+  "risel_multas_geocache_v2",
+  "risel_multas_geocache",
+  "risel_geocache"
 ];
 
 /**
@@ -54,14 +59,16 @@ export function performStorageEmergencyEviction(): number {
   try {
     const keysToRemove: string[] = [];
 
-    // 1. Identificar chaves com prefixo descartável
+    // 1. Identificar chaves com prefixo descartável ou caches volumosos de mapa/telemetria
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key) continue;
 
       if (
         DISPOSABLE_PREFIXES.some(prefix => key.startsWith(prefix)) ||
-        DISPOSABLE_KEYS.includes(key)
+        DISPOSABLE_KEYS.includes(key) ||
+        key.includes("geocache") ||
+        key.includes("_cache_")
       ) {
         keysToRemove.push(key);
       }
@@ -76,10 +83,10 @@ export function performStorageEmergencyEviction(): number {
     });
 
     // 2. Se ainda estiver pesado, inspeciona e otimiza listas grandes
-    // Otimiza vault de snapshot de lançamentos se estiver muito pesado (> 400KB)
+    // Otimiza vault de snapshot de lançamentos se estiver muito pesado (> 300KB)
     try {
       const snap = localStorage.getItem("risel_lancamentos_snapshot_vault");
-      if (snap && snap.length > 400000) {
+      if (snap && snap.length > 300000) {
         const parsed = JSON.parse(snap);
         if (Array.isArray(parsed)) {
           const cleaned = parsed.map((item: any) => {
@@ -93,13 +100,28 @@ export function performStorageEmergencyEviction(): number {
       try { localStorage.removeItem("risel_lancamentos_snapshot_vault"); } catch (_) {}
     }
 
-    // 3. Otimiza histórico de abastecimentos ou manutenções caso contenham itens demais (> 200)
+    // 3. Otimiza lista de multas locais eliminando anexos pesados se houver
+    try {
+      const mStr = localStorage.getItem("risel_frota_multas");
+      if (mStr && mStr.length > 400000) {
+        const parsedM = JSON.parse(mStr);
+        if (Array.isArray(parsedM)) {
+          const cleanM = parsedM.map((m: any) => {
+            const { pdfBase64, anexoBase64, imagemBase64, ...rest } = m;
+            return rest;
+          });
+          localStorage.setItem("risel_frota_multas", JSON.stringify(cleanM));
+        }
+      }
+    } catch (e) {}
+
+    // 4. Otimiza histórico de abastecimentos ou manutenções caso contenham itens demais (> 150)
     try {
       const abast = localStorage.getItem("risel_frota_abastecimentos");
-      if (abast && abast.length > 500000) {
+      if (abast && abast.length > 400000) {
         const parsed = JSON.parse(abast);
-        if (Array.isArray(parsed) && parsed.length > 200) {
-          localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(parsed.slice(0, 200)));
+        if (Array.isArray(parsed) && parsed.length > 150) {
+          localStorage.setItem("risel_frota_abastecimentos", JSON.stringify(parsed.slice(0, 150)));
         }
       }
     } catch (e) {}
@@ -114,14 +136,35 @@ export function performStorageEmergencyEviction(): number {
 
 /**
  * Higieniza objetos de veículos antes de salvar no localStorage
- * Garante que payloads pesados não estourem a cota de 5MB
+ * Garante retenção estrita dos campos essenciais, eliminando rastreamento pesado e imagens
  */
 function sanitizeVehiclesForStorage(vehicles: any[]): any[] {
   if (!Array.isArray(vehicles)) return [];
   return vehicles.map(v => {
     if (!v || typeof v !== "object") return v;
-    const { _raw, rawTelemetry, rawSheetRow, historicoPosicoes, ...clean } = v;
-    return clean;
+    // Campos essenciais para exibição e formulários
+    return {
+      id: v.id || v.placa,
+      placa: v.placa,
+      modelo: v.modelo || '',
+      marca: v.marca || '',
+      ano: v.ano || '',
+      filial: v.filial || v.base || '',
+      base: v.base || v.filial || '',
+      condutor: v.condutor || '',
+      cpfCondutor: v.cpfCondutor || v.cpf || '',
+      status: v.status || 'ATIVO',
+      tipo: v.tipo || 'Passeio',
+      capacidade: v.capacidade || '',
+      regiao: v.regiao || '',
+      locadora: v.locadora || v.proprietario || '',
+      proprietario: v.proprietario || v.locadora || '',
+      vencContrato: v.vencContrato || '',
+      validadeLicenciamento: v.validadeLicenciamento || '',
+      email: v.email || '',
+      contrato: v.contrato || '',
+      kmAtual: v.kmAtual || 0
+    };
   });
 }
 
@@ -211,15 +254,15 @@ export function safeRemoveItem(key: string): void {
 
 /**
  * Executa checagem proativa no início da aplicação
- * Se o uso estiver acima de ~3.2MB (de 5MB), executa limpeza automática preventiva
+ * Se o uso estiver acima de ~2.5MB (de 5MB), executa limpeza automática preventiva
  */
 export function cleanStorageHealthCheck() {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
     const totalBytes = getLocalStorageSize();
-    // 3.2 MB = 3,355,443 bytes
-    if (totalBytes > 3200000) {
-      console.info(`[SafeStorage] Uso alto detectado (${(totalBytes / (1024 * 1024)).toFixed(2)} MB). Otimizando armazenamento...`);
+    // 2.5 MB = 2,621,440 bytes
+    if (totalBytes > 2500000) {
+      console.info(`[SafeStorage] Uso preventivo alto detectado (${(totalBytes / (1024 * 1024)).toFixed(2)} MB). Otimizando armazenamento...`);
       performStorageEmergencyEviction();
     }
   } catch (e) {}

@@ -13,7 +13,7 @@ import {
   saveEmailMappingsSupabase,
   fetchVeiculosSupabase
 } from '../../../services/supabaseService';
-import { safeSetItem, safeGetItem } from '../../../utils/safeStorage';
+import { safeSetItem, safeGetItem, safeRemoveItem } from '../../../utils/safeStorage';
 
 const API_URL_KEY = 'risel_api_url';
 const DRIVE_FOLDER_KEY = 'risel_drive_folder_id';
@@ -71,7 +71,7 @@ export const DEFAULT_CC_EMAILS = 'lorena.padilha@risel.com.br; deny.goncalves@ri
 
 export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
     let localParsed: Record<string, { to: string; cc: string }> = {};
-    const local = localStorage.getItem('risel_placa_email_mappings');
+    const local = safeGetItem('risel_placa_email_mappings');
     if (local) {
         try {
             localParsed = JSON.parse(local);
@@ -85,7 +85,7 @@ export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: st
         const cloudMappings = await fetchEmailMappingsSupabase('placa');
         if (cloudMappings && typeof cloudMappings === 'object' && Object.keys(cloudMappings).length > 0) {
             const merged = { ...cloudMappings, ...localParsed };
-            localStorage.setItem('risel_placa_email_mappings', JSON.stringify(merged));
+            safeSetItem('risel_placa_email_mappings', JSON.stringify(merged));
             return merged;
         }
     } catch (e) {
@@ -108,14 +108,14 @@ export const savePlacaEmailMappings = async (mappings: Record<string, { to: stri
         sanitized[placa.toUpperCase().trim()] = { to: val.to || '', cc: ccStr };
     });
 
-    localStorage.setItem('risel_placa_email_mappings', JSON.stringify(sanitized));
+    safeSetItem('risel_placa_email_mappings', JSON.stringify(sanitized));
     saveEmailMappingsSupabase('placa', sanitized).catch(e => console.warn("Aviso ao salvar mapeamento no Supabase:", e));
     return { success: true };
 };
 
 export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
     let baseMap: Record<string, { to: string; cc: string }> = DEFAULT_EMAIL_MAPPINGS;
-    const local = localStorage.getItem('risel_base_email_mappings');
+    const local = safeGetItem('risel_base_email_mappings');
     if (local) {
         try { baseMap = { ...DEFAULT_EMAIL_MAPPINGS, ...JSON.parse(local) }; } catch (e) {}
     }
@@ -125,7 +125,7 @@ export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: str
         const cloudBase = await fetchEmailMappingsSupabase('base');
         if (cloudBase && typeof cloudBase === 'object') {
             baseMap = { ...baseMap, ...cloudBase };
-            localStorage.setItem('risel_base_email_mappings', JSON.stringify(baseMap));
+            safeSetItem('risel_base_email_mappings', JSON.stringify(baseMap));
         }
     } catch (e) {}
 
@@ -133,7 +133,7 @@ export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: str
 };
 
 export const saveBaseEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
-    localStorage.setItem('risel_base_email_mappings', JSON.stringify(mappings));
+    safeSetItem('risel_base_email_mappings', JSON.stringify(mappings));
     saveEmailMappingsSupabase('base', mappings).catch(e => console.warn("Aviso ao salvar mapeamento de base no Supabase:", e));
     return { success: true };
 };
@@ -302,7 +302,7 @@ export const updateCacheOptimistically = (
       data.multas = list;
     }
 
-    localStorage.setItem(CACHE_KEY, JSON.stringify({
+    safeSetItem(CACHE_KEY, JSON.stringify({
       timestamp: Date.now(),
       data
     }));
@@ -855,17 +855,10 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
     idbDelete('multas', 'm2');
     idbDelete('multas', 'm3');
     idbDelete('multas', 'teste-real-1');
-    localStorage.setItem("risel_frota_multas", JSON.stringify(localMultas));
+    safeSetItem("risel_frota_multas", JSON.stringify(localMultas));
 
     const finalVeiculos = localVeiculos;
     const finalMultas = localMultas.filter(m => !isMockOrTestMulta(m));
-
-    // Se houver multas válidas salvas localmente mas ainda não gravadas no Supabase, tenta sincronizar
-    if (finalMultas.length > 0) {
-      finalMultas.forEach(m => {
-        saveMultaSupabase(m).catch(() => {});
-      });
-    }
 
     // Carregar motoristas locais do IndexedDB
     let motoristas: Motorista[] = [];
@@ -896,9 +889,9 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
       }
     } catch (e) {}
 
-    // 3. Do localStorage
+    // 3. Do localStorage protegido
     try {
-      const storedCodigos = localStorage.getItem('risel_codigos_multas');
+      const storedCodigos = safeGetItem('risel_codigos_multas');
       if (storedCodigos) {
         const parsed: CodigoMulta[] = JSON.parse(storedCodigos);
         if (Array.isArray(parsed)) {
@@ -937,13 +930,13 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
 
     localStore = resultData;
 
-    // Sincronizar no IndexedDB em segundo plano para garantia total contra perda de dados
+    // Sincronizar no IndexedDB em segundo plano para garantia total contra perda de dados (capacidade de GB)
     try {
       if (finalMultas.length > 0) idbBulkPut('multas', finalMultas);
       if (finalVeiculos.length > 0) idbBulkPut('veiculos', finalVeiculos);
     } catch (e) {}
 
-    localStorage.setItem(CACHE_KEY, JSON.stringify({
+    safeSetItem(CACHE_KEY, JSON.stringify({
         timestamp: Date.now(),
         data: resultData
     }));
@@ -1149,7 +1142,7 @@ export const saveMulta = async (multa: Multa) => {
     } else {
       list.unshift(multa);
     }
-    localStorage.setItem("risel_frota_multas", JSON.stringify(list));
+    safeSetItem("risel_frota_multas", JSON.stringify(list));
     localStore.multas = list;
   } catch (e) {
     console.error("Erro ao persistir multa localmente:", e);
@@ -1181,13 +1174,13 @@ export const saveBatchMultas = async (
   // 1. Atualizar persistência primária local rápida (LocalStorage)
   let updatedList: Multa[] = [];
   try {
-    const stored = localStorage.getItem("risel_frota_multas");
+    const stored = safeGetItem("risel_frota_multas");
     let list: Multa[] = stored ? JSON.parse(stored) : [];
     const map = new Map<string, Multa>();
     list.forEach(m => map.set(m.id || m.ait, m));
     multasParaGravar.forEach(m => map.set(m.id || m.ait, m));
     updatedList = Array.from(map.values());
-    localStorage.setItem("risel_frota_multas", JSON.stringify(updatedList));
+    safeSetItem("risel_frota_multas", JSON.stringify(updatedList));
     localStore.multas = updatedList;
   } catch (err) {
     console.warn("Aviso ao salvar lote de multas no localStorage:", err);
@@ -1197,11 +1190,11 @@ export const saveBatchMultas = async (
 
   // 2. Atualizar Cache Otimista em memória e localStorage
   try {
-    const cached = localStorage.getItem(CACHE_KEY);
+    const cached = safeGetItem(CACHE_KEY);
     let data = cached ? JSON.parse(cached).data : null;
     if (!data) data = { ...localStore };
     data.multas = updatedList.length > 0 ? updatedList : localStore.multas;
-    localStorage.setItem(CACHE_KEY, JSON.stringify({
+    safeSetItem(CACHE_KEY, JSON.stringify({
       timestamp: Date.now(),
       data
     }));
@@ -1263,12 +1256,12 @@ export const saveCodigo = async (codigo: CodigoMulta) => {
     await idbPut('codigos', codigo);
   } catch (e) {}
   try {
-    const stored = localStorage.getItem('risel_codigos_multas');
+    const stored = safeGetItem('risel_codigos_multas');
     let list: CodigoMulta[] = stored ? JSON.parse(stored) : [];
     const idx = list.findIndex(c => cleanString(c.codigo) === cleanString(codigo.codigo));
     if (idx >= 0) list[idx] = codigo;
     else list.push(codigo);
-    localStorage.setItem('risel_codigos_multas', JSON.stringify(list));
+    safeSetItem('risel_codigos_multas', JSON.stringify(list));
   } catch (e) {}
 
   const idx = localStore.codigos.findIndex(c => cleanString(c.codigo) === cleanString(codigo.codigo));
@@ -1298,11 +1291,11 @@ export const deleteMulta = async (id: string) => {
 
   await idbDelete('multas', id);
   try {
-    const stored = localStorage.getItem("risel_frota_multas");
+    const stored = safeGetItem("risel_frota_multas");
     if (stored) {
       let list: Multa[] = JSON.parse(stored);
       list = list.filter(m => m.id !== id && m.ait !== id);
-      localStorage.setItem("risel_frota_multas", JSON.stringify(list));
+      safeSetItem("risel_frota_multas", JSON.stringify(list));
     }
   } catch (e) {
     console.error("Erro ao remover multa localmente:", e);
@@ -1317,8 +1310,8 @@ export const clearAllMultasData = async () => {
   } catch (e) {
     console.warn("Aviso ao limpar Supabase:", e);
   }
-  localStorage.removeItem("risel_frota_multas");
-  localStorage.removeItem(CACHE_KEY);
+  safeRemoveItem("risel_frota_multas");
+  safeRemoveItem(CACHE_KEY);
   try {
     const idbMultas = await idbGetAll<Multa>('multas');
     if (idbMultas && idbMultas.length > 0) {

@@ -1177,7 +1177,7 @@ export default function Frota() {
               if (parsed.length > 0) {
                 const updated = [...pedagios, ...parsed];
                 setPedagios(updated);
-                localStorage.setItem("risel_frota_pedagios", JSON.stringify(updated));
+                safeSetItem("risel_frota_pedagios", JSON.stringify(updated));
                 showToast("success", "Pedágios Importados", `${parsed.length} pedágios foram importados com sucesso!`);
               }
             } else {

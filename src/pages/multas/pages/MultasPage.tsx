@@ -15,6 +15,7 @@ import { fetchVehiclePositionAtTime, TrackerMatchResult } from '../../../service
 import { MercosulPlateBadge } from '../../../components/MercosulPlateBadge';
 import { formatCPF, cleanCPF } from '../../../utils/cpfHelper';
 import { ImportarMultasCsvModal } from '../components/ImportarMultasCsvModal';
+import { safeSetItem, safeGetItem } from '../../../utils/safeStorage';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -146,7 +147,7 @@ const MapModal: React.FC<{
 
     useEffect(() => {
         try {
-            const savedCache = localStorage.getItem(GEO_CACHE_KEY);
+            const savedCache = safeGetItem(GEO_CACHE_KEY);
             if (savedCache) {
                 geoCacheRef.current = JSON.parse(savedCache);
             }
@@ -156,7 +157,7 @@ const MapModal: React.FC<{
     const saveToCache = (key: string, data: any) => {
         geoCacheRef.current[key] = data;
         try { 
-            localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(geoCacheRef.current)); 
+            safeSetItem(GEO_CACHE_KEY, JSON.stringify(geoCacheRef.current)); 
         } catch (e) {}
     };
 
@@ -765,32 +766,41 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     }
   };
 
-  const loadData = async (force: boolean = false) => {
-      setLoading(true);
-      const data = await fetchAllData(force);
-      setMultas(data.multas);
-      setVeiculos(data.veiculos);
-      setMotoristas(data.motoristas);
-      setCodigos(data.codigos);
+  const loadData = async (force: boolean = false, silent: boolean = false) => {
+      if (!silent) setLoading(true);
       try {
-          const mappings = await fetchBaseEmailMappings();
-          setBaseMappings(mappings);
-      } catch (err) {
-          console.error("Erro ao carregar mapeamentos de email", err);
+        const data = await fetchAllData(force);
+        if (data) {
+          if (Array.isArray(data.multas)) setMultas(data.multas);
+          if (Array.isArray(data.veiculos)) setVeiculos(data.veiculos);
+          if (Array.isArray(data.motoristas)) setMotoristas(data.motoristas);
+          if (Array.isArray(data.codigos)) setCodigos(data.codigos);
+        }
+        try {
+            const mappings = await fetchBaseEmailMappings();
+            if (mappings) setBaseMappings(mappings);
+        } catch (err) {
+            console.warn("Aviso ao carregar mapeamentos de email", err);
+        }
+      } catch (loadErr) {
+        console.warn("Aviso ao carregar dados de multas:", loadErr);
+      } finally {
+        if (!silent) setLoading(false);
       }
-      setLoading(false);
   };
 
   useEffect(() => { 
-    loadData(false); 
+    // Carregamento inicial com indicador
+    loadData(false, false); 
 
-    // Sincronização periódica entre usuários a cada 20 segundos
+    // Sincronização periódica suave em background (a cada 60s, silenciosa, sem travar tela)
     const syncTimer = setInterval(() => {
-      loadData(false);
-    }, 20000);
+      loadData(false, true);
+    }, 60000);
 
     const onFocus = () => {
-      loadData(false);
+      // Atualização silenciosa ao focar a aba, sem bloquear a interface do usuário
+      loadData(false, true);
     };
     window.addEventListener('focus', onFocus);
 

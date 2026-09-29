@@ -34,17 +34,23 @@ export const VersionManager: React.FC = () => {
 
     // 2. Checagem periódica a cada 90 segundos
     const interval = setInterval(async () => {
-      const { updated } = await checkServerVersion();
+      const { updated, version } = await checkServerVersion();
       if (updated) {
-        setHasNewVersion(true);
+        const dismissed = sessionStorage.getItem("risel_dismissed_version");
+        if (dismissed !== version) {
+          setHasNewVersion(true);
+        }
       }
     }, 90000);
 
     // 3. Checagem quando o usuário volta para a aba da Risel
     const handleFocus = async () => {
-      const { updated } = await checkServerVersion();
+      const { updated, version } = await checkServerVersion();
       if (updated) {
-        setHasNewVersion(true);
+        const dismissed = sessionStorage.getItem("risel_dismissed_version");
+        if (dismissed !== version) {
+          setHasNewVersion(true);
+        }
       }
     };
 
@@ -97,7 +103,19 @@ export const VersionManager: React.FC = () => {
           {!isReloading && (
             <button
               type="button"
-              onClick={() => setHasNewVersion(false)}
+              onClick={() => {
+                setHasNewVersion(false);
+                try {
+                  fetch(`/api/version?t=${Date.now()}`)
+                    .then(r => r.json())
+                    .then(d => {
+                      if (d.version || d.serverStart) {
+                        sessionStorage.setItem("risel_dismissed_version", d.version || d.serverStart);
+                      }
+                    })
+                    .catch(() => {});
+                } catch (_) {}
+              }}
               className="p-1 text-emerald-400 hover:text-white hover:bg-emerald-900/60 rounded-lg cursor-pointer transition-colors"
               title="Fechar aviso"
             >
