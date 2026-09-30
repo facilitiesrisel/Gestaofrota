@@ -2308,13 +2308,24 @@ export default function Frota() {
   }, [veiculos]);
 
   const filteredVeiculos = useMemo(() => {
+    if (!Array.isArray(veiculos)) return [];
+    const q = (searchQuery || "").toLowerCase().trim();
+
     const list = veiculos.filter(v => {
-      const matchesSearch = 
-        v.placa.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        v.modelo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        v.condutor.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (Boolean(v.funcao) && v.funcao.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (Boolean(v.setor) && v.setor.toLowerCase().includes(searchQuery.toLowerCase()));
+      if (!v) return false;
+      const plate = (v.placa || "").toLowerCase();
+      const model = (v.modelo || "").toLowerCase();
+      const driver = (v.condutor || "").toLowerCase();
+      const role = String(v.funcao || "").toLowerCase();
+      const sector = String(v.setor || "").toLowerCase();
+
+      const matchesSearch = !q || (
+        plate.includes(q) ||
+        model.includes(q) ||
+        driver.includes(q) ||
+        role.includes(q) ||
+        sector.includes(q)
+      );
       
       const matchesFilial = filterFilial === "Todos" || isSameCityOrBase(v.filial, filterFilial);
       const matchesStatus = filterStatus === "Todos" || v.status === filterStatus;
@@ -2328,22 +2339,25 @@ export default function Frota() {
 
     // Sort list
     list.sort((a, b) => {
+      if (!a || !b) return 0;
       if (sortField === "diasRestantes") {
         const diasA = diasParaVencimento(a.vencContrato, a.dataInativacao, a.status);
         const diasB = diasParaVencimento(b.vencContrato, b.dataInativacao, b.status);
         return sortDirection === "asc" ? diasA - diasB : diasB - diasA;
       }
 
-      let valA: any = a[sortField] !== undefined ? a[sortField] : "";
-      let valB: any = b[sortField] !== undefined ? b[sortField] : "";
+      let valA: any = a[sortField] !== undefined && a[sortField] !== null ? a[sortField] : "";
+      let valB: any = b[sortField] !== undefined && b[sortField] !== null ? b[sortField] : "";
 
-      if (typeof valA === "string") {
-        valA = valA.toLowerCase();
-        valB = (valB as string).toLowerCase();
+      if (typeof valA === "number" && typeof valB === "number") {
+        return sortDirection === "asc" ? valA - valB : valB - valA;
       }
 
-      if (valA < valB) return sortDirection === "asc" ? -1 : 1;
-      if (valA > valB) return sortDirection === "asc" ? 1 : -1;
+      const strA = String(valA).toLowerCase();
+      const strB = String(valB).toLowerCase();
+
+      if (strA < strB) return sortDirection === "asc" ? -1 : 1;
+      if (strA > strB) return sortDirection === "asc" ? 1 : -1;
       return 0;
     });
 
@@ -2377,7 +2391,7 @@ export default function Frota() {
       return d <= 30;
     }).length;
 
-    const odometroTotal = targetVehicles.reduce((acc, curr) => acc + (curr.odometro || 0), 0);
+    const odometroTotal = targetVehicles.reduce((acc, curr) => acc + (Number(curr?.odometro) || 0), 0);
 
     return { total, ativos, inativos, manutencao, contratosProximos90, alertaVenc30, odometroTotal, contratoCount, provisorioCount };
   }, [filteredVeiculos]);
@@ -2763,7 +2777,10 @@ export default function Frota() {
                 title="Controle de Frota"
                 description="Gestão completa de veículos leves, quilometragem, condutores cadastrados e vencimentos de contratos."
                 icon={Car}
-                onClick={() => setActiveTab("frota")}
+                onClick={() => {
+                  setActiveTab("frota");
+                  setSearchQuery("");
+                }}
                 theme="orange"
                 delay={0.15}
               />
@@ -2984,7 +3001,7 @@ export default function Frota() {
               },
               { 
                 label: "Odômetro Total", 
-                value: `${stats.odometroTotal.toLocaleString("pt-BR")} km`, 
+                value: `${(Number(stats?.odometroTotal) || 0).toLocaleString("pt-BR")} km`, 
                 sub: "Distância acumulada", 
                 gradient: "from-violet-500 to-purple-500", 
                 icon: Gauge, 
@@ -3611,7 +3628,7 @@ export default function Frota() {
                                 </td>
                                 <td className="py-4 px-4 text-left">
                                   <div className={`font-bold ${isVencido ? "text-rose-950" : "text-slate-800"}`}>{formatarTextoLongo(v.modelo, 20)}</div>
-                                  <div className="text-[10px] font-semibold text-slate-400 mt-0.5">{toTitleCase(v.combustivel)} · {v.odometro.toLocaleString("pt-BR")} km</div>
+                                  <div className="text-[10px] font-semibold text-slate-400 mt-0.5">{toTitleCase(v.combustivel || "Flex")} · {(Number(v.odometro) || 0).toLocaleString("pt-BR")} km</div>
                                 </td>
                                 <td className="py-4 px-4 text-left">
                                   <div className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4140,7 +4157,7 @@ export default function Frota() {
                     <div className="border border-slate-150 p-3 rounded-xl flex items-center justify-between">
                       <div>
                         <span className="text-[9px] font-bold text-slate-400 block uppercase">Último Odômetro</span>
-                        <span className="font-black text-slate-800 text-sm block mt-0.5">{selectedVeiculo.odometro.toLocaleString("pt-BR")} km</span>
+                        <span className="font-black text-slate-800 text-sm block mt-0.5">{(Number(selectedVeiculo.odometro) || 0).toLocaleString("pt-BR")} km</span>
                       </div>
                       <Gauge className="w-5 h-5 text-indigo-500" />
                     </div>
@@ -5236,7 +5253,7 @@ export default function Frota() {
                               <div>
                                 <p className="font-bold text-slate-800">{log.message}</p>
                                 <p className="text-[10px] text-slate-400 font-mono">
-                                  {new Date(log.timestamp).toLocaleString("pt-BR")} | Arquivo: {log.filename || "N/A"}
+                                  {log?.timestamp ? new Date(log.timestamp).toLocaleString("pt-BR") : "N/A"} | Arquivo: {log?.filename || "N/A"}
                                 </p>
                               </div>
                             </div>

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users } from "lucide-react";
+import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users, ExternalLink } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -3289,6 +3289,24 @@ export default function Lancamento() {
                           </div>
                         </div>
                       )}
+
+                      {/* Indicador de Armazenamento Seguro e Link Corporativo do Google Drive */}
+                      <div className="flex items-center justify-between px-1 pt-1.5 text-[9.5px]">
+                        <span className="flex items-center gap-1 text-emerald-850 font-bold">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span>Armazenamento em Nuvem Ativo</span>
+                        </span>
+                        <a
+                          href="https://drive.google.com/drive/folders/1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz?hl=pt-br"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[#114D38] hover:text-emerald-800 font-extrabold flex items-center gap-1 underline"
+                          title="Abrir pasta de lançamentos no Google Drive (pastas mensais automáticas)"
+                        >
+                          <span>Pasta no Google Drive</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
                     </div>
 
                     <div className="space-y-0.5 mt-2">

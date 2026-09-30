@@ -142,10 +142,9 @@ function sanitizeVehiclesForStorage(vehicles: any[]): any[] {
   if (!Array.isArray(vehicles)) return [];
   return vehicles.map(v => {
     if (!v || typeof v !== "object") return v;
-    // Campos essenciais para exibição e formulários
     return {
       id: v.id || v.placa,
-      placa: v.placa,
+      placa: (v.placa || '').toUpperCase().trim(),
       modelo: v.modelo || '',
       marca: v.marca || '',
       ano: v.ano || '',
@@ -153,17 +152,30 @@ function sanitizeVehiclesForStorage(vehicles: any[]): any[] {
       base: v.base || v.filial || '',
       condutor: v.condutor || '',
       cpfCondutor: v.cpfCondutor || v.cpf || '',
-      status: v.status || 'ATIVO',
-      tipo: v.tipo || 'Passeio',
-      capacidade: v.capacidade || '',
-      regiao: v.regiao || '',
+      cnhValidade: v.cnhValidade || '',
+      cnhNumero: v.cnhNumero || '',
+      cnhNomeArquivo: v.cnhNomeArquivo || '',
+      cnhAnexoBase64: typeof v.cnhAnexoBase64 === 'string' && v.cnhAnexoBase64.length < 200000 ? v.cnhAnexoBase64 : '',
+      funcao: v.funcao || '',
+      setor: v.setor || '',
+      contatoMotorista: v.contatoMotorista || '',
+      gestorResp: v.gestorResp || '',
+      email: v.email || '',
       locadora: v.locadora || v.proprietario || '',
       proprietario: v.proprietario || v.locadora || '',
+      contrato: v.contrato || '',
+      odometro: typeof v.odometro === 'number' ? v.odometro : (Number(v.kmAtual) || 0),
+      kmAtual: typeof v.kmAtual === 'number' ? v.kmAtual : (Number(v.odometro) || 0),
+      combustivel: v.combustivel || 'Flex',
+      status: v.status ? (v.status.toLowerCase() === 'inativo' ? 'Inativo' : v.status.toLowerCase() === 'em manutenção' ? 'Em Manutenção' : 'Ativo') : 'Ativo',
       vencContrato: v.vencContrato || '',
       validadeLicenciamento: v.validadeLicenciamento || '',
-      email: v.email || '',
-      contrato: v.contrato || '',
-      kmAtual: v.kmAtual || 0
+      dataInativacao: v.dataInativacao || '',
+      motivoInativacao: v.motivoInativacao || '',
+      tipoVinculo: v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === 'FROTA PRÓPRIA' ? '' : 'Contrato'),
+      tipo: v.tipo || 'Passeio',
+      capacidade: v.capacidade || '',
+      regiao: v.regiao || ''
     };
   });
 }

@@ -447,6 +447,18 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
               </button>
             </div>
 
+            {/* Atalho Corporativo para o Google Drive de Lançamentos */}
+            <a
+              href="https://drive.google.com/drive/folders/1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz?hl=pt-br"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-xl bg-emerald-800/80 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 border border-emerald-600/60 shadow-sm cursor-pointer"
+              title="Abrir Pasta Oficial de Documentos no Google Drive"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-emerald-300" />
+              <span className="hidden sm:inline">Google Drive</span>
+            </a>
+
             {blobUrl && (
               <button
                 onClick={handleOpenInNewTab}

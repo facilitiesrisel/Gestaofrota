@@ -6,6 +6,10 @@ import { getAccessToken, setAccessToken } from "./googleSheetsService";
 export const GOOGLE_DRIVE_SINISTROS_ROOT_FOLDER_ID = "1A62QNaC-5m7xMVzZtUxvXxBCHREp_jse";
 export const GOOGLE_DRIVE_SINISTROS_ROOT_FOLDER_URL = `https://drive.google.com/drive/folders/${GOOGLE_DRIVE_SINISTROS_ROOT_FOLDER_ID}?hl=pt-br`;
 
+// Pasta corporativa oficial do Google Drive para Lançamentos de Documentos da Risel Combustíveis
+export const GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_ID = "1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz";
+export const GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_URL = `https://drive.google.com/drive/folders/${GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_ID}?hl=pt-br`;
+
 export interface GoogleDriveFile {
   id: string;
   name: string;
@@ -254,32 +258,181 @@ export async function uploadSinistroAttachmentToDrive(
 }
 
 /**
- * Lista os arquivos contidos na pasta de um sinistro
+ * Formata o nome da pasta mensal para os Lançamentos de Documentos:
+ * Exemplo: "2026-09 - Setembro" ou "2026-10 - Outubro"
  */
-export async function listFilesInDriveFolder(folderId: string, token?: string | null): Promise<GoogleDriveFile[]> {
+export function formatMonthFolderName(vencimentoOuData?: string): string {
+  let dateObj = new Date();
+  if (vencimentoOuData) {
+    if (vencimentoOuData.includes("/")) {
+      const parts = vencimentoOuData.trim().split("/");
+      if (parts.length === 3) {
+        dateObj = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    } else if (vencimentoOuData.includes("-")) {
+      const parts = vencimentoOuData.trim().split("T")[0].split("-");
+      if (parts.length === 3) {
+        dateObj = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      }
+    }
+  }
+
+  const mesNomes = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+
+  const ano = dateObj.getFullYear();
+  const mesNum = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const mesNome = mesNomes[dateObj.getMonth()] || "Mes";
+
+  return `${ano}-${mesNum} - ${mesNome}`;
+}
+
+/**
+ * Localiza ou cria a pasta do mês dentro da pasta raiz corporativa de Lançamentos de Documentos
+ */
+export async function createOrGetMonthlyFolder(
+  vencimentoOuData?: string,
+  token?: string | null
+): Promise<GoogleDriveFolder> {
   const accessToken = token || (await getValidDriveToken());
-  if (!accessToken || !folderId || folderId.startsWith("local_") || folderId.startsWith("folder_")) {
-    return [];
+  const folderName = formatMonthFolderName(vencimentoOuData);
+
+  if (!accessToken) {
+    return {
+      id: `local_month_${Date.now()}`,
+      name: folderName,
+      webViewLink: GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_URL
+    };
   }
 
   try {
-    const query = `'${folderId}' in parents and trashed = false`;
-    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime)&pageSize=100`;
+    // 1. Pesquisar se a pasta do mês já existe dentro da pasta raiz de Lançamentos
+    const query = `'${GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_ID}' in parents and name = '${folderName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink)`;
 
-    const res = await fetch(url, {
+    const searchRes = await fetch(searchUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json"
       }
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      return data.files || [];
+    if (searchRes.ok) {
+      const data = await searchRes.json();
+      if (data.files && data.files.length > 0) {
+        const found = data.files[0];
+        return {
+          id: found.id,
+          name: found.name,
+          webViewLink: found.webViewLink || `https://drive.google.com/drive/folders/${found.id}`
+        };
+      }
     }
-    return [];
+
+    // 2. Se não existir, cria a nova subpasta do mês dentro da pasta de lançamentos
+    const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name: folderName,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_ID]
+      })
+    });
+
+    if (createRes.ok) {
+      const newFolder = await createRes.json();
+      return {
+        id: newFolder.id,
+        name: newFolder.name || folderName,
+        webViewLink: newFolder.webViewLink || `https://drive.google.com/drive/folders/${newFolder.id}`
+      };
+    }
   } catch (err) {
-    console.warn("Aviso ao listar arquivos da pasta do Google Drive:", err);
-    return [];
+    console.warn("Aviso ao buscar/criar pasta do mês no Google Drive:", err);
   }
+
+  return {
+    id: GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_ID,
+    name: folderName,
+    webViewLink: GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_URL
+  };
 }
+
+/**
+ * Salva um arquivo de lançamento diretamente no Google Drive, na subpasta do mês correspondente,
+ * com o nome padronizado oficial gerado pelo sistema.
+ */
+export async function uploadLancamentoFileToDrive(
+  file: File | Blob,
+  customName: string,
+  vencimentoOuData?: string,
+  token?: string | null
+): Promise<GoogleDriveFile> {
+  const accessToken = token || (await getValidDriveToken());
+  if (!accessToken) {
+    throw new Error("Conexão com o Google Drive necessária. Realize a autorização para enviar anexos diretamente.");
+  }
+
+  // Obter ou criar a subpasta do mês dentro da pasta oficial
+  const monthFolder = await createOrGetMonthlyFolder(vencimentoOuData, accessToken);
+
+  const metadata = {
+    name: customName,
+    parents: [monthFolder.id]
+  };
+
+  const boundary = "-------314159265358979323846";
+  const delimiter = `\r\n--${boundary}\r\n`;
+  const closeDelimiter = `\r\n--${boundary}--`;
+
+  const reader = new FileReader();
+
+  return new Promise((resolve, reject) => {
+    reader.onload = async () => {
+      try {
+        const fileContent = reader.result;
+        const base64Data = (fileContent as string).includes(",")
+          ? (fileContent as string).split(",")[1]
+          : fileContent;
+
+        const multipartRequestBody =
+          delimiter +
+          "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+          JSON.stringify(metadata) +
+          delimiter +
+          `Content-Type: ${file.type || "application/pdf"}\r\n` +
+          "Content-Transfer-Encoding: base64\r\n\r\n" +
+          base64Data +
+          closeDelimiter;
+
+        const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": `multipart/related; boundary=${boundary}`
+          },
+          body: multipartRequestBody
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error?.message || "Erro ao gravar anexo no Google Drive");
+        }
+
+        const data: GoogleDriveFile = await res.json();
+        resolve(data);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    reader.onerror = (e) => reject(e);
+    reader.readAsDataURL(file);
+  });
+}
+

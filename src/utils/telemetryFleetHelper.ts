@@ -72,7 +72,7 @@ export function getProcessedFleetWithReservations(
     }
   }
 
-  // 1.1 Obter e integrar veículos cadastrados na Frota de veículos ativos da Gestão de Reservas
+  // 1.1 Verificar quais veículos do Controle de Frota Leve também estão alocados na Gestão de Reservas
   let reservaFleetList: any[] = [];
   if (reservaVehiclesProp && reservaVehiclesProp.length > 0) {
     reservaFleetList = reservaVehiclesProp;
@@ -87,29 +87,13 @@ export function getProcessedFleetWithReservations(
     }
   }
 
-  // Mapa de placas de veículos cadastrados na Frota da Gestão de Reservas
+  // Mapa de placas de veículos ativos na Gestão de Reservas (apenas para enriquecimento visual do card)
   const reservaPlatesSet = new Set<string>();
   (reservaFleetList || []).forEach((rv: any) => {
     if (rv.isActive !== false) {
       const rawPlate = (rv.plate || rv.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       if (rawPlate) {
         reservaPlatesSet.add(rawPlate);
-        // Se o veículo ativo de reservas ainda não estiver na fleetList, adiciona-o para ser monitorado
-        const exists = fleetList.some(f => (f.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === rawPlate);
-        if (!exists) {
-          fleetList.push({
-            id: rv.id || `v-${rawPlate.toLowerCase()}`,
-            placa: rv.plate || rv.placa || rawPlate,
-            modelo: rv.model || rv.modelo || 'Veículo Operacional',
-            condutor: rv.driver || rv.condutor || 'Disponível (Gestão de Reservas)',
-            status: 'Ativo',
-            odometro: Number(rv.lastKm || rv.initialKm) || 0,
-            filial: rv.base || 'Paulínia',
-            locadora: 'Frota Reservas',
-            contrato: 'Risel',
-            funcao: rv.type || 'Operações'
-          } as any);
-        }
       }
     }
   });

@@ -2611,7 +2611,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs">
                         <span className="text-[11px] text-emerald-200/90 font-medium">Impacto Financeiro:</span>
                         <span className="font-black text-sm text-emerald-300 font-mono">
-                            {metrics.totalValor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            {(metrics.totalValor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                         </span>
                     </div>
                 </div>

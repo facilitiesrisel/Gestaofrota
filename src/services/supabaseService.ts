@@ -257,6 +257,95 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
   }
 }
 
+export const SUPABASE_STORAGE_BUCKET_DOCUMENTOS = "documentos-anexos";
+
+/**
+ * Converte base64 para Blob binário de forma segura
+ */
+function base64ToBlob(base64Data: string, contentType: string = 'application/pdf'): Blob {
+  const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+  const byteCharacters = atob(cleanBase64);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  return new Blob([byteArray], { type: contentType });
+}
+
+/**
+ * Upload de arquivo anexo para o Supabase Storage Bucket ('documentos-anexos').
+ * Organiza por subpasta mensal (ex: '2026/09/nome_arquivo.pdf')
+ * Retorna a URL pública para salvar diretamente na tabela, reduzindo tráfego da API em até 95%.
+ */
+export async function uploadDocumentoAnexoSupabaseStorage(
+  fileOrBase64: File | Blob | { base64: string; name: string },
+  fileName: string,
+  vencimentoOuData?: string
+): Promise<{ publicUrl: string; path: string } | null> {
+  try {
+    const client = getSupabaseClient();
+    
+    // Extrai ano e mês para organização da pasta
+    let year = new Date().getFullYear();
+    let month = String(new Date().getMonth() + 1).padStart(2, '0');
+    if (vencimentoOuData) {
+      if (vencimentoOuData.includes('/')) {
+        const p = vencimentoOuData.trim().split('/');
+        if (p.length === 3) { year = parseInt(p[2], 10) || year; month = p[1].padStart(2, '0'); }
+      } else if (vencimentoOuData.includes('-')) {
+        const p = vencimentoOuData.trim().split('T')[0].split('-');
+        if (p.length === 3) { year = parseInt(p[0], 10) || year; month = p[1].padStart(2, '0'); }
+      }
+    }
+
+    // Higieniza nome do arquivo
+    const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${year}/${month}/${Date.now()}_${cleanFileName}`;
+
+    let blobToSend: Blob;
+    let contentType = 'application/pdf';
+    const lowerName = cleanFileName.toLowerCase();
+    if (lowerName.endsWith('.png')) contentType = 'image/png';
+    else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) contentType = 'image/jpeg';
+    else if (lowerName.endsWith('.webp')) contentType = 'image/webp';
+
+    if (fileOrBase64 instanceof Blob || fileOrBase64 instanceof File) {
+      blobToSend = fileOrBase64;
+      if (fileOrBase64.type) contentType = fileOrBase64.type;
+    } else if (typeof fileOrBase64 === 'object' && fileOrBase64.base64) {
+      blobToSend = base64ToBlob(fileOrBase64.base64, contentType);
+    } else {
+      return null;
+    }
+
+    const { data, error } = await client.storage
+      .from(SUPABASE_STORAGE_BUCKET_DOCUMENTOS)
+      .upload(storagePath, blobToSend, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType
+      });
+
+    if (error) {
+      console.warn(`[Supabase Storage] Informação: bucket '${SUPABASE_STORAGE_BUCKET_DOCUMENTOS}' indisponível ou permissão pendente:`, error.message);
+      return null;
+    }
+
+    const { data: publicUrlData } = client.storage
+      .from(SUPABASE_STORAGE_BUCKET_DOCUMENTOS)
+      .getPublicUrl(storagePath);
+
+    return {
+      publicUrl: publicUrlData.publicUrl,
+      path: storagePath
+    };
+  } catch (err) {
+    console.warn('[Supabase Storage] Aviso ao carregar arquivo no bucket:', err);
+    return null;
+  }
+}
+
 // 4. Salvar / Atualizar Lançamento no Supabase
 export async function saveLancamentoSupabase(item: any): Promise<boolean> {
   try {
@@ -295,6 +384,28 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     if (filialBase && !finalObs.includes(`[BASE: ${filialBase}]`)) {
       finalObs = finalObs ? `${finalObs} [BASE: ${filialBase}]` : `[BASE: ${filialBase}]`;
     }
+    if (item.driveUrl && !finalObs.includes(item.driveUrl)) {
+      finalObs = finalObs ? `${finalObs} [GOOGLE DRIVE: ${item.driveUrl}]` : `[GOOGLE DRIVE: ${item.driveUrl}]`;
+    }
+
+    // Economia de tráfego e banco de dados: se tiver URL do Supabase Storage ou Google Drive, prioriza URL
+    let finalAnexo = item.arquivoAnexoUrl || item.driveUrl || item.arquivoAnexoBase64 || "";
+
+    // Se o anexo for um base64 volumoso (> 80KB) e não tiver URL direta, tenta salvar no Supabase Storage
+    if (finalAnexo && finalAnexo.length > 80000 && !finalAnexo.startsWith("http")) {
+      try {
+        const storageResult = await uploadDocumentoAnexoSupabaseStorage(
+          { base64: finalAnexo, name: item.nomeArquivoAnexo || "documento.pdf" },
+          item.nomeArquivoAnexo || "documento.pdf",
+          item.dataVencimento || item.dataLancamento
+        );
+        if (storageResult && storageResult.publicUrl) {
+          finalAnexo = storageResult.publicUrl;
+        }
+      } catch (stErr) {
+        console.warn("[Supabase Storage] Fallback para base64:", stErr);
+      }
+    }
 
     // Monta o objeto base
     const baseRecord: any = {
@@ -311,7 +422,7 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       cnpj: item.cnpj || "",
       estabelecimento: filialBase,
       nome_arquivo_anexo: item.nomeArquivoAnexo || "",
-      arquivo_anexo_base64: item.arquivoAnexoBase64 || "",
+      arquivo_anexo_base64: finalAnexo,
       item_sistema: item.itemSistema || "",
       data_emissao: item.dataEmissao || "",
       observacao: finalObs,
