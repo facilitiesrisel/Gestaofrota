@@ -2041,6 +2041,7 @@ export interface SupabaseMulta {
   valor?: number;
   valor_com_desconto?: number;
   desconto?: number;
+  taxa_locadora?: number;
   data_infracao?: string;
   data_recebimento?: string;
   prazo_indicacao?: string;
@@ -2108,6 +2109,7 @@ export async function fetchMultasSupabase(): Promise<any[]> {
       retornouComPrazo: row.retornou_com_prazo || 'SIM',
       valor: Number(row.valor || 0),
       desconto: Number(row.desconto || 0),
+      taxaLocadora: Number(row.taxa_locadora || 0),
       valorComDesconto: Number(row.valor_com_desconto || (row.valor || 0)),
       empresaOuCondutor: row.empresa_ou_condutor || 'CONDUTOR',
       descontarMotorista: row.descontar_motorista || 'SIM',
@@ -2150,6 +2152,7 @@ export async function saveMultaSupabase(item: any): Promise<boolean> {
       valor: Number(item.valor) || 0,
       valor_com_desconto: Number(item.valorComDesconto) || (Number(item.valor) || 0),
       desconto: Number(item.desconto) || 0,
+      taxa_locadora: Number(item.taxaLocadora) || 0,
       data_infracao: dataInfracao || undefined,
       data_recebimento: item.dataRecebimento || undefined,
       prazo_indicacao: item.prazoIndicacao || undefined,

@@ -634,6 +634,11 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
             if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
               const existing = idMap.get(idStr);
               if (existing) {
+                const existingHasBase64 = Boolean(existing.arquivoAnexoBase64 || (Array.isArray(existing.anexos) && existing.anexos.some((a: any) => a?.base64)));
+                const itemHasBase64 = Boolean(item.arquivoAnexoBase64 || (Array.isArray(item.anexos) && item.anexos.some((a: any) => a?.base64)));
+                const bestAnexoBase64 = item.arquivoAnexoBase64 || existing.arquivoAnexoBase64 || "";
+                const bestAnexos = itemHasBase64 ? item.anexos : (existingHasBase64 ? existing.anexos : (item.anexos || existing.anexos || []));
+
                 idMap.set(idStr, normalizeLancamento({
                   ...existing,
                   ...item,
@@ -642,8 +647,8 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
                   codLancamentoOc: item.codLancamentoOc || existing.codLancamentoOc || "",
                   doc: (item.doc && !item.doc.startsWith("DOC-") && !item.doc.endsWith("S/N")) ? item.doc : existing.doc,
                   nomeArquivoAnexo: item.nomeArquivoAnexo || existing.nomeArquivoAnexo || "",
-                  arquivoAnexoBase64: item.arquivoAnexoBase64 || existing.arquivoAnexoBase64 || "",
-                  anexos: (Array.isArray(existing.anexos) && existing.anexos.length > 0) ? existing.anexos : (item.anexos || [])
+                  arquivoAnexoBase64: bestAnexoBase64,
+                  anexos: bestAnexos
                 }));
               } else {
                 idMap.set(idStr, normalizeLancamento(item));
@@ -997,5 +1002,68 @@ export function exportLancamentosBackupJson(): void {
   document.body.appendChild(downloadAnchor);
   downloadAnchor.click();
   downloadAnchor.remove();
+}
+
+/**
+ * Recupera o anexo PDF/imagem original de um lançamento diretamente do servidor ou Supabase
+ */
+export async function fetchLancamentoAnexoOriginal(id: string | number): Promise<{ nome: string; arquivoAnexoBase64: string; anexos: any[] } | null> {
+  const targetId = String(id || "").trim();
+  if (!targetId) return null;
+
+  // 1. Tenta buscar no cache em memória primeiro
+  const current = getLancamentosUnified();
+  const cached = current.find(i => String(i.id) === targetId);
+  if (cached && (cached.arquivoAnexoBase64 || (Array.isArray(cached.anexos) && cached.anexos.some((a: any) => a?.base64)))) {
+    return {
+      nome: cached.nomeArquivoAnexo || cached.anexos?.[0]?.nome || "Documento.pdf",
+      arquivoAnexoBase64: cached.arquivoAnexoBase64 || cached.anexos?.[0]?.base64 || "",
+      anexos: cached.anexos || []
+    };
+  }
+
+  // 2. Busca no endpoint dedicado do servidor
+  try {
+    const res = await fetch(`/api/lancamentos/${encodeURIComponent(targetId)}/anexo?_t=${Date.now()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && (data.arquivoAnexoBase64 || (Array.isArray(data.anexos) && data.anexos.length > 0))) {
+        if (cached) {
+          cached.arquivoAnexoBase64 = data.arquivoAnexoBase64 || cached.arquivoAnexoBase64;
+          if (Array.isArray(data.anexos) && data.anexos.length > 0) {
+            cached.anexos = data.anexos;
+          }
+        }
+        return {
+          nome: data.nome || "Documento.pdf",
+          arquivoAnexoBase64: data.arquivoAnexoBase64 || "",
+          anexos: data.anexos || []
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("[LancamentosService] Falha ao carregar anexo do servidor:", err);
+  }
+
+  // 3. Fallback Supabase
+  try {
+    const client = getSupabaseClient();
+    if (client) {
+      const numId = Number(targetId);
+      const query = isNaN(numId)
+        ? client.from("lancamentos").select("arquivo_anexo_base64, nome_arquivo_anexo").eq("id", targetId).single()
+        : client.from("lancamentos").select("arquivo_anexo_base64, nome_arquivo_anexo").eq("id", numId).single();
+      const { data, error } = await query;
+      if (!error && data && data.arquivo_anexo_base64) {
+        return {
+          nome: data.nome_arquivo_anexo || "Documento.pdf",
+          arquivoAnexoBase64: data.arquivo_anexo_base64,
+          anexos: [{ id: "anx-supa", nome: data.nome_arquivo_anexo || "Documento.pdf", base64: data.arquivo_anexo_base64 }]
+        };
+      }
+    }
+  } catch (e) {}
+
+  return null;
 }
 

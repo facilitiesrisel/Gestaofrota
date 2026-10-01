@@ -23,6 +23,7 @@ import {
   CsvMultaItem,
   CsvParseResult
 } from '../utils/csvMultasParser';
+import { formatDateBR, todayBR } from '../services/dateUtils';
 
 interface ImportarMultasCsvModalProps {
   isOpen: boolean;
@@ -190,7 +191,7 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
         frota: String(item.frota || '').trim(),
         base: String(item.base || '').trim(),
         dataHoraInfracao: String(item.dataHoraInfracao || '').trim(),
-        dataRecebimento: String(item.dataRecebimento || '').trim(), // Data de hoje (data da importação)
+        dataRecebimento: item.dataRecebimento ? formatDateBR(item.dataRecebimento) : todayBR(),
         prazoIndicacao: '',
         enquadramento: String(item.enquadramento || '').trim(),
         artigoCtb: String(item.artigoCtb || '').trim(),
@@ -597,8 +598,8 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
                                     ? item.dataHoraInfracao.replace('T', ' ')
                                     : '-'}
                                 </div>
-                                <div className="text-[9.5px] text-gray-400">
-                                  Rec: {item.dataRecebimento} (Hoje)
+                                <div className="text-[9.5px] text-emerald-700 font-bold">
+                                  Notificação: {formatDateBR(item.dataRecebimento)}
                                 </div>
                               </td>
                               <td className="py-2 px-3 max-w-[200px]">

@@ -41,6 +41,7 @@ import {
   createDatabaseBackup,
   restoreFromDatabaseBackup,
   importLancamentosToDatabase,
+  fetchLancamentoAnexoOriginal,
   DatabaseBackupInfo
 } from "../../services/lancamentosService";
 import { 
@@ -2191,7 +2192,25 @@ export default function Lancamento() {
   const [sendingEmailId, setSendingEmailId] = useState<number | string | null>(null);
 
   // Disparo / Reenvio manual do e-mail de aprovação abrindo o modal corporativo de destinatários
-  const handleManualSendEmail = (item: any) => {
+  const handleManualSendEmail = async (item: any) => {
+    let b64 = item.arquivoAnexoBase64 || item.anexos?.[0]?.base64;
+    let anxList = item.anexos || [];
+
+    // Se o item em cache estiver sem o base64 do anexo, recupera de imediato do servidor
+    if ((!b64 || b64.length < 50) && item.id) {
+      try {
+        const res = await fetchLancamentoAnexoOriginal(item.id);
+        if (res && res.arquivoAnexoBase64) {
+          b64 = res.arquivoAnexoBase64;
+          if (Array.isArray(res.anexos) && res.anexos.length > 0) {
+            anxList = res.anexos;
+          }
+        }
+      } catch (e) {
+        console.warn("[Lancamento] Aviso ao recuperar anexo para envio:", e);
+      }
+    }
+
     setEmailDispatchModal({
       isOpen: true,
       docData: {
@@ -2204,8 +2223,11 @@ export default function Lancamento() {
         codigoLancamento: item.codigoLancamento || item.codLancamentoOc,
         descricao: item.descricao,
         cnpj: item.cnpj,
-        nomeArquivoAnexo: item.nomeArquivoAnexo,
-        arquivoAnexoBase64: item.arquivoAnexoBase64
+        nomeArquivoAnexo: item.nomeArquivoAnexo || (anxList[0]?.nome || "Documento.pdf"),
+        arquivoAnexoBase64: b64,
+        anexos: anxList,
+        status: item.status,
+        dataAprovacao: item.dataAprovacao
       },
       calculatedDocName: item.doc,
       toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
@@ -2242,17 +2264,20 @@ export default function Lancamento() {
     await saveLancamentoUnified(updatedItem);
     window.dispatchEvent(new Event("risel_lancamentos_updated"));
 
-    // Se o status for alterado para Aguardando aprovação, dispara o e-mail oficial
-    if (newStatus.toLowerCase().includes("aguardando")) {
+    // Se o status for alterado para Aguardando aprovação ou Aprovado, dispara o e-mail oficial correspondente
+    if (newStatus.toLowerCase().includes("aguardando") || newStatus.toLowerCase().includes("aprovado")) {
       sendLancamentoAprovacaoEmail({
         ...updatedItem,
         columnOrder,
         visibleCols
       }).then(sent => {
         if (sent) {
+          const isAppr = newStatus.toLowerCase().includes("aprovado");
           setEmailSentNotice({
-            title: "E-mail de Aprovação Enviado",
-            desc: `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
+            title: isAppr ? "E-mail de Homologação / Aprovação Enviado" : "E-mail de Aprovação Enviado",
+            desc: isAppr
+              ? `E-mail corporativo com identidade visual de APROVADO e anexo original encaminhado para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
+              : `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
           });
           setTimeout(() => setEmailSentNotice(null), 8000);
         }
@@ -3185,6 +3210,7 @@ export default function Lancamento() {
                                     onClick={() => {
                                       const allAnexos = formData.anexos || [];
                                       setViewingAnexo({
+                                        id: editingId || undefined,
                                         nome: anx.nome,
                                         fornecedor: formData.fornecedor || "Não identificado",
                                         fornecedorCnpj: formData.cnpj || "Sem CNPJ",
@@ -3968,6 +3994,7 @@ export default function Lancamento() {
                                         ? item.anexos
                                         : [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }];
                                       setViewingAnexo({
+                                        id: item.id,
                                         nome: item.nomeArquivoAnexo || anxList[0]?.nome || "Documento.pdf",
                                         fornecedor: item.fornecedor,
                                         fornecedorCnpj: item.cnpj || "Sem CNPJ",
@@ -4759,7 +4786,25 @@ export default function Lancamento() {
                       {formatDateDisplay(emailDispatchModal.docData?.dataVencimento || emailDispatchModal.docData?.vencimento)}
                     </span>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-700">Status:</span>
+                    <span className={cn(
+                      "font-black px-2 py-0.5 rounded border text-[11px]",
+                      String(emailDispatchModal.docData?.status || "").toLowerCase().includes("aprovado")
+                        ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                        : "bg-amber-50 text-amber-800 border-amber-200"
+                    )}>
+                      {emailDispatchModal.docData?.status || "Aguardando Aprovação"}
+                    </span>
+                  </div>
                 </div>
+
+                {String(emailDispatchModal.docData?.status || "").toLowerCase().includes("aprovado") && (
+                  <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Lançamento com status <strong>Aprovado</strong>: o e-mail será disparado com a identidade visual oficial de aprovação e homologação.</span>
+                  </div>
+                )}
 
                 {/* Banner de Saudação Dinâmica */}
                 <div className="flex items-center justify-between gap-2 p-2 bg-emerald-50/60 rounded-lg border border-emerald-100 text-xs">
@@ -5080,8 +5125,13 @@ export default function Lancamento() {
                       if (emailDispatchModal.isManualResendOnly) {
                         const para = emailDispatchModal.toRecipients;
                         const cc = emailDispatchModal.ccRecipients;
+                        const currentDocStatus = emailDispatchModal.docData?.status || "Aguardando Aprovação";
+                        const isApproved = String(currentDocStatus).toLowerCase().includes("aprovado");
+
                         const sent = await sendLancamentoAprovacaoEmail({
                           ...emailDispatchModal.docData,
+                          status: currentDocStatus,
+                          dataAprovacao: emailDispatchModal.docData?.dataAprovacao || (isApproved ? new Date().toLocaleDateString('pt-BR') : ""),
                           codigoLancamento: emailDispatchModal.docData?.codigoLancamento || "",
                           doc: emailDispatchModal.docData?.codigoLancamento || emailDispatchModal.calculatedDocName || emailDispatchModal.docData.doc,
                           destinatariosPara: para,
@@ -5091,7 +5141,7 @@ export default function Lancamento() {
                         });
                         if (sent) {
                           const docId = emailDispatchModal.docData?.id;
-                          if (docId) {
+                          if (docId && !isApproved) {
                             const existingDoc = lancamentos.find(item => String(item.id) === String(docId)) || emailDispatchModal.docData;
                             const updatedDoc = {
                               ...existingDoc,
@@ -5104,8 +5154,10 @@ export default function Lancamento() {
                           }
                           const saudacao = getSaudacaoDestinatarios(para);
                           setEmailSentNotice({
-                            title: "E-mail de Aprovação Enviado",
-                            desc: `E-mail (${saudacao}) encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}. Status atualizado para "Aguardando Aprovação".`
+                            title: isApproved ? "E-mail de Lançamento Aprovado Enviado" : "E-mail de Aprovação Enviado",
+                            desc: isApproved
+                              ? `E-mail (${saudacao}) com identidade visual oficial de documento APROVADO encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}.`
+                              : `E-mail (${saudacao}) encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}. Status atualizado para "Aguardando Aprovação".`
                           });
                           setTimeout(() => setEmailSentNotice(null), 8000);
                         } else {

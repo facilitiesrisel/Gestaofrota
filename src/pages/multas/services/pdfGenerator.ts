@@ -1,6 +1,8 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Multa } from '../types';
+import { formatDateBR, formatDateTimeBR } from './dateUtils';
+import { formatNomeProprio } from '../../../lib/utils';
 
 export interface GeneratedPdfResult {
   dataUrl: string;
@@ -59,7 +61,7 @@ export const generateAutorizacaoDescontoPdf = async (multa: Partial<Multa>): Pro
 
   const placa = (multa.placa || 'SEM-PLACA').toUpperCase().trim();
   const ait = (multa.ait || 'SEM-AIT').toUpperCase().trim();
-  const motorista = (multa.responsavelNome || '').toUpperCase().trim();
+  const motorista = formatNomeProprio(multa.responsavelNome) || '';
   const cpfMatricula = (multa.responsavelCodigo || '').trim();
   const base = (multa.base || 'FILIAL').toUpperCase().trim();
   const frota = (multa.frota || placa).toUpperCase().trim();
@@ -74,8 +76,10 @@ export const generateAutorizacaoDescontoPdf = async (multa: Partial<Multa>): Pro
   const via = multa.rodoviaOuUrbano === 'RODOVIA' ? 'RODOVIA' : 'URBANO';
   
   const valorOriginal = Number(multa.valor || 0);
-  const desconto = Number(multa.desconto || 0);
-  const valorFinal = Number(multa.valorComDesconto ?? (valorOriginal - desconto));
+  const taxaLocadora = Number(multa.taxaLocadora || 0);
+  // Regra: valor cheio da Multa, aplicado 20% de desconto, e após isso somada a taxa da locadora
+  const desconto = multa.desconto !== undefined ? Number(multa.desconto) : Number((valorOriginal * 0.20).toFixed(2));
+  const valorFinal = Number(multa.valorComDesconto ?? (Math.max(0, valorOriginal - desconto) + taxaLocadora));
 
   const fmtMoney = (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   
@@ -176,13 +180,14 @@ export const generateAutorizacaoDescontoPdf = async (multa: Partial<Multa>): Pro
   autoTable(doc, {
     startY: currentY,
     theme: 'grid',
-    head: [['Placa', 'Frota', 'Auto de Infração (AIT)', 'Data / Hora da Infração', 'Prazo Indicação']],
+    head: [['Placa', 'Frota', 'Auto de Infração (AIT)', 'Data/Hora Infração', 'Data Notificação', 'Prazo Indicação']],
     body: [[
       placa,
       frota,
       ait,
-      fmtDate(multa.dataHoraInfracao),
-      fmtDate(multa.prazoIndicacao)
+      formatDateTimeBR(multa.dataHoraInfracao),
+      formatDateBR(multa.dataRecebimento),
+      formatDateBR(multa.prazoIndicacao)
     ]],
     styles: { fontSize: 8, cellPadding: 2.2, textColor: darkTextColor },
     headStyles: { fillColor: primaryColor, textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
@@ -231,7 +236,7 @@ export const generateAutorizacaoDescontoPdf = async (multa: Partial<Multa>): Pro
   // Espaçamento aprimorado entre Item 2 e Item 3
   currentY = (doc as any).lastAutoTable.finalY + 6.5;
 
-  // Seção 3: Demonstrativo Financeiro (Apenas os 3 valores fundamentais)
+  // Seção 3: Demonstrativo Financeiro
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(...primaryColor);
@@ -239,22 +244,44 @@ export const generateAutorizacaoDescontoPdf = async (multa: Partial<Multa>): Pro
 
   currentY += 2.5;
 
+  const tableHead = taxaLocadora > 0
+    ? [['Valor Integral (R$)', 'Desconto 20% (R$)', 'Taxa Locadora (R$)', 'Valor Líquido a Descontar (R$)']]
+    : [['Valor Integral (R$)', 'Desconto Concedido (R$)', 'Valor Líquido a Descontar (R$)']];
+
+  const tableBody = taxaLocadora > 0
+    ? [[
+        fmtMoney(valorOriginal),
+        fmtMoney(desconto),
+        fmtMoney(taxaLocadora),
+        fmtMoney(valorFinal)
+      ]]
+    : [[
+        fmtMoney(valorOriginal),
+        fmtMoney(desconto),
+        fmtMoney(valorFinal)
+      ]];
+
+  const colStyles: any = taxaLocadora > 0
+    ? {
+        0: { cellWidth: 45 },
+        1: { cellWidth: 45 },
+        2: { cellWidth: 42 },
+        3: { cellWidth: 50, fontStyle: 'bold', textColor: [0, 120, 60] }
+      }
+    : {
+        0: { cellWidth: 60 },
+        1: { cellWidth: 60 },
+        2: { cellWidth: 62, fontStyle: 'bold', textColor: [0, 120, 60] }
+      };
+
   autoTable(doc, {
     startY: currentY,
     theme: 'grid',
-    head: [['Valor Integral (R$)', 'Desconto Concedido (R$)', 'Valor Líquido a Descontar (R$)']],
-    body: [[
-      fmtMoney(valorOriginal),
-      fmtMoney(desconto),
-      fmtMoney(valorFinal)
-    ]],
+    head: tableHead,
+    body: tableBody,
     styles: { fontSize: 8.5, cellPadding: 2.8, textColor: darkTextColor, halign: 'center' },
     headStyles: { fillColor: primaryColor, textColor: 255, fontStyle: 'bold', fontSize: 8, halign: 'center' },
-    columnStyles: {
-      0: { cellWidth: 60 },
-      1: { cellWidth: 60 },
-      2: { cellWidth: 62, fontStyle: 'bold', textColor: [0, 120, 60] }
-    },
+    columnStyles: colStyles,
     margin: { left: 14, right: 14 }
   });
 

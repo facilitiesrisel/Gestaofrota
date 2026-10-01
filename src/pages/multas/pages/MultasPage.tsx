@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchAllData, saveMulta, saveBatchMultas, deleteMulta, cleanString, uploadFileToDrive, generateAuthPdfDocs, getDriveFolderId, getDocsTemplateId, formatInputText, saveCodigo, fetchBaseEmailMappings, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, deleteDriveFiles } from '../services/storage';
 import { generateAutorizacaoDescontoPdf, openTermoInNewTab } from '../services/pdfGenerator';
 import { VEICULOS_REAIS } from '../../../data/veiculos_reais';
-import { parseLocalDate } from '../services/dateUtils';
+import { parseLocalDate, formatDateBR, formatDateTimeBR, toHtmlDateValue, toHtmlDateTimeValue, normalizeToBrazilianDate, compareDatesSafe, todayBR } from '../services/dateUtils';
 import { Multa, StatusMulta, TipoMulta, Veiculo, Motorista, CodigoMulta } from '../types';
 import { Plus, Search, FileText, Download, Save, Send, AlertTriangle, Calendar, DollarSign, Clock, User, LayoutGrid, List as ListIcon, Edit2, Edit3, Car, ArrowRight, Info, MapPin, Trash2, UploadCloud, Eye, Loader2, HelpCircle, X, Mail, ArrowLeft, Map as MapIcon, Layers, Paperclip, FileCheck, RectangleHorizontal, Filter, ChevronDown, ChevronUp, FileSpreadsheet, ArrowUpDown, CheckCircle2, MessageSquare, AlertCircle, Radio, Navigation } from 'lucide-react';
 import Loading from '../components/Loading';
@@ -16,6 +16,7 @@ import { MercosulPlateBadge } from '../../../components/MercosulPlateBadge';
 import { formatCPF, cleanCPF } from '../../../utils/cpfHelper';
 import { ImportarMultasCsvModal } from '../components/ImportarMultasCsvModal';
 import { safeSetItem, safeGetItem } from '../../../utils/safeStorage';
+import { toTitleCase, formatNomeProprio } from '../../../lib/utils';
 
 // FIX: Declare L on Window to avoid TypeScript errors with Leaflet
 declare global {
@@ -37,6 +38,7 @@ const initialMulta: Partial<Multa> = {
   empresaOuCondutor: 'CONDUTOR',
   descontarMotorista: 'SIM',
   pagoComDesconto: 'SIM',
+  taxaLocadora: 0,
 };
 
 const sanitizeMultaForForm = (m: Partial<Multa>): Partial<Multa> => {
@@ -51,7 +53,7 @@ const sanitizeMultaForForm = (m: Partial<Multa>): Partial<Multa> => {
     enquadramento: String(m.enquadramento ?? '').trim(),
     artigoCtb: String(m.artigoCtb ?? '').trim(),
     descricaoInfracao: String(m.descricaoInfracao ?? '').trim(),
-    responsavelNome: String(m.responsavelNome ?? '').trim(),
+    responsavelNome: formatNomeProprio(m.responsavelNome),
     responsavelCodigo: String(m.responsavelCodigo ?? '').trim(),
     orgaoAutuador: String(m.orgaoAutuador ?? '').trim(),
     endereco: String(m.endereco ?? '').trim(),
@@ -59,7 +61,11 @@ const sanitizeMultaForForm = (m: Partial<Multa>): Partial<Multa> => {
     uf: String(m.uf ?? '').trim(),
     obs: String(m.obs ?? '').trim(),
     linkAit: String(m.linkAit ?? ''),
-    linkAuth: String(m.linkAuth ?? '')
+    linkAuth: String(m.linkAuth ?? ''),
+    taxaLocadora: typeof m.taxaLocadora === 'number' ? m.taxaLocadora : (Number(m.taxaLocadora) || 0),
+    dataRecebimento: m.dataRecebimento ? formatDateBR(m.dataRecebimento) : '',
+    prazoIndicacao: m.prazoIndicacao ? formatDateBR(m.prazoIndicacao) : '',
+    descontoEnviadoRH: m.descontoEnviadoRH ? formatDateBR(m.descontoEnviadoRH) : ''
   };
 };
 
@@ -658,6 +664,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const [loading, setLoading] = useState(false);
   const [multas, setMultas] = useState<Multa[]>([]);
   const [formData, setFormData] = useState<Partial<Multa>>(initialMulta);
+  const [taxaTipo, setTaxaTipo] = useState<'VALOR' | 'PERCENTUAL'>('VALOR');
+  const [taxaInput, setTaxaInput] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [uploadingAit, setUploadingAit] = useState(false);
@@ -920,9 +928,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   }, [multas, searchTerm, filters]);
 
   const formatDateString = (val?: string) => {
-      if (!val) return '-';
-      const date = parseLocalDate(val);
-      return date ? date.toLocaleDateString('pt-BR') : val;
+      return formatDateBR(val);
   };
 
   const formatMoneyString = (val?: any) => {
@@ -936,8 +942,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       return [...filteredMultas].sort((a, b) => {
           const aVal = a[sortConfig.key];
           const bVal = b[sortConfig.key];
-          if (a[sortConfig.key] === undefined) return 1;
-          if (b[sortConfig.key] === undefined) return -1;
+          if (a[sortConfig.key] === undefined || a[sortConfig.key] === null || a[sortConfig.key] === '') return 1;
+          if (b[sortConfig.key] === undefined || b[sortConfig.key] === null || b[sortConfig.key] === '') return -1;
+          
+          const dateKeys: Array<keyof Multa> = ['dataHoraInfracao', 'dataRecebimento', 'prazoIndicacao', 'vencimento', 'descontoEnviadoRH'];
+          if (dateKeys.includes(sortConfig.key)) {
+              const diff = compareDatesSafe(aVal, bVal);
+              return sortConfig.direction === 'asc' ? diff : -diff;
+          }
+
           if (typeof aVal === 'number' && typeof bVal === 'number') {
               return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
           }
@@ -1020,7 +1033,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               placa: rawText, 
               frota: foundFrota || prev.frota || rawText, 
               base: foundFilial || prev.base || '',
-              responsavelNome: foundMotorista || prev.responsavelNome || '',
+              responsavelNome: foundMotorista ? formatNomeProprio(foundMotorista) : (prev.responsavelNome ? formatNomeProprio(prev.responsavelNome) : ''),
               responsavelCodigo: formattedCpf || prev.responsavelCodigo || ''
           }));
           clearError('frota');
@@ -1051,6 +1064,40 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     return null;
   };
 
+  const parseTaxaInputValue = (
+    rawInput: string,
+    tipo: 'VALOR' | 'PERCENTUAL',
+    vCheio: number
+  ): { taxaEmReais: number; isPerc: boolean; percValue: number } => {
+    const trimmed = String(rawInput ?? '').trim();
+    if (!trimmed || trimmed === '0' || trimmed === '0%' || trimmed === '0,00' || trimmed === '0.00') {
+      return { taxaEmReais: 0, isPerc: tipo === 'PERCENTUAL', percValue: 0 };
+    }
+
+    const hasPercent = trimmed.includes('%');
+    const isPerc = tipo === 'PERCENTUAL' || hasPercent;
+
+    if (isPerc) {
+      const cleanPerc = trimmed.replace('%', '').replace(/\s+/g, '').replace(',', '.');
+      const perc = parseFloat(cleanPerc) || 0;
+      const emReais = Number(((vCheio * perc) / 100).toFixed(2));
+      return { taxaEmReais: emReais, isPerc: true, percValue: perc };
+    } else {
+      const cleanVal = trimmed.replace('R$', '').trim();
+      let num = 0;
+      if (cleanVal.includes(',') && cleanVal.includes('.')) {
+        num = parseFloat(cleanVal.replace(/\./g, '').replace(',', '.')) || 0;
+      } else if (cleanVal.includes(',')) {
+        num = parseFloat(cleanVal.replace(',', '.')) || 0;
+      } else {
+        num = parseFloat(cleanVal) || 0;
+      }
+      const emReais = Number(num.toFixed(2));
+      const perc = vCheio > 0 ? Number(((emReais / vCheio) * 100).toFixed(1)) : 0;
+      return { taxaEmReais: emReais, isPerc: false, percValue: perc };
+    }
+  };
+
   const handleEnquadramentoChange = (val: string) => {
     const upperVal = (val || '').toUpperCase();
     const cleanSearch = cleanString(upperVal);
@@ -1060,11 +1107,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
     if (matchedCodigo && !matchedCodigo.isNew) {
       const valorNominal = Number(matchedCodigo.valor) || 0;
-      let descVal = Number(matchedCodigo.desconto) || 0;
-      if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
-        descVal = Number((valorNominal - descVal).toFixed(2));
-      }
-      const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
+      // Regra de cálculo: 20% de desconto sobre o valor cheio da Multa
+      const descVal = Number((valorNominal * 0.20).toFixed(2));
+      const valorMultaComDesc = Math.max(0, valorNominal - descVal);
+      const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, valorNominal);
+      const valorFinal = Number((valorMultaComDesc + taxaEmReais).toFixed(2));
 
       setFormData(prev => ({
         ...prev,
@@ -1074,6 +1121,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         pontosCnh: Number(matchedCodigo.pontos ?? prev.pontosCnh ?? 0),
         valor: valorNominal > 0 ? valorNominal : (prev.valor || 0),
         desconto: descVal >= 0 ? descVal : (prev.desconto || 0),
+        taxaLocadora: taxaEmReais,
         valorComDesconto: valorFinal > 0 ? valorFinal : (prev.valorComDesconto || 0)
       }));
       clearError('enquadramento');
@@ -1120,14 +1168,10 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const selectCodigo = (codigo: any) => {
     if (!codigo) return;
     const valorNominal = Number(codigo.valor) || 0;
-    let descVal = Number(codigo.desconto) || 0;
-    
-    // Proteção para registros antigos onde desconto podia estar cadastrado com valor do boleto com desconto (80%)
-    if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
-      descVal = Number((valorNominal - descVal).toFixed(2));
-    }
-    
-    const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
+    // Regra: valor cheio com 20% de desconto
+    const descVal = Number((valorNominal * 0.20).toFixed(2));
+    const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, valorNominal);
+    const valorFinal = Number((Math.max(0, valorNominal - descVal) + taxaEmReais).toFixed(2));
 
     setFormData(prev => ({
       ...prev, 
@@ -1137,6 +1181,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       pontosCnh: codigo.isNew ? prev.pontosCnh : Number(codigo.pontos || 0), 
       valor: codigo.isNew ? prev.valor : valorNominal, 
       desconto: codigo.isNew ? prev.desconto : descVal, 
+      taxaLocadora: taxaEmReais,
       valorComDesconto: codigo.isNew ? prev.valorComDesconto : valorFinal
     }));
     clearError('enquadramento');
@@ -1154,11 +1199,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         const match = findMatchingCodigo(enq, codigos);
         if (match && !match.isNew) {
           const valorNominal = Number(match.valor) || 0;
-          let descVal = Number(match.desconto) || 0;
-          if (descVal > (valorNominal * 0.5) && descVal < valorNominal) {
-            descVal = Number((valorNominal - descVal).toFixed(2));
-          }
-          const valorFinal = Number(Math.max(0, valorNominal - descVal).toFixed(2));
+          const descVal = Number((valorNominal * 0.20).toFixed(2));
+          const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, valorNominal);
+          const valorFinal = Number((Math.max(0, valorNominal - descVal) + taxaEmReais).toFixed(2));
           return {
             ...prev,
             artigoCtb: prev.artigoCtb || String(match.baseLegal || '').toUpperCase(),
@@ -1166,6 +1209,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
             pontosCnh: (prev.pontosCnh !== undefined && prev.pontosCnh !== 0) ? prev.pontosCnh : Number(match.pontos || 0),
             valor: (prev.valor && prev.valor > 0) ? prev.valor : valorNominal,
             desconto: (prev.desconto !== undefined && prev.desconto > 0) ? prev.desconto : descVal,
+            taxaLocadora: taxaEmReais,
             valorComDesconto: (prev.valorComDesconto && prev.valorComDesconto > 0) ? prev.valorComDesconto : valorFinal
           };
         }
@@ -1174,17 +1218,69 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     }, 250);
   };
 
+  const updateTaxaLocadora = (rawInput: string, forcedTipo?: 'VALOR' | 'PERCENTUAL', customValorCheio?: number, customDesconto?: number) => {
+      const vCheio = customValorCheio !== undefined ? customValorCheio : (Number(formData.valor) || 0);
+      const vDesc = customDesconto !== undefined ? customDesconto : (Number(formData.desconto) || 0);
+      
+      const trimmed = String(rawInput ?? '').trim();
+      const hasPercentSymbol = trimmed.includes('%');
+      const tipo = forcedTipo || (hasPercentSymbol ? 'PERCENTUAL' : taxaTipo);
+      
+      if (hasPercentSymbol && taxaTipo !== 'PERCENTUAL') {
+          setTaxaTipo('PERCENTUAL');
+      }
+
+      setTaxaInput(rawInput);
+
+      const { taxaEmReais } = parseTaxaInputValue(rawInput, tipo, vCheio);
+      const valorMultaComDesc = Math.max(0, vCheio - vDesc);
+      const valorFinal = Number((valorMultaComDesc + taxaEmReais).toFixed(2));
+
+      setFormData(prev => ({
+          ...prev,
+          taxaLocadora: taxaEmReais,
+          valorComDesconto: valorFinal
+      }));
+  };
+
+  const handleToggleTaxaTipo = (novoTipo: 'VALOR' | 'PERCENTUAL') => {
+      setTaxaTipo(novoTipo);
+      updateTaxaLocadora(taxaInput, novoTipo);
+  };
+
   const handleMoneyChange = (field: 'valor' | 'desconto', val: number) => {
       if (val < 0 || isNaN(val)) return;
-      const currentValor = field === 'valor' ? val : (Number(formData.valor) || 0);
-      const currentDesconto = field === 'desconto' ? val : (Number(formData.desconto) || 0);
-      const valorFinal = Number(Math.max(0, currentValor - currentDesconto).toFixed(2));
       
-      setFormData(prev => ({
-        ...prev,
-        [field]: val,
-        valorComDesconto: valorFinal
-      }));
+      setFormData(prev => {
+          const currentValor = field === 'valor' ? val : (Number(prev.valor) || 0);
+          
+          let currentDesconto = Number(prev.desconto) || 0;
+          if (field === 'valor') {
+              // Aplica 20% de desconto no valor cheio se pago com desconto
+              if (prev.pagoComDesconto !== 'NÃO') {
+                  currentDesconto = Number((currentValor * 0.20).toFixed(2));
+              } else {
+                  currentDesconto = 0;
+              }
+          } else if (field === 'desconto') {
+              currentDesconto = val;
+          }
+
+          // Se a taxa da locadora for percentual (ou taxaInput contiver %), recalcula o valor em R$ com base no novo valor cheio
+          const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, currentValor);
+
+          // Cálculo exato: valor cheio da Multa, aplicado 20% de desconto, e após isso somada a taxa da locadora
+          const valorMultaComDesconto = Math.max(0, currentValor - currentDesconto);
+          const valorFinal = Number((valorMultaComDesconto + taxaEmReais).toFixed(2));
+          
+          return {
+              ...prev,
+              [field]: val,
+              taxaLocadora: taxaEmReais,
+              ...(field === 'valor' ? { desconto: currentDesconto } : {}),
+              valorComDesconto: valorFinal
+          };
+      });
       clearError(field);
   };
 
@@ -1193,7 +1289,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     setFormData(prev => ({ ...prev, responsavelCodigo: formattedVal }));
     const motorista = motoristas.find(m => m.login === formattedVal);
     if (motorista) {
-      setFormData(prev => ({ ...prev, responsavelCodigo: formattedVal, responsavelNome: motorista.nome }));
+      setFormData(prev => ({ ...prev, responsavelCodigo: formattedVal, responsavelNome: formatNomeProprio(motorista.nome) }));
       clearError('responsavelNome');
     }
   };
@@ -1330,8 +1426,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       
       if (!formData.frota) newErrors.frota = "Frota é obrigatória.";
       if (!formData.placa || formData.placa.length < 7) newErrors.placa = "Placa inválida.";
-      if (formData.dataHoraInfracao && formData.dataRecebimento && new Date(formData.dataRecebimento) < new Date(formData.dataHoraInfracao)) {
-          newErrors.dataRecebimento = "Data inválida.";
+      if (formData.dataHoraInfracao && formData.dataRecebimento && compareDatesSafe(formData.dataRecebimento, formData.dataHoraInfracao) < 0) {
+          newErrors.dataRecebimento = "Data do recebimento não pode ser anterior à data da infração.";
       }
       setErrors(newErrors);
       return Object.keys(newErrors).length === 0;
@@ -1361,7 +1457,12 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         }
     }
 
-    const savedMulta = { ...formData, id: formData.id || formData.ait || `multa-${Date.now()}` } as Multa;
+    const savedMulta = { 
+        ...formData, 
+        responsavelNome: formatNomeProprio(formData.responsavelNome),
+        taxaLocadora: Number(formData.taxaLocadora) || 0,
+        id: formData.id || formData.ait || `multa-${Date.now()}` 
+    } as Multa;
     await saveMulta(savedMulta);
     
     // Limpar filtros de busca/mês para garantir que o registro apareça na tabela imediatamente
@@ -1371,6 +1472,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     await loadData(true);
     setView('LIST');
     setFormData(initialMulta);
+    setTaxaInput('');
+    setTaxaTipo('VALOR');
     setErrors({});
     setLoading(false);
   };
@@ -1398,7 +1501,12 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         }
     }
 
-    const savedMulta = { ...formData, id: formData.id || formData.ait || `multa-${Date.now()}` } as Multa;
+    const savedMulta = { 
+        ...formData, 
+        responsavelNome: formatNomeProprio(formData.responsavelNome),
+        taxaLocadora: Number(formData.taxaLocadora) || 0,
+        id: formData.id || formData.ait || `multa-${Date.now()}` 
+    } as Multa;
     await saveMulta(savedMulta);
 
     setFilters(prev => ({ ...prev, mes: '', dataInicio: '', dataFim: '', placa: '', base: '', status: '', responsabilidade: '', descontar: '' }));
@@ -1406,6 +1514,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     await loadData(true);
     setView('LIST');
     setFormData(initialMulta);
+    setTaxaInput('');
+    setTaxaTipo('VALOR');
     setErrors({});
     setLoading(false);
 
@@ -1532,8 +1642,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
   const generateEmailHTML = (data: Partial<Multa> & { customMessage?: string }) => {
       const fmtMoney = (val?: number) => val ? val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : "R$ 0,00";
-      const fmtDate = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') : "-";
-      const fmtDateTime = (val?: string) => val ? new Date(val).toLocaleDateString('pt-BR') + ' às ' + new Date(val).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "-";
+      const fmtDate = (val?: string) => formatDateBR(val);
+      const fmtDateTime = (val?: string) => formatDateTimeBR(val);
       
       const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(data.placa || ''));
       const baseStr = (data.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
@@ -1619,7 +1729,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
               <table style="width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
                 <tr style="background-color: #f8fafc;">
                   <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0; width: 38%;">👤 Motorista / Condutor:</td>
-                  <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; font-weight: 800; color: #0f172a;">${data.responsavelNome || '-'}</td>
+                  <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; font-weight: 800; color: #0f172a;">${formatNomeProprio(data.responsavelNome) || '-'}</td>
                 </tr>
                 <tr>
                   <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0;">📄 Auto de Infração (AIT):</td>
@@ -1638,12 +1748,19 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #0f172a; font-weight: 700;">${fmtDateTime(data.dataHoraInfracao)}</td>
                 </tr>
                 <tr>
+                  <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0;">📬 Data do Recebimento:</td>
+                  <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #0f172a; font-weight: 700;">${data.dataRecebimento ? fmtDate(data.dataRecebimento) : '-'}</td>
+                </tr>
+                <tr>
                   <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0;">⚠️ Infração Cometida:</td>
                   <td style="padding: 10px 14px; border-bottom: 1px solid #e2e8f0; color: #0f172a; line-height: 1.4;">${data.descricaoInfracao || data.enquadramento || '-'}</td>
                 </tr>
                 <tr style="background-color: #f8fafc;">
                   <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0;">💲 Valor com Desconto:</td>
-                  <td style="padding: 10px 14px; color: #15803d; font-weight: 900; font-size: 14px; border-bottom: 1px solid #e2e8f0;">${fmtMoney(data.valorComDesconto || data.valor)}</td>
+                  <td style="padding: 10px 14px; color: #15803d; font-weight: 900; font-size: 14px; border-bottom: 1px solid #e2e8f0;">
+                    ${fmtMoney(data.valorComDesconto || data.valor)}
+                    ${Number(data.taxaLocadora || 0) > 0 ? `<span style="font-size: 11px; color: #b45309; font-weight: bold; margin-left: 8px;">(Inclui taxa locadora: ${fmtMoney(Number(data.taxaLocadora))})</span>` : ''}
+                  </td>
                 </tr>
                 <tr>
                   <td style="padding: 10px 14px; font-weight: 700; color: #0d4a36; border-bottom: 1px solid #e2e8f0;">🪪 Pontuação CNH:</td>
@@ -1811,24 +1928,10 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           });
       }
 
-      const getFormattedSubjectDate = (dateStr?: string) => {
-          if (!dateStr) return '';
-          try {
-              const isoDate = dateStr.split('T')[0];
-              if (isoDate.includes('-')) {
-                  const parts = isoDate.split('-');
-                  if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
-              }
-          } catch(e) {}
-          const d = new Date(dateStr);
-          if (isNaN(d.getTime())) return '';
-          return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
-      };
-
       const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(normalizedMulta.placa || ''));
       const baseStr = (normalizedMulta.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
       const frotaStr = normalizedMulta.frota || (veiculoMatch as any)?.frota || normalizedMulta.placa || 'S/F';
-      const dataFormatada = getFormattedSubjectDate(normalizedMulta.dataHoraInfracao);
+      const dataFormatada = formatDateBR(normalizedMulta.dataHoraInfracao || normalizedMulta.dataRecebimento);
       const finalSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedMulta.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
 
       const smtpHost = localStorage.getItem("risel_smtp_host") || undefined;
@@ -1930,24 +2033,10 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
       const { toEmail, ccEmail, origin } = await resolveEmailRecipients(normalizedData);
 
-      const getFormattedSubjectDate = (dateStr?: string) => {
-          if (!dateStr) return '';
-          try {
-              const isoDate = dateStr.split('T')[0];
-              if (isoDate.includes('-')) {
-                  const parts = isoDate.split('-');
-                  if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
-              }
-          } catch(e) {}
-          const d = new Date(dateStr);
-          if (isNaN(d.getTime())) return '';
-          return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
-      };
-
       const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(normalizedData.placa || ''));
       const baseStr = (normalizedData.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
       const frotaStr = normalizedData.frota || (veiculoMatch as any)?.frota || normalizedData.placa || 'S/F';
-      const dataFormatada = getFormattedSubjectDate(normalizedData.dataHoraInfracao);
+      const dataFormatada = formatDateBR(normalizedData.dataHoraInfracao || normalizedData.dataRecebimento);
       const defaultSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedData.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
 
       setEmailTo(toEmail);
@@ -2040,7 +2129,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(currentMulta.placa || ''));
       const baseStr = (currentMulta.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
       const frotaStr = currentMulta.frota || (veiculoMatch as any)?.frota || currentMulta.placa || 'S/F';
-      const dataFormatada = currentMulta.dataHoraInfracao ? currentMulta.dataHoraInfracao.split('T')[0] : '';
+      const dataFormatada = formatDateBR(currentMulta.dataHoraInfracao || currentMulta.dataRecebimento);
       const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
       const finalSubject = emailSubject.trim() || fallbackSubject;
       const subject = encodeURIComponent(finalSubject);
@@ -2048,15 +2137,17 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       const obsPlainText = currentMulta.obs && currentMulta.obs.trim() ? `• Observações: ${currentMulta.obs.trim()}\n` : '';
 
       let bodyPlainText = `Prezados(as),\n\nSeguem as informações da Notificação de Infração de Trânsito para providências:\n\n` +
-          `• Motorista / Condutor: ${currentMulta.responsavelNome || '-'}\n` +
+          `• Motorista / Condutor: ${formatNomeProprio(currentMulta.responsavelNome) || '-'}\n` +
           `• Auto de Infração (AIT): ${currentMulta.ait || '-'}\n` +
           `• Placa do Veículo: ${currentMulta.placa || '-'}\n` +
           `• Frota / Unidade: ${frotaStr}\n` +
           `• Base / Filial: ${baseStr}\n` +
+          `• Data e Hora da Infração: ${formatDateTimeBR(currentMulta.dataHoraInfracao)}\n` +
+          `• Data do Recebimento: ${currentMulta.dataRecebimento ? formatDateBR(currentMulta.dataRecebimento) : 'Não informada'}\n` +
           `• Infração Cometida: ${currentMulta.descricaoInfracao || currentMulta.enquadramento || '-'}\n` +
-          `• Valor Líquido com Desconto: ${(currentMulta.valorComDesconto || currentMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\n` +
+          `• Valor Líquido Final: ${(currentMulta.valorComDesconto || currentMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}${Number(currentMulta.taxaLocadora || 0) > 0 ? ` (Inclui Taxa Locadora: R$ ${Number(currentMulta.taxaLocadora).toFixed(2)})` : ''}\n` +
           `• Pontuação CNH: ${currentMulta.pontosCnh || 0} Pontos\n` +
-          `• Prazo Limite para Indicação: ${currentMulta.prazoIndicacao || '-'}\n` +
+          `• Prazo Limite para Indicação: ${formatDateBR(currentMulta.prazoIndicacao)}\n` +
           obsPlainText + `\n`;
 
       if (emailCustomMessage && emailCustomMessage.trim()) {
@@ -2118,24 +2209,10 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           .filter(e => e.length > 0 && e.includes('@'));
       
       // Format date for subject
-      const getFormattedSubjectDate = (dateStr?: string) => {
-          if (!dateStr) return '';
-          try {
-              const isoDate = dateStr.split('T')[0];
-              if (isoDate.includes('-')) {
-                  const parts = isoDate.split('-');
-                  if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
-              }
-          } catch(e) {}
-          const d = new Date(dateStr);
-          if (isNaN(d.getTime())) return '';
-          return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
-      };
-
       const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(currentMulta.placa || ''));
       const baseStr = (currentMulta.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
       const frotaStr = currentMulta.frota || (veiculoMatch as any)?.frota || currentMulta.placa || 'S/F';
-      const dataFormatada = getFormattedSubjectDate(currentMulta.dataHoraInfracao);
+      const dataFormatada = formatDateBR(currentMulta.dataHoraInfracao || currentMulta.dataRecebimento);
       const fallbackSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${currentMulta.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
       const finalSubject = emailSubject.trim() || fallbackSubject;
       
@@ -2429,7 +2506,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                 <div>
                   <span className="text-[10px] font-bold text-slate-400 block uppercase">Condutor / Motorista</span>
                   <span className="font-black text-slate-800 truncate block text-xs" title={activeMulta.responsavelNome}>
-                    {activeMulta.responsavelNome || 'Não informado'}
+                    {activeMulta.responsavelNome ? formatNomeProprio(activeMulta.responsavelNome) : 'Não informado'}
                   </span>
                 </div>
                 <div>
@@ -2464,10 +2541,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   </span>
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold text-emerald-700 block uppercase">Valor Líquido c/ Desconto</span>
-                  <span className="font-mono font-black text-emerald-800 text-xs">
+                  <span className="text-[10px] font-bold text-emerald-700 block uppercase">Valor Líquido Final</span>
+                  <span className="font-mono font-black text-emerald-800 text-xs block">
                     {(activeMulta.valorComDesconto || activeMulta.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </span>
+                  {Number(activeMulta.taxaLocadora || 0) > 0 && (
+                    <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1 rounded border border-amber-200/50 inline-block mt-0.5">
+                      + R$ {Number(activeMulta.taxaLocadora).toFixed(2)} taxa locadora
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -2587,7 +2669,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     <button id="btn-abrir-importar-csv" onClick={() => setIsImportModalOpen(true)} className="bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><UploadCloud size={14} className="mr-1.5 text-purple-600" /> Importar CSV</button>
                     <button onClick={() => setIsExportModalOpen(true)} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><FileSpreadsheet size={14} className="mr-1.5" /> Exportar</button>
                     <button onClick={() => setShowGlobalMap(true)} className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg flex items-center shadow-sm transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><MapIcon size={14} className="mr-1.5 text-risel-green" /> Mapa Geral</button>
-                    <button onClick={() => { setFormData(initialMulta); setErrors({}); setView('FORM'); }} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg flex items-center shadow-sm hover:shadow transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><Plus size={14} className="mr-1.5" /> Nova Multa</button>
+                    <button onClick={() => { setFormData(initialMulta); setTaxaInput(''); setTaxaTipo('VALOR'); setErrors({}); setView('FORM'); }} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg flex items-center shadow-sm hover:shadow transition-all active:scale-95 whitespace-nowrap font-bold text-xs"><Plus size={14} className="mr-1.5" /> Nova Multa</button>
                 </div>
             </div>
 
@@ -2747,6 +2829,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                     <th className="px-3 py-3 w-20 text-white/90 font-bold uppercase tracking-wider text-[10px] text-center border-r border-white/10">Ações</th>
                                     <th onClick={() => handleSort('status')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] text-left border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Status <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('dataHoraInfracao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Multa <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('dataRecebimento')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data do Recebimento <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('prazoIndicacao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Prazo <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('placa')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Placa <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('ait')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">AIT <ArrowUpDown size={12}/></div></th>
@@ -2766,7 +2849,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                         <tr key={multa.id} className={`${rowClass} hover:bg-blue-50/60 transition-colors group`}>
                                             <td className="px-2 py-2 text-center border-r border-gray-200/50 align-middle">
                                                 <div className="flex justify-center space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={(e) => { e.stopPropagation(); setFormData(sanitizeMultaForForm(multa)); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); const sanitized = sanitizeMultaForForm(multa); setFormData(sanitized); setTaxaInput(sanitized.taxaLocadora ? String(sanitized.taxaLocadora) : ''); setTaxaTipo('VALOR'); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); handleSendDirectEmail(multa); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Enviar Notificação Direto (E-mail Cadastrado)"><Send size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); handleOpenEmailModal(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Confirmar / Editar Destinatários antes do envio"><Mail size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-full transition-all relative" title="Localizar no Mapa & Rastreador GPS">
@@ -2778,6 +2861,11 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             <td className="px-3 py-2 text-left border-r border-gray-200/50 whitespace-nowrap align-middle">{getStatusBadge(multa.status)}</td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center">
                                                 <span className="text-[10px] font-mono text-gray-600">{formatDateString(multa.dataHoraInfracao)}</span>
+                                            </td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center bg-emerald-50/20">
+                                                <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-50/80 px-1.5 py-0.5 rounded border border-emerald-200/60">
+                                                    {formatDateBR(multa.dataRecebimento)}
+                                                </span>
                                             </td>
                                             <td className={`px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center ${prazoInfo.cellGradient || ''}`}>
                                                 <span className={`text-[11px] font-mono ${prazoInfo.textColor || 'text-gray-700'}`}>
@@ -2791,7 +2879,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             <td className="px-3 py-2 border-r border-gray-200/50 text-gray-800 text-xs font-medium align-middle truncate max-w-[260px]" title={multa.descricaoInfracao || multa.enquadramento}>
                                                 {multa.descricaoInfracao || multa.enquadramento || '-'}
                                             </td>
-                                            <td className="px-3 py-2 border-r border-gray-200/50 text-gray-600 align-middle truncate max-w-[140px] text-xs font-medium">{multa.responsavelNome || '-'}</td>
+                                            <td className="px-3 py-2 border-r border-gray-200/50 text-gray-800 align-middle truncate max-w-[140px] text-xs font-semibold">
+                                                {multa.responsavelNome ? formatNomeProprio(multa.responsavelNome) : '-'}
+                                            </td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 text-center align-middle whitespace-nowrap">
                                                 {multa.obs && multa.obs.trim().length > 0 ? (
                                                     <div className="group/obs relative inline-block">
@@ -2834,7 +2924,23 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-3 py-2 text-right font-bold text-gray-800 whitespace-nowrap align-middle text-xs">{formatMoneyString(multa.valor)}</td>
+                                            <td className="px-3 py-2 text-right font-bold text-gray-800 whitespace-nowrap align-middle text-xs">
+                                                <div className="flex flex-col items-end">
+                                                    <span className="font-mono font-black text-emerald-800">
+                                                        {formatMoneyString(multa.valorComDesconto || (multa.valor ? Number(multa.valor) * 0.8 + Number(multa.taxaLocadora || 0) : 0))}
+                                                    </span>
+                                                    {Number(multa.taxaLocadora || 0) > 0 && (
+                                                        <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1 rounded border border-amber-200/50 mt-0.5" title="Taxa aplicada pela Locadora">
+                                                            + {formatMoneyString(multa.taxaLocadora)} taxa
+                                                        </span>
+                                                    )}
+                                                    {Number(multa.valor || 0) > 0 && (
+                                                        <span className="text-[9px] text-gray-400 font-normal line-through">
+                                                            {formatMoneyString(multa.valor)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </td>
                                         </tr>
                                     );
                                 })}
@@ -3126,34 +3232,92 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                         <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
                             <DollarSign size={15} className="mr-1.5 text-emerald-700"/> DEMONSTRATIVO FINANCEIRO
                         </h3>
-                        <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Valores</span>
                     </div>
 
                     <div className="space-y-2.5">
-                        <div className="grid grid-cols-3 gap-2">
+                        {/* Linha 1: Valor Cheio e Desconto 20% */}
+                        <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Valor Total (R$)</label>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5" title="Valor integral e total da multa">
+                                    Valor Cheio (R$)
+                                </label>
                                 <input 
                                     type="number" 
+                                    step="0.01"
                                     className="w-full border border-slate-300 rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-black text-slate-900" 
-                                    value={formData.valor || 0} 
+                                    value={formData.valor ?? ''} 
                                     onChange={e => handleMoneyChange('valor', Number(e.target.value))} 
+                                    placeholder="0,00"
                                     min="0"
                                 />
                             </div>
                             <div>
-                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Desconto (R$)</label>
+                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5" title="Desconto padrão de 20% para pagamento">
+                                    Desconto 20% (R$)
+                                </label>
                                 <input 
                                     type="number" 
-                                    className="w-full border border-slate-300 rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-black text-slate-900" 
-                                    value={formData.desconto || 0} 
+                                    step="0.01"
+                                    className="w-full border border-slate-300 rounded-lg p-1.5 bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-black text-emerald-700" 
+                                    value={formData.desconto ?? ''} 
                                     onChange={e => handleMoneyChange('desconto', Number(e.target.value))} 
+                                    placeholder="0,00"
                                     min="0"
                                 />
                             </div>
+                        </div>
+
+                        {/* Linha 2: Taxa Locadora e Valor Final (logo abaixo, alinhado e com espaço harmonioso) */}
+                        <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-[10px] font-extrabold text-emerald-800 uppercase block mb-0.5">Valor Final</label>
-                                <div className="w-full border border-emerald-300 bg-emerald-50/90 rounded-lg p-1.5 text-emerald-800 font-black text-xs text-center truncate">
+                                <div className="flex items-center justify-between mb-0.5">
+                                    <label className="text-[10px] font-extrabold text-amber-700 uppercase block">
+                                        Taxa Locadora
+                                    </label>
+                                    <div className="flex items-center bg-slate-100 p-0.5 rounded border border-slate-200 text-[9px] font-bold">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleToggleTaxaTipo('VALOR')}
+                                            className={`px-1.5 py-0.5 rounded transition-all cursor-pointer ${taxaTipo === 'VALOR' && !taxaInput.includes('%') ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                                            title="Informar em Reais (R$)"
+                                        >
+                                            R$
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleToggleTaxaTipo('PERCENTUAL')}
+                                            className={`px-1.5 py-0.5 rounded transition-all cursor-pointer ${taxaTipo === 'PERCENTUAL' || taxaInput.includes('%') ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                                            title="Informar em Percentual (%)"
+                                        >
+                                            %
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="relative">
+                                    <input 
+                                        type="text" 
+                                        className="w-full border border-amber-300 bg-amber-50/30 rounded-lg p-1.5 pr-14 focus:ring-2 focus:ring-amber-500 outline-none text-xs font-black text-amber-900 placeholder:text-amber-400/60" 
+                                        value={taxaInput} 
+                                        onChange={e => updateTaxaLocadora(e.target.value)} 
+                                        placeholder={taxaTipo === 'PERCENTUAL' ? 'Ex: 15%' : 'Ex: 25,00 ou 15%'}
+                                    />
+                                    {Number(formData.taxaLocadora || 0) > 0 && (
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-amber-700 bg-amber-100/90 px-1 py-0.5 rounded pointer-events-none">
+                                            {taxaTipo === 'PERCENTUAL' || taxaInput.includes('%') 
+                                                ? `R$ ${Number(formData.taxaLocadora).toFixed(2)}`
+                                                : Number(formData.valor || 0) > 0 
+                                                    ? `${((Number(formData.taxaLocadora) / Number(formData.valor)) * 100).toFixed(1)}%`
+                                                    : `R$ ${Number(formData.taxaLocadora).toFixed(2)}`
+                                            }
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex flex-col justify-between">
+                                <label className="text-[10px] font-extrabold text-emerald-800 uppercase block mb-0.5">
+                                    Valor Final
+                                </label>
+                                <div className="w-full h-[33px] border border-emerald-300 bg-emerald-50/90 rounded-lg px-2 text-emerald-800 font-black text-xs sm:text-sm flex items-center justify-center truncate shadow-2xs">
                                     {(formData.valorComDesconto || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                 </div>
                             </div>
@@ -3176,10 +3340,25 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                 <select 
                                     className="w-full border border-slate-300 rounded-lg p-1.5 focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-bold cursor-pointer bg-slate-50" 
                                     value={formData.pagoComDesconto} 
-                                    onChange={e => setFormData({...formData, pagoComDesconto: e.target.value as any})}
+                                    onChange={e => {
+                                        const novoPago = e.target.value as 'SIM' | 'NÃO';
+                                        setFormData(prev => {
+                                            const vCheio = Number(prev.valor) || 0;
+                                            const desc = novoPago === 'SIM' ? Number((vCheio * 0.20).toFixed(2)) : 0;
+                                            const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, vCheio);
+                                            const vFinal = Number((Math.max(0, vCheio - desc) + taxaEmReais).toFixed(2));
+                                            return {
+                                                ...prev,
+                                                pagoComDesconto: novoPago,
+                                                desconto: desc,
+                                                taxaLocadora: taxaEmReais,
+                                                valorComDesconto: vFinal
+                                            };
+                                        });
+                                    }}
                                 >
-                                    <option value="SIM">SIM (20% a 40%)</option>
-                                    <option value="NÃO">NÃO (Integral)</option>
+                                    <option value="SIM">SIM (20% Desconto)</option>
+                                    <option value="NÃO">NÃO (Integral s/ Desconto)</option>
                                 </select>
                             </div>
                         </div>
@@ -3204,39 +3383,88 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                 <input 
                                     type="datetime-local" 
                                     className="w-full border border-slate-300 rounded-lg p-1.5 focus:ring-2 focus:ring-emerald-500 outline-none text-xs font-semibold" 
-                                    value={formData.dataHoraInfracao || ''} 
+                                    value={toHtmlDateTimeValue(formData.dataHoraInfracao)} 
                                     onChange={e => setFormData({...formData, dataHoraInfracao: e.target.value})}
                                 />
+                                {formData.dataHoraInfracao && (
+                                    <div className="text-[9px] font-bold text-slate-500 mt-0.5 flex items-center justify-between">
+                                        <span>Padrão BR:</span>
+                                        <span className="text-slate-800 font-mono">{formatDateTimeBR(formData.dataHoraInfracao)}</span>
+                                    </div>
+                                )}
                             </div>
                             <div>
-                                <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Data Recebimento</label>
+                                <div className="flex items-center justify-between mb-0.5">
+                                    <label className="text-[10px] font-extrabold text-slate-700 uppercase block">
+                                        Data do Recebimento
+                                    </label>
+                                    <span className="text-[8px] font-black text-emerald-800 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200">
+                                        DD/MM/AAAA
+                                    </span>
+                                </div>
                                 <input 
                                     type="date" 
-                                    className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs font-semibold ${errors.dataRecebimento ? 'border-red-500 focus:ring-red-200' : 'border-slate-300 focus:ring-emerald-500'}`} 
-                                    value={formData.dataRecebimento || ''} 
-                                    onChange={e => { setFormData({...formData, dataRecebimento: e.target.value}); clearError('dataRecebimento'); }}
+                                    className={`w-full border rounded-lg p-1.5 focus:ring-2 outline-none text-xs font-semibold ${errors.dataRecebimento ? 'border-red-500 focus:ring-red-200 bg-red-50/40' : 'border-slate-300 focus:ring-emerald-500'}`} 
+                                    value={toHtmlDateValue(formData.dataRecebimento)} 
+                                    onChange={e => { 
+                                        const htmlVal = e.target.value;
+                                        const brVal = formatDateBR(htmlVal);
+                                        setFormData({...formData, dataRecebimento: brVal}); 
+                                        clearError('dataRecebimento'); 
+                                    }}
                                 />
+                                <div className="flex items-center justify-between mt-0.5 text-[9px]">
+                                    <span className="text-slate-500 font-medium">Exibição BR:</span>
+                                    <span className="font-black text-emerald-800 font-mono bg-emerald-50 px-1 rounded">
+                                        {formData.dataRecebimento ? formatDateBR(formData.dataRecebimento) : 'Opcional'}
+                                    </span>
+                                </div>
+                                {errors.dataRecebimento && <p className="text-[9px] text-red-600 font-bold mt-0.5">{errors.dataRecebimento}</p>}
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-[10px] font-extrabold text-red-700 uppercase block mb-0.5">Prazo Limite Indicação</label>
+                                <div className="flex items-center justify-between mb-0.5">
+                                    <label className="text-[10px] font-extrabold text-red-700 uppercase block">Prazo Limite Indicação</label>
+                                    <span className="text-[8px] font-black text-red-800 bg-red-50 px-1 py-0.2 rounded border border-red-200">DD/MM/AAAA</span>
+                                </div>
                                 <input 
                                     type="date" 
                                     className="w-full border border-red-300 bg-red-50/40 rounded-lg p-1.5 focus:ring-2 focus:ring-red-500 outline-none text-xs font-black text-red-900" 
-                                    value={formData.prazoIndicacao || ''} 
-                                    onChange={e => setFormData({...formData, prazoIndicacao: e.target.value})}
+                                    value={toHtmlDateValue(formData.prazoIndicacao)} 
+                                    onChange={e => {
+                                        const htmlVal = e.target.value;
+                                        setFormData({...formData, prazoIndicacao: formatDateBR(htmlVal)});
+                                    }}
                                 />
+                                <div className="flex items-center justify-between mt-0.5 text-[9px]">
+                                    <span className="text-slate-500 font-medium">Exibição BR:</span>
+                                    <span className="font-black text-red-800 font-mono">
+                                        {formData.prazoIndicacao ? formatDateBR(formData.prazoIndicacao) : 'DD/MM/AAAA'}
+                                    </span>
+                                </div>
                             </div>
                             <div>
-                                <label className="text-[10px] font-extrabold text-purple-700 uppercase block mb-0.5">Enviado ao RH</label>
+                                <div className="flex items-center justify-between mb-0.5">
+                                    <label className="text-[10px] font-extrabold text-purple-700 uppercase block">Enviado ao RH</label>
+                                    <span className="text-[8px] font-black text-purple-800 bg-purple-50 px-1 py-0.2 rounded border border-purple-200">DD/MM/AAAA</span>
+                                </div>
                                 <input 
                                     type="date" 
                                     className="w-full border border-purple-200 bg-purple-50/40 rounded-lg p-1.5 focus:ring-2 focus:ring-purple-500 outline-none text-xs font-bold text-purple-900" 
-                                    value={formData.descontoEnviadoRH || ''} 
-                                    onChange={e => setFormData({...formData, descontoEnviadoRH: e.target.value})}
+                                    value={toHtmlDateValue(formData.descontoEnviadoRH)} 
+                                    onChange={e => {
+                                        const htmlVal = e.target.value;
+                                        setFormData({...formData, descontoEnviadoRH: formatDateBR(htmlVal)});
+                                    }}
                                 />
+                                <div className="flex items-center justify-between mt-0.5 text-[9px]">
+                                    <span className="text-slate-500 font-medium">Exibição BR:</span>
+                                    <span className="font-black text-purple-800 font-mono">
+                                        {formData.descontoEnviadoRH ? formatDateBR(formData.descontoEnviadoRH) : 'DD/MM/AAAA'}
+                                    </span>
+                                </div>
                             </div>
                         </div>
 
@@ -3259,7 +3487,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                         <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
                             <User size={14} className="mr-1.5 text-emerald-700"/> CONDUTOR & RESPONSABILIDADE
                         </h3>
-                        <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Identificação</span>
+                        <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Nome Sobrenome</span>
                     </div>
 
                     <div className="space-y-2">
@@ -3268,14 +3496,22 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                 <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
                                     Nome do Motorista
                                 </label>
-                                <span className="text-[9px] text-slate-400 font-medium">Ou em branco para preencher no PDF</span>
+                                <span className="text-[9px] text-slate-400 font-medium">Padrão "Nome Sobrenome"</span>
                             </div>
                             <input 
                                 type="text" 
                                 className="w-full border border-slate-300 rounded-lg p-1.5 bg-slate-50 focus:bg-white text-slate-900 font-bold text-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all" 
                                 value={formData.responsavelNome || ''} 
-                                onChange={e => setFormData({...formData, responsavelNome: formatInputText(e.target.value)})}
-                                placeholder="Deixe em branco para preencher à mão no PDF"
+                                onChange={e => {
+                                    setFormData({...formData, responsavelNome: e.target.value});
+                                    clearError('responsavelNome');
+                                }}
+                                onBlur={e => {
+                                    if (e.target.value) {
+                                        setFormData(prev => ({...prev, responsavelNome: formatNomeProprio(e.target.value)}));
+                                    }
+                                }}
+                                placeholder="Ex: Carlos Eduardo da Silva"
                             />
                         </div>
 

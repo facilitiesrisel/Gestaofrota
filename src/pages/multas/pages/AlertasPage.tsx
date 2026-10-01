@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchAllData } from '../services/storage';
-import { parseLocalDate } from '../services/dateUtils';
+import { parseLocalDate, formatDateBR } from '../services/dateUtils';
 import { Multa, StatusMulta } from '../types';
 import { Clock, ShieldAlert, CheckCircle2, Siren } from 'lucide-react';
 import Loading from '../components/Loading';
@@ -25,21 +25,8 @@ const AlertasPage: React.FC<AlertasPageProps> = ({ defaultMonth }) => {
 
   const calculateDaysRemaining = (dateStr: string | undefined): number | null => {
     if (!dateStr) return null;
-    let targetDate: Date;
-    
-    // Tratamento de formatos variados
-    if (dateStr.includes('T')) {
-        targetDate = new Date(dateStr);
-    } else if (dateStr.includes('/')) {
-        const [d, m, y] = dateStr.split(' ')[0].split('/');
-        targetDate = new Date(Number(y), Number(m) - 1, Number(d));
-    } else if (dateStr.includes('-')) {
-        targetDate = new Date(dateStr);
-    } else {
-        return null;
-    }
-
-    if (isNaN(targetDate.getTime())) return null;
+    const targetDate = parseLocalDate(dateStr);
+    if (!targetDate || isNaN(targetDate.getTime())) return null;
 
     const today = new Date();
     today.setHours(0,0,0,0);
@@ -170,7 +157,7 @@ const AlertasPage: React.FC<AlertasPageProps> = ({ defaultMonth }) => {
                                         </td>
                                         <td className="p-3.5 align-middle text-center">
                                             <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded">
-                                                {m.prazoIndicacao ? new Date(m.prazoIndicacao).toLocaleDateString('pt-BR') : '-'}
+                                                {formatDateBR(m.prazoIndicacao)}
                                             </span>
                                         </td>
                                         <td className="p-3.5 align-middle">

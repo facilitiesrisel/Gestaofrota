@@ -3,6 +3,8 @@ import { X, Download, Printer, FileText, CheckCircle2, ShieldCheck, UserCheck, C
 import { Multa } from '../types';
 import { RISEL_LOGO_URL } from '../services/pdfGenerator';
 import { generateAutorizacaoDescontoPdf } from '../services/pdfGenerator';
+import { formatDateBR, formatDateTimeBR } from '../services/dateUtils';
+import { formatNomeProprio } from '../../../lib/utils';
 
 interface PdfViewerModalProps {
   isOpen: boolean;
@@ -110,8 +112,9 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   );
 
   const valorOriginal = Number(multaData?.valor || 0);
-  const desconto = Number(multaData?.desconto || 0);
-  const valorFinal = Number(multaData?.valorComDesconto ?? (valorOriginal - desconto));
+  const taxaLocadora = Number(multaData?.taxaLocadora || 0);
+  const desconto = multaData?.desconto !== undefined ? Number(multaData?.desconto) : Number((valorOriginal * 0.20).toFixed(2));
+  const valorFinal = Number(multaData?.valorComDesconto ?? (Math.max(0, valorOriginal - desconto) + taxaLocadora));
   const dataHoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
   const localCidade = multaData?.municipio && multaData.municipio !== '-' ? multaData.municipio : 'Campinas';
   const localUF = multaData?.uf && multaData.uf !== '-' ? multaData.uf : 'SP';
@@ -259,6 +262,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
                         <th className="p-2 border border-slate-300">Frota</th>
                         <th className="p-2 border border-slate-300">Auto de Infração (AIT)</th>
                         <th className="p-2 border border-slate-300">Data / Hora Infração</th>
+                        <th className="p-2 border border-slate-300">Data Notificação</th>
                         <th className="p-2 border border-slate-300">Prazo Indicação</th>
                       </tr>
                     </thead>
@@ -267,8 +271,9 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
                         <td className="p-2 border border-slate-300 font-black font-mono text-emerald-900">{multaData.placa || '-'}</td>
                         <td className="p-2 border border-slate-300 font-bold">{multaData.frota || '-'}</td>
                         <td className="p-2 border border-slate-300 font-mono font-bold text-slate-800">{multaData.ait || '-'}</td>
-                        <td className="p-2 border border-slate-300">{fmtDate(multaData.dataHoraInfracao)}</td>
-                        <td className="p-2 border border-slate-300 font-bold text-red-700">{fmtDate(multaData.prazoIndicacao)}</td>
+                        <td className="p-2 border border-slate-300">{formatDateTimeBR(multaData.dataHoraInfracao)}</td>
+                        <td className="p-2 border border-slate-300 font-bold text-emerald-800">{formatDateBR(multaData.dataRecebimento)}</td>
+                        <td className="p-2 border border-slate-300 font-bold text-red-700">{formatDateBR(multaData.prazoIndicacao)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -318,24 +323,47 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
                     <FileSpreadsheet size={14} className="mr-1.5 text-emerald-700" />
                     <span>3. DEMONSTRATIVO FINANCEIRO E VALOR DO DESCONTO</span>
                   </div>
-                  <table className="w-full text-center border-collapse border border-slate-300 text-xs">
-                    <thead className="bg-[#114D38] text-white text-[10px] font-bold">
-                      <tr>
-                        <th className="p-2.5 border border-slate-300 w-1/3">Valor Integral (R$)</th>
-                        <th className="p-2.5 border border-slate-300 w-1/3">Desconto Concedido (R$)</th>
-                        <th className="p-2.5 border border-slate-300 w-1/3">Valor Líquido a Descontar (R$)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-slate-50 font-bold">
-                      <tr>
-                        <td className="p-3 border border-slate-300 text-slate-700">{fmtMoney(valorOriginal)}</td>
-                        <td className="p-3 border border-slate-300 text-emerald-700">{fmtMoney(desconto)}</td>
-                        <td className="p-3 border border-slate-300 text-emerald-800 font-black text-sm bg-emerald-50">
-                          {fmtMoney(valorFinal)}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                  {taxaLocadora > 0 ? (
+                    <table className="w-full text-center border-collapse border border-slate-300 text-xs">
+                      <thead className="bg-[#114D38] text-white text-[10px] font-bold">
+                        <tr>
+                          <th className="p-2.5 border border-slate-300 w-1/4">Valor Integral (R$)</th>
+                          <th className="p-2.5 border border-slate-300 w-1/4">Desconto 20% (R$)</th>
+                          <th className="p-2.5 border border-slate-300 w-1/4">Taxa Locadora (R$)</th>
+                          <th className="p-2.5 border border-slate-300 w-1/4">Valor Líquido a Descontar (R$)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-slate-50 font-bold">
+                        <tr>
+                          <td className="p-3 border border-slate-300 text-slate-700">{fmtMoney(valorOriginal)}</td>
+                          <td className="p-3 border border-slate-300 text-emerald-700">{fmtMoney(desconto)}</td>
+                          <td className="p-3 border border-slate-300 text-amber-700">{fmtMoney(taxaLocadora)}</td>
+                          <td className="p-3 border border-slate-300 text-emerald-800 font-black text-sm bg-emerald-50">
+                            {fmtMoney(valorFinal)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  ) : (
+                    <table className="w-full text-center border-collapse border border-slate-300 text-xs">
+                      <thead className="bg-[#114D38] text-white text-[10px] font-bold">
+                        <tr>
+                          <th className="p-2.5 border border-slate-300 w-1/3">Valor Integral (R$)</th>
+                          <th className="p-2.5 border border-slate-300 w-1/3">Desconto Concedido (R$)</th>
+                          <th className="p-2.5 border border-slate-300 w-1/3">Valor Líquido a Descontar (R$)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-slate-50 font-bold">
+                        <tr>
+                          <td className="p-3 border border-slate-300 text-slate-700">{fmtMoney(valorOriginal)}</td>
+                          <td className="p-3 border border-slate-300 text-emerald-700">{fmtMoney(desconto)}</td>
+                          <td className="p-3 border border-slate-300 text-emerald-800 font-black text-sm bg-emerald-50">
+                            {fmtMoney(valorFinal)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  )}
                 </div>
 
                 {/* 4. TERMO LEGAL E DECLARAÇÃO CLT */}
@@ -345,7 +373,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
                     <span>4. DECLARAÇÃO DE RESPONSABILIDADE E AUTORIZAÇÃO EXPRESSA DE DESCONTO</span>
                   </div>
                   <p className="text-[11px] leading-relaxed text-justify">
-                    Eu, <strong className="text-slate-900 uppercase">{multaData.responsavelNome || 'CONDUTOR'}</strong>, identificado(a) neste termo, declaro para todos os fins de direito que me encontrava na condução do veículo placa <strong className="font-mono text-slate-900">{multaData.placa || '-'}</strong> (Frota {multaData.frota || '-'}) na data e horário indicados, sendo de minha inteira responsabilidade a infração de trânsito autuada sob o AIT nº <strong className="font-mono text-slate-900">{multaData.ait || '-'}</strong>.
+                    Eu, <strong className="text-slate-900 uppercase">{formatNomeProprio(multaData.responsavelNome) || 'CONDUTOR'}</strong>, identificado(a) neste termo, declaro para todos os fins de direito que me encontrava na condução do veículo placa <strong className="font-mono text-slate-900">{multaData.placa || '-'}</strong> (Frota {multaData.frota || '-'}) na data e horário indicados, sendo de minha inteira responsabilidade a infração de trânsito autuada sob o AIT nº <strong className="font-mono text-slate-900">{multaData.ait || '-'}</strong>.
                   </p>
                   <p className="text-[11px] leading-relaxed text-justify">
                     Com fulcro no <strong className="text-slate-900">Artigo 462, § 1º da Consolidação das Leis do Trabalho (CLT)</strong> e no Regulamento Interno de Uso de Veículos da Empresa, <strong className="text-emerald-900">AUTORIZO EXPRESSAMENTE</strong> a empresa RISEL COMBUSTÍVEIS LTDA a efetuar o desconto em minha folha de pagamento no valor de <strong className="text-emerald-900">{fmtMoney(valorFinal)}</strong> referente à referida infração, bem como concordo com a pontuação atribuída ao meu prontuário de habilitação.
@@ -364,7 +392,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
                     <p className="font-black text-slate-800 text-[11px] uppercase">ASSINATURA DO CONDUTOR</p>
                     <p className="text-[10px] text-slate-400">(Idêntica à assinatura constante na CNH)</p>
                     <p className="text-[10px] text-slate-600 font-bold mt-0.5">
-                      {multaData.responsavelNome || '-'}
+                      {formatNomeProprio(multaData.responsavelNome) || '-'}
                       {multaData.responsavelCodigo && multaData.responsavelCodigo !== '-' && (
                         <span className="font-mono text-slate-500 font-normal ml-1">
                           (CPF: {multaData.responsavelCodigo})

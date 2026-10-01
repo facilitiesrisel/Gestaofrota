@@ -2076,6 +2076,53 @@ async function startServer() {
     }
   });
 
+  // Rota para recuperar o anexo PDF/imagem original completo de um lançamento
+  app.get("/api/lancamentos/:id/anexo", async (req, res) => {
+    try {
+      const targetId = String(req.params.id || "").trim();
+      if (!targetId) {
+        return res.status(400).json({ success: false, error: "ID ausente" });
+      }
+
+      let foundItem: any = null;
+      if (fs.existsSync(LANCAMENTOS_FILE)) {
+        try {
+          const list = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
+          if (Array.isArray(list)) {
+            foundItem = list.find((i: any) => String(i.id) === targetId || String(i.doc).includes(targetId));
+          }
+        } catch (e) {}
+      }
+
+      if (!foundItem && fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
+        try {
+          const list = JSON.parse(fs.readFileSync(LANCAMENTOS_BACKUP_FILE, "utf-8"));
+          if (Array.isArray(list)) {
+            foundItem = list.find((i: any) => String(i.id) === targetId || String(i.doc).includes(targetId));
+          }
+        } catch (e) {}
+      }
+
+      if (!foundItem) {
+        return res.status(404).json({ success: false, error: "Lançamento não encontrado" });
+      }
+
+      const nome = foundItem.nomeArquivoAnexo || foundItem.anexos?.[0]?.nome || "Documento.pdf";
+      const base64 = foundItem.arquivoAnexoBase64 || foundItem.anexos?.[0]?.base64 || "";
+
+      return res.json({
+        success: true,
+        id: foundItem.id,
+        nome,
+        arquivoAnexoBase64: base64,
+        anexos: foundItem.anexos || []
+      });
+    } catch (err: any) {
+      console.error("[Server Lancamentos] Erro ao recuperar anexo:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.delete("/api/lancamentos/:id", async (req, res) => {
     try {
       const targetId = req.params.id;

@@ -3,10 +3,11 @@ import {
   FileText, X, Download, Printer, ExternalLink, Eye, RotateCw, ZoomIn, 
   ZoomOut, ShieldCheck, Building, Calendar, DollarSign, UserCheck, 
   CheckCircle2, CreditCard, ChevronLeft, ChevronRight, Sparkles, RefreshCw,
-  Clock, Tag, User, HelpCircle, FileCheck
+  Clock, Tag, User, HelpCircle, FileCheck, Layers
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import { cn } from "../../lib/utils";
+import { fetchLancamentoAnexoOriginal } from "../../services/lancamentosService";
 
 // Configurar worker do PDF.js para processamento em background seguro
 if (typeof window !== "undefined") {
@@ -21,9 +22,11 @@ export interface AnexoItem {
   content?: string;
   tamanho?: number;
   tipo?: string;
+  url?: string;
 }
 
 export interface DocumentoAnexoData {
+  id?: number | string;
   nome?: string;
   fornecedor?: string;
   fornecedorCnpj?: string;
@@ -44,6 +47,7 @@ export interface DocumentoAnexoData {
   frequencia?: string;
   observacao?: string;
   arquivoAnexoBase64?: string;
+  arquivoAnexoUrl?: string;
   anexos?: AnexoItem[];
   anexoAtivoIndex?: number;
 }
@@ -98,27 +102,97 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
 }) => {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"pdf" | "image" | "voucher">("pdf");
+  const [pdfRenderMode, setPdfRenderMode] = useState<"native" | "canvas">("native");
   const [zoom, setZoom] = useState<number>(1.0);
   const [rotation, setRotation] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [remoteData, setRemoteData] = useState<{ arquivoAnexoBase64?: string; anexos?: AnexoItem[]; nome?: string } | null>(null);
+  const [isFetchingRemote, setIsFetchingRemote] = useState<boolean>(false);
 
-  // Lista normalizada de anexos (até 4)
+  // Busca remota transparente se o anexo não veio pré-carregado no objeto em memória
+  useEffect(() => {
+    if (!isOpen || !documento) {
+      setRemoteData(null);
+      setIsFetchingRemote(false);
+      return;
+    }
+
+    const hasImmediateAnexo = Boolean(
+      (documento.arquivoAnexoBase64 && documento.arquivoAnexoBase64.trim().length > 50) ||
+      (documento.arquivoAnexoUrl && documento.arquivoAnexoUrl.trim().length > 5) ||
+      (Array.isArray(documento.anexos) && documento.anexos.some(a => (a?.base64 && a.base64.trim().length > 50) || (a?.arquivoAnexoBase64 && a.arquivoAnexoBase64.trim().length > 50) || a?.url))
+    );
+
+    if (!hasImmediateAnexo && documento.id) {
+      setIsFetchingRemote(true);
+      setIsLoading(true);
+      fetchLancamentoAnexoOriginal(documento.id).then(res => {
+        if (res && (res.arquivoAnexoBase64 || (Array.isArray(res.anexos) && res.anexos.length > 0))) {
+          setRemoteData(res);
+        }
+      }).catch(err => {
+        console.warn("[DocumentoAnexoModal] Aviso ao recuperar anexo do servidor:", err);
+      }).finally(() => {
+        setIsFetchingRemote(false);
+      });
+    } else {
+      setIsFetchingRemote(false);
+    }
+  }, [isOpen, documento]);
+
+  // Lista normalizada de anexos (até 4) garantindo herança do base64 original da fatura
   const anexosList = React.useMemo<AnexoItem[]>(() => {
     if (!documento) return [];
-    if (Array.isArray(documento.anexos) && documento.anexos.length > 0) {
-      return documento.anexos.slice(0, 4);
+
+    const fallbackBase64 = (
+      documento.arquivoAnexoBase64 ||
+      remoteData?.arquivoAnexoBase64 ||
+      documento.arquivoAnexoUrl ||
+      ""
+    ).trim();
+
+    // 1. Prioriza anexos com conteúdo base64 presentes em documento
+    if (Array.isArray(documento.anexos) && documento.anexos.length > 0 && documento.anexos.some(a => a?.base64 || a?.arquivoAnexoBase64 || a?.url)) {
+      return documento.anexos.slice(0, 4).map((anx, idx) => ({
+        id: anx.id || `anx-${idx + 1}`,
+        nome: anx.nome || (idx === 0 ? (documento.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
+        base64: anx.base64 || anx.arquivoAnexoBase64 || (idx === 0 ? fallbackBase64 : ""),
+        url: anx.url
+      }));
     }
-    const rawSingle = documento.arquivoAnexoBase64?.trim();
-    if (rawSingle) {
+
+    // 2. Anexos vindos da busca remota no servidor
+    if (remoteData?.anexos && Array.isArray(remoteData.anexos) && remoteData.anexos.length > 0) {
+      return remoteData.anexos.slice(0, 4).map((anx, idx) => ({
+        id: anx.id || `anx-${idx + 1}`,
+        nome: anx.nome || (idx === 0 ? (remoteData.nome || documento.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
+        base64: anx.base64 || anx.arquivoAnexoBase64 || (idx === 0 ? fallbackBase64 : ""),
+        url: anx.url
+      }));
+    }
+
+    // 3. Anexos presentes em documento (mesmo que vindos do cache sem base64 interno, recebem o fallback)
+    if (Array.isArray(documento.anexos) && documento.anexos.length > 0) {
+      return documento.anexos.slice(0, 4).map((anx, idx) => ({
+        id: anx.id || `anx-${idx + 1}`,
+        nome: anx.nome || (idx === 0 ? (documento.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
+        base64: anx.base64 || anx.arquivoAnexoBase64 || (idx === 0 ? fallbackBase64 : ""),
+        url: anx.url
+      }));
+    }
+
+    // 4. Arquivo único de fatura
+    if (fallbackBase64) {
       return [{
         id: "anx-1",
-        nome: documento.nome || "Documento_Fiscal.pdf",
-        base64: rawSingle
+        nome: documento.nome || remoteData?.nome || "Documento_Fiscal.pdf",
+        base64: fallbackBase64
       }];
     }
+
     return [];
-  }, [documento]);
+  }, [documento, remoteData]);
 
   const [activeAnexoIndex, setActiveAnexoIndex] = useState<number>(0);
 
@@ -132,7 +206,7 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
   }, [documento]);
 
   const currentAnexo = anexosList[activeAnexoIndex] || anexosList[0] || null;
-  const fileName = currentAnexo?.nome || documento?.nome || "Documento Fiscal";
+  const fileName = currentAnexo?.nome || documento?.nome || remoteData?.nome || "Documento Fiscal.pdf";
   
   // Estados para renderização do PDF via Canvas (PDF.js)
   const [pdfDoc, setPdfDoc] = useState<any>(null);
@@ -153,11 +227,16 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Converter Base64 e Inicializar PDF.js ou Imagem
+  // Converter Base64/URL e Inicializar visualizador nativo ou PDF.js/Imagem
   useEffect(() => {
     if (!isOpen || !documento) {
       setBlobUrl(null);
       setPdfDoc(null);
+      return;
+    }
+
+    if (isFetchingRemote) {
+      setIsLoading(true);
       return;
     }
 
@@ -169,11 +248,20 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
     setNumPages(0);
     setPdfDoc(null);
 
-    const rawData = (currentAnexo?.base64 || currentAnexo?.arquivoAnexoBase64 || currentAnexo?.content || documento.arquivoAnexoBase64 || "")?.trim();
+    const rawData = (
+      currentAnexo?.base64 || 
+      currentAnexo?.arquivoAnexoBase64 || 
+      currentAnexo?.content || 
+      currentAnexo?.url ||
+      remoteData?.arquivoAnexoBase64 || 
+      documento.arquivoAnexoBase64 || 
+      documento.arquivoAnexoUrl ||
+      ""
+    )?.trim();
 
     if (!rawData) {
       setBlobUrl(null);
-      setViewMode("voucher");
+      // Se não há dados brutos e não está buscando remotamente, libera loading para mostrar opções
       setIsLoading(false);
       return;
     }
@@ -182,68 +270,80 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
       let isImg = false;
       let rawBytes: Uint8Array | null = null;
       let urlCreated: string | null = null;
+      let mime = "application/pdf";
 
-      if (rawData.startsWith("data:")) {
-        const parts = rawData.split(",");
-        if (parts.length >= 2) {
-          const mimeMatch = parts[0].match(/:(.*?);/);
-          let mime = mimeMatch ? mimeMatch[1].toLowerCase() : "application/pdf";
-          
-          // Decodificar Base64 para binário
-          const binaryStr = atob(parts[1]);
-          const len = binaryStr.length;
-          rawBytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {
-            rawBytes[i] = binaryStr.charCodeAt(i);
-          }
-
-          if (mime === "application/octet-stream" || !mime) {
-            const fName = (fileName || "").toLowerCase();
-            if (fName.endsWith(".png")) mime = "image/png";
-            else if (fName.endsWith(".jpg") || fName.endsWith(".jpeg")) mime = "image/jpeg";
-            else if (fName.endsWith(".webp")) mime = "image/webp";
-            else mime = "application/pdf";
-          }
-
-          isImg = mime.startsWith("image/") || rawData.startsWith("data:image/");
-          const blob = new Blob([rawBytes], { type: mime });
-          urlCreated = URL.createObjectURL(blob);
-          setBlobUrl(urlCreated);
-        }
-      } else if (rawData.startsWith("http://") || rawData.startsWith("https://") || rawData.startsWith("blob:")) {
+      if (rawData.startsWith("http://") || rawData.startsWith("https://") || rawData.startsWith("blob:")) {
         urlCreated = rawData;
         setBlobUrl(rawData);
         const lower = rawData.toLowerCase();
         isImg = lower.includes(".png") || lower.includes(".jpg") || lower.includes(".jpeg") || lower.includes(".webp");
+      } else {
+        // Data URL ou Base64 puro
+        let base64Part = rawData;
+        if (rawData.startsWith("data:")) {
+          const parts = rawData.split(",");
+          if (parts.length >= 2) {
+            const mimeMatch = parts[0].match(/:(.*?);/);
+            if (mimeMatch) mime = mimeMatch[1].toLowerCase();
+            base64Part = parts[1];
+          }
+        }
+
+        // Limpa espaços e formatações
+        base64Part = base64Part.replace(/\s/g, "");
+
+        // Decodificar Base64 para binário
+        const binaryStr = atob(base64Part);
+        const len = binaryStr.length;
+        rawBytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          rawBytes[i] = binaryStr.charCodeAt(i);
+        }
+
+        // Detecção de tipo por Magic Bytes se necessário
+        if (mime === "application/octet-stream" || !mime || mime === "application/pdf") {
+          if (len >= 4 && rawBytes[0] === 0x89 && rawBytes[1] === 0x50 && rawBytes[2] === 0x4E && rawBytes[3] === 0x47) {
+            mime = "image/png";
+          } else if (len >= 3 && rawBytes[0] === 0xFF && rawBytes[1] === 0xD8 && rawBytes[2] === 0xFF) {
+            mime = "image/jpeg";
+          } else if (len >= 4 && rawBytes[0] === 0x25 && rawBytes[1] === 0x50 && rawBytes[2] === 0x44 && rawBytes[3] === 0x46) {
+            mime = "application/pdf";
+          }
+        }
+
+        if (mime === "application/octet-stream" || !mime) {
+          const fName = (fileName || "").toLowerCase();
+          if (fName.endsWith(".png")) mime = "image/png";
+          else if (fName.endsWith(".jpg") || fName.endsWith(".jpeg")) mime = "image/jpeg";
+          else if (fName.endsWith(".webp")) mime = "image/webp";
+          else mime = "application/pdf";
+        }
+
+        isImg = mime.startsWith("image/") || rawData.startsWith("data:image/");
+        const blob = new Blob([rawBytes], { type: mime });
+        urlCreated = URL.createObjectURL(blob);
+        setBlobUrl(urlCreated);
       }
 
       if (isImg) {
         setViewMode("image");
         setIsLoading(false);
       } else {
-        // Carregar PDF via PDF.js nativo para renderização direta em HTML5 Canvas
+        // PDF: define visualização como PDF (Prioridade 1: Documento Original)
         setViewMode("pdf");
-        
-        const loadPdf = async () => {
-          try {
-            const loadingTask = rawBytes 
-              ? pdfjsLib.getDocument({ data: rawBytes })
-              : pdfjsLib.getDocument({ url: urlCreated || rawData });
-            
-            const doc = await loadingTask.promise;
+        setIsLoading(false);
+
+        // Se tiver rawBytes e PDF.js estiver disponível, carrega em background para dar suporte a modo Canvas
+        if (rawBytes) {
+          pdfjsLib.getDocument({ data: rawBytes }).promise.then(doc => {
             setPdfDoc(doc);
             setNumPages(doc.numPages);
             setCurrentPage(1);
-            setIsLoading(false);
-          } catch (pdfErr) {
-            console.warn("Erro ao renderizar PDF via Canvas, utilizando modo espelho:", pdfErr);
-            setLoadError("Não foi possível renderizar o arquivo PDF diretamente.");
-            setViewMode("voucher");
-            setIsLoading(false);
-          }
-        };
-
-        loadPdf();
+          }).catch(err => {
+            console.warn("[DocumentoAnexoModal] Aviso Canvas PDF (modo nativo ativo):", err);
+            setPdfRenderMode("native");
+          });
+        }
       }
 
       return () => {
@@ -257,7 +357,7 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
       setViewMode("voucher");
       setIsLoading(false);
     }
-  }, [isOpen, documento, activeAnexoIndex, currentAnexo]);
+  }, [isOpen, documento, activeAnexoIndex, currentAnexo, remoteData, isFetchingRemote]);
 
   // Renderizar a página atual no Canvas quando mudar a página, zoom ou rotação
   useEffect(() => {
@@ -416,34 +516,33 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
           {/* CONTROLES RÁPIDOS & FECHAR */}
           <div className="flex items-center gap-1.5 shrink-0">
             {/* Alternador de Modo */}
-            <div className="bg-black/25 p-1 rounded-xl border border-white/10 flex items-center gap-1 mr-1">
-              {(blobUrl || pdfDoc) && (
-                <button
-                  onClick={() => setViewMode(blobUrl && !pdfDoc ? "image" : "pdf")}
-                  className={cn(
-                    "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer",
-                    viewMode !== "voucher" 
-                      ? "bg-emerald-500 text-slate-950 font-black shadow-sm" 
-                      : "text-emerald-200 hover:text-white hover:bg-white/10"
-                  )}
-                  title="Visualizar documento anexado"
-                >
-                  <Eye className="w-3 h-3" />
-                  Arquivo Anexado
-                </button>
-              )}
+            <div className="bg-black/35 p-1 rounded-xl border border-white/10 flex items-center gap-1 mr-1">
+              <button
+                onClick={() => setViewMode(blobUrl && !pdfDoc ? "image" : "pdf")}
+                disabled={!blobUrl && !isFetchingRemote && anexosList.length === 0}
+                className={cn(
+                  "px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed",
+                  viewMode !== "voucher" 
+                    ? "bg-emerald-500 text-slate-950 font-black shadow-md shadow-emerald-500/20" 
+                    : "text-emerald-200 hover:text-white hover:bg-white/10"
+                )}
+                title="Visualizar documento / fatura original anexada"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                PDF / Fatura Original
+              </button>
               <button
                 onClick={() => setViewMode("voucher")}
                 className={cn(
-                  "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer",
+                  "px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
                   viewMode === "voucher" 
-                    ? "bg-emerald-500 text-slate-950 font-black shadow-sm" 
+                    ? "bg-emerald-500 text-slate-950 font-black shadow-md shadow-emerald-500/20" 
                     : "text-emerald-200 hover:text-white hover:bg-white/10"
                 )}
                 title="Visualizar espelho fiscal digital padronizado"
               >
-                <Sparkles className="w-3 h-3" />
-                Espelho Fiscal
+                <Sparkles className="w-3.5 h-3.5" />
+                Espelho Fiscal Digital
               </button>
             </div>
 
@@ -538,83 +637,161 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
         {/* CORPO DO VISUALIZADOR */}
         <div className="flex-1 overflow-hidden bg-slate-950 flex flex-col relative">
           
-          {isLoading ? (
-            <div className="flex-1 flex flex-col items-center justify-center space-y-3">
+          {isFetchingRemote ? (
+            <div className="flex-1 flex flex-col items-center justify-center space-y-3 bg-slate-950 p-6 text-center">
+              <div className="w-10 h-10 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
+              <p className="text-sm text-slate-200 font-bold">Carregando PDF original da fatura...</p>
+              <p className="text-xs text-slate-400 max-w-sm">
+                Recuperando o arquivo binário original do documento fiscal no banco de dados.
+              </p>
+            </div>
+          ) : isLoading ? (
+            <div className="flex-1 flex flex-col items-center justify-center space-y-3 bg-slate-950">
               <div className="w-10 h-10 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
               <p className="text-xs text-slate-400 font-semibold">Carregando visualizador...</p>
             </div>
-          ) : viewMode === "pdf" && pdfDoc ? (
-            /* VISUALIZAÇÃO DIRETA VIA HTML5 CANVAS (PDF.JS NATIVO - SEM RESTRIÇÃO DO CHROME) */
+          ) : viewMode === "pdf" && blobUrl ? (
+            /* VISUALIZAÇÃO DE PDF ORIGINAL - SUPORTE NATIVO ROBUSTO E CANVAS */
             <div className="flex-1 w-full h-full flex flex-col bg-slate-900">
               
-              {/* BARRA DE CONTROLES DO PDF (PAGINAÇÃO, ZOOM, ROTAÇÃO) */}
+              {/* SUBTOOLBAR DO VISUALIZADOR */}
               <div className="bg-slate-850 px-4 py-2 border-b border-slate-750 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300 shrink-0">
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={currentPage <= 1 || renderingPage}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition-colors cursor-pointer"
-                    title="Página Anterior"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <span className="text-xs font-mono font-bold px-2 py-0.5 bg-slate-800 rounded-md border border-slate-700">
-                    {currentPage} / {numPages || 1}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Documento Original ({fileName})
                   </span>
-                  <button
-                    onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-                    disabled={currentPage >= numPages || renderingPage}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition-colors cursor-pointer"
-                    title="Próxima Página"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                  {renderingPage && (
-                    <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin ml-1" />
-                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {pdfDoc && pdfRenderMode === "canvas" && (
+                    <div className="flex items-center gap-1.5 mr-2">
+                      <button
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={currentPage <= 1 || renderingPage}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition-colors cursor-pointer"
+                        title="Página Anterior"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <span className="text-xs font-mono font-bold px-2 py-0.5 bg-slate-800 rounded-md border border-slate-700">
+                        {currentPage} / {numPages || 1}
+                      </span>
+                      <button
+                        onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                        disabled={currentPage >= numPages || renderingPage}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition-colors cursor-pointer"
+                        title="Próxima Página"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                      {renderingPage && (
+                        <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin ml-1" />
+                      )}
+                      
+                      <div className="flex items-center gap-1 ml-2">
+                        <button
+                          onClick={() => setZoom(z => Math.max(0.5, Number((z - 0.2).toFixed(1))))}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                          title="Diminuir Zoom"
+                        >
+                          <ZoomOut className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-[11px] font-mono font-bold text-slate-400 w-10 text-center">
+                          {Math.round(zoom * 100)}%
+                        </span>
+                        <button
+                          onClick={() => setZoom(z => Math.min(3.0, Number((z + 0.2).toFixed(1))))}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                          title="Aumentar Zoom"
+                        >
+                          <ZoomIn className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setRotation(r => (r + 90) % 360)}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer ml-0.5"
+                          title="Girar 90°"
+                        >
+                          <RotateCw className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pdfDoc && (
+                    <button
+                      onClick={() => setPdfRenderMode(m => m === "native" ? "canvas" : "native")}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer border border-slate-700"
+                      title={pdfRenderMode === "native" ? "Mudar para visualizador interativo Canvas" : "Mudar para visualizador nativo de PDF"}
+                    >
+                      <Layers className="w-3 h-3 text-emerald-400" />
+                      {pdfRenderMode === "native" ? "Modo Canvas" : "Modo Nativo"}
+                    </button>
+                  )}
+
                   <button
-                    onClick={() => setZoom(z => Math.max(0.5, Number((z - 0.2).toFixed(1))))}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
-                    title="Diminuir Zoom"
+                    onClick={handleOpenInNewTab}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer border border-slate-700"
+                    title="Abrir PDF em nova aba em tela cheia"
                   >
-                    <ZoomOut className="w-3.5 h-3.5" />
+                    <ExternalLink className="w-3 h-3 text-emerald-400" />
+                    Nova Aba
                   </button>
-                  <span className="text-[11px] font-mono font-bold text-slate-400 w-12 text-center">
-                    {Math.round(zoom * 100)}%
-                  </span>
+
                   <button
-                    onClick={() => setZoom(z => Math.min(3.0, Number((z + 0.2).toFixed(1))))}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
-                    title="Aumentar Zoom"
+                    onClick={handleDownload}
+                    className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer shadow-sm"
+                    title="Baixar arquivo PDF original"
                   >
-                    <ZoomIn className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => setRotation(r => (r + 90) % 360)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer ml-1"
-                    title="Girar 90°"
-                  >
-                    <RotateCw className="w-3.5 h-3.5" />
+                    <Download className="w-3 h-3" />
+                    Baixar PDF
                   </button>
                 </div>
               </div>
 
-              {/* CONTAINER DO CANVAS DO PDF */}
-              <div className="flex-1 overflow-auto p-4 sm:p-6 flex items-center justify-center bg-slate-950 custom-scrollbar">
-                <canvas 
-                  ref={canvasRef} 
-                  className="rounded-xl shadow-2xl bg-white transition-all duration-150 border border-slate-800"
-                  style={{
-                    maxWidth: zoom <= 1.0 ? '100%' : 'none',
-                    maxHeight: zoom <= 1.0 ? '100%' : 'none',
-                    objectFit: 'contain'
-                  }}
-                />
-              </div>
+              {/* ÁREA DE VISUALIZAÇÃO DO PDF */}
+              {pdfRenderMode === "canvas" && pdfDoc ? (
+                <div className="flex-1 overflow-auto p-4 sm:p-6 flex items-center justify-center bg-slate-950 custom-scrollbar">
+                  <canvas 
+                    ref={canvasRef} 
+                    className="rounded-xl shadow-2xl bg-white transition-all duration-150 border border-slate-800"
+                    style={{
+                      maxWidth: zoom <= 1.0 ? '100%' : 'none',
+                      maxHeight: zoom <= 1.0 ? '100%' : 'none',
+                      objectFit: 'contain'
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="flex-1 w-full h-full p-2 sm:p-4 bg-slate-950 flex flex-col">
+                  <iframe
+                    src={`${blobUrl}#view=FitH&toolbar=1`}
+                    className="w-full h-full border border-slate-800 rounded-2xl bg-white shadow-2xl"
+                    title={fileName}
+                  />
+                </div>
+              )}
 
+            </div>
+          ) : viewMode === "pdf" && !blobUrl ? (
+            /* AVISO QUANDO NÃO HÁ ARQUIVO ANEXO CADASTRADO */
+            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-950 text-center space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 shadow-inner">
+                <FileText className="w-8 h-8 text-slate-500" />
+              </div>
+              <div className="max-w-md space-y-1.5">
+                <h4 className="text-base font-bold text-slate-200">Nenhum arquivo PDF de fatura anexado</h4>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Este lançamento não possui um arquivo PDF ou imagem anexado diretamente. Você pode visualizar o Espelho Fiscal Digital padronizado com todos os dados cadastrais da fatura.
+                </p>
+              </div>
+              <button
+                onClick={() => setViewMode("voucher")}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center gap-2 cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4" />
+                Visualizar Espelho Fiscal Digital
+              </button>
             </div>
           ) : viewMode === "image" && blobUrl ? (
             /* VISUALIZAÇÃO DE IMAGEM */

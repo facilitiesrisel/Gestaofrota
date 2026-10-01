@@ -44,6 +44,7 @@ export interface LancamentoEmailData {
   destinatariosPara?: string[];
   destinatariosCc?: string[];
   saudacaoPersonalizada?: string;
+  dataAprovacao?: string;
 }
 
 /**
@@ -208,11 +209,43 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     status: {
       label: "STATUS",
       minWidth: "140px",
-      renderCell: () => `
-        <span style="background-color: #fef3c7; color: #92400e; padding: 5px 9px; border-radius: 4px; border: 1px solid #fde68a; font-weight: 800; font-size: 9.5pt; text-transform: uppercase; display: inline-block; white-space: nowrap;">
-          ⏳ ${statusAtual}
-        </span>
-      `
+      renderCell: () => {
+        const norm = (statusAtual || "").trim().toLowerCase();
+        const isApproved = norm.includes("aprovado") || norm.includes("finalizado") || norm.includes("lançado");
+        const isContested = norm.includes("contestação") || norm.includes("reprovado");
+        const isCancelled = norm.includes("cancelado");
+
+        if (isApproved) {
+          return `
+            <span style="background-color: #dcfce7; color: #14532d; padding: 7px 14px; border-radius: 6px; border: 2px solid #16a34a; font-weight: 900; font-size: 10pt; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; white-space: nowrap; box-shadow: 0 1px 3px rgba(22, 163, 74, 0.2); font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              ✅ ${statusAtual}
+            </span>
+          `;
+        }
+
+        if (isContested) {
+          return `
+            <span style="background-color: #fee2e2; color: #991b1b; padding: 6px 12px; border-radius: 6px; border: 1.5px solid #ef4444; font-weight: 900; font-size: 10pt; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              ⚠️ ${statusAtual}
+            </span>
+          `;
+        }
+
+        if (isCancelled) {
+          return `
+            <span style="background-color: #f1f5f9; color: #475569; padding: 6px 12px; border-radius: 6px; border: 1.5px solid #94a3b8; font-weight: 900; font-size: 10pt; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              🚫 ${statusAtual}
+            </span>
+          `;
+        }
+
+        // Padrão: Aguardando Aprovação
+        return `
+          <span style="background-color: #fef3c7; color: #92400e; padding: 6px 12px; border-radius: 6px; border: 1.5px solid #f59e0b; font-weight: 800; font-size: 9.5pt; text-transform: uppercase; letter-spacing: 0.3px; display: inline-block; white-space: nowrap; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+            ⏳ ${statusAtual}
+          </span>
+        `;
+      }
     },
     lancamento: {
       label: "DATA DO LANÇAMENTO",
@@ -290,6 +323,8 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     }
   };
 
+  const isAprovado = statusAtual.toLowerCase().includes("aprovado") || statusAtual.toLowerCase().includes("finalizado");
+
   // Gerar o HTML dos headers (<th ...>)
   const headersHtml = colsToRender.map(key => {
     const def = columnDefs[key];
@@ -297,7 +332,8 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     const align = def.align === "right" ? "text-align: right;" : "text-align: left;";
     const minW = def.minWidth ? `min-width: ${def.minWidth};` : "";
     const maxW = def.maxWidth ? `max-width: ${def.maxWidth};` : "";
-    return `<th style="padding: 11px 12px; ${align} ${minW} ${maxW} font-size: 9.5pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.35px; border-bottom: 2px solid #f47920; border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">${def.label}</th>`;
+    const borderBottomTh = isAprovado ? "border-bottom: 2px solid #10b981;" : "border-bottom: 2px solid #f47920;";
+    return `<th style="padding: 11px 12px; ${align} ${minW} ${maxW} font-size: 9.5pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.35px; ${borderBottomTh} border-right: 1px solid rgba(255,255,255,0.15); white-space: nowrap;">${def.label}</th>`;
   }).join("\n");
 
   // Gerar o HTML das células (<td ...>)
@@ -310,8 +346,10 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     return `<td style="padding: 13px 12px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; vertical-align: middle; ${align} ${minW} ${maxW} font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">${def.renderCell()}</td>`;
   }).join("\n");
 
-  // Assunto exigido: Aprovação - Nome do Fornecedor - Vencimento
-  const subject = `Aprovação - ${fornecedorNome} - ${vencimentoBr}`;
+  // Assunto com identidade destacada de aprovado
+  const subject = isAprovado
+    ? `✅ [APROVADO] Lançamento Aprovado - ${fornecedorNome} - ${vencimentoBr}`
+    : `Aprovação - ${fornecedorNome} - ${vencimentoBr}`;
 
   // NOTA CRÍTICA: Não adicionamos tag <title> ou preheaders soltos que apareçam fora da tabela elegante nos webmails/clientes de e-mail!
   const html = `
@@ -335,24 +373,36 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
     <body style="background-color: #f1f5f9; padding: 20px 10px; margin: 0; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt;">
       <!-- Preheader oculto para evitar que visualizadores mostrem textos soltos acima do card -->
       <div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; font-size: 0px; line-height: 0px; opacity: 0;">
-        Solicitação de Aprovação de Lançamento - Risel Combustíveis Ltda
+        ${isAprovado ? `Lançamento Aprovado - ${fornecedorNome} - Risel Combustíveis Ltda` : `Solicitação de Aprovação de Lançamento - Risel Combustíveis Ltda`}
       </div>
 
       <div style="max-width: 1060px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #cbd5e1; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
         
         <!-- Header Corporativo Risel -->
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#09392b" style="background-color: #09392b; background: linear-gradient(135deg, #06231a 0%, #0d4a36 50%, #156c50 100%); width: 100%; border-bottom: 4px solid #f47920; border-collapse: collapse;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${isAprovado ? '#052e23' : '#09392b'}" style="background-color: ${isAprovado ? '#052e23' : '#09392b'}; background: ${isAprovado ? 'linear-gradient(135deg, #052e23 0%, #065f46 50%, #059669 100%)' : 'linear-gradient(135deg, #06231a 0%, #0d4a36 50%, #156c50 100%)'}; width: 100%; border-bottom: 4px solid ${isAprovado ? '#10b981' : '#f47920'}; border-collapse: collapse;">
           <tr>
-            <td bgcolor="#09392b" style="padding: 20px 24px;">
+            <td style="padding: 20px 24px;">
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
                 <tr>
                   <td width="52" valign="middle" style="width: 52px; vertical-align: middle;">
-                    <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" width="48" height="48" style="width: 48px; height: 48px; border-radius: 8px; display: block; border: 2px solid rgba(255,255,255,0.3); object-fit: cover;" />
+                    <img src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" alt="Logo Risel" width="48" height="48" style="width: 48px; height: 48px; border-radius: 8px; display: block; border: 2px solid ${isAprovado ? '#86efac' : 'rgba(255,255,255,0.3)'}; object-fit: cover;" />
                   </td>
                   <td valign="middle" style="padding-left: 16px; vertical-align: middle;">
-                    <h1 style="color: #ffffff !important; margin: 0; font-size: 15pt; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">SOLICITAÇÃO DE APROVAÇÃO DE LANÇAMENTO</h1>
-                    <p style="color: #86efac !important; margin: 3px 0 0 0; font-size: 9.5pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">Risel Combustíveis Ltda • Sistema de Lançamento de Documentos</p>
+                    <h1 style="color: #ffffff !important; margin: 0; font-size: 15pt; font-weight: 900; letter-spacing: -0.2px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; line-height: 1.2;">
+                      ${isAprovado ? "✓ NOTIFICAÇÃO DE LANÇAMENTO APROVADO" : "SOLICITAÇÃO DE APROVAÇÃO DE LANÇAMENTO"}
+                    </h1>
+                    <p style="color: #86efac !important; margin: 3px 0 0 0; font-size: 9.5pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                      ${isAprovado ? "Risel Combustíveis Ltda • Documento Homologado e Aprovado" : "Risel Combustíveis Ltda • Sistema de Lançamento de Documentos"}
+                    </p>
                   </td>
+                  ${isAprovado ? `
+                  <td align="right" valign="middle" style="text-align: right; vertical-align: middle;">
+                    <div style="display: inline-block; background-color: rgba(16, 185, 129, 0.25); border: 2px solid #86efac; border-radius: 8px; padding: 6px 14px; text-align: center;">
+                      <span style="color: #a7f3d0; font-size: 8pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; display: block;">Status Oficial</span>
+                      <span style="color: #ffffff; font-size: 11pt; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; display: block;">✓ APROVADO</span>
+                    </div>
+                  </td>
+                  ` : ''}
                 </tr>
               </table>
             </td>
@@ -362,7 +412,35 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
         <!-- Conteúdo do E-mail -->
         <div style="padding: 24px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1e293b; text-align: left;">
           
-          <!-- Saudação e Introdução com Descrição Integrada -->
+          <!-- Saudação e Introdução com Identidade Visual de Aprovado -->
+          ${isAprovado ? `
+          <div style="background-color: #ecfdf5; border: 2px solid #10b981; border-left: 6px solid #059669; padding: 18px 22px; border-radius: 10px; margin-bottom: 22px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; text-align: left; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.1);">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+              <tr>
+                <td valign="middle">
+                  <div style="display: inline-block; background-color: #059669; color: #ffffff; padding: 5px 14px; border-radius: 9999px; font-weight: 900; font-size: 9.5pt; text-transform: uppercase; letter-spacing: 0.5px;">
+                    ✓ STATUS: APROVADO
+                  </div>
+                  ${data.dataAprovacao ? `
+                    <span style="margin-left: 12px; font-size: 9.5pt; color: #047857; font-weight: 700;">
+                      Data da Aprovação: <strong>${formatDataParaBrasileiro(data.dataAprovacao)}</strong>
+                    </span>
+                  ` : ''}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding-top: 10px;">
+                  <p style="font-size: 12pt; color: #064e3b; margin: 0 0 6px 0; font-weight: 800; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                    ${saudacao}
+                  </p>
+                  <p style="font-size: 10.5pt; color: #047857; margin: 0; line-height: 1.55; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+                    Comunicamos que o documento fiscal abaixo foi <strong>HOMOLOGADO E APROVADO COM SUCESSO</strong> para prosseguimento no fluxo financeiro da Risel Combustíveis.
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </div>
+          ` : `
           <div style="background-color: #f8fafc; border-left: 5px solid #0d4a36; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; text-align: left;">
             <p style="font-size: 11.5pt; color: #0d4a36; margin: 0 0 6px 0; font-weight: 800; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
               ${saudacao}
@@ -371,6 +449,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
               Segue documento fiscal para conferência e aprovação de lançamento.
             </p>
           </div>
+          `}
 
           <!-- Tabela Horizontal com Dados do Lançamento alinhada à esquerda -->
           <div style="text-align: left; margin: 0;">
@@ -383,7 +462,7 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
             <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; text-align: left; margin: 0;">
               <table width="100%" cellpadding="0" cellspacing="0" border="0" align="left" style="width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif; text-align: left; margin: 0;">
                 <thead>
-                  <tr bgcolor="#114D38" style="background-color: #114D38; color: #ffffff;">
+                  <tr bgcolor="${isAprovado ? '#064e3b' : '#114D38'}" style="background-color: ${isAprovado ? '#064e3b' : '#114D38'}; color: #ffffff;">
                     ${headersHtml}
                   </tr>
                 </thead>
@@ -394,6 +473,12 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
                 </tbody>
               </table>
             </div>
+
+            ${isAprovado ? `
+            <div style="margin-top: 14px; padding: 9px 16px; background-color: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; font-size: 9.5pt; color: #166534; font-weight: 700; display: inline-block; font-family: 'Aptos Narrow', 'Aptos', Calibri, 'Segoe UI', Arial, sans-serif;">
+              🛡️ Homologação Oficial: Documento Aprovado e Registrado no Sistema de Documentos Risel
+            </div>
+            ` : ''}
           </div>
 
           ${(() => {

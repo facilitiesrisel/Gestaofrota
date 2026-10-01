@@ -1,4 +1,5 @@
 import { Multa, StatusMulta, TipoMulta, Veiculo, CodigoMulta } from '../types';
+import { formatDateBR, todayBR } from '../services/dateUtils';
 
 export interface CsvMultaItem {
   id: string;
@@ -444,8 +445,9 @@ export function parseCsvMultas(
   const colValorReembolso = findColIndex(['VALOR DO REEMBOLSO']);
   const colChassi = findColIndex(['CHASSI']);
   const colCliente = findColIndex(['CLIENTE']);
+  const colRecebimento = findColIndex(['DATA DO RECEBIMENTO', 'DATA DE RECEBIMENTO', 'DATA RECEBIMENTO', 'DATA NOTIFICACAO', 'DATA DA NOTIFICACAO', 'RECEBIMENTO', 'NOTIFICACAO']);
 
-  const todayStr = new Date().toISOString().split('T')[0]; // Data de importação
+  const todayBRStr = todayBR(); // Data no padrão brasileiro DD/MM/AAAA
 
   const items: CsvMultaItem[] = [];
   const processedAitsInBatch = new Set<string>();
@@ -548,6 +550,9 @@ export function parseCsvMultas(
     if (ait) processedAitsInBatch.add(ait);
     if (placa && dataHoraInfracao) processedPlacaDateTimeInBatch.add(`${placa}_${dataHoraInfracao}`);
 
+    const rawRecebimento = colRecebimento !== -1 ? (row[colRecebimento] || '').trim() : '';
+    const dataRecebimentoFinal = rawRecebimento ? formatDateBR(rawRecebimento) : todayBRStr;
+
     // Cria o item da multa
     const item: CsvMultaItem = {
       id: ait || `IMP-${placa}-${Date.now()}-${i}`,
@@ -556,7 +561,7 @@ export function parseCsvMultas(
       frota,
       base,
       dataHoraInfracao,
-      dataRecebimento: todayStr, // Data do recebimento que vai ser a data da Importação
+      dataRecebimento: dataRecebimentoFinal, // Data da Notificação / Recebimento em DD/MM/AAAA
       enquadramento,
       descricaoInfracao: descricao,
       endereco: locationData.cleanedAddress,
@@ -575,7 +580,7 @@ export function parseCsvMultas(
       pagoComDesconto: 'SIM',
       recebidaComPrazo: 'SIM',
       retornouComPrazo: 'NÃO',
-      obs: `Importado via CSV Demonstrativo Vamos (${todayStr})${taxaAdm ? ` | Taxa ADM: ${taxaAdm}` : ''}${valorTaxaAdm ? ` (R$ ${valorTaxaAdm.toFixed(2)})` : ''}${valorReembolso ? ` | Total Reembolso: R$ ${valorReembolso.toFixed(2)}` : ''}`,
+      obs: `Importado via CSV Demonstrativo Vamos (${todayBRStr})${taxaAdm ? ` | Taxa ADM: ${taxaAdm}` : ''}${valorTaxaAdm ? ` (R$ ${valorTaxaAdm.toFixed(2)})` : ''}${valorReembolso ? ` | Total Reembolso: R$ ${valorReembolso.toFixed(2)}` : ''}`,
       cliente,
       chassi,
       taxaAdm,

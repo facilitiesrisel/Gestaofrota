@@ -2609,12 +2609,19 @@ export default function Frota() {
     const placa = formData.get("placa") as string;
     const condutor = veiculos.find(v => v.placa === placa)?.condutor || "Motorista";
 
+    const rawData = (formData.get("data") as string) || "";
+    let dataBR = rawData;
+    if (rawData && rawData.includes("-")) {
+      const p = rawData.split("-");
+      if (p.length === 3) dataBR = `${p[2]}/${p[1]}/${p[0]}`;
+    }
+
     const fine: Multa = {
       id: String(Date.now()),
       placa,
       condutor,
       infracao: formData.get("infracao") as string,
-      data: formData.get("data") as string,
+      data: dataBR,
       valor: Number(formData.get("valor") || 0),
       pontos: Number(formData.get("pontos") || 0),
       pagamento: "Aberto",

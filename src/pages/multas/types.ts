@@ -83,6 +83,7 @@ export interface Multa {
   retornouComPrazo?: 'SIM' | 'NÃO';
   valor?: number;
   desconto?: number;
+  taxaLocadora?: number; // Taxa aplicada pelas locadoras
   valorComDesconto?: number;
   empresaOuCondutor?: 'EMPRESA' | 'CONDUTOR';
   descontarMotorista?: 'SIM' | 'NÃO';

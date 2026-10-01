@@ -45,3 +45,37 @@ export function toTitleCase(str: string | undefined | null): string {
     .join("");
 }
 
+/**
+ * Formata nomes próprios de pessoas para o padrão estrito "Nome Sobrenome" (Capitalização Correta Brasileira).
+ * Mantém preposições em minúsculas (de, da, do, das, dos, e) e capitaliza nomes próprios.
+ * Exemplo: "JOÃO DA SILVA" -> "João da Silva", "lucas e silva" -> "Lucas e Silva"
+ */
+export function formatNomeProprio(name: string | undefined | null): string {
+  if (!name) return "";
+  const clean = String(name).trim();
+  if (!clean) return "";
+
+  const preposicoes = new Set(["de", "da", "do", "das", "dos", "e", "d'"]);
+  const algarismosRomanos = new Set(["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]);
+  const palavras = clean.split(/\s+/);
+
+  return palavras
+    .map((palavra, index) => {
+      if (!palavra) return "";
+      const upper = palavra.toUpperCase();
+      if (algarismosRomanos.has(upper)) {
+        return upper;
+      }
+      const lower = palavra.toLowerCase();
+      if (lower.startsWith("d'") && lower.length > 2) {
+        return "d'" + lower.charAt(2).toUpperCase() + lower.slice(3);
+      }
+      if (index > 0 && preposicoes.has(lower)) {
+        return lower;
+      }
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
