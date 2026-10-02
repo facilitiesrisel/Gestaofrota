@@ -3232,6 +3232,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                         <h3 className="font-black text-slate-800 flex items-center text-xs tracking-wide">
                             <DollarSign size={15} className="mr-1.5 text-emerald-700"/> DEMONSTRATIVO FINANCEIRO
                         </h3>
+                        <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            Cálculo & Taxas
+                        </span>
                     </div>
 
                     <div className="space-y-2.5">
@@ -3317,12 +3320,13 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                 <label className="text-[10px] font-extrabold text-emerald-800 uppercase block mb-0.5">
                                     Valor Final
                                 </label>
-                                <div className="w-full h-[33px] border border-emerald-300 bg-emerald-50/90 rounded-lg px-2 text-emerald-800 font-black text-xs sm:text-sm flex items-center justify-center truncate shadow-2xs">
+                                <div className="w-full h-[33px] border-2 border-emerald-400 bg-gradient-to-r from-emerald-50 to-teal-50/80 rounded-lg px-2 text-emerald-900 font-black text-xs sm:text-sm flex items-center justify-center truncate shadow-xs">
                                     {(formData.valorComDesconto || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                 </div>
                             </div>
                         </div>
 
+                        {/* Linha 3: Descontar Motorista? e Pago c/ Desconto? */}
                         <div className="grid grid-cols-2 gap-2 pt-0.5">
                             <div>
                                 <label className="text-[10px] font-extrabold text-slate-600 uppercase block mb-0.5">Descontar Motorista?</label>
@@ -3360,6 +3364,50 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                     <option value="SIM">SIM (20% Desconto)</option>
                                     <option value="NÃO">NÃO (Integral s/ Desconto)</option>
                                 </select>
+                            </div>
+                        </div>
+
+                        {/* Bloco de Detalhamento Contábil / Demonstrativo Visual Harmonioso preenchendo o espaço do Card */}
+                        <div className="bg-slate-50/90 border border-slate-200/90 rounded-lg p-2 space-y-1 text-[10.5px] shadow-2xs mt-1">
+                            <div className="flex items-center justify-between text-slate-600 font-semibold">
+                                <span className="flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                    Valor Integral (Cheio):
+                                </span>
+                                <span className="font-mono font-bold text-slate-800">
+                                    {Number(formData.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                </span>
+                            </div>
+                            
+                            <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                                <span className="flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                    (-) Desconto Pagamento {formData.pagoComDesconto === 'SIM' ? '(20%)' : '(0%)'}:
+                                </span>
+                                <span className="font-mono font-bold text-emerald-700">
+                                    - {Number(formData.desconto || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                </span>
+                            </div>
+
+                            {Number(formData.taxaLocadora || 0) > 0 && (
+                                <div className="flex items-center justify-between text-amber-700 font-semibold">
+                                    <span className="flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                        (+) Taxa Locadora:
+                                    </span>
+                                    <span className="font-mono font-bold text-amber-800">
+                                        + {Number(formData.taxaLocadora || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                    </span>
+                                </div>
+                            )}
+
+                            <div className="border-t border-slate-200 pt-1 flex items-center justify-between font-black text-slate-900">
+                                <span className="text-emerald-900 font-extrabold uppercase text-[9.5px] tracking-wide">
+                                    (=) Valor Final Calculado:
+                                </span>
+                                <span className="font-mono text-xs font-black text-emerald-800 bg-emerald-100/90 px-1.5 py-0.2 rounded">
+                                    {(formData.valorComDesconto || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                </span>
                             </div>
                         </div>
                     </div>

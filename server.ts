@@ -2474,7 +2474,7 @@ async function startServer() {
         }
       }
 
-      // Anexos vindos de driveUrls ou Data URLs (com expansão completa para múltiplos anexos e download do Google Drive)
+      // Anexos vindos de driveUrls ou Data URLs (com suporte a múltiplos anexos locais e remotos do Google Drive)
       const flatDriveItems: Array<{ name: string; url: string }> = [];
 
       if (Array.isArray(driveUrls)) {
@@ -2482,12 +2482,23 @@ async function startServer() {
           const item = driveUrls[i];
           if (!item) continue;
 
-          const rawUrlStr = String(item.url || item.link || (typeof item === 'string' ? item : "") || "").trim();
-          const baseName = item.name || item.filename || "";
+          let rawUrlStr = String(item.url || item.link || (typeof item === 'string' ? item : "") || "").trim();
+          let baseName = String(item.name || item.filename || "").trim();
 
-          // Se contiver múltiplos links separados por | ou quebra de linha ou ;
-          const parts = rawUrlStr.split(/\s*\|\s*|[\r\n;]+/).map(p => p.trim()).filter(Boolean);
-          if (parts.length > 1) {
+          if (!rawUrlStr) continue;
+
+          // Se a URL já for um Data URL direto (base64)
+          if (rawUrlStr.startsWith("data:")) {
+            flatDriveItems.push({
+              name: baseName || `Documento_${flatDriveItems.length + 1}.pdf`,
+              url: rawUrlStr
+            });
+            continue;
+          }
+
+          // Se contiver múltiplos links concatenados por " | " ou quebra de linha
+          if (rawUrlStr.includes(" | ") || rawUrlStr.includes("\n")) {
+            const parts = rawUrlStr.split(/\s*\|\s*|[\r\n]+/).map(p => p.trim()).filter(Boolean);
             parts.forEach((part, partIdx) => {
               let name = baseName ? `${baseName}_${partIdx + 1}` : `Anexo_${partIdx + 1}`;
               let url = part;
@@ -2498,16 +2509,20 @@ async function startServer() {
               }
               if (url) flatDriveItems.push({ name, url });
             });
-          } else if (parts.length === 1) {
-            let name = baseName || `Documento_${flatDriveItems.length + 1}`;
-            let url = parts[0];
-            if (url.includes("::")) {
-              const segs = url.split("::");
-              name = segs[0].trim() || name;
-              url = segs.slice(1).join("::").trim();
-            }
-            if (url) flatDriveItems.push({ name, url });
+            continue;
           }
+
+          // Se contiver "Nome::URL"
+          if (rawUrlStr.includes("::")) {
+            const segs = rawUrlStr.split("::");
+            baseName = segs[0].trim() || baseName;
+            rawUrlStr = segs.slice(1).join("::").trim();
+          }
+
+          flatDriveItems.push({
+            name: baseName || `Documento_${flatDriveItems.length + 1}.pdf`,
+            url: rawUrlStr
+          });
         }
       }
 

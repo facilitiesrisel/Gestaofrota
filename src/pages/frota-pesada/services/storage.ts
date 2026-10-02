@@ -471,11 +471,11 @@ export const sendEmailWithAttachmentsApi = async (data: SendEmailPayload) => {
     const driveUrls: Array<{ name: string; url: string }> = [];
 
     if (data.linkAit) {
-        // Suporta separador oficial " | ", quebras de linha ou ponto e vírgula
-        const parts = String(data.linkAit)
-            .split(/\s*\|\s*|[\r\n;,]+/)
-            .map(p => p.trim())
-            .filter(Boolean);
+        // Suporta separador oficial " | " e quebras de linha (NUNCA vírgula ou ponto e vírgula que quebram Data URLs)
+        const rawString = String(data.linkAit).trim();
+        const parts = rawString.includes(' | ') 
+            ? rawString.split(' | ').map(p => p.trim()).filter(Boolean)
+            : rawString.split(/\r?\n/).map(p => p.trim()).filter(Boolean);
 
         parts.forEach((part, idx) => {
             let name = `Auto_Infracao_AIT_${data.placa || 'MULTA'}${parts.length > 1 ? `_${idx + 1}` : ''}`;

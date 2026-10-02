@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { getApiUrl, setApiUrl, testConnection, getDriveFolderId, getDocsTemplateId, setDriveConfig, clearCache, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, DEFAULT_API_URL } from '../services/storage';
-import { Save, Link as LinkIcon, Radio, CheckCircle, XCircle, Loader2, Code, Copy, Table, AlertTriangle, FileJson, Folder, Mail, RefreshCw, Plus, Trash2, Edit2, Check, X } from 'lucide-react';
+import { getApiUrl, setApiUrl, testConnection, getDriveFolderId, getDocsTemplateId, setDriveConfig, clearCache, fetchBaseEmailMappings, saveBaseEmailMappings, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, DEFAULT_API_URL } from '../services/storage';
+import { Save, Link as LinkIcon, Radio, CheckCircle, XCircle, Loader2, Code, Copy, Table, AlertTriangle, FileJson, Folder, Mail, RefreshCw, Plus, Trash2, Edit2, Check, X, Building, Truck } from 'lucide-react';
 
 const HEADERS_MULTAS = "ID\tSTATUS\tFROTA\tPLACA\tBASE\tAIT\tTIPO\tDATA INFRACAO\tDATA RECEBIMENTO\tPRAZO INDICACAO\tRECEBIDA COM PRAZO\tENQUADRAMENTO\tARTIGO CTB\tDESCRICAO INFRACAO\tPONTOS CNH\tLOGIN MOTORISTA\tNOME MOTORISTA\tORGAO AUTUADOR\tENDERECO\tMUNICIPIO\tUF\tRODOVIA OU URBANO\tRETORNOU COM PRAZO\tVALOR\tDESCONTO\tVALOR COM DESCONTO\tEMPRESA OU CONDUTOR\tDESCONTAR MOTORISTA\tPAGO COM DESCONTO\tENVIADO AO RH\tOBS\tLINK AIT\tLINK AUTORIZACAO";
 const HEADERS_VEICULOS = "STATUS\tFROTA\tPLACA\tMARCA\tMODELO\tANO\tFILIAL\tREGIÃO\tTIPO\tCAPACIDADE\tPROPRIETÁRIO\tLICENCIAMENTO\tCUSTO LICENCIAMENTO 2026\tCUSTO IPVA 2026\tCUSTO MULTAS 2026\tCUSTO POR PLACA";
@@ -240,8 +240,10 @@ const ConfigPage: React.FC = () => {
   const [folderId, setFolderId] = useState('');
   const [templateId, setTemplateId] = useState('');
   
-  // Base Email Mappings States
-  const [mappings, setMappings] = useState<Record<string, { to: string; cc: string }>>({});
+  // Mapeamentos de E-mail: Suporte a Base Operacional (Reativado) e Placa
+  const [mappingMode, setMappingMode] = useState<'base' | 'placa'>('base');
+  const [baseMappings, setBaseMappings] = useState<Record<string, { to: string; cc: string }>>(DEFAULT_EMAIL_MAPPINGS);
+  const [placaMappings, setPlacaMappings] = useState<Record<string, { to: string; cc: string }>>({});
   const [loadingMappings, setLoadingMappings] = useState(true);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingTo, setEditingTo] = useState('');
@@ -257,7 +259,7 @@ const ConfigPage: React.FC = () => {
   } | null>(null);
   const [loadingSmtp, setLoadingSmtp] = useState(true);
   
-  const [newBase, setNewBase] = useState('');
+  const [newKey, setNewKey] = useState('');
   const [newTo, setNewTo] = useState('');
   const [newCc, setNewCc] = useState('');
 
@@ -287,10 +289,14 @@ const ConfigPage: React.FC = () => {
     const loadMappings = async () => {
       try {
         setLoadingMappings(true);
-        const fetched = await fetchPlacaEmailMappings();
-        setMappings(fetched);
+        const [bases, placas] = await Promise.all([
+          fetchBaseEmailMappings(),
+          fetchPlacaEmailMappings()
+        ]);
+        if (bases) setBaseMappings(bases);
+        if (placas) setPlacaMappings(placas);
       } catch (err) {
-        console.error("Erro ao carregar mapeamentos de emails por placa", err);
+        console.error("Erro ao carregar mapeamentos de emails por base e placa", err);
       } finally {
         setLoadingMappings(false);
       }
@@ -327,45 +333,72 @@ const ConfigPage: React.FC = () => {
   const handleSaveMapping = async (keyToSave: string, toStr: string, ccStr: string) => {
     const cleanKey = keyToSave.toUpperCase().trim();
     if (!cleanKey) return;
-    const updated = {
-      ...mappings,
-      [cleanKey]: {
-        to: toStr.trim(),
-        cc: ccStr.trim()
-      }
-    };
-    setMappings(updated);
-    await savePlacaEmailMappings(updated);
+    
+    if (mappingMode === 'base') {
+      const updated = {
+        ...baseMappings,
+        [cleanKey]: { to: toStr.trim(), cc: ccStr.trim() }
+      };
+      setBaseMappings(updated);
+      await saveBaseEmailMappings(updated);
+    } else {
+      const updated = {
+        ...placaMappings,
+        [cleanKey]: { to: toStr.trim(), cc: ccStr.trim() }
+      };
+      setPlacaMappings(updated);
+      await savePlacaEmailMappings(updated);
+    }
     setEditingKey(null);
   };
 
   const handleAddMapping = async () => {
-    const cleanKey = newBase.toUpperCase().trim();
-    if (!cleanKey) { alert("Placa do veículo é obrigatória."); return; }
-    if (mappings[cleanKey]) { alert("Esta placa já possui destinatários cadastrados."); return; }
+    const cleanKey = newKey.toUpperCase().trim();
+    if (!cleanKey) { 
+      alert(mappingMode === 'base' ? "Sigla ou nome da Base é obrigatório (ex: PAULINIA ou PLN)." : "Placa do veículo é obrigatória."); 
+      return; 
+    }
+
+    if (mappingMode === 'base') {
+      if (baseMappings[cleanKey]) { alert("Esta base já possui destinatários cadastrados. Use o botão Editar na tabela."); return; }
+      const updated = {
+        ...baseMappings,
+        [cleanKey]: { to: newTo.trim(), cc: newCc.trim() }
+      };
+      setBaseMappings(updated);
+      await saveBaseEmailMappings(updated);
+      alert(`Base Operacional "${cleanKey}" cadastrada com sucesso!`);
+    } else {
+      if (placaMappings[cleanKey]) { alert("Esta placa já possui destinatários cadastrados. Use o botão Editar na tabela."); return; }
+      const updated = {
+        ...placaMappings,
+        [cleanKey]: { to: newTo.trim(), cc: newCc.trim() }
+      };
+      setPlacaMappings(updated);
+      await savePlacaEmailMappings(updated);
+      alert(`Placa "${cleanKey}" cadastrada com sucesso!`);
+    }
     
-    const updated = {
-      ...mappings,
-      [cleanKey]: {
-        to: newTo.trim(),
-        cc: newCc.trim()
-      }
-    };
-    setMappings(updated);
-    await savePlacaEmailMappings(updated);
-    
-    setNewBase('');
+    setNewKey('');
     setNewTo('');
     setNewCc('');
-    alert(`Placa ${cleanKey} cadastrada com sucesso!`);
   };
 
   const handleDeleteMapping = async (keyToDelete: string) => {
-    if (!confirm(`Excluir o cadastro de destinatários da placa "${keyToDelete}"?`)) return;
-    const updated = { ...mappings };
-    delete updated[keyToDelete];
-    setMappings(updated);
-    await savePlacaEmailMappings(updated);
+    const targetDesc = mappingMode === 'base' ? `a base operacional "${keyToDelete}"` : `a placa "${keyToDelete}"`;
+    if (!confirm(`Excluir o cadastro de destinatários para ${targetDesc}?`)) return;
+    
+    if (mappingMode === 'base') {
+      const updated = { ...baseMappings };
+      delete updated[keyToDelete];
+      setBaseMappings(updated);
+      await saveBaseEmailMappings(updated);
+    } else {
+      const updated = { ...placaMappings };
+      delete updated[keyToDelete];
+      setPlacaMappings(updated);
+      await savePlacaEmailMappings(updated);
+    }
   };
 
   const handleReset = () => {
@@ -478,155 +511,232 @@ const ConfigPage: React.FC = () => {
         )}
       </div>
 
-      {/* Cadastro de Destinatários de acordo com a Placa do Veículo */}
+      {/* Gerenciamento de Destinatários de Notificação: Base Operacional e Placa do Veículo */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-6">
-        <div className="flex justify-between items-center border-b pb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-4 gap-3">
           <div>
-            <h3 className="font-bold text-gray-800 flex items-center gap-2">
-              <Mail className="text-risel-green" size={20} />
-              Cadastro de Destinatários por Placa do Veículo
+            <h3 className="font-bold text-gray-800 flex items-center gap-2 text-base">
+              <Mail className="text-risel-green" size={22} />
+              Destinatários e Cópias de Notificação por E-mail
             </h3>
-            <p className="text-xs text-gray-500">
-              Configure os e-mails destinatários ("Para") e em cópia ("CC") por placa de veículo. Nota: <strong>lorena.padilha@risel.com.br</strong> e <strong>deny.goncalves@risel.com.br</strong> serão sempre incluídos em Cópia (CC) automaticamente em todas as notificações.
+            <p className="text-xs text-gray-500 mt-0.5">
+              Defina os e-mails ("Para") e cópias ("CC") automáticas por <strong>Base Operacional</strong> ou por <strong>Placa</strong>. Nota: <strong>lorena.padilha@risel.com.br</strong> e <strong>deny.goncalves@risel.com.br</strong> são mantidos automaticamente em todas as notificações corporativas.
             </p>
+          </div>
+
+          {/* Seletor de Modo: Base (Reativada) vs Placa */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold shrink-0">
+            <button
+              type="button"
+              onClick={() => { setMappingMode('base'); setEditingKey(null); setNewKey(''); setNewTo(''); setNewCc(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                mappingMode === 'base'
+                  ? 'bg-emerald-700 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Building size={14} /> Por Base Operacional
+              <span className={`text-[9px] px-1.5 py-0.2 rounded-full ${mappingMode === 'base' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
+                {Object.keys(baseMappings).length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMappingMode('placa'); setEditingKey(null); setNewKey(''); setNewTo(''); setNewCc(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                mappingMode === 'placa'
+                  ? 'bg-emerald-700 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Truck size={14} /> Por Placa do Veículo
+              <span className={`text-[9px] px-1.5 py-0.2 rounded-full ${mappingMode === 'placa' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
+                {Object.keys(placaMappings).length}
+              </span>
+            </button>
           </div>
         </div>
 
         {loadingMappings ? (
-          <div className="flex items-center justify-center p-6 text-gray-400">
+          <div className="flex items-center justify-center p-8 text-gray-400 text-xs font-bold">
             <Loader2 className="animate-spin mr-2" size={20} />
-            Carregando destinatários por placa...
+            Carregando mapeamentos de destinatários...
           </div>
         ) : (
-          <div className="space-y-4">
-            {/* Tabela de mapeamentos existentes */}
-            <div className="overflow-x-auto border border-gray-200 rounded-xl">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase border-b">
-                    <th className="p-3 w-1/5">PLACA DO VEÍCULO</th>
-                    <th className="p-3 w-2/5">PARA (DESTINATÁRIOS)</th>
-                    <th className="p-3 w-2/5">CÓPIA (CC)</th>
-                    <th className="p-3 text-center w-24">AÇÕES</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y text-xs">
-                  {Object.keys(mappings).length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="p-6 text-center text-gray-400 font-medium">
-                        Nenhuma placa cadastrada com destinatários específicos. Os envios usarão as cópias padrão do sistema.
-                      </td>
-                    </tr>
-                  ) : (
-                    (Object.entries(mappings) as Array<[string, { to: string; cc: string }]>).map(([baseKey, val]) => {
-                      const isEditing = editingKey === baseKey;
-                      return (
-                        <tr key={baseKey} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-3 font-black text-gray-800">{baseKey}</td>
-                          <td className="p-3">
-                            {isEditing ? (
-                              <input
-                                type="text"
-                                className="w-full border p-2 rounded text-xs focus:ring-2 focus:ring-risel-green"
-                                value={editingTo}
-                                onChange={e => setEditingTo(e.target.value)}
-                                placeholder="email1@risel.com.br; email2@risel.com.br"
-                              />
-                            ) : (
-                              <span className="font-medium text-slate-700 break-all">{val.to || '-'}</span>
-                            )}
-                          </td>
-                          <td className="p-3">
-                            {isEditing ? (
-                              <input
-                                type="text"
-                                className="w-full border p-2 rounded text-xs focus:ring-2 focus:ring-risel-green"
-                                value={editingCc}
-                                onChange={e => setEditingCc(e.target.value)}
-                                placeholder="copia@risel.com.br"
-                              />
-                            ) : (
-                              <span className="font-medium text-slate-500 break-all">{val.cc || '-'}</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-center">
-                            {isEditing ? (
-                              <div className="flex justify-center gap-1">
-                                <button
-                                  onClick={() => handleSaveMapping(baseKey, editingTo, editingCc)}
-                                  className="p-1 text-green-600 hover:bg-green-50 rounded"
-                                  title="Salvar"
-                                >
-                                  <Check size={16} />
-                                </button>
-                                <button
-                                  onClick={() => setEditingKey(null)}
-                                  className="p-1 text-gray-400 hover:bg-gray-100 rounded"
-                                  title="Cancelar"
-                                >
-                                  <X size={16} />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex justify-center gap-1">
-                                <button
-                                  onClick={() => {
-                                    setEditingKey(baseKey);
-                                    setEditingTo(val.to || '');
-                                    setEditingCc(val.cc || '');
-                                  }}
-                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                                  title="Editar"
-                                >
-                                  <Edit2 size={14} />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteMapping(baseKey)}
-                                  className="p-1 text-red-600 hover:bg-red-50 rounded"
-                                  title="Excluir"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+          <div className="space-y-5">
+            {/* Aviso explicativo contextualizado */}
+            <div className={`p-3 rounded-lg border flex items-center justify-between text-xs ${
+              mappingMode === 'base' 
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900 font-semibold' 
+                : 'bg-blue-50/70 border-blue-200 text-blue-900 font-semibold'
+            }`}>
+              <div className="flex items-center gap-2">
+                {mappingMode === 'base' ? <Building size={16} className="text-emerald-700 shrink-0"/> : <Truck size={16} className="text-blue-700 shrink-0"/>}
+                <span>
+                  {mappingMode === 'base' 
+                    ? '🏢 Exibindo destinatários por Base Operacional / Filial. Toda infração sem placa individual assumirá os e-mails da sua respectiva Base.'
+                    : '🚗 Exibindo regras prioritárias por Placa. Caso um veículo tenha e-mails configurados aqui, ele terá prioridade sobre a Base.'}
+                </span>
+              </div>
             </div>
 
-            {/* Form de Adicionar nova placa */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-gray-200">
-              <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Novo Mapeamento por Placa</h4>
+            {/* Tabela de mapeamentos */}
+            {(() => {
+              const currentList = mappingMode === 'base' ? baseMappings : placaMappings;
+              const entries = Object.entries(currentList) as Array<[string, { to: string; cc: string }]>;
+              
+              return (
+                <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-[10px] font-black text-slate-500 uppercase border-b border-slate-200">
+                        <th className="p-3 w-1/4">
+                          {mappingMode === 'base' ? 'BASE OPERACIONAL / FILIAL' : 'PLACA DO VEÍCULO'}
+                        </th>
+                        <th className="p-3 w-2/5">DESTINATÁRIOS PRINCIPAIS (PARA)</th>
+                        <th className="p-3 w-1/3">CÓPIA (CC)</th>
+                        <th className="p-3 text-center w-28">AÇÕES</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y text-xs">
+                      {entries.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="p-8 text-center text-gray-400 font-medium">
+                            {mappingMode === 'base' 
+                              ? 'Nenhuma base cadastrada. Adicione uma nova base operacional no formulário abaixo.'
+                              : 'Nenhuma placa cadastrada individualmente. Os envios usarão as regras por Base Operacional.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        entries.map(([key, val]) => {
+                          const isEditing = editingKey === key;
+                          return (
+                            <tr key={key} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="p-3 font-black text-slate-900 tracking-wide font-mono">
+                                <span className={`px-2 py-0.5 rounded border text-xs ${
+                                  mappingMode === 'base' 
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                                    : 'bg-blue-50 border-blue-200 text-blue-800'
+                                }`}>
+                                  {key}
+                                </span>
+                              </td>
+                              <td className="p-3">
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    value={editingTo}
+                                    onChange={e => setEditingTo(e.target.value)}
+                                    placeholder="email1@risel.com.br; email2@risel.com.br"
+                                  />
+                                ) : (
+                                  <span className="font-medium text-slate-800 break-all">{val.to || '-'}</span>
+                                )}
+                              </td>
+                              <td className="p-3">
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    value={editingCc}
+                                    onChange={e => setEditingCc(e.target.value)}
+                                    placeholder="copia@risel.com.br"
+                                  />
+                                ) : (
+                                  <span className="font-medium text-slate-500 break-all">{val.cc || '-'}</span>
+                                )}
+                              </td>
+                              <td className="p-3 text-center">
+                                {isEditing ? (
+                                  <div className="flex justify-center gap-1.5">
+                                    <button
+                                      onClick={() => handleSaveMapping(key, editingTo, editingCc)}
+                                      className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors"
+                                      title="Salvar Alterações"
+                                    >
+                                      <Check size={15} />
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingKey(null)}
+                                      className="p-1.5 text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+                                      title="Cancelar Edição"
+                                    >
+                                      <X size={15} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex justify-center gap-1.5">
+                                    <button
+                                      onClick={() => {
+                                        setEditingKey(key);
+                                        setEditingTo(val.to || '');
+                                        setEditingCc(val.cc || '');
+                                      }}
+                                      className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                                      title="Editar Destinatários"
+                                    >
+                                      <Edit2 size={13} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteMapping(key)}
+                                      className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                                      title="Excluir Mapeamento"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {/* Form de Adicionar novo mapeamento (Base ou Placa) */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Plus size={14} className="text-emerald-700" />
+                {mappingMode === 'base' ? 'Cadastrar Nova Base Operacional' : 'Cadastrar Nova Placa de Veículo'}
+              </h4>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                 <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase">Placa do Veículo</label>
+                  <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
+                    {mappingMode === 'base' ? 'Nome / Sigla da Base' : 'Placa do Veículo'}
+                  </label>
                   <input
                     type="text"
-                    className="w-full border p-2 rounded text-xs uppercase font-bold focus:ring-2 focus:ring-risel-green"
-                    placeholder="Ex: ABC1234"
-                    value={newBase}
-                    onChange={e => setNewBase(e.target.value)}
+                    className="w-full border border-slate-300 p-2 rounded-lg text-xs uppercase font-black focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                    placeholder={mappingMode === 'base' ? 'Ex: PAULINIA ou PLN' : 'Ex: ABC1D23'}
+                    value={newKey}
+                    onChange={e => setNewKey(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase">E-mails destinatários (Para)</label>
+                  <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
+                    E-mails Destinatários (Para)
+                  </label>
                   <input
                     type="text"
-                    className="w-full border p-2 rounded text-xs focus:ring-2 focus:ring-risel-green"
+                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
                     placeholder="email1@risel.com.br; email2@risel.com.br"
                     value={newTo}
                     onChange={e => setNewTo(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase">E-mails em cópia (CC)</label>
+                  <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
+                    E-mails em Cópia (CC)
+                  </label>
                   <input
                     type="text"
-                    className="w-full border p-2 rounded text-xs focus:ring-2 focus:ring-risel-green"
+                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
                     placeholder="copia1@risel.com.br; copia2@risel.com.br"
                     value={newCc}
                     onChange={e => setNewCc(e.target.value)}
@@ -635,9 +745,10 @@ const ConfigPage: React.FC = () => {
                 <div>
                   <button
                     onClick={handleAddMapping}
-                    className="w-full bg-risel-green hover:bg-risel-dark text-white p-2.5 rounded font-bold text-xs flex justify-center items-center shadow transition-all active:scale-95"
+                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white p-2 rounded-lg font-bold text-xs flex justify-center items-center shadow-xs transition-all active:scale-95 cursor-pointer"
                   >
-                    <Plus size={14} className="mr-1" /> Adicionar Placa
+                    <Plus size={14} className="mr-1" />
+                    {mappingMode === 'base' ? 'Adicionar Base' : 'Adicionar Placa'}
                   </button>
                 </div>
               </div>
