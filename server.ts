@@ -2474,56 +2474,97 @@ async function startServer() {
         }
       }
 
-      // Anexos vindos de driveUrls ou Data URLs (com download automático de links do Google Drive)
+      // Anexos vindos de driveUrls ou Data URLs (com expansão completa para múltiplos anexos e download do Google Drive)
+      const flatDriveItems: Array<{ name: string; url: string }> = [];
+
       if (Array.isArray(driveUrls)) {
         for (let i = 0; i < driveUrls.length; i++) {
           const item = driveUrls[i];
-          if (!item || !item.url) continue;
+          if (!item) continue;
 
-          let rawUrl = String(item.url || "").trim();
-          let customName = item.name || "";
+          const rawUrlStr = String(item.url || item.link || (typeof item === 'string' ? item : "") || "").trim();
+          const baseName = item.name || item.filename || "";
 
-          // Se o formato vier como "Nome::URL"
-          if (rawUrl.includes("::")) {
-            const parts = rawUrl.split("::");
-            if (!customName) customName = parts[0].trim();
-            rawUrl = parts.slice(1).join("::").trim();
+          // Se contiver múltiplos links separados por | ou quebra de linha ou ;
+          const parts = rawUrlStr.split(/\s*\|\s*|[\r\n;]+/).map(p => p.trim()).filter(Boolean);
+          if (parts.length > 1) {
+            parts.forEach((part, partIdx) => {
+              let name = baseName ? `${baseName}_${partIdx + 1}` : `Anexo_${partIdx + 1}`;
+              let url = part;
+              if (part.includes("::")) {
+                const segs = part.split("::");
+                name = segs[0].trim() || name;
+                url = segs.slice(1).join("::").trim();
+              }
+              if (url) flatDriveItems.push({ name, url });
+            });
+          } else if (parts.length === 1) {
+            let name = baseName || `Documento_${flatDriveItems.length + 1}`;
+            let url = parts[0];
+            if (url.includes("::")) {
+              const segs = url.split("::");
+              name = segs[0].trim() || name;
+              url = segs.slice(1).join("::").trim();
+            }
+            if (url) flatDriveItems.push({ name, url });
           }
+        }
+      }
 
-          let fname = customName || `Documento_${i + 1}.pdf`;
+      if (flatDriveItems.length > 0) {
+        console.log(`[Risel SMTP] Processando ${flatDriveItems.length} anexo(s) para o e-mail...`);
+        for (let i = 0; i < flatDriveItems.length; i++) {
+          const item = flatDriveItems[i];
+          let rawUrl = String(item.url || "").trim();
+          let fname = item.name || `Documento_${i + 1}.pdf`;
 
           if (rawUrl.startsWith('data:')) {
             const parsed = parseBase64Attachment(rawUrl, fname, 'application/pdf');
             if (parsed) mailAttachments.push(parsed);
-          } else if (typeof rawUrl === 'string' && isValidSafeHttpsUrl(rawUrl)) {
+            continue;
+          }
+
+          if (typeof rawUrl === 'string' && isValidSafeHttpsUrl(rawUrl)) {
             // Se for link do Google Drive, faz o download automático do arquivo para envio direto
             const driveMatch = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
             if (driveMatch && driveMatch[1]) {
               const fileId = driveMatch[1];
               try {
-                const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-                console.log(`[Risel SMTP] Baixando anexo do Google Drive (${fileId}) para envio no e-mail...`);
-                const driveRes = await fetch(downloadUrl);
+                // Tenta endpoint de download direto com confirmação para evitar bloqueios de antivírus do Drive
+                const downloadUrl1 = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
+                console.log(`[Risel SMTP] Baixando anexo ${i + 1}/${flatDriveItems.length} do Google Drive (${fileId}: ${fname})...`);
+                let driveRes = await fetch(downloadUrl1);
+
+                if (!driveRes.ok) {
+                  const downloadUrl2 = `https://drive.google.com/uc?export=download&id=${fileId}`;
+                  driveRes = await fetch(downloadUrl2);
+                }
+
                 if (driveRes.ok) {
                   const contentType = driveRes.headers.get("content-type") || "application/pdf";
                   const arrayBuf = await driveRes.arrayBuffer();
                   const buf = Buffer.from(arrayBuf);
 
-                  if (contentType.includes("jpeg") || contentType.includes("jpg")) {
-                    if (!fname.toLowerCase().endsWith(".jpg") && !fname.toLowerCase().endsWith(".jpeg")) fname += ".jpg";
-                  } else if (contentType.includes("png")) {
-                    if (!fname.toLowerCase().endsWith(".png")) fname += ".png";
-                  } else {
-                    if (!fname.toLowerCase().endsWith(".pdf")) fname += ".pdf";
-                  }
+                  const isHtml = contentType.includes("text/html") && buf.byteLength < 50000 && buf.toString('utf-8', 0, 100).toLowerCase().includes("<!doctype html");
+                  if (!isHtml) {
+                    if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+                      if (!fname.toLowerCase().endsWith(".jpg") && !fname.toLowerCase().endsWith(".jpeg")) fname += ".jpg";
+                    } else if (contentType.includes("png")) {
+                      if (!fname.toLowerCase().endsWith(".png")) fname += ".png";
+                    } else {
+                      if (!fname.toLowerCase().endsWith(".pdf")) fname += ".pdf";
+                    }
 
-                  mailAttachments.push({
-                    filename: fname,
-                    content: buf,
-                    contentType: contentType
-                  });
-                  console.log(`[Risel SMTP] Anexo do Google Drive anexado com sucesso: ${fname} (${buf.byteLength} bytes)`);
-                  continue;
+                    mailAttachments.push({
+                      filename: fname,
+                      content: buf,
+                      contentType: contentType
+                    });
+                    console.log(`[Risel SMTP] Anexo ${i + 1}/${flatDriveItems.length} do Google Drive anexado com sucesso: ${fname} (${buf.byteLength} bytes)`);
+                    continue;
+                  } else {
+                    console.warn(`[Risel SMTP] Resposta do Drive retornou HTML em vez de arquivo para ${fileId}.`);
+                  }
                 }
               } catch (driveErr: any) {
                 console.warn(`[Risel SMTP] Falha ao baixar anexo do Google Drive (${fileId}):`, driveErr.message);

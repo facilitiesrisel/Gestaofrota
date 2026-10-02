@@ -467,6 +467,41 @@ export interface SendEmailPayload {
 }
 
 export const sendEmailWithAttachmentsApi = async (data: SendEmailPayload) => {
+    // Desmembra todos os links de AIT presentes na string (formato "Nome::URL | Nome2::URL2" ou URLs separadas por pipe/vírgula/linha)
+    const driveUrls: Array<{ name: string; url: string }> = [];
+
+    if (data.linkAit) {
+        // Suporta separador oficial " | ", quebras de linha ou ponto e vírgula
+        const parts = String(data.linkAit)
+            .split(/\s*\|\s*|[\r\n;,]+/)
+            .map(p => p.trim())
+            .filter(Boolean);
+
+        parts.forEach((part, idx) => {
+            let name = `Auto_Infracao_AIT_${data.placa || 'MULTA'}${parts.length > 1 ? `_${idx + 1}` : ''}`;
+            let url = part;
+            if (part.includes('::')) {
+                const segs = part.split('::');
+                name = segs[0].trim() || name;
+                url = segs.slice(1).join('::').trim();
+            }
+            if (url) {
+                // Garante nome amigável e legível
+                if (!/\.(pdf|png|jpe?g)$/i.test(name)) {
+                    name += '.pdf';
+                }
+                driveUrls.push({ name, url });
+            }
+        });
+    }
+
+    if (data.linkAuth) {
+        driveUrls.push({
+            name: `Autorizacao_Desconto_${data.placa || 'MULTA'}.pdf`,
+            url: data.linkAuth
+        });
+    }
+
     // 1. Tentar envio prioritário pelo backend Node (/api/send-email) com suporte a Resend, Brevo e SMTP
     try {
         const res = await fetch('/api/send-email', {
@@ -479,10 +514,8 @@ export const sendEmailWithAttachmentsApi = async (data: SendEmailPayload) => {
                 html: data.message_html,
                 source: 'multas',
                 fromName: 'Sistema de Multas Risel',
-                driveUrls: [
-                    ...(data.linkAit ? [{ name: 'AIT_Auto_Infracao.pdf', url: data.linkAit }] : []),
-                    ...(data.linkAuth ? [{ name: 'Autorizacao_Desconto.pdf', url: data.linkAuth }] : [])
-                ]
+                driveUrls: driveUrls,
+                attachments: data.files || []
             })
         });
         if (res.ok) {
@@ -491,7 +524,7 @@ export const sendEmailWithAttachmentsApi = async (data: SendEmailPayload) => {
                 return {
                     success: true,
                     message: json.message || 'E-mail enviado com sucesso!',
-                    attachmentsCount: json.attachmentsCount ?? 0,
+                    attachmentsCount: json.attachmentsCount ?? driveUrls.length,
                     provider: json.provider
                 };
             }
@@ -503,7 +536,10 @@ export const sendEmailWithAttachmentsApi = async (data: SendEmailPayload) => {
     // 2. Fallback para Google Apps Script
     const payload = {
         action: 'send_email',
-        payload: data
+        payload: {
+            ...data,
+            driveUrls: driveUrls
+        }
     };
     return await request(payload);
 };
