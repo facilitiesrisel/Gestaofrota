@@ -28,7 +28,8 @@ import {
   ArrowRight,
   Users,
   LayoutGrid,
-  ShieldAlert
+  ShieldAlert,
+  Settings
 } from 'lucide-react';
 import { fetchAllData } from './frota-pesada/services/storage';
 import { useAuth } from '../context/AuthContext';
@@ -859,6 +860,16 @@ export default function FrotaPesada() {
                   }`}
                 >
                   Alertas
+                </button>
+                <button
+                  onClick={() => handleNavigatePage('CONFIG')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                    currentPage === 'CONFIG' ? 'bg-rose-500 text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Configurações e Destinatários de E-mail"
+                >
+                  <Settings className="w-3 h-3" />
+                  Configurações
                 </button>
               </div>
             )}

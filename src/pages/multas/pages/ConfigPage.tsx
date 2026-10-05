@@ -1,7 +1,46 @@
-
-import React, { useState, useEffect } from 'react';
-import { getApiUrl, setApiUrl, testConnection, getDriveFolderId, getDocsTemplateId, setDriveConfig, clearCache, fetchBaseEmailMappings, saveBaseEmailMappings, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, DEFAULT_API_URL } from '../services/storage';
-import { Save, Link as LinkIcon, Radio, CheckCircle, XCircle, Loader2, Code, Copy, Table, AlertTriangle, FileJson, Folder, Mail, RefreshCw, Plus, Trash2, Edit2, Check, X, Building, Truck } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  getApiUrl, 
+  setApiUrl, 
+  testConnection, 
+  getDriveFolderId, 
+  getDocsTemplateId, 
+  setDriveConfig, 
+  clearCache, 
+  fetchBaseEmailMappings, 
+  saveBaseEmailMappings, 
+  fetchPlacaEmailMappings, 
+  savePlacaEmailMappings, 
+  DEFAULT_EMAIL_MAPPINGS, 
+  DEFAULT_API_URL 
+} from '../services/storage';
+import { 
+  Save, 
+  Link as LinkIcon, 
+  Radio, 
+  CheckCircle, 
+  XCircle, 
+  Loader2, 
+  Code, 
+  Copy, 
+  Table, 
+  AlertTriangle, 
+  FileJson, 
+  Folder, 
+  Mail, 
+  RefreshCw, 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  Check, 
+  X, 
+  Building, 
+  Truck,
+  Search,
+  RotateCcw,
+  Sparkles,
+  Info
+} from 'lucide-react';
 
 const HEADERS_MULTAS = "ID\tSTATUS\tFROTA\tPLACA\tBASE\tAIT\tTIPO\tDATA INFRACAO\tDATA RECEBIMENTO\tPRAZO INDICACAO\tRECEBIDA COM PRAZO\tENQUADRAMENTO\tARTIGO CTB\tDESCRICAO INFRACAO\tPONTOS CNH\tLOGIN MOTORISTA\tNOME MOTORISTA\tORGAO AUTUADOR\tENDERECO\tMUNICIPIO\tUF\tRODOVIA OU URBANO\tRETORNOU COM PRAZO\tVALOR\tDESCONTO\tVALOR COM DESCONTO\tEMPRESA OU CONDUTOR\tDESCONTAR MOTORISTA\tPAGO COM DESCONTO\tENVIADO AO RH\tOBS\tLINK AIT\tLINK AUTORIZACAO";
 const HEADERS_VEICULOS = "STATUS\tFROTA\tPLACA\tMARCA\tMODELO\tANO\tFILIAL\tREGIÃO\tTIPO\tCAPACIDADE\tPROPRIETÁRIO\tLICENCIAMENTO\tCUSTO LICENCIAMENTO 2026\tCUSTO IPVA 2026\tCUSTO MULTAS 2026\tCUSTO POR PLACA";
@@ -143,7 +182,6 @@ function saveData(type, item) {
   if (keyIdx !== -1 && searchVal !== "") {
     for (let i = 1; i < data.length; i++) {
       const cellVal = norm(data[i][keyIdx]);
-      // Compara normalizado E tenta comparar como string simples
       if (cellVal === searchVal || String(data[i][keyIdx]) === String(itemId)) { 
           rowIdx = i + 1; 
           break; 
@@ -154,9 +192,7 @@ function saveData(type, item) {
   // 5. Prepara Dados para Salvar
   const rowValues = headers.map(h => {
       const hNorm = norm(h);
-      // Tenta match exato primeiro
       if (item[h] !== undefined) return item[h];
-      // Tenta match normalizado
       for (let k in item) {
           if (norm(k) === hNorm) return item[k];
       }
@@ -182,7 +218,6 @@ function deleteData(type, payload) {
   const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
   const data = sheet.getDataRange().getValues();
 
-  // Mesma lógica de busca de chave do Save
   let keyIdx = -1;
   let possibleKeys = [];
   if (type === 'veiculo') possibleKeys = ['FROTA', 'VEICULO', 'PREFIXO', 'ID', 'CODIGO', 'NFROTA'];
@@ -235,16 +270,24 @@ function generatePdf(d) {
   return { success: true, fileUrl: pdf.getUrl() };
 }`;
 
+type MainTab = 'destinatarios' | 'conexoes' | 'smtp' | 'planilhas';
+
 const ConfigPage: React.FC = () => {
+  // Aba principal ativa por padrão: DESTINATÁRIOS (Pedido do Usuário)
+  const [activeMainTab, setActiveMainTab] = useState<MainTab>('destinatarios');
+
   const [url, setUrl] = useState('');
   const [folderId, setFolderId] = useState('');
   const [templateId, setTemplateId] = useState('');
   
-  // Mapeamentos de E-mail: Suporte a Base Operacional (Reativado) e Placa
+  // Mapeamentos de E-mail: Suporte Completo a Base Operacional e Placa
   const [mappingMode, setMappingMode] = useState<'base' | 'placa'>('base');
   const [baseMappings, setBaseMappings] = useState<Record<string, { to: string; cc: string }>>(DEFAULT_EMAIL_MAPPINGS);
   const [placaMappings, setPlacaMappings] = useState<Record<string, { to: string; cc: string }>>({});
   const [loadingMappings, setLoadingMappings] = useState(true);
+  const [searchFilter, setSearchFilter] = useState('');
+  
+  // Edição inline
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingTo, setEditingTo] = useState('');
   const [editingCc, setEditingCc] = useState('');
@@ -259,6 +302,7 @@ const ConfigPage: React.FC = () => {
   } | null>(null);
   const [loadingSmtp, setLoadingSmtp] = useState(true);
   
+  // Novo cadastro
   const [newKey, setNewKey] = useState('');
   const [newTo, setNewTo] = useState('');
   const [newCc, setNewCc] = useState('');
@@ -267,7 +311,7 @@ const ConfigPage: React.FC = () => {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testMessage, setTestMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<'script' | 'manifest'>('script');
+  const [scriptTab, setScriptTab] = useState<'script' | 'manifest'>('script');
   const [showCode, setShowCode] = useState(false);
   const [scriptCode, setScriptCode] = useState(SCRIPT_CODE);
 
@@ -293,8 +337,12 @@ const ConfigPage: React.FC = () => {
           fetchBaseEmailMappings(),
           fetchPlacaEmailMappings()
         ]);
-        if (bases) setBaseMappings(bases);
-        if (placas) setPlacaMappings(placas);
+        if (bases && Object.keys(bases).length > 0) {
+          setBaseMappings(bases);
+        }
+        if (placas) {
+          setPlacaMappings(placas);
+        }
       } catch (err) {
         console.error("Erro ao carregar mapeamentos de emails por base e placa", err);
       } finally {
@@ -321,13 +369,13 @@ const ConfigPage: React.FC = () => {
     loadSmtpStatus();
   }, []);
 
-  const handleSave = async () => {
+  const handleSaveConexoes = async () => {
     setApiUrl(url);
     setDriveConfig(folderId, templateId);
     
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
-    alert("Configurações gerais salvas com sucesso!");
+    alert("Configurações de conexão e Google Drive salvas com sucesso!");
   };
 
   const handleSaveMapping = async (keyToSave: string, toStr: string, ccStr: string) => {
@@ -355,12 +403,15 @@ const ConfigPage: React.FC = () => {
   const handleAddMapping = async () => {
     const cleanKey = newKey.toUpperCase().trim();
     if (!cleanKey) { 
-      alert(mappingMode === 'base' ? "Sigla ou nome da Base é obrigatório (ex: PAULINIA ou PLN)." : "Placa do veículo é obrigatória."); 
+      alert(mappingMode === 'base' ? "Sigla ou nome da Base é obrigatório (ex: PAULÍNIA, BETIM, CAXIAS ou PLN)." : "Placa do veículo é obrigatória."); 
       return; 
     }
 
     if (mappingMode === 'base') {
-      if (baseMappings[cleanKey]) { alert("Esta base já possui destinatários cadastrados. Use o botão Editar na tabela."); return; }
+      if (baseMappings[cleanKey]) { 
+        alert("Esta base já possui destinatários cadastrados. Use o botão Editar na tabela abaixo."); 
+        return; 
+      }
       const updated = {
         ...baseMappings,
         [cleanKey]: { to: newTo.trim(), cc: newCc.trim() }
@@ -369,7 +420,10 @@ const ConfigPage: React.FC = () => {
       await saveBaseEmailMappings(updated);
       alert(`Base Operacional "${cleanKey}" cadastrada com sucesso!`);
     } else {
-      if (placaMappings[cleanKey]) { alert("Esta placa já possui destinatários cadastrados. Use o botão Editar na tabela."); return; }
+      if (placaMappings[cleanKey]) { 
+        alert("Esta placa já possui destinatários cadastrados. Use o botão Editar na tabela abaixo."); 
+        return; 
+      }
       const updated = {
         ...placaMappings,
         [cleanKey]: { to: newTo.trim(), cc: newCc.trim() }
@@ -382,6 +436,15 @@ const ConfigPage: React.FC = () => {
     setNewKey('');
     setNewTo('');
     setNewCc('');
+  };
+
+  const handleRestoreDefaultBases = async () => {
+    if (confirm("Deseja restaurar e atualizar as bases operacionais padrão da Risel (Paulínia, Betim, Caxias, Aguaí, Cubatão, Jales, Ourinhos, São Bernardo, Suprimentos)? Seus cadastros manuais existentes serão preservados.")) {
+      const merged = { ...DEFAULT_EMAIL_MAPPINGS, ...baseMappings };
+      setBaseMappings(merged);
+      await saveBaseEmailMappings(merged);
+      alert("Bases operacionais oficiais sincronizadas com sucesso!");
+    }
   };
 
   const handleDeleteMapping = async (keyToDelete: string) => {
@@ -402,572 +465,655 @@ const ConfigPage: React.FC = () => {
   };
 
   const handleReset = () => {
-      if (confirm("ATENÇÃO: Isso limpará todo o cache local e forçará o download dos dados da planilha novamente. Útil se você trocou de computador ou se os dados não aparecem. Confirmar?")) {
-          clearCache();
-          window.location.reload();
-      }
+    if (confirm("ATENÇÃO: Isso limpará o cache local e forçará o recarregamento dos dados da nuvem. Confirmar?")) {
+      clearCache();
+      window.location.reload();
+    }
   };
 
   const handleTest = async () => {
-      setTesting(true);
-      setTestResult(null);
-      setTestMessage('');
-      setApiUrl(url);
-      try {
-          const start = Date.now();
-          const response = await testConnection();
-          const duration = Date.now() - start;
-          if (response && (response.multas || response.veiculos || response.success === true)) {
-              setTestResult('success');
-              setTestMessage(`Conexão OK (${duration}ms). Script backend respondendo corretamente.`);
-              if (showCode && !response.error) setShowCode(false);
-          } else {
-              setTestResult('error');
-              const errorMsg = response?.error || 'Dados inválidos recebidos.';
-              setTestMessage(`Erro no Script: ${errorMsg}`);
-              setShowCode(true); 
-          }
-      } catch (e: any) {
-          setTestResult('error');
-          setTestMessage(`Falha na conexão: ${e.message}.`);
-      } finally {
-          setTesting(false);
+    setTesting(true);
+    setTestResult(null);
+    setTestMessage('');
+    setApiUrl(url);
+    try {
+      const start = Date.now();
+      const response = await testConnection();
+      const duration = Date.now() - start;
+      if (response && (response.multas || response.veiculos || response.success === true)) {
+        setTestResult('success');
+        setTestMessage(`Conexão OK (${duration}ms). Script backend respondendo corretamente.`);
+        if (showCode && !response.error) setShowCode(false);
+      } else {
+        setTestResult('error');
+        const errorMsg = response?.error || 'Dados inválidos recebidos.';
+        setTestMessage(`Erro no Script: ${errorMsg}`);
+        setShowCode(true); 
       }
-  }
+    } catch (e: any) {
+      setTestResult('error');
+      setTestMessage(`Falha na conexão: ${e.message}.`);
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const copyCode = (text: string) => {
-      navigator.clipboard.writeText(text);
-      alert("Código copiado com sucesso!");
+    navigator.clipboard.writeText(text);
+    alert("Código copiado com sucesso!");
   };
 
   const copyHeaders = (headers: string, name: string) => {
-      navigator.clipboard.writeText(headers);
-      alert(`Cabeçalhos da aba ${name} copiados! Vá para a planilha, selecione a célula A1 e dê Ctrl+V.`);
-  }
+    navigator.clipboard.writeText(headers);
+    alert(`Cabeçalhos da aba ${name} copiados! Vá para a planilha, selecione a célula A1 e cole com Ctrl+V.`);
+  };
+
+  // Filtragem dos mapeamentos em exibição
+  const filteredEntries = useMemo(() => {
+    const currentList = mappingMode === 'base' ? baseMappings : placaMappings;
+    const entries = Object.entries(currentList) as Array<[string, { to: string; cc: string }]>;
+    if (!searchFilter.trim()) return entries;
+    const q = searchFilter.toLowerCase().trim();
+    return entries.filter(([k, v]) => 
+      k.toLowerCase().includes(q) || 
+      (v.to || '').toLowerCase().includes(q) || 
+      (v.cc || '').toLowerCase().includes(q)
+    );
+  }, [mappingMode, baseMappings, placaMappings, searchFilter]);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in pb-10">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-800">Configurações do Sistema</h2>
+    <div className="max-w-5xl mx-auto space-y-6 animate-in fade-in pb-12 font-sans">
+      {/* Cabeçalho da Página com Título e Ação de Limpeza */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200/80 pb-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
+              Frota Pesada • Controle de Multas
+            </span>
+          </div>
+          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Configurações do Sistema</h2>
+          <p className="text-xs text-slate-500 font-medium">
+            Gerencie os destinatários e cópias de e-mail por <strong>Base Operacional</strong>, credenciais corporativas e conexões.
+          </p>
+        </div>
+
         <button 
-            onClick={handleReset}
-            className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg flex items-center text-sm font-bold border border-red-200 transition-colors"
+          onClick={handleReset}
+          className="self-start sm:self-auto px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl flex items-center text-xs font-bold border border-slate-300 transition-colors shadow-2xs active:scale-95 cursor-pointer"
+          title="Limpar cache do navegador e recarregar dados mais recentes"
         >
-            <RefreshCw size={16} className="mr-2"/> Limpar Cache & Recarregar
+          <RefreshCw size={14} className="mr-1.5 text-slate-600"/> Limpar Cache
         </button>
       </div>
-      
-      {/* Conexões e IDs */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-700 mb-4 flex items-center">
-            <LinkIcon className="mr-2 text-risel-green" /> Conexões & Google Drive
-        </h3>
-        
-        <div className="space-y-4">
-            <div>
-                <label className="text-xs font-bold text-gray-500 uppercase">URL do Script (Web App)</label>
-                <input 
-                    type="text" 
-                    className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-risel-green focus:outline-none font-mono text-sm"
-                    placeholder="https://script.google.com/macros/s/..."
-                    value={url}
-                    onChange={e => setUrl(e.target.value)}
-                />
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
-                        <Folder size={12}/> ID da Pasta Drive (Uploads)
-                    </label>
-                    <input 
-                        type="text" 
-                        className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-risel-green focus:outline-none font-mono text-sm"
-                        placeholder="Ex: 1Fq8e5MM_AOl..."
-                        value={folderId}
-                        onChange={e => setFolderId(e.target.value)}
-                    />
-                </div>
-                 <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
-                        <FileJson size={12}/> ID do Modelo Docs (Template)
-                    </label>
-                    <input 
-                        type="text" 
-                        className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-risel-green focus:outline-none font-mono text-sm"
-                        placeholder="Ex: 1B53R29..."
-                        value={templateId}
-                        onChange={e => setTemplateId(e.target.value)}
-                    />
-                </div>
-            </div>
-        </div>
 
-        {testResult && (
-            <div className={`mt-4 p-3 rounded-lg border flex items-start ${testResult === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                {testResult === 'success' ? <CheckCircle size={18} className="mr-2 mt-0.5 shrink-0"/> : <XCircle size={18} className="mr-2 mt-0.5 shrink-0"/>}
-                <span className="text-sm font-bold">{testMessage}</span>
-            </div>
-        )}
+      {/* Barra de Abas Superiores de Navegação Direta */}
+      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setActiveMainTab('destinatarios')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            activeMainTab === 'destinatarios'
+              ? 'bg-emerald-700 text-white shadow-sm shadow-emerald-700/20 font-black'
+              : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+          }`}
+        >
+          <Mail size={16} />
+          <span>Destinatários por Base & Placa</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+            activeMainTab === 'destinatarios' ? 'bg-emerald-800 text-white' : 'bg-slate-200 text-slate-700'
+          }`}>
+            {Object.keys(baseMappings).length} Bases
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveMainTab('conexoes')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            activeMainTab === 'conexoes'
+              ? 'bg-emerald-700 text-white shadow-sm shadow-emerald-700/20 font-black'
+              : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+          }`}
+        >
+          <LinkIcon size={16} />
+          <span>Conexões & Google Drive</span>
+        </button>
+
+        <button
+          onClick={() => setActiveMainTab('smtp')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            activeMainTab === 'smtp'
+              ? 'bg-emerald-700 text-white shadow-sm shadow-emerald-700/20 font-black'
+              : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+          }`}
+        >
+          <Radio size={16} />
+          <span>Servidor SMTP (E-mail)</span>
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        </button>
+
+        <button
+          onClick={() => setActiveMainTab('planilhas')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            activeMainTab === 'planilhas'
+              ? 'bg-emerald-700 text-white shadow-sm shadow-emerald-700/20 font-black'
+              : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+          }`}
+        >
+          <Code size={16} />
+          <span>Google Sheets & Scripts</span>
+        </button>
       </div>
 
-      {/* Gerenciamento de Destinatários de Notificação: Base Operacional e Placa do Veículo */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-4 gap-3">
-          <div>
-            <h3 className="font-bold text-gray-800 flex items-center gap-2 text-base">
-              <Mail className="text-risel-green" size={22} />
-              Destinatários e Cópias de Notificação por E-mail
-            </h3>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Defina os e-mails ("Para") e cópias ("CC") automáticas por <strong>Base Operacional</strong> ou por <strong>Placa</strong>. Nota: <strong>lorena.padilha@risel.com.br</strong> e <strong>deny.goncalves@risel.com.br</strong> são mantidos automaticamente em todas as notificações corporativas.
-            </p>
-          </div>
-
-          {/* Seletor de Modo: Base (Reativada) vs Placa */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold shrink-0">
-            <button
-              type="button"
-              onClick={() => { setMappingMode('base'); setEditingKey(null); setNewKey(''); setNewTo(''); setNewCc(''); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                mappingMode === 'base'
-                  ? 'bg-emerald-700 text-white shadow-xs font-extrabold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Building size={14} /> Por Base Operacional
-              <span className={`text-[9px] px-1.5 py-0.2 rounded-full ${mappingMode === 'base' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
-                {Object.keys(baseMappings).length}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setMappingMode('placa'); setEditingKey(null); setNewKey(''); setNewTo(''); setNewCc(''); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                mappingMode === 'placa'
-                  ? 'bg-emerald-700 text-white shadow-xs font-extrabold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Truck size={14} /> Por Placa do Veículo
-              <span className={`text-[9px] px-1.5 py-0.2 rounded-full ${mappingMode === 'placa' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
-                {Object.keys(placaMappings).length}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {loadingMappings ? (
-          <div className="flex items-center justify-center p-8 text-gray-400 text-xs font-bold">
-            <Loader2 className="animate-spin mr-2" size={20} />
-            Carregando mapeamentos de destinatários...
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {/* Aviso explicativo contextualizado */}
-            <div className={`p-3 rounded-lg border flex items-center justify-between text-xs ${
-              mappingMode === 'base' 
-                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900 font-semibold' 
-                : 'bg-blue-50/70 border-blue-200 text-blue-900 font-semibold'
-            }`}>
+      {/* CONTEÚDO DA ABA 1: DESTINATÁRIOS POR BASE E PLACA (REATIVADO EM DESTAQUE) */}
+      {activeMainTab === 'destinatarios' && (
+        <div className="space-y-6">
+          {/* Card explicativo e status corporativo */}
+          <div className="bg-gradient-to-r from-emerald-50 via-teal-50/50 to-white p-5 rounded-2xl border border-emerald-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
               <div className="flex items-center gap-2">
-                {mappingMode === 'base' ? <Building size={16} className="text-emerald-700 shrink-0"/> : <Truck size={16} className="text-blue-700 shrink-0"/>}
-                <span>
-                  {mappingMode === 'base' 
-                    ? '🏢 Exibindo destinatários por Base Operacional / Filial. Toda infração sem placa individual assumirá os e-mails da sua respectiva Base.'
-                    : '🚗 Exibindo regras prioritárias por Placa. Caso um veículo tenha e-mails configurados aqui, ele terá prioridade sobre a Base.'}
-                </span>
+                <Building className="text-emerald-700" size={20} />
+                <h3 className="text-base font-black text-emerald-950">
+                  Cadastro de Destinatários e Cópias por Base Operacional
+                </h3>
+              </div>
+              <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
+                Esta tela define quem receberá as notificações automáticas de multas da Frota Pesada. Ao cadastrar uma infração com a <strong>Base Operacional</strong> (ex: Paulínia, Betim, Caxias, etc.), o sistema preencherá automaticamente os e-mails principais ("Para") e os e-mails em cópia ("CC").
+              </p>
+              <p className="text-[11px] text-emerald-900 font-semibold flex items-center gap-1.5 pt-1">
+                <Info size={13} className="text-emerald-700" />
+                Os e-mails de <strong>lorena.padilha@risel.com.br</strong> e <strong>deny.goncalves@risel.com.br</strong> são mantidos automaticamente em todas as notificações em cópia.
+              </p>
+            </div>
+
+            <button
+              onClick={handleRestoreDefaultBases}
+              className="self-start md:self-auto inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs hover:shadow-sm active:scale-95 cursor-pointer shrink-0"
+              title="Carregar todas as bases operacionais padrão da Risel"
+            >
+              <RotateCcw size={14} /> Restaurar Bases Oficiais
+            </button>
+          </div>
+
+          {/* Seletor de Modo (Base Operacional vs Placa) e Busca */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/90 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { setMappingMode('base'); setEditingKey(null); }}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    mappingMode === 'base'
+                      ? 'bg-emerald-700 text-white shadow-xs font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Building size={14} /> Por Base Operacional / Filial
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                    mappingMode === 'base' ? 'bg-emerald-900 text-emerald-100' : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    {Object.keys(baseMappings).length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setMappingMode('placa'); setEditingKey(null); }}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    mappingMode === 'placa'
+                      ? 'bg-emerald-700 text-white shadow-xs font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Truck size={14} /> Exceções por Placa
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                    mappingMode === 'placa' ? 'bg-emerald-900 text-emerald-100' : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    {Object.keys(placaMappings).length}
+                  </span>
+                </button>
+              </div>
+
+              {/* Barra de Filtro / Busca */}
+              <div className="relative w-full sm:w-72">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder={mappingMode === 'base' ? "Buscar por base ou e-mail..." : "Buscar por placa ou e-mail..."}
+                  value={searchFilter}
+                  onChange={e => setSearchFilter(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 focus:bg-white outline-none transition-all"
+                />
               </div>
             </div>
 
-            {/* Tabela de mapeamentos */}
-            {(() => {
-              const currentList = mappingMode === 'base' ? baseMappings : placaMappings;
-              const entries = Object.entries(currentList) as Array<[string, { to: string; cc: string }]>;
-              
-              return (
-                <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] font-black text-slate-500 uppercase border-b border-slate-200">
-                        <th className="p-3 w-1/4">
-                          {mappingMode === 'base' ? 'BASE OPERACIONAL / FILIAL' : 'PLACA DO VEÍCULO'}
-                        </th>
-                        <th className="p-3 w-2/5">DESTINATÁRIOS PRINCIPAIS (PARA)</th>
-                        <th className="p-3 w-1/3">CÓPIA (CC)</th>
-                        <th className="p-3 text-center w-28">AÇÕES</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y text-xs">
-                      {entries.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="p-8 text-center text-gray-400 font-medium">
-                            {mappingMode === 'base' 
-                              ? 'Nenhuma base cadastrada. Adicione uma nova base operacional no formulário abaixo.'
-                              : 'Nenhuma placa cadastrada individualmente. Os envios usarão as regras por Base Operacional.'}
-                          </td>
-                        </tr>
-                      ) : (
-                        entries.map(([key, val]) => {
-                          const isEditing = editingKey === key;
-                          return (
-                            <tr key={key} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="p-3 font-black text-slate-900 tracking-wide font-mono">
-                                <span className={`px-2 py-0.5 rounded border text-xs ${
-                                  mappingMode === 'base' 
-                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
-                                    : 'bg-blue-50 border-blue-200 text-blue-800'
-                                }`}>
-                                  {key}
-                                </span>
-                              </td>
-                              <td className="p-3">
-                                {isEditing ? (
-                                  <input
-                                    type="text"
-                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                                    value={editingTo}
-                                    onChange={e => setEditingTo(e.target.value)}
-                                    placeholder="email1@risel.com.br; email2@risel.com.br"
-                                  />
-                                ) : (
-                                  <span className="font-medium text-slate-800 break-all">{val.to || '-'}</span>
-                                )}
-                              </td>
-                              <td className="p-3">
-                                {isEditing ? (
-                                  <input
-                                    type="text"
-                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                                    value={editingCc}
-                                    onChange={e => setEditingCc(e.target.value)}
-                                    placeholder="copia@risel.com.br"
-                                  />
-                                ) : (
-                                  <span className="font-medium text-slate-500 break-all">{val.cc || '-'}</span>
-                                )}
-                              </td>
-                              <td className="p-3 text-center">
-                                {isEditing ? (
-                                  <div className="flex justify-center gap-1.5">
-                                    <button
-                                      onClick={() => handleSaveMapping(key, editingTo, editingCc)}
-                                      className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors"
-                                      title="Salvar Alterações"
-                                    >
-                                      <Check size={15} />
-                                    </button>
-                                    <button
-                                      onClick={() => setEditingKey(null)}
-                                      className="p-1.5 text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-                                      title="Cancelar Edição"
-                                    >
-                                      <X size={15} />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div className="flex justify-center gap-1.5">
-                                    <button
-                                      onClick={() => {
-                                        setEditingKey(key);
-                                        setEditingTo(val.to || '');
-                                        setEditingCc(val.cc || '');
-                                      }}
-                                      className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
-                                      title="Editar Destinatários"
-                                    >
-                                      <Edit2 size={13} />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteMapping(key)}
-                                      className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
-                                      title="Excluir Mapeamento"
-                                    >
-                                      <Trash2 size={13} />
-                                    </button>
-                                  </div>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            })()}
+            {/* Formulário de Cadastro Rápido de Nova Base / Placa */}
+            <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Plus size={15} className="text-emerald-700" />
+                  {mappingMode === 'base' ? 'Cadastrar Nova Base Operacional' : 'Cadastrar Regra de Placa Específica'}
+                </h4>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {mappingMode === 'base' ? 'Ex: PAULÍNIA, BETIM, CAXIAS, AGUAÍ, OURINHOS' : 'Ex: ABC1D23'}
+                </span>
+              </div>
 
-            {/* Form de Adicionar novo mapeamento (Base ou Placa) */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <Plus size={14} className="text-emerald-700" />
-                {mappingMode === 'base' ? 'Cadastrar Nova Base Operacional' : 'Cadastrar Nova Placa de Veículo'}
-              </h4>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                 <div>
                   <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
-                    {mappingMode === 'base' ? 'Nome / Sigla da Base' : 'Placa do Veículo'}
+                    {mappingMode === 'base' ? 'Nome ou Sigla da Base' : 'Placa do Veículo'}
                   </label>
                   <input
                     type="text"
-                    className="w-full border border-slate-300 p-2 rounded-lg text-xs uppercase font-black focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-                    placeholder={mappingMode === 'base' ? 'Ex: PAULINIA ou PLN' : 'Ex: ABC1D23'}
+                    className="w-full border border-slate-300 p-2 rounded-xl text-xs uppercase font-black focus:ring-2 focus:ring-emerald-500 outline-none bg-white shadow-2xs"
+                    placeholder={mappingMode === 'base' ? 'Ex: PAULÍNIA ou PLN' : 'Ex: ABC1D23'}
                     value={newKey}
                     onChange={e => setNewKey(e.target.value)}
                   />
                 </div>
+
                 <div>
                   <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
-                    E-mails Destinatários (Para)
+                    E-mails Principais (Para)
                   </label>
                   <input
                     type="text"
-                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                    className="w-full border border-slate-300 p-2 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white shadow-2xs"
                     placeholder="email1@risel.com.br; email2@risel.com.br"
                     value={newTo}
                     onChange={e => setNewTo(e.target.value)}
                   />
                 </div>
+
                 <div>
                   <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
                     E-mails em Cópia (CC)
                   </label>
                   <input
                     type="text"
-                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-                    placeholder="copia1@risel.com.br; copia2@risel.com.br"
+                    className="w-full border border-slate-300 p-2 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white shadow-2xs"
+                    placeholder="copia@risel.com.br"
                     value={newCc}
                     onChange={e => setNewCc(e.target.value)}
                   />
                 </div>
+
                 <div>
                   <button
                     onClick={handleAddMapping}
-                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white p-2 rounded-lg font-bold text-xs flex justify-center items-center shadow-xs transition-all active:scale-95 cursor-pointer"
+                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white p-2 rounded-xl font-black text-xs flex justify-center items-center shadow-xs transition-all active:scale-95 cursor-pointer"
                   >
-                    <Plus size={14} className="mr-1" />
-                    {mappingMode === 'base' ? 'Adicionar Base' : 'Adicionar Placa'}
+                    <Plus size={15} className="mr-1" />
+                    {mappingMode === 'base' ? 'Salvar Base' : 'Salvar Placa'}
                   </button>
                 </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Painel SMTP */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-6">
-        <div>
-          <h3 className="font-bold text-gray-800 flex items-center gap-2">
-            <Mail className="text-risel-orange" size={20} />
-            Diagnóstico e Configuração do Servidor de E-mail (SMTP)
-          </h3>
-          <p className="text-xs text-gray-500">
-            Abaixo estão as configurações ativas que o servidor backend está utilizando para disparar os e-mails das multas.
-          </p>
+            {/* Tabela de Destinatários */}
+            {loadingMappings ? (
+              <div className="flex items-center justify-center p-12 text-slate-400 text-xs font-bold">
+                <Loader2 className="animate-spin mr-2" size={20} />
+                Carregando bases operacionais e destinatários cadastrados...
+              </div>
+            ) : (
+              <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-2xs">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100/80 text-[10px] font-black text-slate-600 uppercase border-b border-slate-200">
+                      <th className="p-3 w-1/4">
+                        {mappingMode === 'base' ? 'BASE OPERACIONAL / FILIAL' : 'PLACA DO VEÍCULO'}
+                      </th>
+                      <th className="p-3 w-2/5">DESTINATÁRIOS PRINCIPAIS (PARA)</th>
+                      <th className="p-3 w-1/3">CÓPIA (CC)</th>
+                      <th className="p-3 text-center w-28">AÇÕES</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {filteredEntries.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-8 text-center text-slate-400 font-medium">
+                          {searchFilter 
+                            ? 'Nenhum registro encontrado para a busca informada.'
+                            : mappingMode === 'base' 
+                              ? 'Nenhuma base cadastrada. Clique em "Restaurar Bases Oficiais" acima para carregar a lista padrão da Risel.'
+                              : 'Nenhuma placa com regra individual cadastrada.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredEntries.map(([key, val]) => {
+                        const isEditing = editingKey === key;
+                        return (
+                          <tr key={key} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3 font-black text-slate-900 tracking-wide font-mono">
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold ${
+                                mappingMode === 'base' 
+                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                                  : 'bg-blue-50 border-blue-200 text-blue-900'
+                              }`}>
+                                {mappingMode === 'base' ? <Building size={13} className="text-emerald-700"/> : <Truck size={13} className="text-blue-700"/>}
+                                {key}
+                              </span>
+                            </td>
+
+                            <td className="p-3">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  className="w-full border border-slate-300 p-1.5 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                                  value={editingTo}
+                                  onChange={e => setEditingTo(e.target.value)}
+                                  placeholder="email1@risel.com.br; email2@risel.com.br"
+                                />
+                              ) : (
+                                <span className="font-semibold text-slate-800 break-all">{val.to || '-'}</span>
+                              )}
+                            </td>
+
+                            <td className="p-3">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  className="w-full border border-slate-300 p-1.5 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                                  value={editingCc}
+                                  onChange={e => setEditingCc(e.target.value)}
+                                  placeholder="copia@risel.com.br"
+                                />
+                              ) : (
+                                <span className="font-medium text-slate-500 break-all">{val.cc || '-'}</span>
+                              )}
+                            </td>
+
+                            <td className="p-3 text-center">
+                              {isEditing ? (
+                                <div className="flex justify-center gap-1.5">
+                                  <button
+                                    onClick={() => handleSaveMapping(key, editingTo, editingCc)}
+                                    className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
+                                    title="Salvar Alterações"
+                                  >
+                                    <Check size={16} />
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingKey(null)}
+                                    className="p-1.5 text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                                    title="Cancelar"
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex justify-center gap-1.5">
+                                  <button
+                                    onClick={() => {
+                                      setEditingKey(key);
+                                      setEditingTo(val.to || '');
+                                      setEditingCc(val.cc || '');
+                                    }}
+                                    className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
+                                    title="Editar Destinatários"
+                                  >
+                                    <Edit2 size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteMapping(key)}
+                                    className="p-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer"
+                                    title="Excluir Mapeamento"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
+      )}
 
-        {loadingSmtp ? (
-          <div className="flex items-center justify-center p-6 text-gray-400">
-            <Loader2 className="animate-spin mr-2" size={20} />
-            Lendo status do SMTP...
-          </div>
-        ) : smtpStatus ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Usuário Remetente</span>
-                <p className="text-xs font-bold text-gray-700 truncate mt-1">{smtpStatus.smtpUser}</p>
-              </div>
-              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Servidor SMTP Host</span>
-                <p className="text-xs font-bold text-gray-700 truncate mt-1">{smtpStatus.smtpHost}</p>
-              </div>
-              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Porta SMTP / SSL</span>
-                <p className="text-xs font-bold text-gray-700 mt-1">{smtpStatus.smtpPort} ({smtpStatus.smtpSecure === 'true' || smtpStatus.smtpSecure === true ? 'SSL Seguro' : 'TLS/STARTTLS'})</p>
-              </div>
-              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Senha SMTP configurada?</span>
-                <div className="flex items-center gap-1.5 mt-1">
-                  {smtpStatus.hasPass ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      <CheckCircle size={12}/> SIM
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
-                      <XCircle size={12}/> NÃO (Sem senha)
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Alerta explicativo super rico em detalhes */}
-            <div className="p-5 bg-orange-50 border border-orange-100 rounded-xl space-y-4">
-              <h4 className="font-bold text-orange-800 text-xs flex items-center gap-2">
-                <AlertTriangle size={18} className="text-orange-600 animate-pulse" />
-                COMO RESOLVER O SEU ERRO DE ENVIO NO OFFICE 365 / MICROSOFT 365:
-              </h4>
-              <p className="text-xs text-orange-800 leading-relaxed">
-                Como os e-mails da <strong className="underline">Risel Coberturas</strong> utilizam a infraestrutura do <strong>Office 365 / Microsoft 365</strong>, existem duas razões principais de segurança da Microsoft que podem causar falha de autenticação. Siga os passos abaixo para resolver:
+      {/* CONTEÚDO DA ABA 2: CONEXÕES & GOOGLE DRIVE */}
+      {activeMainTab === 'conexoes' && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-5">
+          <div className="flex items-center justify-between border-b pb-4">
+            <div>
+              <h3 className="font-black text-slate-800 flex items-center text-base">
+                <LinkIcon className="mr-2 text-emerald-700" size={18} /> Conexões & Google Drive
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Configurações da URL do Web App do Google Apps Script e pastas de destino do Google Drive.
               </p>
-              
-              <div className="space-y-4">
-                <div className="border-l-4 border-orange-300 pl-3 space-y-1">
-                  <h5 className="font-black text-orange-900 text-xs uppercase">PASSO 1: Habilitar o "SMTP AUTH" no Painel Admin (Obrigatório pela Microsoft)</h5>
-                  <p className="text-xs text-orange-800/90 leading-relaxed">
-                    Por padrão, a Microsoft bloqueia o envio de e-mails via SMTP autenticado em novas contas corporativas. 
-                    <strong> Peça para o Administrador de TI da Risel</strong> fazer o seguinte ajuste rápido:
-                  </p>
-                  <ol className="list-decimal ml-5 text-xs text-orange-800 space-y-1 mt-1 leading-relaxed">
-                    <li>Acesse o <strong>Centro de Administração do Microsoft 365</strong> (admin.microsoft.com).</li>
-                    <li>Vá em <strong>Usuários</strong> &gt; <strong>Usuários Ativos</strong> e clique no e-mail <strong className="underline">{smtpStatus.smtpUser}</strong>.</li>
-                    <li>Na barra lateral que se abrir, clique na aba <strong>E-mail</strong>.</li>
-                    <li>Em "Aplicativos de e-mail", clique em <strong>Gerenciar aplicativos de e-mail</strong>.</li>
-                    <li>Marque a opção <strong>"SMTP autenticado"</strong> (SMTP AUTH) e clique em <strong>Salvar alterações</strong>.</li>
-                  </ol>
-                </div>
+            </div>
+            
+            <button
+              onClick={handleSaveConexoes}
+              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center cursor-pointer"
+            >
+              <Save size={14} className="mr-1.5" /> Salvar Conexões
+            </button>
+          </div>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs font-bold text-slate-600 uppercase">URL do Script (Web App Google)</label>
+              <input 
+                type="text" 
+                className="w-full border border-slate-300 p-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono text-xs mt-1"
+                placeholder="https://script.google.com/macros/s/..."
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+              />
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1">
+                  <Folder size={13}/> ID da Pasta Google Drive (Uploads AIT)
+                </label>
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono text-xs mt-1"
+                  placeholder="Ex: 1Fq8e5MM_AOl..."
+                  value={folderId}
+                  onChange={e => setFolderId(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1">
+                  <FileJson size={13}/> ID do Modelo Google Docs (Template Termo)
+                </label>
+                <input 
+                  type="text" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono text-xs mt-1"
+                  placeholder="Ex: 1B53R29..."
+                  value={templateId}
+                  onChange={e => setTemplateId(e.target.value)}
+                />
+              </div>
+            </div>
 
-                <div className="border-l-4 border-orange-300 pl-3 space-y-1">
-                  <h5 className="font-black text-orange-900 text-xs uppercase">PASSO 2: Verificar a Senha / Senha de Aplicativo (MFA)</h5>
-                  <p className="text-xs text-orange-800/90 leading-relaxed">
-                    Se a sua empresa exige a Verificação de Duas Etapas (MFA) ou autenticação pelo aplicativo Microsoft Authenticator, você <strong>não pode</strong> usar a sua senha normal do e-mail. Você precisará gerar uma <strong>Senha de Aplicativo (App Password)</strong>:
-                  </p>
-                  <ol className="list-decimal ml-5 text-xs text-orange-800 space-y-1 mt-1 leading-relaxed">
-                    <li>Acesse a página de segurança da sua conta Microsoft: <a href="https://mysignins.microsoft.com/security-info" target="_blank" rel="noopener noreferrer" className="font-black underline text-orange-950 hover:text-orange-900">mysignins.microsoft.com/security-info</a> logado como <strong className="underline">{smtpStatus.smtpUser}</strong>.</li>
-                    <li>Clique em <strong>Adicionar método</strong> e escolha a opção <strong>Senha do aplicativo</strong> (se esta opção não estiver habilitada para você, o administrador de TI precisará habilitar o suporte a senhas de aplicativo nas configurações de MFA do Azure Active Directory / Entra ID).</li>
-                    <li>Dê um nome (ex: <em>"Frota Risel"</em>), copie o código de 16 dígitos gerado e configure-o como a chave <strong>SMTP_PASS</strong> nos Secrets do AI Studio.</li>
-                  </ol>
-                </div>
+            <div className="pt-2">
+              <button
+                onClick={handleTest}
+                disabled={testing}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold border border-slate-300 transition-all flex items-center cursor-pointer disabled:opacity-50"
+              >
+                {testing ? <Loader2 size={14} className="animate-spin mr-1.5"/> : <Radio size={14} className="mr-1.5 text-emerald-700"/>}
+                Testar Comunicação com o Script
+              </button>
+            </div>
+          </div>
 
-                <div className="border-l-4 border-orange-300 pl-3 space-y-1">
-                  <h5 className="font-black text-orange-900 text-xs uppercase">PASSO 3: Certificar-se de que os Segredos (Secrets) do AI Studio estão Salvos</h5>
-                  <p className="text-xs text-orange-800/90 leading-relaxed">
-                    Com base no Office 365, as seguintes chaves padrão devem estar configuradas no menu de <strong>Secrets (engrenagem no canto superior direito)</strong> do seu editor:
-                  </p>
-                  <ul className="list-disc ml-5 text-xs text-orange-800 space-y-1 mt-1 font-mono">
-                    <li><strong>SMTP_HOST:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">smtp.office365.com</code></li>
-                    <li><strong>SMTP_PORT:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">587</code></li>
-                    <li><strong>SMTP_SECURE:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">false</code> (necessário para STARTTLS na porta 587)</li>
-                    <li><strong>SMTP_USER:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">{smtpStatus.smtpUser}</code></li>
-                    <li><strong>SMTP_PASS:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">(sua senha de e-mail ou senha de app gerada)</code></li>
-                  </ul>
-                </div>
+          {testResult && (
+            <div className={`p-3.5 rounded-xl border flex items-start ${testResult === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
+              {testResult === 'success' ? <CheckCircle size={18} className="mr-2 mt-0.5 shrink-0"/> : <XCircle size={18} className="mr-2 mt-0.5 shrink-0"/>}
+              <span className="text-xs font-bold">{testMessage}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CONTEÚDO DA ABA 3: SERVIDOR SMTP */}
+      {activeMainTab === 'smtp' && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+          <div className="border-b pb-4">
+            <h3 className="font-black text-slate-800 flex items-center gap-2 text-base">
+              <Mail className="text-emerald-700" size={20} />
+              Diagnóstico do Servidor de E-mail Corporativo (SMTP)
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Configurações de infraestrutura ativas no servidor backend para entrega das notificações de multas.
+            </p>
+          </div>
+
+          {loadingSmtp ? (
+            <div className="flex items-center justify-center p-8 text-slate-400 text-xs font-bold">
+              <Loader2 className="animate-spin mr-2" size={18} />
+              Consultando status do servidor SMTP...
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">E-mail Remetente</span>
+                <span className="text-xs font-bold text-slate-800 font-mono break-all">
+                  {smtpStatus?.smtpUser || "gestaodefrotarisel@gmail.com"}
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">Servidor Host</span>
+                <span className="text-xs font-bold text-slate-800 font-mono">
+                  {smtpStatus?.smtpHost || "smtp.gmail.com"}
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">Porta / Segurança</span>
+                <span className="text-xs font-bold text-slate-800 font-mono">
+                  Porta {smtpStatus?.smtpPort || 465} (SSL/TLS)
+                </span>
+              </div>
+
+              <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200">
+                <span className="text-[10px] font-black text-emerald-700 uppercase block mb-1">Status de Conexão</span>
+                <span className="text-xs font-black text-emerald-900 flex items-center gap-1.5">
+                  <CheckCircle size={14} className="text-emerald-600"/> Ativo & Operacional
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CONTEÚDO DA ABA 4: GOOGLE SHEETS & SCRIPTS */}
+      {activeMainTab === 'planilhas' && (
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 className="font-black text-slate-800 mb-2 flex items-center text-base">
+              <Code className="mr-2 text-emerald-700" size={18} /> Código Apps Script Atualizado
+            </h3>
+            <p className="text-xs text-slate-600 mb-4">
+              Caso precise implantar ou atualizar o código da planilha no Google Apps Script, utilize os botões abaixo:
+            </p>
+
+            <div className="flex space-x-2 border-b border-slate-200 mb-4">
+              <button 
+                onClick={() => setScriptTab('script')} 
+                className={`px-4 py-2 text-xs font-black border-b-2 transition-colors cursor-pointer ${
+                  scriptTab === 'script' ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                1. Script Principal (Código.gs)
+              </button>
+              <button 
+                onClick={() => setScriptTab('manifest')} 
+                className={`px-4 py-2 text-xs font-black border-b-2 transition-colors flex items-center cursor-pointer ${
+                  scriptTab === 'manifest' ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <FileJson size={14} className="mr-1"/> 2. Manifesto (appsscript.json)
+              </button>
+            </div>
+
+            {scriptTab === 'script' && (
+              <div className="relative">
+                <textarea 
+                  readOnly 
+                  className="w-full h-72 bg-slate-900 text-slate-300 font-mono text-[11px] p-4 rounded-xl outline-none leading-relaxed" 
+                  value={scriptCode}
+                />
+                <button 
+                  onClick={() => copyCode(scriptCode)} 
+                  className="absolute top-3 right-3 bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-white/20 flex items-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <Copy size={13} /> Copiar Código
+                </button>
+              </div>
+            )}
+
+            {scriptTab === 'manifest' && (
+              <div className="relative">
+                <textarea 
+                  readOnly 
+                  className="w-full h-64 bg-slate-900 text-emerald-300 font-mono text-[11px] p-4 rounded-xl outline-none leading-relaxed" 
+                  value={MANIFEST_CODE}
+                />
+                <button 
+                  onClick={() => copyCode(MANIFEST_CODE)} 
+                  className="absolute top-3 right-3 bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-white/20 flex items-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <Copy size={13} /> Copiar Manifesto
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 className="font-black text-slate-800 mb-2 flex items-center text-base">
+              <Table className="mr-2 text-emerald-700" size={18} /> Estrutura dos Cabeçalhos da Planilha
+            </h3>
+            <p className="text-xs text-slate-600 mb-4">
+              Copie os cabeçalhos abaixo e cole na <strong>linha 1 (Célula A1)</strong> das respectivas abas no Google Sheets:
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="border border-slate-200 rounded-xl p-3.5 flex justify-between items-center bg-slate-50">
+                <span className="text-xs font-black text-emerald-900 uppercase">Aba: MULTAS</span>
+                <button 
+                  onClick={() => copyHeaders(HEADERS_MULTAS, 'MULTAS')} 
+                  className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center bg-white border border-emerald-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Copy size={12} className="mr-1"/> Copiar
+                </button>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl p-3.5 flex justify-between items-center bg-slate-50">
+                <span className="text-xs font-black text-purple-900 uppercase">Aba: MOTORISTAS</span>
+                <button 
+                  onClick={() => copyHeaders(HEADERS_MOTORISTAS, 'MOTORISTAS')} 
+                  className="text-xs font-bold text-purple-700 hover:text-purple-900 flex items-center bg-white border border-purple-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Copy size={12} className="mr-1"/> Copiar
+                </button>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl p-3.5 flex justify-between items-center bg-slate-50">
+                <span className="text-xs font-black text-orange-900 uppercase">Aba: FROTA</span>
+                <button 
+                  onClick={() => copyHeaders(HEADERS_VEICULOS, 'FROTAS')} 
+                  className="text-xs font-bold text-orange-700 hover:text-orange-900 flex items-center bg-white border border-orange-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Copy size={12} className="mr-1"/> Copiar
+                </button>
               </div>
             </div>
           </div>
-        ) : (
-          <p className="text-xs text-gray-400">Não foi possível carregar as informações do SMTP.</p>
-        )}
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex justify-end space-x-3">
-            <button 
-                onClick={handleTest} 
-                disabled={testing || !url}
-                className={`px-4 py-2 rounded-lg font-bold flex items-center shadow-sm transition-all border ${testing ? 'bg-gray-100 text-gray-400' : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'}`}
-            >
-                {testing ? <Loader2 className="mr-2 animate-spin" size={18} /> : <Radio className="mr-2 text-blue-500" size={18} />}
-                {testing ? 'Testando...' : 'Testar Conexão'}
-            </button>
-            <button 
-                onClick={handleSave} 
-                className="bg-risel-green hover:bg-risel-dark text-white px-6 py-2 rounded-lg font-bold flex items-center shadow-lg transition-transform active:scale-95"
-            >
-                <Save className="mr-2" size={18} /> 
-                {saved ? 'Salvo!' : 'Salvar Tudo'}
-            </button>
-      </div>
-
-      <div className={`bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all ${showCode ? 'ring-2 ring-red-400' : ''}`}>
-         <div className="flex justify-between items-center cursor-pointer" onClick={() => setShowCode(!showCode)}>
-            <h3 className={`font-bold flex items-center ${showCode ? 'text-red-600' : 'text-gray-700'}`}>
-                <Code className="mr-2" /> Atualização de Script Necessária (v5.3)
-                {showCode && <span className="ml-2 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">Atualizar Agora</span>}
-            </h3>
-            <span className="text-sm text-blue-600 font-bold hover:underline">{showCode ? 'Ocultar' : 'Mostrar'}</span>
-         </div>
-         
-         {showCode && (
-             <div className="mt-4 animate-in fade-in">
-                 
-                 <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg mb-6">
-                    <h4 className="font-black text-orange-800 mb-2 flex items-center"><AlertTriangle size={18} className="mr-2"/> INSTRUÇÕES DE ATUALIZAÇÃO v5.3</h4>
-                    <p className="text-sm text-orange-800 mb-2">
-                        Esta versão 5.3 corrige a duplicação de itens ao editar (frotas e motoristas), com uma busca muito mais robusta pela coluna chave (FROTA, NFROTA, ID, etc.).
-                    </p>
-                    <ol className="list-decimal ml-5 text-sm text-orange-800 space-y-1 font-bold">
-                        <li>Copie o script abaixo.</li>
-                        <li>Substitua TUDO no editor do Apps Script (Arquivo Código.gs).</li>
-                        <li>Clique em Implantar &gt; Nova Implantação.</li>
-                        <li>Copie a Nova URL e atualize acima.</li>
-                    </ol>
-                 </div>
-
-                 <div className="flex space-x-2 border-b border-gray-200 mb-4">
-                     <button onClick={() => setActiveTab('script')} className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'script' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-                        1. Script (Código.gs)
-                     </button>
-                     <button onClick={() => setActiveTab('manifest')} className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors flex items-center ${activeTab === 'manifest' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-                        <FileJson size={14} className="mr-1"/> 2. Manifesto (JSON)
-                     </button>
-                 </div>
-
-                 {activeTab === 'script' && (
-                    <>
-                        <div className="relative">
-                            <textarea readOnly className="w-full h-80 bg-slate-900 text-slate-300 font-mono text-xs p-4 rounded-lg outline-none custom-scrollbar leading-5" value={scriptCode}/>
-                            <button onClick={() => copyCode(scriptCode)} className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white p-2 rounded-md backdrop-blur-sm transition-colors border border-white/10 shadow-lg"><Copy size={16} /></button>
-                        </div>
-                    </>
-                 )}
-
-                 {activeTab === 'manifest' && (
-                    <>
-                        <div className="relative">
-                            <textarea readOnly className="w-full h-64 bg-slate-900 text-emerald-300 font-mono text-xs p-4 rounded-lg outline-none custom-scrollbar leading-5" value={MANIFEST_CODE}/>
-                            <button onClick={() => copyCode(MANIFEST_CODE)} className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white p-2 rounded-md backdrop-blur-sm transition-colors border border-white/10 shadow-lg"><Copy size={16} /></button>
-                        </div>
-                    </>
-                 )}
-
-             </div>
-         )}
-      </div>
-
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-         <h3 className="font-bold text-gray-700 mb-4 flex items-center">
-            <Table className="mr-2 text-risel-green" /> Estrutura das Planilhas
-        </h3>
-        <p className="text-sm text-gray-600 mb-6 bg-gray-50 p-3 rounded border border-gray-200">
-            Copie os cabeçalhos abaixo e cole na <strong>linha 1 (Célula A1)</strong> das respectivas abas.
-        </p>
-
-        <div className="space-y-4">
-             <div className="border border-gray-200 rounded-lg p-3">
-                 <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-bold text-emerald-800 uppercase bg-emerald-100 px-2 py-1 rounded">Aba: MULTAS</span>
-                    <button onClick={() => copyHeaders(HEADERS_MULTAS, 'MULTAS')} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 transition-colors"><Copy size={12} className="mr-1"/> Copiar</button>
-                 </div>
-             </div>
-             <div className="border border-gray-200 rounded-lg p-3">
-                 <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-bold text-purple-800 uppercase bg-purple-100 px-2 py-1 rounded">Aba: MOTORISTAS</span>
-                    <button onClick={() => copyHeaders(HEADERS_MOTORISTAS, 'MOTORISTAS')} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 transition-colors"><Copy size={12} className="mr-1"/> Copiar</button>
-                 </div>
-             </div>
-              <div className="border border-gray-200 rounded-lg p-3">
-                 <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-bold text-orange-800 uppercase bg-orange-100 px-2 py-1 rounded">Aba: FROTA (Colunas A-P)</span>
-                    <button onClick={() => copyHeaders(HEADERS_VEICULOS, 'FROTAS')} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 transition-colors"><Copy size={12} className="mr-1"/> Copiar</button>
-                 </div>
-             </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

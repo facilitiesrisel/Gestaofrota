@@ -140,9 +140,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         })}
       </nav>
 
-      {/* Seção Inferior: Configurações (para Infrações) e Botão de Voltar ao ERP */}
+      {/* Seção Inferior: Atalho do Portal, Configurações de Multas (Destinatários por Base) e Voltar ao ERP */}
       <div className="mt-auto space-y-1.5 pr-2 pt-4 border-t border-slate-800/40">
-        {/* Opção discreta para alternar entre os submódulos da frota sem sair para o ERP */}
+        {/* Opção para alternar entre os submódulos da frota sem sair para o ERP */}
         {onBackToPortal && (
           <button
             onClick={onBackToPortal}
@@ -156,25 +156,28 @@ const Sidebar: React.FC<SidebarProps> = ({
           </button>
         )}
 
-        {/* Configurações (exibido no submódulo de Infrações de Trânsito conforme solicitado) */}
-        {activeSubmodule === 'infracoes' && (
-          <button
-            onClick={() => onNavigate('CONFIG')}
-            className={`flex items-center w-full px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs gap-3 text-left cursor-pointer group ${
-              currentPage === 'CONFIG'
-                ? 'bg-orange-500/10 text-orange-500 shadow-sm border-l-4 border-orange-500 font-extrabold'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-            } ${!isOpen ? 'justify-center px-2' : ''}`}
-            title={!isOpen ? "Configurações" : undefined}
-          >
-            <Settings 
-              className={`w-[18px] h-[18px] shrink-0 transition-colors ${
-                currentPage === 'CONFIG' ? 'text-orange-500' : 'text-slate-400 group-hover:text-slate-200'
-              }`} 
-            />
-            {isOpen && <span className="whitespace-nowrap">Configurações</span>}
-          </button>
-        )}
+        {/* Configurações do Controle de Multas (Destinatários e Cópias por Base, Google Drive, SMTP) */}
+        <button
+          onClick={() => onNavigate('CONFIG')}
+          className={`flex items-center w-full px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs gap-3 text-left cursor-pointer group ${
+            currentPage === 'CONFIG'
+              ? 'bg-emerald-500/15 text-emerald-400 shadow-sm border-l-4 border-emerald-500 font-extrabold'
+              : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+          } ${!isOpen ? 'justify-center px-2' : ''}`}
+          title={!isOpen ? "Configurações (Destinatários por Base)" : undefined}
+        >
+          <Settings 
+            className={`w-[18px] h-[18px] shrink-0 transition-colors ${
+              currentPage === 'CONFIG' ? 'text-emerald-400' : 'text-slate-400 group-hover:text-emerald-400'
+            }`} 
+          />
+          {isOpen && (
+            <div className="flex flex-col text-left overflow-hidden">
+              <span className="whitespace-nowrap">Configurações</span>
+              <span className="text-[9px] text-slate-500 font-normal">Destinatários por Base</span>
+            </div>
+          )}
+        </button>
 
         {/* Botão de Voltar ao ERP */}
         <button

@@ -5086,5 +5086,73 @@
         "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-24%20at%2020.25.43_Camila%20Silva%20Henriqu.jpeg"
       ]
     }
+  },
+  {
+    "id": "sin_84_RNL4D77",
+    "numeroProtocolo": "SIN-84",
+    "dataHora": "2026-09-24T17:10:00",
+    "dataComunicado": "2026-09-24",
+    "placa": "RNL4D77",
+    "base": "CUBATÃO",
+    "motorista": "THIAGO EUZEBIO DOMINGUES",
+    "cnhMotorista": "Em Anexo (SharePoint)",
+    "gestorImediato": "EVERTON OLÍMPIO",
+    "nomeTerceiro": "NÃO INFORMADO",
+    "contatoTerceiro": "NÃO INFORMADO",
+    "placaTerceiro": "GYS3A17",
+    "houveTerceiros": "Sim",
+    "dadosTerceiro": "Placa: GYS3A17 | Condutor: NÃO INFORMADO | Tel: NÃO INFORMADO",
+    "tipoEvento": "Colisão / Acidente",
+    "gravidade": "Média",
+    "status": "Em Apuração",
+    "culpabilidade": "Condutor Risel",
+    "condutorAssumiu": "SIM",
+    "cidade": "SANTOS",
+    "endereco": "AVENIDA ENGENHEIRO AUGUSTO BARATA, SABOÓ",
+    "local": "AVENIDA ENGENHEIRO AUGUSTO BARATA, SABOÓ - SANTOS",
+    "danosVeiculo": "TERCEIRO",
+    "boletimOcorrencia": "B.O. Anexado",
+    "boletimOcorrenciaUrl": "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA/BOLETIM%20DE%20OCORR%C3%8ANCIA_Paulo%20Alves%20Pereira%202.pdf",
+    "valorEstimadoPrejuizo": 0,
+    "valorFranquia": 0,
+    "custoEfetivoRisel": 0,
+    "descricao": "QUANDO PARADO NA VIA INFORMADA, TIVE QUE DAR RÉ, PARA UM VEÍCULO EFETUAR A CONVERÇÃO. QUANDO DANDO RÉ, ENCOSTEI NO CAMINHÃO QUE ESTAVA ATRÁS, OCASIONANDO UM PEQUENO DANO NO PARA-CHOQUE DO MESMO.",
+    "origem": "Microsoft Forms (Sheet1 - SharePoint)",
+    "enviadoPor": "Paulo Alves Pereira",
+    "emailEnviadoPor": "paulo.pereira@risel.com.br",
+    "anexosSharePoint": [
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.38%20(1)_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.38_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.39%20(1)_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.39_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.43%20(1)_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.43%20(2)_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.43_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.44_Paulo%20Alves%20Pereira.jpeg",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA/BOLETIM%20DE%20OCORR%C3%8ANCIA_Paulo%20Alves%20Pereira%202.pdf",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DECLARA%C3%87%C3%83O%20DE%20PR%C3%93PRIO%20PUNHO/CNH_THIAGO_EUZEBIO_Paulo%20Alves%20Pereira%201.pdf",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/CNH%20MOTORISTA%20RISEL/CRLV%20%20%2031.10.2026_Paulo%20Alves%20Pereira.pdf",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/_layouts/15/Doc.aspx?sourcedoc=%7B2BB2054F-F177-4BEC-BCC8-C50FE237D3FF%7D&file=documento_Paulo%20Alves%20Pereira.docx&action=default&mobileredirect=true",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/_layouts/15/Doc.aspx?sourcedoc=%7B45641B1E-BDEB-43D6-B2B1-DF29D97C946F%7D&file=documento_Paulo%20Alves%20Pereira.docx&action=default&mobileredirect=true",
+      "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/AVISO%20DE%20SINISTRO/REGISTRO%20DE%20OCORR%C3%8ANCIA_Paulo%20Alves%20Pereira%206.pdf"
+    ],
+    "sharepointLinks": {
+      "boletim": "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA/BOLETIM%20DE%20OCORR%C3%8ANCIA_Paulo%20Alves%20Pereira%202.pdf",
+      "cnhMotorista": "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DECLARA%C3%87%C3%83O%20DE%20PR%C3%93PRIO%20PUNHO/CNH_THIAGO_EUZEBIO_Paulo%20Alves%20Pereira%201.pdf",
+      "docVeiculoFrota": "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/CNH%20MOTORISTA%20RISEL/CRLV%20%20%2031.10.2026_Paulo%20Alves%20Pereira.pdf",
+      "docVeiculoTerceiro": "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/_layouts/15/Doc.aspx?sourcedoc=%7B2BB2054F-F177-4BEC-BCC8-C50FE237D3FF%7D&file=documento_Paulo%20Alves%20Pereira.docx&action=default&mobileredirect=true",
+      "cnhTerceiro": "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/_layouts/15/Doc.aspx?sourcedoc=%7B45641B1E-BDEB-43D6-B2B1-DF29D97C946F%7D&file=documento_Paulo%20Alves%20Pereira.docx&action=default&mobileredirect=true",
+      "declaracao": "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/AVISO%20DE%20SINISTRO/REGISTRO%20DE%20OCORR%C3%8ANCIA_Paulo%20Alves%20Pereira%206.pdf",
+      "fotos": [
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.38%20(1)_Paulo%20Alves%20Pereira.jpeg",
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.38_Paulo%20Alves%20Pereira.jpeg",
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.39%20(1)_Paulo%20Alves%20Pereira.jpeg",
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/DOCUMENTO%20DO%20VE%C3%8DCULO%20DA%20FROTA%201/WhatsApp%20Image%202026-09-28%20at%2009.56.39_Paulo%20Alves%20Pereira.jpeg",
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.43%20(1)_Paulo%20Alves%20Pereira.jpeg",
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.43%20(2)_Paulo%20Alves%20Pereira.jpeg",
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.43_Paulo%20Alves%20Pereira.jpeg",
+        "https://riselcombustiveis-my.sharepoint.com/personal/deny_goncalves_risel_com_br/Documents/Aplicativos/Microsoft%20Forms/Comunicado%20de%20Sinistro%20-%20Frota%20Pesada/FOTOS%20DO%20OCORRIDO/WhatsApp%20Image%202026-09-28%20at%2011.09.44_Paulo%20Alves%20Pereira.jpeg"
+      ]
+    }
   }
 ]

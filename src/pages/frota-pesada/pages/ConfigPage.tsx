@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { getApiUrl, setApiUrl, testConnection, getDriveFolderId, getDocsTemplateId, setDriveConfig, getEmailConfig, setEmailConfig, clearCache, saveConfigItemApi } from '../services/storage';
-import { Save, Link as LinkIcon, Radio, CheckCircle, XCircle, Loader2, Code, Copy, Table, AlertTriangle, FileJson, Folder, Mail, RefreshCw } from 'lucide-react';
+import { getApiUrl, setApiUrl, testConnection, getDriveFolderId, getDocsTemplateId, setDriveConfig, clearCache, fetchBaseEmailMappings, saveBaseEmailMappings, fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, DEFAULT_API_URL } from '../services/storage';
+import { Save, Link as LinkIcon, Radio, CheckCircle, XCircle, Loader2, Code, Copy, Table, AlertTriangle, FileJson, Folder, Mail, RefreshCw, Plus, Trash2, Edit2, Check, X, Building, Truck } from 'lucide-react';
 
 const HEADERS_MULTAS = "ID\tSTATUS\tFROTA\tPLACA\tBASE\tAIT\tTIPO\tDATA INFRACAO\tDATA RECEBIMENTO\tPRAZO INDICACAO\tRECEBIDA COM PRAZO\tENQUADRAMENTO\tARTIGO CTB\tDESCRICAO INFRACAO\tPONTOS CNH\tLOGIN MOTORISTA\tNOME MOTORISTA\tORGAO AUTUADOR\tENDERECO\tMUNICIPIO\tUF\tRODOVIA OU URBANO\tRETORNOU COM PRAZO\tVALOR\tDESCONTO\tVALOR COM DESCONTO\tEMPRESA OU CONDUTOR\tDESCONTAR MOTORISTA\tPAGO COM DESCONTO\tENVIADO AO RH\tOBS\tLINK AIT\tLINK AUTORIZACAO";
 const HEADERS_VEICULOS = "STATUS\tFROTA\tPLACA\tMARCA\tMODELO\tANO\tFILIAL\tREGIÃO\tTIPO\tCAPACIDADE\tPROPRIETÁRIO\tLICENCIAMENTO\tCUSTO LICENCIAMENTO 2026\tCUSTO IPVA 2026\tCUSTO MULTAS 2026\tCUSTO POR PLACA";
@@ -20,13 +20,12 @@ const MANIFEST_CODE = `{
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/script.external_request",
-    "https://www.googleapis.com/auth/script.send_mail"
+    "https://www.googleapis.com/auth/script.external_request"
   ]
 }`;
 
 const SCRIPT_CODE = `// =================================================================================
-// CÓDIGO BACKEND G F RISEL v5.4 (ANEXOS DIRETOS NO E-MAIL + SYNC COMPLETO)
+// CÓDIGO BACKEND G F RISEL v5.3 (FIX: DUPLICIDADE E DETECÇÃO DE CHAVES)
 // =================================================================================
 
 function doGet(e) { return handleRequest(e); }
@@ -52,7 +51,6 @@ function handleRequest(e) {
     else if (action === 'delete') result = { success: true, data: deleteData(content.type, content.payload) };
     else if (action === 'upload') result = uploadFile(content);
     else if (action === 'generate_pdf') result = generatePdf(content);
-    else if (action === 'send_email') result = sendEmailNotification(content.payload);
 
     return jsonResponse(result);
   } catch (err) {
@@ -88,28 +86,15 @@ function saveData(type, item) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   
   // 1. Definição Inteligente da Aba
-  let sheetName = 'Multas';
+  let sheetName = 'DADOS';
   if (type === 'veiculo') {
-      if (ss.getSheetByName('Frota')) sheetName = 'Frota';
-      else if (ss.getSheetByName('FROTA')) sheetName = 'FROTA';
+      if (ss.getSheetByName('FROTA')) sheetName = 'FROTA';
       else if (ss.getSheetByName('FROTAS')) sheetName = 'FROTAS';
-      else if (ss.getSheetByName('Frota Completa')) sheetName = 'Frota Completa';
-      else if (ss.getSheetByName('veiculos')) sheetName = 'veiculos';
-      else sheetName = 'Frota';
+      else sheetName = 'FROTA';
   }
-  else if (type === 'motorista') {
-      if (ss.getSheetByName('Motoristas')) sheetName = 'Motoristas';
-      else if (ss.getSheetByName('MOTORISTAS')) sheetName = 'MOTORISTAS';
-      else if (ss.getSheetByName('motoristas')) sheetName = 'motoristas';
-      else sheetName = 'Motoristas';
-  }
-  else if (type === 'codigo') {
-      if (ss.getSheetByName('Cod Multas')) sheetName = 'Cod Multas';
-      else if (ss.getSheetByName('COD MULTAS')) sheetName = 'COD MULTAS';
-      else sheetName = 'Cod Multas';
-  }
+  else if (type === 'motorista') sheetName = ss.getSheetByName('MOTORISTAS') ? 'MOTORISTAS' : 'MOTORISTA';
   else if (type === 'config') sheetName = 'CONFIGS';
-  else sheetName = ss.getSheetByName('Multas') ? 'Multas' : (ss.getSheetByName('MULTAS') ? 'MULTAS' : 'Multas');
+  else sheetName = 'MULTAS';
 
   let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -189,18 +174,7 @@ function saveData(type, item) {
 
 function deleteData(type, payload) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  
-  let sheetName = 'DADOS';
-  if (type === 'veiculo') {
-      if (ss.getSheetByName('Frota Completa')) sheetName = 'Frota Completa';
-      else if (ss.getSheetByName('FROTA COMPLETA')) sheetName = 'FROTA COMPLETA';
-      else if (ss.getSheetByName('FROTA')) sheetName = 'FROTA';
-      else if (ss.getSheetByName('FROTAS')) sheetName = 'FROTAS';
-      else if (ss.getSheetByName('veiculos')) sheetName = 'veiculos';
-      else sheetName = 'Frota Completa';
-  } else {
-      sheetName = type === 'motorista' ? 'MOTORISTAS' : (type === 'config' ? 'CONFIGS' : (ss.getSheetByName('Multas') ? 'Multas' : 'MULTAS'));
-  }
+  let sheetName = type === 'veiculo' ? (ss.getSheetByName('FROTA') ? 'FROTA' : 'FROTAS') : (type === 'motorista' ? 'MOTORISTAS' : (type === 'config' ? 'CONFIGS' : 'MULTAS'));
   
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return "Erro: Aba não encontrada.";
@@ -259,109 +233,6 @@ function generatePdf(d) {
   pdf.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   template.setTrashed(true);
   return { success: true, fileUrl: pdf.getUrl() };
-}
-
-function sendEmailNotification(data) {
-  try {
-    const to = data.to_email || data.emailTo || "deny.goncalves@risel.com.br";
-    const cc = data.cc_email || "";
-    const subject = data.subject || ("NOTIFICAÇÃO DE MULTA: PLACA " + (data.placa || "") + " - AIT " + (data.ait || ""));
-    const htmlBody = data.message_html || data.htmlBody || "";
-    
-    const attachments = [];
-    
-    // 1. Processa anexos do AIT (pode conter múltiplos links ou arquivos)
-    if (data.linkAit) {
-      const parts = String(data.linkAit).split(/[\\n,;|]+/);
-      for (let i = 0; i < parts.length; i++) {
-        const part = parts[i].trim();
-        if (!part) continue;
-        let fileName = "AIT_" + (data.placa || "MULTA") + (i > 0 ? "_" + (i + 1) : "");
-        let fileUrl = part;
-        if (part.indexOf("::") !== -1) {
-          const segs = part.split("::");
-          fileName = segs[0].trim();
-          fileUrl = segs.slice(1).join("::").trim();
-        }
-        const fileId = getFileIdFromUrl(fileUrl);
-        if (fileId) {
-          const att = getSafeAttachment(fileId, fileName);
-          if (att) attachments.push(att);
-        }
-      }
-    }
-    
-    // 2. Processa anexo da Autorização de Desconto (PDF gerado)
-    if (data.linkAuth) {
-      const authId = getFileIdFromUrl(data.linkAuth);
-      if (authId) {
-        const att = getSafeAttachment(authId, "AUTORIZACAO_DESCONTO_" + (data.placa || "MULTA"));
-        if (att) attachments.push(att);
-      }
-    }
-    
-    // 3. Suporte a arquivos adicionais em base64 enviados diretamente
-    if (data.files && Array.isArray(data.files)) {
-      for (let i = 0; i < data.files.length; i++) {
-        const f = data.files[i];
-        if (f && f.data && f.name) {
-          const blob = Utilities.newBlob(Utilities.base64Decode(f.data), f.mimeType || "application/octet-stream", f.name);
-          attachments.push(blob);
-        }
-      }
-    }
-    
-    const emailOptions = {
-      to: to,
-      subject: subject,
-      htmlBody: htmlBody,
-      attachments: attachments
-    };
-    if (cc && cc.trim().length > 0) {
-      emailOptions.cc = cc;
-    }
-    
-    MailApp.sendEmail(emailOptions);
-    
-    return {
-      success: true,
-      message: "E-mail enviado com sucesso com " + attachments.length + " anexo(s) direto(s) na mensagem!",
-      attachmentsCount: attachments.length
-    };
-  } catch (err) {
-    return { success: false, error: "Erro ao enviar e-mail com anexos: " + err.toString() };
-  }
-}
-
-function getFileIdFromUrl(url) {
-  if (!url) return null;
-  const match = String(url).match(/[-\\w]{25,}/);
-  return match ? match[0] : null;
-}
-
-function getSafeAttachment(fileId, preferredName) {
-  try {
-    const file = DriveApp.getFileById(fileId);
-    const mime = file.getMimeType();
-    let blob;
-    if (mime === MimeType.GOOGLE_DOCS || mime === MimeType.GOOGLE_SHEETS || mime === MimeType.GOOGLE_SLIDES) {
-      blob = file.getAs(MimeType.PDF);
-    } else {
-      blob = file.getBlob();
-    }
-    if (preferredName) {
-      const origName = file.getName();
-      const ext = origName.indexOf(".") !== -1 ? origName.split(".").pop() : "";
-      if (ext && preferredName.toLowerCase().indexOf("." + ext.toLowerCase()) === -1) {
-        blob.setName(preferredName + "." + ext);
-      } else {
-        blob.setName(preferredName);
-      }
-    }
-    return blob;
-  } catch (e) {
-    return null;
-  }
 }`;
 
 const ConfigPage: React.FC = () => {
@@ -369,68 +240,164 @@ const ConfigPage: React.FC = () => {
   const [folderId, setFolderId] = useState('');
   const [templateId, setTemplateId] = useState('');
   
-  // EmailJS State
-  const [emailServiceId, setEmailServiceId] = useState('');
-  const [emailTemplateId, setEmailTemplateId] = useState('');
-  const [emailPublicKey, setEmailPublicKey] = useState('');
+  // Mapeamentos de E-mail: Suporte a Base Operacional (Reativado) e Placa
+  const [mappingMode, setMappingMode] = useState<'base' | 'placa'>('base');
+  const [baseMappings, setBaseMappings] = useState<Record<string, { to: string; cc: string }>>(DEFAULT_EMAIL_MAPPINGS);
+  const [placaMappings, setPlacaMappings] = useState<Record<string, { to: string; cc: string }>>({});
+  const [loadingMappings, setLoadingMappings] = useState(true);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingTo, setEditingTo] = useState('');
+  const [editingCc, setEditingCc] = useState('');
+  
+  // SMTP Status States
+  const [smtpStatus, setSmtpStatus] = useState<{
+    smtpUser: string;
+    smtpHost: string;
+    smtpPort: number;
+    smtpSecure: string | boolean;
+    hasPass: boolean;
+  } | null>(null);
+  const [loadingSmtp, setLoadingSmtp] = useState(true);
+  
+  const [newKey, setNewKey] = useState('');
+  const [newTo, setNewTo] = useState('');
+  const [newCc, setNewCc] = useState('');
 
-  const [savingSettings, setSavingSettings] = useState(false);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testMessage, setTestMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'script' | 'manifest'>('script');
   const [showCode, setShowCode] = useState(false);
+  const [scriptCode, setScriptCode] = useState(SCRIPT_CODE);
 
   useEffect(() => {
     setUrl(getApiUrl());
     setFolderId(getDriveFolderId());
     setTemplateId(getDocsTemplateId());
+
+    // Carrega a versão atualizada do Apps Script direto do servidor
+    fetch('/api/sheets/script-code')
+      .then(res => res.ok ? res.text() : null)
+      .then(code => {
+        if (code && code.trim().length > 100) {
+          setScriptCode(code);
+        }
+      })
+      .catch(() => {});
     
-    // Load Email Config
-    const emailConfig = getEmailConfig();
-    setEmailServiceId(emailConfig.serviceId);
-    setEmailTemplateId(emailConfig.templateId);
-    setEmailPublicKey(emailConfig.publicKey);
+    const loadMappings = async () => {
+      try {
+        setLoadingMappings(true);
+        const [bases, placas] = await Promise.all([
+          fetchBaseEmailMappings(),
+          fetchPlacaEmailMappings()
+        ]);
+        if (bases) setBaseMappings(bases);
+        if (placas) setPlacaMappings(placas);
+      } catch (err) {
+        console.error("Erro ao carregar mapeamentos de emails por base e placa", err);
+      } finally {
+        setLoadingMappings(false);
+      }
+    };
+
+    const loadSmtpStatus = async () => {
+      try {
+        setLoadingSmtp(true);
+        const res = await fetch('/api/smtp-status');
+        if (res.ok) {
+          const data = await res.json();
+          setSmtpStatus(data);
+        }
+      } catch (err) {
+        console.error("Erro ao carregar status SMTP", err);
+      } finally {
+        setLoadingSmtp(false);
+      }
+    };
+
+    loadMappings();
+    loadSmtpStatus();
   }, []);
 
   const handleSave = async () => {
-    setSavingSettings(true);
-    
-    // 1. Limpa o cache local IMEDIATAMENTE para que as multas antigas desapareçam
-    clearCache();
-    
-    // 2. Salva localmente primeiro para integridade
     setApiUrl(url);
     setDriveConfig(folderId, templateId);
-    setEmailConfig(emailServiceId, emailTemplateId, emailPublicKey);
     
-    // 3. Tenta sincronizar as configurações com a nuvem (aba CONFIGS da planilha do Google Sheets)
-    // Feito de forma SEQUENCIAL para evitar conflitos concorrentes de trava (LockService) e evitar 
-    // inserções duplicadas e erros ao criar a nova aba "CONFIGS" simultaneamente.
-    try {
-        const emailJSON = JSON.stringify({ serviceId: emailServiceId, templateId: emailTemplateId, publicKey: emailPublicKey });
-        
-        await saveConfigItemApi('risel_drive_folder_id', folderId);
-        await saveConfigItemApi('risel_docs_template_id', templateId);
-        await saveConfigItemApi('risel_email_config', emailJSON);
-        
-        setSaved(true);
-        setSavingSettings(false);
-        setTimeout(() => setSaved(false), 3000);
-        
-        if (confirm("Configurações salvas localmente, cache redefinido com sucesso e tudo sincronizado com a planilha do Google Sheets! A página será recarregada para aplicar os novos dados.")) {
-            window.location.reload();
-        }
-    } catch (e: any) {
-        console.warn("Erro ao sincronizar na planilha:", e);
-        setSaved(true);
-        setSavingSettings(false);
-        setTimeout(() => setSaved(false), 3000);
-        
-        if (confirm(`Configurações salvas localmente na memória do navegador e cache local limpo. Porém, não foi possível sincronizar na planilha online (${e.message || e}). Deseja atualizar a tela mesmo assim?`)) {
-            window.location.reload();
-        }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+    alert("Configurações gerais salvas com sucesso!");
+  };
+
+  const handleSaveMapping = async (keyToSave: string, toStr: string, ccStr: string) => {
+    const cleanKey = keyToSave.toUpperCase().trim();
+    if (!cleanKey) return;
+    
+    if (mappingMode === 'base') {
+      const updated = {
+        ...baseMappings,
+        [cleanKey]: { to: toStr.trim(), cc: ccStr.trim() }
+      };
+      setBaseMappings(updated);
+      await saveBaseEmailMappings(updated);
+    } else {
+      const updated = {
+        ...placaMappings,
+        [cleanKey]: { to: toStr.trim(), cc: ccStr.trim() }
+      };
+      setPlacaMappings(updated);
+      await savePlacaEmailMappings(updated);
+    }
+    setEditingKey(null);
+  };
+
+  const handleAddMapping = async () => {
+    const cleanKey = newKey.toUpperCase().trim();
+    if (!cleanKey) { 
+      alert(mappingMode === 'base' ? "Sigla ou nome da Base é obrigatório (ex: PAULINIA ou PLN)." : "Placa do veículo é obrigatória."); 
+      return; 
+    }
+
+    if (mappingMode === 'base') {
+      if (baseMappings[cleanKey]) { alert("Esta base já possui destinatários cadastrados. Use o botão Editar na tabela."); return; }
+      const updated = {
+        ...baseMappings,
+        [cleanKey]: { to: newTo.trim(), cc: newCc.trim() }
+      };
+      setBaseMappings(updated);
+      await saveBaseEmailMappings(updated);
+      alert(`Base Operacional "${cleanKey}" cadastrada com sucesso!`);
+    } else {
+      if (placaMappings[cleanKey]) { alert("Esta placa já possui destinatários cadastrados. Use o botão Editar na tabela."); return; }
+      const updated = {
+        ...placaMappings,
+        [cleanKey]: { to: newTo.trim(), cc: newCc.trim() }
+      };
+      setPlacaMappings(updated);
+      await savePlacaEmailMappings(updated);
+      alert(`Placa "${cleanKey}" cadastrada com sucesso!`);
+    }
+    
+    setNewKey('');
+    setNewTo('');
+    setNewCc('');
+  };
+
+  const handleDeleteMapping = async (keyToDelete: string) => {
+    const targetDesc = mappingMode === 'base' ? `a base operacional "${keyToDelete}"` : `a placa "${keyToDelete}"`;
+    if (!confirm(`Excluir o cadastro de destinatários para ${targetDesc}?`)) return;
+    
+    if (mappingMode === 'base') {
+      const updated = { ...baseMappings };
+      delete updated[keyToDelete];
+      setBaseMappings(updated);
+      await saveBaseEmailMappings(updated);
+    } else {
+      const updated = { ...placaMappings };
+      delete updated[keyToDelete];
+      setPlacaMappings(updated);
+      await savePlacaEmailMappings(updated);
     }
   };
 
@@ -544,66 +511,375 @@ const ConfigPage: React.FC = () => {
         )}
       </div>
 
-      {/* EmailJS Configuration */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-700 mb-4 flex items-center">
-            <Mail className="mr-2 text-risel-orange" /> Integração de E-mail (EmailJS)
-        </h3>
-        <p className="text-xs text-gray-500 mb-4">
-            Configure abaixo as credenciais do seu painel EmailJS (https://dashboard.emailjs.com/admin) para habilitar o envio de notificações.
-        </p>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-                <label className="text-xs font-bold text-gray-500 uppercase">Service ID</label>
-                <input 
-                    type="text" 
-                    className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-risel-green focus:outline-none font-mono text-sm"
-                    placeholder="service_xxxxx"
-                    value={emailServiceId}
-                    onChange={e => setEmailServiceId(e.target.value)}
-                />
-            </div>
-            <div>
-                <label className="text-xs font-bold text-gray-500 uppercase">Template ID</label>
-                <input 
-                    type="text" 
-                    className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-risel-green focus:outline-none font-mono text-sm"
-                    placeholder="template_xxxxx"
-                    value={emailTemplateId}
-                    onChange={e => setEmailTemplateId(e.target.value)}
-                />
-            </div>
-            <div>
-                <label className="text-xs font-bold text-gray-500 uppercase">Public Key</label>
-                <input 
-                    type="text" 
-                    className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-risel-green focus:outline-none font-mono text-sm"
-                    placeholder="Ex: cuqP-0hX..."
-                    value={emailPublicKey}
-                    onChange={e => setEmailPublicKey(e.target.value)}
-                />
-            </div>
+      {/* Gerenciamento de Destinatários de Notificação: Base Operacional e Placa do Veículo */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-4 gap-3">
+          <div>
+            <h3 className="font-bold text-gray-800 flex items-center gap-2 text-base">
+              <Mail className="text-risel-green" size={22} />
+              Destinatários e Cópias de Notificação por E-mail
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Defina os e-mails ("Para") e cópias ("CC") automáticas por <strong>Base Operacional</strong> ou por <strong>Placa</strong>. Nota: <strong>lorena.padilha@risel.com.br</strong> e <strong>deny.goncalves@risel.com.br</strong> são mantidos automaticamente em todas as notificações corporativas.
+            </p>
+          </div>
+
+          {/* Seletor de Modo: Base (Reativada) vs Placa */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold shrink-0">
+            <button
+              type="button"
+              onClick={() => { setMappingMode('base'); setEditingKey(null); setNewKey(''); setNewTo(''); setNewCc(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                mappingMode === 'base'
+                  ? 'bg-emerald-700 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Building size={14} /> Por Base Operacional
+              <span className={`text-[9px] px-1.5 py-0.2 rounded-full ${mappingMode === 'base' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
+                {Object.keys(baseMappings).length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMappingMode('placa'); setEditingKey(null); setNewKey(''); setNewTo(''); setNewCc(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                mappingMode === 'placa'
+                  ? 'bg-emerald-700 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Truck size={14} /> Por Placa do Veículo
+              <span className={`text-[9px] px-1.5 py-0.2 rounded-full ${mappingMode === 'placa' ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
+                {Object.keys(placaMappings).length}
+              </span>
+            </button>
+          </div>
         </div>
+
+        {loadingMappings ? (
+          <div className="flex items-center justify-center p-8 text-gray-400 text-xs font-bold">
+            <Loader2 className="animate-spin mr-2" size={20} />
+            Carregando mapeamentos de destinatários...
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Aviso explicativo contextualizado */}
+            <div className={`p-3 rounded-lg border flex items-center justify-between text-xs ${
+              mappingMode === 'base' 
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900 font-semibold' 
+                : 'bg-blue-50/70 border-blue-200 text-blue-900 font-semibold'
+            }`}>
+              <div className="flex items-center gap-2">
+                {mappingMode === 'base' ? <Building size={16} className="text-emerald-700 shrink-0"/> : <Truck size={16} className="text-blue-700 shrink-0"/>}
+                <span>
+                  {mappingMode === 'base' 
+                    ? '🏢 Exibindo destinatários por Base Operacional / Filial. Toda infração sem placa individual assumirá os e-mails da sua respectiva Base.'
+                    : '🚗 Exibindo regras prioritárias por Placa. Caso um veículo tenha e-mails configurados aqui, ele terá prioridade sobre a Base.'}
+                </span>
+              </div>
+            </div>
+
+            {/* Tabela de mapeamentos */}
+            {(() => {
+              const currentList = mappingMode === 'base' ? baseMappings : placaMappings;
+              const entries = Object.entries(currentList) as Array<[string, { to: string; cc: string }]>;
+              
+              return (
+                <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-2xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-[10px] font-black text-slate-500 uppercase border-b border-slate-200">
+                        <th className="p-3 w-1/4">
+                          {mappingMode === 'base' ? 'BASE OPERACIONAL / FILIAL' : 'PLACA DO VEÍCULO'}
+                        </th>
+                        <th className="p-3 w-2/5">DESTINATÁRIOS PRINCIPAIS (PARA)</th>
+                        <th className="p-3 w-1/3">CÓPIA (CC)</th>
+                        <th className="p-3 text-center w-28">AÇÕES</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y text-xs">
+                      {entries.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="p-8 text-center text-gray-400 font-medium">
+                            {mappingMode === 'base' 
+                              ? 'Nenhuma base cadastrada. Adicione uma nova base operacional no formulário abaixo.'
+                              : 'Nenhuma placa cadastrada individualmente. Os envios usarão as regras por Base Operacional.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        entries.map(([key, val]) => {
+                          const isEditing = editingKey === key;
+                          return (
+                            <tr key={key} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="p-3 font-black text-slate-900 tracking-wide font-mono">
+                                <span className={`px-2 py-0.5 rounded border text-xs ${
+                                  mappingMode === 'base' 
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                                    : 'bg-blue-50 border-blue-200 text-blue-800'
+                                }`}>
+                                  {key}
+                                </span>
+                              </td>
+                              <td className="p-3">
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    value={editingTo}
+                                    onChange={e => setEditingTo(e.target.value)}
+                                    placeholder="email1@risel.com.br; email2@risel.com.br"
+                                  />
+                                ) : (
+                                  <span className="font-medium text-slate-800 break-all">{val.to || '-'}</span>
+                                )}
+                              </td>
+                              <td className="p-3">
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    value={editingCc}
+                                    onChange={e => setEditingCc(e.target.value)}
+                                    placeholder="copia@risel.com.br"
+                                  />
+                                ) : (
+                                  <span className="font-medium text-slate-500 break-all">{val.cc || '-'}</span>
+                                )}
+                              </td>
+                              <td className="p-3 text-center">
+                                {isEditing ? (
+                                  <div className="flex justify-center gap-1.5">
+                                    <button
+                                      onClick={() => handleSaveMapping(key, editingTo, editingCc)}
+                                      className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors"
+                                      title="Salvar Alterações"
+                                    >
+                                      <Check size={15} />
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingKey(null)}
+                                      className="p-1.5 text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+                                      title="Cancelar Edição"
+                                    >
+                                      <X size={15} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex justify-center gap-1.5">
+                                    <button
+                                      onClick={() => {
+                                        setEditingKey(key);
+                                        setEditingTo(val.to || '');
+                                        setEditingCc(val.cc || '');
+                                      }}
+                                      className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                                      title="Editar Destinatários"
+                                    >
+                                      <Edit2 size={13} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteMapping(key)}
+                                      className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                                      title="Excluir Mapeamento"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {/* Form de Adicionar novo mapeamento (Base ou Placa) */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Plus size={14} className="text-emerald-700" />
+                {mappingMode === 'base' ? 'Cadastrar Nova Base Operacional' : 'Cadastrar Nova Placa de Veículo'}
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div>
+                  <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
+                    {mappingMode === 'base' ? 'Nome / Sigla da Base' : 'Placa do Veículo'}
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-300 p-2 rounded-lg text-xs uppercase font-black focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                    placeholder={mappingMode === 'base' ? 'Ex: PAULINIA ou PLN' : 'Ex: ABC1D23'}
+                    value={newKey}
+                    onChange={e => setNewKey(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
+                    E-mails Destinatários (Para)
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                    placeholder="email1@risel.com.br; email2@risel.com.br"
+                    value={newTo}
+                    onChange={e => setNewTo(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-extrabold text-slate-600 uppercase mb-1 block">
+                    E-mails em Cópia (CC)
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                    placeholder="copia1@risel.com.br; copia2@risel.com.br"
+                    value={newCc}
+                    onChange={e => setNewCc(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <button
+                    onClick={handleAddMapping}
+                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white p-2 rounded-lg font-bold text-xs flex justify-center items-center shadow-xs transition-all active:scale-95 cursor-pointer"
+                  >
+                    <Plus size={14} className="mr-1" />
+                    {mappingMode === 'base' ? 'Adicionar Base' : 'Adicionar Placa'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Painel SMTP */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-6">
+        <div>
+          <h3 className="font-bold text-gray-800 flex items-center gap-2">
+            <Mail className="text-risel-orange" size={20} />
+            Diagnóstico e Configuração do Servidor de E-mail (SMTP)
+          </h3>
+          <p className="text-xs text-gray-500">
+            Abaixo estão as configurações ativas que o servidor backend está utilizando para disparar os e-mails das multas.
+          </p>
+        </div>
+
+        {loadingSmtp ? (
+          <div className="flex items-center justify-center p-6 text-gray-400">
+            <Loader2 className="animate-spin mr-2" size={20} />
+            Lendo status do SMTP...
+          </div>
+        ) : smtpStatus ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">Usuário Remetente</span>
+                <p className="text-xs font-bold text-gray-700 truncate mt-1">{smtpStatus.smtpUser}</p>
+              </div>
+              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">Servidor SMTP Host</span>
+                <p className="text-xs font-bold text-gray-700 truncate mt-1">{smtpStatus.smtpHost}</p>
+              </div>
+              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">Porta SMTP / SSL</span>
+                <p className="text-xs font-bold text-gray-700 mt-1">{smtpStatus.smtpPort} ({smtpStatus.smtpSecure === 'true' || smtpStatus.smtpSecure === true ? 'SSL Seguro' : 'TLS/STARTTLS'})</p>
+              </div>
+              <div className="border border-gray-200/80 rounded-xl p-4 bg-slate-50/50">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">Senha SMTP configurada?</span>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {smtpStatus.hasPass ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      <CheckCircle size={12}/> SIM
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
+                      <XCircle size={12}/> NÃO (Sem senha)
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Alerta explicativo super rico em detalhes */}
+            <div className="p-5 bg-orange-50 border border-orange-100 rounded-xl space-y-4">
+              <h4 className="font-bold text-orange-800 text-xs flex items-center gap-2">
+                <AlertTriangle size={18} className="text-orange-600 animate-pulse" />
+                COMO RESOLVER O SEU ERRO DE ENVIO NO OFFICE 365 / MICROSOFT 365:
+              </h4>
+              <p className="text-xs text-orange-800 leading-relaxed">
+                Como os e-mails da <strong className="underline">Risel Coberturas</strong> utilizam a infraestrutura do <strong>Office 365 / Microsoft 365</strong>, existem duas razões principais de segurança da Microsoft que podem causar falha de autenticação. Siga os passos abaixo para resolver:
+              </p>
+              
+              <div className="space-y-4">
+                <div className="border-l-4 border-orange-300 pl-3 space-y-1">
+                  <h5 className="font-black text-orange-900 text-xs uppercase">PASSO 1: Habilitar o "SMTP AUTH" no Painel Admin (Obrigatório pela Microsoft)</h5>
+                  <p className="text-xs text-orange-800/90 leading-relaxed">
+                    Por padrão, a Microsoft bloqueia o envio de e-mails via SMTP autenticado em novas contas corporativas. 
+                    <strong> Peça para o Administrador de TI da Risel</strong> fazer o seguinte ajuste rápido:
+                  </p>
+                  <ol className="list-decimal ml-5 text-xs text-orange-800 space-y-1 mt-1 leading-relaxed">
+                    <li>Acesse o <strong>Centro de Administração do Microsoft 365</strong> (admin.microsoft.com).</li>
+                    <li>Vá em <strong>Usuários</strong> &gt; <strong>Usuários Ativos</strong> e clique no e-mail <strong className="underline">{smtpStatus.smtpUser}</strong>.</li>
+                    <li>Na barra lateral que se abrir, clique na aba <strong>E-mail</strong>.</li>
+                    <li>Em "Aplicativos de e-mail", clique em <strong>Gerenciar aplicativos de e-mail</strong>.</li>
+                    <li>Marque a opção <strong>"SMTP autenticado"</strong> (SMTP AUTH) e clique em <strong>Salvar alterações</strong>.</li>
+                  </ol>
+                </div>
+
+                <div className="border-l-4 border-orange-300 pl-3 space-y-1">
+                  <h5 className="font-black text-orange-900 text-xs uppercase">PASSO 2: Verificar a Senha / Senha de Aplicativo (MFA)</h5>
+                  <p className="text-xs text-orange-800/90 leading-relaxed">
+                    Se a sua empresa exige a Verificação de Duas Etapas (MFA) ou autenticação pelo aplicativo Microsoft Authenticator, você <strong>não pode</strong> usar a sua senha normal do e-mail. Você precisará gerar uma <strong>Senha de Aplicativo (App Password)</strong>:
+                  </p>
+                  <ol className="list-decimal ml-5 text-xs text-orange-800 space-y-1 mt-1 leading-relaxed">
+                    <li>Acesse a página de segurança da sua conta Microsoft: <a href="https://mysignins.microsoft.com/security-info" target="_blank" rel="noopener noreferrer" className="font-black underline text-orange-950 hover:text-orange-900">mysignins.microsoft.com/security-info</a> logado como <strong className="underline">{smtpStatus.smtpUser}</strong>.</li>
+                    <li>Clique em <strong>Adicionar método</strong> e escolha a opção <strong>Senha do aplicativo</strong> (se esta opção não estiver habilitada para você, o administrador de TI precisará habilitar o suporte a senhas de aplicativo nas configurações de MFA do Azure Active Directory / Entra ID).</li>
+                    <li>Dê um nome (ex: <em>"Frota Risel"</em>), copie o código de 16 dígitos gerado e configure-o como a chave <strong>SMTP_PASS</strong> nos Secrets do AI Studio.</li>
+                  </ol>
+                </div>
+
+                <div className="border-l-4 border-orange-300 pl-3 space-y-1">
+                  <h5 className="font-black text-orange-900 text-xs uppercase">PASSO 3: Certificar-se de que os Segredos (Secrets) do AI Studio estão Salvos</h5>
+                  <p className="text-xs text-orange-800/90 leading-relaxed">
+                    Com base no Office 365, as seguintes chaves padrão devem estar configuradas no menu de <strong>Secrets (engrenagem no canto superior direito)</strong> do seu editor:
+                  </p>
+                  <ul className="list-disc ml-5 text-xs text-orange-800 space-y-1 mt-1 font-mono">
+                    <li><strong>SMTP_HOST:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">smtp.office365.com</code></li>
+                    <li><strong>SMTP_PORT:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">587</code></li>
+                    <li><strong>SMTP_SECURE:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">false</code> (necessário para STARTTLS na porta 587)</li>
+                    <li><strong>SMTP_USER:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">{smtpStatus.smtpUser}</code></li>
+                    <li><strong>SMTP_PASS:</strong> <code className="bg-orange-100 px-1 rounded text-orange-900 font-bold">(sua senha de e-mail ou senha de app gerada)</code></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400">Não foi possível carregar as informações do SMTP.</p>
+        )}
       </div>
 
       {/* Action Buttons */}
       <div className="flex justify-end space-x-3">
             <button 
                 onClick={handleTest} 
-                disabled={testing || !url || savingSettings}
-                className={`px-4 py-2 rounded-lg font-bold flex items-center shadow-sm transition-all border ${testing ? 'bg-gray-100 text-gray-400 font-bold border-gray-100' : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'}`}
+                disabled={testing || !url}
+                className={`px-4 py-2 rounded-lg font-bold flex items-center shadow-sm transition-all border ${testing ? 'bg-gray-100 text-gray-400' : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'}`}
             >
                 {testing ? <Loader2 className="mr-2 animate-spin" size={18} /> : <Radio className="mr-2 text-blue-500" size={18} />}
                 {testing ? 'Testando...' : 'Testar Conexão'}
             </button>
             <button 
                 onClick={handleSave} 
-                disabled={savingSettings}
-                className={`text-white px-6 py-2 rounded-lg font-bold flex items-center shadow-lg transition-all active:scale-95 ${savingSettings ? 'bg-gray-400 cursor-not-allowed' : 'bg-risel-green hover:bg-risel-dark'}`}
+                className="bg-risel-green hover:bg-risel-dark text-white px-6 py-2 rounded-lg font-bold flex items-center shadow-lg transition-transform active:scale-95"
             >
-                {savingSettings ? <Loader2 className="mr-2 animate-spin" size={18} /> : <Save className="mr-2" size={18} />} 
-                {savingSettings ? 'Sincronizando...' : (saved ? 'Salvo!' : 'Salvar Tudo')}
+                <Save className="mr-2" size={18} /> 
+                {saved ? 'Salvo!' : 'Salvar Tudo'}
             </button>
       </div>
 
@@ -619,16 +895,16 @@ const ConfigPage: React.FC = () => {
          {showCode && (
              <div className="mt-4 animate-in fade-in">
                  
-                 <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg mb-6">
-                    <h4 className="font-black text-emerald-800 mb-2 flex items-center"><AlertTriangle size={18} className="mr-2 text-emerald-600"/> INSTRUÇÕES DE ATUALIZAÇÃO v5.4 (ANEXOS DIRETOS NO E-MAIL)</h4>
-                    <p className="text-sm text-emerald-800 mb-2">
-                        Esta versão 5.4 retoma o <strong>envio dos arquivos de multas (AIT e Autorização de Desconto) diretamente como anexos reais no e-mail</strong>, sem a necessidade de links externos para baixar!
+                 <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg mb-6">
+                    <h4 className="font-black text-orange-800 mb-2 flex items-center"><AlertTriangle size={18} className="mr-2"/> INSTRUÇÕES DE ATUALIZAÇÃO v5.3</h4>
+                    <p className="text-sm text-orange-800 mb-2">
+                        Esta versão 5.3 corrige a duplicação de itens ao editar (frotas e motoristas), com uma busca muito mais robusta pela coluna chave (FROTA, NFROTA, ID, etc.).
                     </p>
-                    <ol className="list-decimal ml-5 text-sm text-emerald-800 space-y-1 font-bold">
-                        <li>Copie o script da aba <strong>1. Script (Código.gs)</strong> e cole no Apps Script.</li>
-                        <li>Copie o manifesto da aba <strong>2. Manifesto (JSON)</strong> (com a permissão de e-mail) e cole no <code>appsscript.json</code>.</li>
-                        <li>Clique em <strong>Implantar &gt; Gerenciar Implantações &gt; Editar &gt; Nova Versão</strong> (ou Nova Implantação).</li>
-                        <li>Caso altere a URL, atualize-a no campo acima e clique em Salvar Configurações.</li>
+                    <ol className="list-decimal ml-5 text-sm text-orange-800 space-y-1 font-bold">
+                        <li>Copie o script abaixo.</li>
+                        <li>Substitua TUDO no editor do Apps Script (Arquivo Código.gs).</li>
+                        <li>Clique em Implantar &gt; Nova Implantação.</li>
+                        <li>Copie a Nova URL e atualize acima.</li>
                     </ol>
                  </div>
 
@@ -644,8 +920,8 @@ const ConfigPage: React.FC = () => {
                  {activeTab === 'script' && (
                     <>
                         <div className="relative">
-                            <textarea readOnly className="w-full h-80 bg-slate-900 text-slate-300 font-mono text-xs p-4 rounded-lg outline-none custom-scrollbar leading-5" value={SCRIPT_CODE}/>
-                            <button onClick={() => copyCode(SCRIPT_CODE)} className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white p-2 rounded-md backdrop-blur-sm transition-colors border border-white/10 shadow-lg"><Copy size={16} /></button>
+                            <textarea readOnly className="w-full h-80 bg-slate-900 text-slate-300 font-mono text-xs p-4 rounded-lg outline-none custom-scrollbar leading-5" value={scriptCode}/>
+                            <button onClick={() => copyCode(scriptCode)} className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white p-2 rounded-md backdrop-blur-sm transition-colors border border-white/10 shadow-lg"><Copy size={16} /></button>
                         </div>
                     </>
                  )}

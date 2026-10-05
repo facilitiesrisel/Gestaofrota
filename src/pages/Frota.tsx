@@ -14,7 +14,7 @@ import {
   Clock, MapPin, Gauge, Star, BarChart3, TrendingUp, DollarSign,
   LayoutGrid, ArrowRight, Activity, Edit2, LayoutDashboard, FileSpreadsheet, RefreshCw, RotateCcw,
   CheckCircle, AlertCircle, Info, Database, Copy, ExternalLink, Link2, Lock, Code, Download, Siren, BellRing, Settings,
-  Upload, Trash2
+  Upload, Trash2, Loader2
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import Papa from "papaparse";
@@ -1455,13 +1455,28 @@ export default function Frota() {
     setGoogleSheetsError(null);
 
     try {
-      // 1. Sincronizar Veículos da aba gid=0
+      // 1. Sincronizar Veículos da aba gid=0 (preservando alterações salvas na nuvem)
       try {
         const sheetVehicles = await readVehiclesFromSheets();
         if (sheetVehicles.length > 0) {
-          setVeiculos(sheetVehicles);
-          safeSetItem("risel_frota_veiculos_v2", JSON.stringify(sheetVehicles));
-          console.log(`Carregados ${sheetVehicles.length} veículos da Planilha Google (gid=0).`);
+          setVeiculos(prev => {
+            const currentMap = new Map((prev || []).map(v => [(v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase(), v]));
+            const merged = sheetVehicles.map(sv => {
+              const p = (sv.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+              const existing = currentMap.get(p);
+              return existing ? { ...sv, ...existing } : sv;
+            });
+            // Adiciona veículos do sistema que não estejam na planilha
+            (prev || []).forEach(v => {
+              const p = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+              if (!sheetVehicles.some(sv => (sv.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === p)) {
+                merged.push(v);
+              }
+            });
+            safeSetItem("risel_frota_veiculos_v2", JSON.stringify(merged));
+            return merged;
+          });
+          console.log(`Planilha Google verificada (${sheetVehicles.length} veículos).`);
         }
       } catch (vErr) {
         console.warn("Aviso ao carregar veículos da planilha:", vErr);
@@ -1667,6 +1682,11 @@ export default function Frota() {
   const [modalCnhAnexoBase64, setModalCnhAnexoBase64] = useState<string>("");
   const [modalCnhNomeArquivo, setModalCnhNomeArquivo] = useState<string>("");
   const [previewCnhModal, setPreviewCnhModal] = useState<{ url: string; nome: string; isPdf: boolean } | null>(null);
+
+  // Estados de Sincronização & Persistência em Tempo Real
+  const [isSavingVeh, setIsSavingVeh] = useState(false);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string>("");
 
   // Reservas UI States
   const [reservaError, setReservaError] = useState<string | null>(null);
@@ -2111,12 +2131,12 @@ export default function Frota() {
                 }
               } catch (e) {}
             }
-            if (!currentList || currentList.length === 0) currentList = VEICULOS_REAIS;
+            if (!currentList || currentList.length === 0) return prev;
 
             const updated = currentList.map(v => {
               const cleanV = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
               const matchingGeo = apiVehicles.find(a => (a.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanV);
-              if (matchingGeo) {
+              if (matchingGeo && typeof matchingGeo.odometro === 'number') {
                 return {
                   ...v,
                   odometro: matchingGeo.odometro > v.odometro ? matchingGeo.odometro : v.odometro,
@@ -2152,8 +2172,7 @@ export default function Frota() {
     setVeiculos(data);
     safeSetItem("risel_frota_veiculos_v2", JSON.stringify(data));
 
-    // Salvar/Sincronizar de imediato no banco Supabase (Veículos e Contratos)
-    saveBatchVeiculosSupabase(data).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
+    // 1. Gravação no backend do servidor (com sincronização Supabase integrada)
     try {
       fetch("/api/veiculos/save", {
         method: "POST",
@@ -2161,6 +2180,10 @@ export default function Frota() {
         body: JSON.stringify(data)
       }).catch(() => {});
     } catch (e) {}
+
+    // 2. Gravação em lote na nuvem oficial Supabase
+    saveBatchVeiculosSupabase(data).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
+
     const contratosBatch = data.filter(v => Boolean(v.vencContrato)).map(v => ({
       id: `cto-${v.placa}`,
       numero: v.contrato || `CTO-${v.placa}`,
@@ -2172,7 +2195,7 @@ export default function Frota() {
     }));
     saveBatchContratosSupabase(contratosBatch).catch(e => console.warn("Aviso ao salvar contratos no Supabase:", e));
 
-    // Sincronizar de imediato com a aba gid=0 da planilha do Google se houver conexão ativa
+    // Sincronizar com a planilha do Google se houver conexão ativa
     const activeToken = googleToken || getAccessToken();
     if (activeToken) {
       saveVehiclesToSheets(activeToken, data).catch(err => {
@@ -2180,6 +2203,49 @@ export default function Frota() {
       });
     }
   };
+
+  // Sincronização direta e em tempo real com a nuvem Supabase
+  const handleSyncFromCloud = async (showFeedback = true) => {
+    setIsSyncingCloud(true);
+    try {
+      const freshVehicles = await fetchVeiculosSupabase();
+      if (freshVehicles && freshVehicles.length > 0) {
+        setVeiculos(freshVehicles);
+        safeSetItem("risel_frota_veiculos_v2", JSON.stringify(freshVehicles));
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        setLastSyncTime(timeStr);
+        if (showFeedback) {
+          showToast(
+            "success",
+            "Nuvem Sincronizada!",
+            `${freshVehicles.length} veículos atualizados diretamente do banco de dados oficial.`
+          );
+        }
+      }
+    } catch (err: any) {
+      if (showFeedback) {
+        showToast("error", "Aviso de Conexão", "Não foi possível sincronizar com a nuvem no momento.");
+      }
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
+  // Sincronização automática com a nuvem ao focar na janela ou a cada 90 segundos
+  useEffect(() => {
+    const handleFocus = () => {
+      handleSyncFromCloud(false);
+    };
+    window.addEventListener("focus", handleFocus);
+    const cloudInterval = setInterval(() => {
+      handleSyncFromCloud(false);
+    }, 90 * 1000);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      clearInterval(cloudInterval);
+    };
+  }, []);
 
   const saveChecklists = (data: Checklist[]) => {
     setChecklists(data);
@@ -2411,7 +2477,7 @@ export default function Frota() {
   }, [filteredVeiculos, subSectionFrota]);
 
   // Handle forms
-  const handleAddEditVeiculo = (e: any) => {
+  const handleAddEditVeiculo = async (e: any) => {
     e.preventDefault();
     const formData = new FormData(e.target);
     const id = editingVeh ? editingVeh.id : String(Date.now());
@@ -2422,8 +2488,8 @@ export default function Frota() {
     const locadoraFinal = modalLocadora === "OUTRA" ? customLocadora.toUpperCase().trim() : modalLocadora.toUpperCase().trim();
     const isFrotaPropria = locadoraFinal === "FROTA PRÓPRIA";
 
-    const placaFinal = cleanUpper(formData.get("placa"));
-    const matchingGeo = geoPositions.find(gp => gp.plate && gp.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === placaFinal.replace(/[^a-zA-Z0-9]/g, '').toUpperCase());
+    const placaFinal = cleanUpper(formData.get("placa")).replace(/[^a-zA-Z0-9]/g, '');
+    const matchingGeo = geoPositions.find(gp => gp.plate && gp.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === placaFinal);
     const odometroFinal = (matchingGeo && typeof matchingGeo.odometer === 'number') 
       ? matchingGeo.odometer 
       : Number(formData.get("odometro") || 0);
@@ -2448,7 +2514,7 @@ export default function Frota() {
       id,
       placa: placaFinal,
       modelo: cleanUpper(formData.get("modelo")),
-      vencContrato: isFrotaPropria ? "" : (formData.get("vencContrato") as string || ""),
+      vencContrato: isFrotaPropria ? "" : (formData.get("vencContrato") as string || modalVencContrato || ""),
       condutor: cleanUpper(formData.get("condutor")),
       cpfCondutor: cleanCpfDigits ? formatCPF(cleanCpfDigits) : "",
       cnhValidade: modalCnhValidade || (formData.get("cnhValidade") as string) || "",
@@ -2466,7 +2532,7 @@ export default function Frota() {
       odometro: odometroFinal,
       combustivel: cleanUpper(formData.get("combustivel")),
       status: selectedStatus,
-      dataTrocaCondutor: formData.get("dataTrocaCondutor") as string || HOJE_REF,
+      dataTrocaCondutor: (formData.get("dataTrocaCondutor") as string) || editingVeh?.dataTrocaCondutor || HOJE_REF,
       dataInativacao: selectedStatus === "Inativo" ? (inputDataInativacao || HOJE_REF) : (editingVeh?.dataInativacao || ""),
       motivoInativacao: selectedStatus === "Inativo" ? inputMotivoInativacao : (editingVeh?.motivoInativacao || ""),
       tipoVinculo: isFrotaPropria
@@ -2474,28 +2540,46 @@ export default function Frota() {
         : (((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() || "Contrato") as "Contrato" | "Provisório"),
     };
 
-    let updated: Veiculo[];
-    const cleanCurrentPlaca = placaFinal.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (editingVeh) {
-      updated = veiculos.map(v => {
-        const vPlaca = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        return (v.id === id || vPlaca === cleanCurrentPlaca) ? data : v;
-      });
-    } else {
-      updated = [...veiculos, data];
-    }
-    saveVeiculos(updated);
-    // Persistência imediata e direta do veículo editado
-    saveVeiculoSupabase(data).catch(e => console.warn("Aviso ao salvar veículo editado no Supabase:", e));
+    setIsSavingVeh(true);
     try {
-      fetch("/api/veiculos/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
-      }).catch(() => {});
-    } catch (e) {}
-    setIsVehModalOpen(false);
-    setEditingVeh(null);
+      // 1. Gravação prioritária na nuvem oficial Supabase e sincronização no backend do servidor
+      await saveVeiculoSupabase(data);
+
+      try {
+        await fetch("/api/veiculos/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data)
+        });
+      } catch (_) {}
+
+      // 2. Atualização atômica imediata no estado da aplicação e cache local
+      let updated: Veiculo[];
+      const cleanCurrentPlaca = placaFinal;
+      if (editingVeh) {
+        updated = veiculos.map(v => {
+          const vPlaca = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+          return (v.id === id || vPlaca === cleanCurrentPlaca) ? data : v;
+        });
+      } else {
+        updated = [...veiculos, data];
+      }
+      setVeiculos(updated);
+      safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updated));
+
+      showToast(
+        "success",
+        "Veículo Atualizado com Sucesso!",
+        `Os dados do veículo ${placaFinal} foram salvos no banco de dados na nuvem e sincronizados para todos os usuários.`
+      );
+      setIsVehModalOpen(false);
+      setEditingVeh(null);
+    } catch (err: any) {
+      console.error("Erro ao salvar veículo:", err);
+      showToast("error", "Erro ao Salvar", "Ocorreu uma falha ao salvar as alterações no banco de dados. Tente novamente.");
+    } finally {
+      setIsSavingVeh(false);
+    }
   };
 
   const handleAddChecklist = (e: any) => {
@@ -3524,6 +3608,17 @@ export default function Frota() {
 
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+                      <button
+                        onClick={() => handleSyncFromCloud(true)}
+                        disabled={isSyncingCloud}
+                        title="Atualizar dados em tempo real direto do banco de dados na nuvem Supabase"
+                        className="px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:text-emerald-800 bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 text-emerald-700 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+                        <span className="hidden sm:inline">Sincronizar Nuvem</span>
+                        {lastSyncTime && <span className="text-[10px] text-slate-400 font-normal">({lastSyncTime})</span>}
+                      </button>
+
                       <button
                         onClick={handleExportVeiculosCSV}
                         title="Baixar planilha completa de cadastro de veículos em formato CSV"
@@ -4566,11 +4661,27 @@ export default function Frota() {
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-                <button type="button" onClick={() => setIsVehModalOpen(false)} className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-xs text-slate-500 hover:bg-slate-50 cursor-pointer">
+                <button 
+                  type="button" 
+                  disabled={isSavingVeh}
+                  onClick={() => setIsVehModalOpen(false)} 
+                  className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-xs text-slate-500 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                >
                   Cancelar
                 </button>
-                <button type="submit" className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded-xl text-xs uppercase tracking-wide cursor-pointer">
-                  Salvar Veículo
+                <button 
+                  type="submit" 
+                  disabled={isSavingVeh}
+                  className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded-xl text-xs uppercase tracking-wide cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-md"
+                >
+                  {isSavingVeh ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Gravando na Nuvem...</span>
+                    </>
+                  ) : (
+                    <span>Salvar Veículo</span>
+                  )}
                 </button>
               </div>
             </form>

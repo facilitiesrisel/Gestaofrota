@@ -1854,15 +1854,39 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           }
       }
 
-      // 3. Fallback: Mapeamento de e-mail por Base/Filial
-      if (!toEmail) {
-          const baseUpper = targetMulta.base ? targetMulta.base.toUpperCase().trim() : '';
-          const matchedKey = Object.keys(baseMappings).find(k => baseUpper.includes(k.toUpperCase()) || k.toUpperCase().includes(baseUpper));
-          if (matchedKey && baseMappings[matchedKey]) {
-              toEmail = baseMappings[matchedKey].to || '';
-              origin = `Mapeamento da Base / Filial (${targetMulta.base || 'Geral'})`;
-              if (baseMappings[matchedKey].cc) ccEmail = `${baseMappings[matchedKey].cc}; ${ccEmail}`;
+      // 3. Resolução Inteligente por Base Operacional / Filial (Reativado)
+      const rawBase = (targetMulta.base || (targetMulta as any).filial || (targetMulta as any).unidade || '').toUpperCase().trim();
+      const normalizeBase = (s: string) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]/g, "").trim();
+      const normRaw = normalizeBase(rawBase);
+
+      let baseMatchEntry: { to: string; cc: string } | null = null;
+      let matchedBaseName = rawBase || 'Geral';
+
+      if (normRaw && Object.keys(baseMappings).length > 0) {
+          for (const [bKey, bVal] of Object.entries(baseMappings)) {
+              const normKey = normalizeBase(bKey);
+              if (normRaw === normKey || normRaw.includes(normKey) || normKey.includes(normRaw)) {
+                  baseMatchEntry = bVal;
+                  matchedBaseName = bKey;
+                  break;
+              }
           }
+      }
+
+      // Se ainda não encontrou toEmail, assume os destinatários principais configurados para a Base
+      if (!toEmail && baseMatchEntry && baseMatchEntry.to) {
+          toEmail = baseMatchEntry.to.trim();
+          origin = `Mapeamento da Base Operacional (${matchedBaseName})`;
+      }
+
+      // Incorpora os e-mails em CÓPIA (CC) configurados para a Base Operacional
+      if (baseMatchEntry && baseMatchEntry.cc) {
+          const baseCcs = baseMatchEntry.cc.split(/[;,]+/).map(c => c.trim()).filter(Boolean);
+          baseCcs.forEach(c => {
+              if (!ccEmail.toLowerCase().includes(c.toLowerCase())) {
+                  ccEmail = ccEmail ? `${ccEmail}; ${c}` : c;
+              }
+          });
       }
 
       // 4. Se ainda assim não encontrar, usa ADMIN_EMAIL como segurança

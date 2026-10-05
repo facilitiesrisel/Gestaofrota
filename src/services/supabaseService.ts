@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { VEICULOS_REAIS } from '../data/veiculos_reais';
+import type { Veiculo } from '../pages/Frota';
 
 // Configurações Padrão do Supabase (projeto oficial fornecido)
 const env = (import.meta as any).env || {};
@@ -19,11 +20,14 @@ export function getSupabaseConfig(): SupabaseConfig {
   let savedKey = localStorage.getItem("risel_supabase_key");
 
   // Se a URL estiver vazia, for exemplo antigo ou não for a do projeto oficial, atualiza automaticamente
-  if (!savedUrl || savedUrl.includes("xyzcompany") || savedUrl.includes("xyzproject")) {
+  if (!savedUrl || !savedUrl.includes("ihowbxlqfcjzzzleasqq")) {
     savedUrl = DEFAULT_SUPABASE_URL;
     localStorage.setItem("risel_supabase_url", savedUrl);
   }
-  if (!savedKey || savedKey.includes("sample_key")) {
+  
+  // A chave oficial do projeto Risel contém a assinatura nTbdmUa16BrXPlcX
+  const isOfficialKey = savedKey && savedKey.includes("nTbdmUa16BrXPlcX") && !savedKey.includes("sample_key");
+  if (!isOfficialKey) {
     savedKey = DEFAULT_SUPABASE_KEY;
     localStorage.setItem("risel_supabase_key", savedKey);
   }
@@ -45,13 +49,14 @@ export function saveSupabaseConfig(url: string, anonKey: string): void {
   localStorage.setItem("risel_supabase_url", url.trim());
   localStorage.setItem("risel_supabase_key", anonKey.trim());
   localStorage.setItem("risel_supabase_connected", "true");
+  supabaseInstance = null;
 }
 
 let supabaseInstance: SupabaseClient | null = null;
 
-export function getSupabaseClient(): SupabaseClient {
+export function getSupabaseClient(forceNew = false): SupabaseClient {
   const config = getSupabaseConfig();
-  if (!supabaseInstance) {
+  if (!supabaseInstance || forceNew) {
     supabaseInstance = createClient(config.url, config.anonKey, {
       auth: { persistSession: false }
     });
@@ -61,6 +66,15 @@ export function getSupabaseClient(): SupabaseClient {
 
 export function resetSupabaseClient(): void {
   supabaseInstance = null;
+}
+
+export function forceResetToOfficialSupabase(): SupabaseClient {
+  localStorage.setItem("risel_supabase_url", DEFAULT_SUPABASE_URL);
+  localStorage.setItem("risel_supabase_key", DEFAULT_SUPABASE_KEY);
+  supabaseInstance = createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_KEY, {
+    auth: { persistSession: false }
+  });
+  return supabaseInstance;
 }
 
 // Interfaces de Dados para Usuários no Supabase
@@ -1168,129 +1182,171 @@ export interface SupabaseVeiculo {
 export async function fetchVeiculosSupabase(): Promise<any[]> {
   try {
     const cleanPlateKey = (p: string) => String(p || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
-    const client = getSupabaseClient();
-    const { data, error } = await client
-      .from('veiculos')
-      .select('*')
-      .order('placa', { ascending: true });
+    let records: any[] = [];
+    let fromCloud = false;
 
-    if (error) {
-      console.warn("Aviso ao buscar veículos no Supabase:", error.message);
-    }
+    // 1. Consulta o banco na nuvem Supabase (Fonte Primária da Verdade)
+    try {
+      const client = getSupabaseClient();
+      const { data, error } = await client
+        .from('veiculos')
+        .select('*')
+        .order('placa', { ascending: true });
 
-    let records = data || [];
-
-    // Fallback para servidor local se Supabase retornar vazio
-    if (!records || records.length === 0) {
-      try {
-        const localRes = await fetch("/api/veiculos/local");
-        if (localRes.ok) {
-          const localData = await localRes.json();
-          if (Array.isArray(localData) && localData.length > 0) {
-            records = localData;
+      if (error) {
+        console.warn("Aviso ao buscar veículos no Supabase:", error.message);
+        if (error.message?.includes("API key") || error.code === "PGRST301" || error.code === "401") {
+          const freshClient = forceResetToOfficialSupabase();
+          const retryRes = await freshClient.from('veiculos').select('*').order('placa', { ascending: true });
+          if (retryRes.data && retryRes.data.length > 0) {
+            records = retryRes.data;
+            fromCloud = true;
           }
         }
-      } catch (e) {}
+      } else if (data && data.length > 0) {
+        records = data;
+        fromCloud = true;
+      }
+    } catch (sbErr) {
+      console.warn("Falha de conexão com Supabase:", sbErr);
     }
 
-    const dbMap = new Map((records || []).map(row => [cleanPlateKey(row.placa), row]));
-    let needsSync = false;
-
-    // Garante que todos os 75 veículos reais façam parte da lista com dados atualizados
-    const mergedList = VEICULOS_REAIS.map(real => {
-      const row = dbMap.get(cleanPlateKey(real.placa));
-      if (!row) {
-        needsSync = true;
-        return real;
+    // 2. Consulta o backend local para mesclar quaisquer alterações locais mais recentes
+    let localData: any[] = [];
+    try {
+      const localRes = await fetch("/api/veiculos");
+      if (localRes.ok) {
+        const parsed = await localRes.json();
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localData = parsed;
+        }
       }
+    } catch (_) {}
+
+    // Se o Supabase respondeu, envia cópia de segurança para o backend
+    if (fromCloud && records.length > 0) {
+      try {
+        fetch("/api/veiculos/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(records)
+        }).catch(() => {});
+      } catch (_) {}
+    } else if (records.length === 0 && localData.length > 0) {
+      // Se a nuvem estava temporariamente indisponível, assume os dados do backend local
+      records = localData;
+    }
+
+    // Mapa unificado indexado pela placa
+    const unifiedRecordMap = new Map<string, any>();
+    
+    // Insere registros do Supabase
+    (records || []).forEach(r => {
+      const p = cleanPlateKey(r.placa || r.id);
+      if (p) unifiedRecordMap.set(p, r);
+    });
+
+    // Mescla com os dados do backend local (priorizando edições mais completas)
+    (localData || []).forEach(l => {
+      const p = cleanPlateKey(l.placa || l.id);
+      if (p) {
+        const existing = unifiedRecordMap.get(p) || {};
+        unifiedRecordMap.set(p, { ...existing, ...l });
+      }
+    });
+
+    const realMap = new Map(VEICULOS_REAIS.map(v => [cleanPlateKey(v.placa), v]));
+    const dbPlacas = new Set<string>();
+
+    const mergedList: Veiculo[] = Array.from(unifiedRecordMap.values()).map(row => {
+      const cleanR = cleanPlateKey(row.placa);
+      dbPlacas.add(cleanR);
+      const real = realMap.get(cleanR);
 
       let extra: any = {};
       if (row.observacoes && typeof row.observacoes === "string" && row.observacoes.startsWith("{")) {
-        try {
-          extra = JSON.parse(row.observacoes);
-        } catch (e) {}
+        try { extra = JSON.parse(row.observacoes); } catch (e) {}
       }
 
-      const realFilial = real.filial;
-      const rawFilial = row.filial || row.base || extra.filial;
-      const filialFinal = (rawFilial && rawFilial !== "CAMPINEIRA" && rawFilial !== "Campineira") 
-        ? rawFilial 
-        : (realFilial || rawFilial || "CAMPINEIRA");
+      // Prioridade absoluta para o que o usuário preencheu e salvou no banco
+      const filialFinal = row.filial || row.base || extra.filial || real?.filial || "Paulínia";
+      const condutorFinal = (row.condutor !== undefined && row.condutor !== null && String(row.condutor).trim() !== "")
+        ? String(row.condutor).trim()
+        : (extra.condutor !== undefined && String(extra.condutor).trim() !== "" ? String(extra.condutor).trim() : (real?.condutor || "Disponível"));
+      const statusFinal = (row.status !== undefined && row.status !== null && String(row.status).trim() !== "")
+        ? (String(row.status).trim().toLowerCase() === "inativo" ? "Inativo" : String(row.status).trim().toLowerCase() === "em manutenção" ? "Em Manutenção" : "Ativo")
+        : (extra.status || real?.status || "Ativo");
+      const modeloFinal = row.modelo || extra.modelo || real?.modelo || "Veículo Frota";
+      const locadoraFinal = (row.locadora !== undefined && row.locadora !== null && String(row.locadora).trim() !== "")
+        ? String(row.locadora).trim()
+        : (extra.locadora || real?.locadora || "Frota Própria");
+      const contratoFinal = (row.contrato !== undefined && row.contrato !== null)
+        ? String(row.contrato).trim()
+        : (extra.contrato || real?.contrato || "");
+      const vencFinal = row.venc_contrato || row.vencContrato || extra.vencContrato || real?.vencContrato || "";
+      const emailFinal = (row.email !== undefined && row.email !== null)
+        ? String(row.email).trim()
+        : (extra.email || real?.email || "");
+      const gestorFinal = (row.gestor_resp !== undefined && row.gestor_resp !== null && String(row.gestor_resp).trim() !== "")
+        ? String(row.gestor_resp).trim()
+        : (row.gestorResp || extra.gestorResp || real?.gestorResp || "");
+      const contatoFinal = (row.contato_motorista !== undefined && row.contato_motorista !== null && String(row.contato_motorista).trim() !== "")
+        ? String(row.contato_motorista).trim()
+        : (row.contatoMotorista || extra.contatoMotorista || real?.contatoMotorista || "");
+      const funcaoFinal = row.funcao || extra.funcao || real?.funcao || "Motorista";
+      const setorFinal = row.setor || extra.setor || (real as any)?.setor || "";
+      const cpfFinal = row.cpf_condutor || row.cpfCondutor || extra.cpfCondutor || real?.cpfCondutor || "";
+      const cnhValFinal = row.cnh_validade || row.cnhValidade || extra.cnhValidade || "";
+      const cnhNumFinal = row.cnh_numero || row.cnhNumero || extra.cnhNumero || "";
+      const cnhArquivoFinal = row.cnh_nome_arquivo || row.cnhNomeArquivo || extra.cnhNomeArquivo || "";
+      const cnhAnexoFinal = row.cnh_anexo_base64 || row.cnhAnexoBase64 || extra.cnhAnexoBase64 || `/api/cnh/${cleanR}`;
+      const odometroFinal = Number(row.odometro || row.km_atual || extra.odometro || real?.odometro || 0);
+      const combustivelFinal = row.combustivel || row.combustivel_padrao || extra.combustivel || real?.combustivel || "Flex";
+      const dataTrocaFinal = row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || real?.dataTrocaCondutor || "";
+      const dataInatFinal = extra.dataInativacao || row.data_inativacao || row.dataInativacao || (real as any)?.dataInativacao || "";
+      const motivoInatFinal = extra.motivoInativacao || row.motivo_inativacao || row.motivoInativacao || (real as any)?.motivoInativacao || "";
+      const tipoVinculoFinal = extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.tipo_vinculo !== undefined ? row.tipo_vinculo : (locadoraFinal === "FROTA PRÓPRIA" ? "" : "Contrato"));
+      const obsFinal = row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || (real as any)?.observacoes || "");
 
       return {
-        id: row.placa || real.placa,
-        placa: real.placa || row.placa,
-        modelo: row.modelo || real.modelo || "Veículo Frota",
-        vencContrato: row.venc_contrato || row.vencContrato || extra.vencContrato || real.vencContrato || "",
-        condutor: row.condutor || extra.condutor || real.condutor || "Disponível",
-        cpfCondutor: extra.cpfCondutor || row.cpf_condutor || row.cpfCondutor || real.cpfCondutor || "",
-        cnhValidade: extra.cnhValidade || row.cnh_validade || row.cnhValidade || "",
-        cnhNumero: extra.cnhNumero || row.cnh_numero || row.cnhNumero || "",
-        cnhAnexoBase64: extra.cnhAnexoBase64 || row.cnh_anexo_base64 || row.cnhAnexoBase64 || "",
-        cnhNomeArquivo: extra.cnhNomeArquivo || row.cnh_nome_arquivo || row.cnhNomeArquivo || "",
-        funcao: row.funcao || extra.funcao || real.funcao || "Motorista",
-        setor: extra.setor || row.setor || (real as any).setor || "",
-        contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || real.contatoMotorista || "",
-        gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || real.gestorResp || "",
-        email: row.email !== undefined && row.email !== null && row.email !== "" ? row.email : (extra.email !== undefined && extra.email !== null && extra.email !== "" ? extra.email : (real.email || "")),
+        id: row.id || cleanR,
+        placa: cleanR,
+        modelo: modeloFinal,
+        vencContrato: vencFinal,
+        condutor: condutorFinal,
+        cpfCondutor: cpfFinal,
+        cnhValidade: cnhValFinal,
+        cnhNumero: cnhNumFinal,
+        cnhAnexoBase64: cnhAnexoFinal,
+        cnhNomeArquivo: cnhArquivoFinal,
+        funcao: funcaoFinal,
+        setor: setorFinal,
+        contatoMotorista: contatoFinal,
+        gestorResp: gestorFinal,
+        email: emailFinal,
         filial: filialFinal,
         base: filialFinal,
-        locadora: row.locadora || extra.locadora || real.locadora || "Frota Própria",
-        contrato: row.contrato || extra.contrato || real.contrato || "",
-        odometro: Number(row.odometro || row.km_atual || extra.odometro || real.odometro || 0),
-        combustivel: row.combustivel || row.combustivel_padrao || extra.combustivel || real.combustivel || "Flex",
-        status: row.status || real.status || "Ativo",
-        dataTrocaCondutor: row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || real.dataTrocaCondutor || "",
-        dataInativacao: extra.dataInativacao || row.data_inativacao || row.dataInativacao || (real as any).dataInativacao || "",
-        motivoInativacao: extra.motivoInativacao || row.motivo_inativacao || row.motivoInativacao || (real as any).motivoInativacao || "",
-        tipoVinculo: extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.locadora === "FROTA PRÓPRIA" || (real && real.locadora === "FROTA PRÓPRIA") ? "" : "Contrato")),
-        observacoes: row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || (real as any).observacoes || "")
+        locadora: locadoraFinal,
+        contrato: contratoFinal,
+        odometro: odometroFinal,
+        combustivel: combustivelFinal,
+        status: statusFinal as any,
+        dataTrocaCondutor: dataTrocaFinal,
+        dataInativacao: dataInatFinal,
+        motivoInativacao: motivoInatFinal,
+        tipoVinculo: tipoVinculoFinal,
+        observacoes: obsFinal
       };
     });
 
-    // Inclui também veículos extras cadastrados manualmente diretamente
-    (records || []).forEach(row => {
-      const cleanR = cleanPlateKey(row.placa);
-      if (!VEICULOS_REAIS.some(v => cleanPlateKey(v.placa) === cleanR)) {
-        let extra: any = {};
-        if (row.observacoes && typeof row.observacoes === "string" && row.observacoes.startsWith("{")) {
-          try { extra = JSON.parse(row.observacoes); } catch (e) {}
-        }
-        mergedList.push({
-          id: row.placa,
-          placa: row.placa,
-          modelo: row.modelo || "Veículo Frota",
-          vencContrato: row.venc_contrato || row.vencContrato || extra.vencContrato || "",
-          condutor: row.condutor || extra.condutor || "Disponível",
-          cpfCondutor: extra.cpfCondutor || row.cpf_condutor || row.cpfCondutor || "",
-          cnhValidade: extra.cnhValidade || "",
-          cnhNumero: extra.cnhNumero || "",
-          cnhAnexoBase64: extra.cnhAnexoBase64 || "",
-          cnhNomeArquivo: extra.cnhNomeArquivo || "",
-          funcao: row.funcao || extra.funcao || "Motorista",
-          setor: extra.setor || row.setor || "",
-          contatoMotorista: row.contato_motorista || row.contatoMotorista || extra.contatoMotorista || "",
-          gestorResp: row.gestor_resp || row.gestorResp || extra.gestorResp || "",
-          email: row.email || extra.email || "",
-          filial: row.filial || row.base || extra.filial || "CAMPINEIRA",
-          locadora: row.locadora || extra.locadora || "Frota Própria",
-          contrato: row.contrato || extra.contrato || "",
-          odometro: Number(row.odometro || row.km_atual || extra.odometro || 0),
-          combustivel: row.combustivel || row.combustivel_padrao || extra.combustivel || "Flex",
-          status: row.status || "Ativo",
-          dataTrocaCondutor: row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || "",
-          dataInativacao: extra.dataInativacao || row.data_inativacao || row.dataInativacao || "",
-          motivoInativacao: extra.motivoInativacao || row.motivo_inativacao || row.motivoInativacao || "",
-          tipoVinculo: extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.tipo_vinculo !== undefined ? row.tipo_vinculo : (row.locadora === "FROTA PRÓPRIA" ? "" : "Contrato")),
-          observacoes: row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || "")
-        });
+    // Se houver algum veículo em VEICULOS_REAIS que ainda não esteja no banco, inclui
+    VEICULOS_REAIS.forEach(real => {
+      const p = cleanPlateKey(real.placa);
+      if (!dbPlacas.has(p)) {
+        mergedList.push(real);
+        dbPlacas.add(p);
       }
     });
-
-    // Se identificou veículos faltantes no banco, salva os faltantes
-    if (needsSync && (data || []).length === 0) {
-      saveBatchVeiculosSupabase(mergedList).catch(err => console.warn("Aviso ao inicializar veículos no Supabase:", err));
-    }
 
     return mergedList;
   } catch (err) {
@@ -1301,19 +1357,33 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
 
 export async function saveVeiculoSupabase(item: any): Promise<boolean> {
   try {
-    const client = getSupabaseClient();
-    const cleanPlaca = (item.placa || "").toUpperCase().trim();
-    const realVeh = VEICULOS_REAIS.find(v => v.placa === cleanPlaca);
-    const resolvedFilial = (item.filial && item.filial !== "CAMPINEIRA" && item.filial !== "Campineira") 
-      ? item.filial 
-      : (realVeh ? realVeh.filial : (item.base || "CAMPINEIRA"));
+    const cleanPlaca = String(item.placa || item.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
+    if (!cleanPlaca) return false;
+
+    // Se o anexo de CNH for um data URL ou base64 pesado (> 2KB), envia para o endpoint de CNH do servidor
+    let cnhAnexoRef = item.cnhAnexoBase64 || "";
+    if (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.length > 2000) {
+      try {
+        await fetch(`/api/cnh/${cleanPlaca}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base64: cnhAnexoRef, nomeArquivo: item.cnhNomeArquivo })
+        });
+        cnhAnexoRef = `/api/cnh/${cleanPlaca}`;
+      } catch (_) {}
+    }
+
+    const resolvedFilial = item.filial || item.base || "Paulínia";
 
     const extraData = JSON.stringify({
+      modelo: item.modelo || "Veículo Frota",
+      condutor: item.condutor || "Disponível",
+      status: item.status || "Ativo",
       vencContrato: item.vencContrato || "",
       cpfCondutor: item.cpfCondutor || "",
       cnhValidade: item.cnhValidade || "",
       cnhNumero: item.cnhNumero || "",
-      cnhAnexoBase64: item.cnhAnexoBase64 || "",
+      cnhAnexoBase64: cnhAnexoRef,
       cnhNomeArquivo: item.cnhNomeArquivo || "",
       funcao: item.funcao || "",
       setor: item.setor || "",
@@ -1323,7 +1393,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       filial: resolvedFilial,
       locadora: item.locadora || "",
       contrato: item.contrato || "",
-      odometro: item.odometro || 0,
+      odometro: Number(item.odometro || 0),
       combustivel: item.combustivel || "Flex",
       dataTrocaCondutor: item.dataTrocaCondutor || "",
       dataInativacao: item.dataInativacao || "",
@@ -1334,7 +1404,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
 
     const dbRecord: any = {
       placa: cleanPlaca,
-      modelo: item.modelo || (realVeh ? realVeh.modelo : "Veículo Frota"),
+      modelo: item.modelo || "Veículo Frota",
       marca: item.marca || "",
       ano: Number(item.ano) || new Date().getFullYear(),
       tipo: item.tipo || "Leve",
@@ -1357,48 +1427,50 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       observacoes: extraData
     };
 
-    let { error } = await client
-      .from('veiculos')
-      .upsert(dbRecord, { onConflict: 'placa' });
-
-    // Fallback caso colunas opcionais falhem
-    if (error) {
-      const standardRecord = {
-        placa: cleanPlaca,
-        modelo: item.modelo || "Veículo Frota",
-        marca: item.marca || "",
-        ano: Number(item.ano) || new Date().getFullYear(),
-        tipo: item.tipo || "Leve",
-        base: resolvedFilial,
-        condutor: item.condutor || "Disponível",
-        status: item.status || "Ativo",
-        km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
-        combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
-        email: item.email || "",
-        gestor_resp: item.gestorResp || "",
-        observacoes: extraData
-      };
-      const fallbackRes = await client
+    // 1. Grava no Supabase (await com retorno de confirmação)
+    let supabaseSuccess = false;
+    try {
+      const client = getSupabaseClient();
+      const { error } = await client
         .from('veiculos')
-        .upsert(standardRecord, { onConflict: 'placa' });
-      
-      if (fallbackRes.error) {
-        console.warn("Aviso ao gravar veículo no Supabase (fallback padrão):", fallbackRes.error.message);
-        return false;
+        .upsert(dbRecord, { onConflict: 'placa' });
+
+      if (error) {
+        console.warn("Aviso ao salvar no Supabase, tentando record standard:", error.message);
+        const standardRecord = {
+          placa: cleanPlaca,
+          modelo: item.modelo || "Veículo Frota",
+          base: resolvedFilial,
+          condutor: item.condutor || "Disponível",
+          status: item.status || "Ativo",
+          km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
+          observacoes: extraData
+        };
+        const res2 = await client.from('veiculos').upsert(standardRecord, { onConflict: 'placa' });
+        supabaseSuccess = !res2.error;
+      } else {
+        supabaseSuccess = true;
       }
-      return true;
+    } catch (sbErr) {
+      console.warn("Aviso ao sincronizar no Supabase:", sbErr);
     }
 
-    // Persistência adicional no backend local
+    // 2. Grava no backend local atômico imediatamente
     try {
-      fetch("/api/veiculos/save", {
+      await fetch("/api/veiculos/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...item, filial: resolvedFilial, email: item.email || "" })
-      }).catch(() => {});
-    } catch (e) {}
+        body: JSON.stringify({ 
+          ...item, 
+          placa: cleanPlaca, 
+          filial: resolvedFilial, 
+          base: resolvedFilial,
+          cnhAnexoBase64: cnhAnexoRef 
+        })
+      });
+    } catch (_) {}
 
-    return true;
+    return supabaseSuccess;
   } catch (err) {
     console.error("Erro no saveVeiculoSupabase:", err);
     return false;
@@ -1409,20 +1481,36 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
   if (!items || items.length === 0) return { count: 0, success: true };
 
   try {
+    const sanitizedBatch = items.map(item => {
+      const cleanPlaca = String(item.placa || item.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
+      let cnhAnexoRef = item.cnhAnexoBase64 || "";
+      if (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.length > 2000) {
+        cnhAnexoRef = `/api/cnh/${cleanPlaca}`;
+      }
+      return { ...item, placa: cleanPlaca, cnhAnexoBase64: cnhAnexoRef };
+    });
+
+    // 1. Grava no backend local imediatamente
+    try {
+      await fetch("/api/veiculos/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sanitizedBatch)
+      });
+    } catch (_) {}
+
+    // 2. Grava no Supabase com records leves e sanitizados
     const client = getSupabaseClient();
-    const dbRecords = items.map(item => {
-      const cleanPlaca = (item.placa || "").toUpperCase().trim();
-      const realVeh = VEICULOS_REAIS.find(v => v.placa === cleanPlaca);
-      const resolvedFilial = (item.filial && item.filial !== "CAMPINEIRA" && item.filial !== "Campineira") 
-        ? item.filial 
-        : (realVeh ? realVeh.filial : (item.base || "CAMPINEIRA"));
+    const dbRecords = sanitizedBatch.map(item => {
+      const cleanPlaca = item.placa;
+      const resolvedFilial = item.filial || item.base || "Paulínia";
 
       const extraData = JSON.stringify({
         vencContrato: item.vencContrato || "",
         cpfCondutor: item.cpfCondutor || "",
         cnhValidade: item.cnhValidade || "",
         cnhNumero: item.cnhNumero || "",
-        cnhAnexoBase64: item.cnhAnexoBase64 || "",
+        cnhAnexoBase64: item.cnhAnexoBase64 || `/api/cnh/${cleanPlaca}`,
         cnhNomeArquivo: item.cnhNomeArquivo || "",
         funcao: item.funcao || "",
         setor: item.setor || "",
@@ -1471,81 +1559,19 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
       .from('veiculos')
       .upsert(dbRecords, { onConflict: 'placa' });
 
-    // Fallback caso a tabela no Supabase não contenha as novas colunas
     if (error) {
-      const standardBatch = items.map(item => {
-        const cleanPlaca = (item.placa || "").toUpperCase().trim();
-        const realVeh = VEICULOS_REAIS.find(v => v.placa === cleanPlaca);
-        const resolvedFilial = (item.filial && item.filial !== "CAMPINEIRA" && item.filial !== "Campineira") 
-          ? item.filial 
-          : (realVeh ? realVeh.filial : (item.base || "CAMPINEIRA"));
-
-        const extraData = JSON.stringify({
-          vencContrato: item.vencContrato || "",
-          cpfCondutor: item.cpfCondutor || "",
-          cnhValidade: item.cnhValidade || "",
-          cnhNumero: item.cnhNumero || "",
-          cnhAnexoBase64: item.cnhAnexoBase64 || "",
-          cnhNomeArquivo: item.cnhNomeArquivo || "",
-          funcao: item.funcao || "",
-          setor: item.setor || "",
-          contatoMotorista: item.contatoMotorista || "",
-          gestorResp: item.gestorResp || "",
-          email: item.email || "",
-          filial: resolvedFilial,
-          locadora: item.locadora || "",
-          contrato: item.contrato || "",
-          odometro: item.odometro || 0,
-          combustivel: item.combustivel || "Flex",
-          dataTrocaCondutor: item.dataTrocaCondutor || "",
-          dataInativacao: item.dataInativacao || "",
-          motivoInativacao: item.motivoInativacao || "",
-          observacoes: item.observacoes || ""
-        });
-
-        return {
-          placa: cleanPlaca,
-          modelo: item.modelo || "Veículo Frota",
-          marca: item.marca || "",
-          ano: Number(item.ano) || new Date().getFullYear(),
-          tipo: item.tipo || "Leve",
-          base: resolvedFilial,
-          condutor: item.condutor || "Disponível",
-          status: item.status || "Ativo",
-          km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
-          combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
-          email: item.email || "",
-          gestor_resp: item.gestorResp || "",
-          observacoes: extraData
-        };
-      });
-
-      const fallbackRes = await client
-        .from('veiculos')
-        .upsert(standardBatch, { onConflict: 'placa' });
-
-      if (fallbackRes.error) {
-        console.warn("Aviso ao gravar lote padrão de veículos no Supabase:", fallbackRes.error.message);
-        return { count: 0, success: false };
-      }
-      try {
-        fetch("/api/veiculos/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(items)
-        }).catch(() => {});
-      } catch (e) {}
-      return { count: standardBatch.length, success: true };
+      console.warn("Aviso no upsert em lote do Supabase, tentando padrão:", error.message);
+      const standardBatch = dbRecords.map(r => ({
+        placa: r.placa,
+        modelo: r.modelo,
+        base: r.base,
+        condutor: r.condutor,
+        status: r.status,
+        km_atual: r.km_atual,
+        observacoes: r.observacoes
+      }));
+      await client.from('veiculos').upsert(standardBatch, { onConflict: 'placa' });
     }
-
-    // Persistência adicional no backend local
-    try {
-      fetch("/api/veiculos/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(items)
-      }).catch(() => {});
-    } catch (e) {}
 
     return { count: dbRecords.length, success: true };
   } catch (err) {
@@ -2775,6 +2801,18 @@ export async function saveChecklistSupabase(checklist: any): Promise<boolean> {
 
 // 15. MAPEAMENTOS DE E-MAIL (CONFIGURAÇÕES DE MULTAS & FROTA)
 export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base'): Promise<any | null> {
+  // 1. Consulta prioritária no backend local oficial
+  try {
+    const res = await fetch(`/api/email-mappings/${tipo}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+        return data;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Consulta fallback no Supabase
   try {
     const client = getSupabaseClient();
     const { data, error } = await client
@@ -2791,9 +2829,21 @@ export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base'): Promis
 }
 
 export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base', mappings: any): Promise<boolean> {
+  let serverOk = false;
+  // 1. Grava no backend local oficial
+  try {
+    const res = await fetch(`/api/email-mappings/${tipo}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mappings)
+    });
+    serverOk = res.ok;
+  } catch (_) {}
+
+  // 2. Grava de forma segura no Supabase
   try {
     const client = getSupabaseClient();
-    const { error } = await client
+    await client
       .from('email_mappings')
       .upsert({
         id: `map_${tipo}`,
@@ -2801,11 +2851,9 @@ export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base', mappings
         mappings,
         updated_at: new Date().toISOString()
       }, { onConflict: 'id' });
+  } catch (err) {}
 
-    return !error;
-  } catch (err) {
-    return false;
-  }
+  return serverOk;
 }
 
 // 16. Script SQL de Criação das Tabelas do Risel ERP no Supabase

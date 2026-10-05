@@ -57,14 +57,30 @@ export const getEmailConfig = () => {
 };
 
 // Default Base Email Mappings
+// Default Base Email Mappings com suporte a siglas e nomes por extenso das Bases Operacionais Risel
 export const DEFAULT_EMAIL_MAPPINGS: Record<string, { to: string; cc: string }> = {
-    'AGU': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'CPB': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'JLS': { to: 'rodrigo.mosca@risel.com.br; operacional01.jales@risel.com.br; dyorgines.messaros@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'OUR': { to: 'vinicius.paladino@risel.com.br; frotaor@risel.com.br', cc: 'logistica6@risel.com.br' },
     'PLN': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'PAULÍNIA': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'PAULINIA': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'AGU': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'AGUAÍ': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'AGUAI': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'CPB': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'CUBATÃO': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'CUBATAO': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'JLS': { to: 'rodrigo.mosca@risel.com.br; operacional01.jales@risel.com.br; dyorgines.messaros@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'JALES': { to: 'rodrigo.mosca@risel.com.br; operacional01.jales@risel.com.br; dyorgines.messaros@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'OUR': { to: 'vinicius.paladino@risel.com.br; frotaor@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'OURINHOS': { to: 'vinicius.paladino@risel.com.br; frotaor@risel.com.br', cc: 'logistica6@risel.com.br' },
     'SBC': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'SUPRI': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' }
+    'SÃO BERNARDO': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'SAO BERNARDO': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'BETIM': { to: 'gabriela.alves@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'BTM': { to: 'gabriela.alves@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'CAXIAS': { to: 'operacional.caxias@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'CXS': { to: 'operacional.caxias@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'SUPRI': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'SUPRIMENTOS': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' }
 };
 
 export const DEFAULT_CC_EMAILS = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
@@ -80,17 +96,30 @@ export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: st
         }
     }
 
-    // Consulta na nuvem oficial Supabase
+    // 1. Consulta na nuvem oficial Supabase
     try {
         const cloudMappings = await fetchEmailMappingsSupabase('placa');
         if (cloudMappings && typeof cloudMappings === 'object' && Object.keys(cloudMappings).length > 0) {
-            const merged = { ...cloudMappings, ...localParsed };
+            const merged = { ...localParsed, ...cloudMappings };
             safeSetItem('risel_placa_email_mappings', JSON.stringify(merged));
             return merged;
         }
     } catch (e) {
         console.warn("Aviso ao buscar mapeamento de e-mails da placa no Supabase:", e);
     }
+
+    // 2. Fallback no servidor local backend
+    try {
+        const serverRes = await fetch('/api/email-mappings/placa');
+        if (serverRes.ok) {
+            const serverData = await serverRes.json();
+            if (serverData && typeof serverData === 'object' && Object.keys(serverData).length > 0) {
+                const merged = { ...localParsed, ...serverData };
+                safeSetItem('risel_placa_email_mappings', JSON.stringify(merged));
+                return merged;
+            }
+        }
+    } catch (_) {}
 
     return localParsed;
 };
@@ -109,7 +138,19 @@ export const savePlacaEmailMappings = async (mappings: Record<string, { to: stri
     });
 
     safeSetItem('risel_placa_email_mappings', JSON.stringify(sanitized));
+    
+    // 1. Grava no Supabase
     saveEmailMappingsSupabase('placa', sanitized).catch(e => console.warn("Aviso ao salvar mapeamento no Supabase:", e));
+    
+    // 2. Grava no backend do servidor
+    try {
+        await fetch('/api/email-mappings/placa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sanitized)
+        });
+    } catch (_) {}
+
     return { success: true };
 };
 
@@ -120,21 +161,46 @@ export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: str
         try { baseMap = { ...DEFAULT_EMAIL_MAPPINGS, ...JSON.parse(local) }; } catch (e) {}
     }
 
-    // Consulta na nuvem oficial Supabase
+    // 1. Consulta na nuvem oficial Supabase
     try {
         const cloudBase = await fetchEmailMappingsSupabase('base');
-        if (cloudBase && typeof cloudBase === 'object') {
+        if (cloudBase && typeof cloudBase === 'object' && Object.keys(cloudBase).length > 0) {
             baseMap = { ...baseMap, ...cloudBase };
             safeSetItem('risel_base_email_mappings', JSON.stringify(baseMap));
+            return baseMap;
         }
     } catch (e) {}
+
+    // 2. Fallback no servidor local backend
+    try {
+        const serverRes = await fetch('/api/email-mappings/base');
+        if (serverRes.ok) {
+            const serverBase = await serverRes.json();
+            if (serverBase && typeof serverBase === 'object' && Object.keys(serverBase).length > 0) {
+                baseMap = { ...baseMap, ...serverBase };
+                safeSetItem('risel_base_email_mappings', JSON.stringify(baseMap));
+            }
+        }
+    } catch (_) {}
 
     return baseMap;
 };
 
 export const saveBaseEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
     safeSetItem('risel_base_email_mappings', JSON.stringify(mappings));
+    
+    // 1. Grava no Supabase
     saveEmailMappingsSupabase('base', mappings).catch(e => console.warn("Aviso ao salvar mapeamento de base no Supabase:", e));
+    
+    // 2. Grava no backend do servidor local
+    try {
+        await fetch('/api/email-mappings/base', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(mappings)
+        });
+    } catch (_) {}
+
     return { success: true };
 };
 

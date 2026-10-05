@@ -1,6 +1,8 @@
 
 import { Veiculo, Motorista, CodigoMulta, Multa } from '../types';
 import { mockVeiculos, mockMotoristas, mockCodigosMulta, mockMultas } from './mockData';
+import { fetchEmailMappingsSupabase, saveEmailMappingsSupabase } from '../../../services/supabaseService';
+import { safeSetItem, safeGetItem } from '../../../utils/safeStorage';
 
 const API_URL_KEY = 'risel_api_url';
 const DRIVE_FOLDER_KEY = 'risel_drive_folder_id';
@@ -10,7 +12,7 @@ const CACHE_KEY = 'risel_data_cache_1mwfKdJ_v4';
 const CACHE_DURATION = 1 * 60 * 1000; // 1 Minuto para diminuir latência
 
 // URL ATUALIZADA DO SCRIPT
-const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxiN8UHx-gOiq0-BK7cWD45kY4mz60418wxbRZDmnO89VxR5hya-DNGXzbm5GmBpBijUA/exec';
+export const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxiN8UHx-gOiq0-BK7cWD45kY4mz60418wxbRZDmnO89VxR5hya-DNGXzbm5GmBpBijUA/exec';
 
 // IDs Padrão (Fallback)
 const DEFAULT_FOLDER_ID = '1Fq8e5MM_AOl01HD0iGmVg1cg2bCnUmVk';
@@ -51,6 +53,86 @@ export const getEmailConfig = () => {
         }
     }
     return { serviceId: '', templateId: '', publicKey: '' };
+};
+
+// Default Base Email Mappings
+export const DEFAULT_EMAIL_MAPPINGS: Record<string, { to: string; cc: string }> = {
+    'AGU': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'CPB': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'JLS': { to: 'rodrigo.mosca@risel.com.br; operacional01.jales@risel.com.br; dyorgines.messaros@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'OUR': { to: 'vinicius.paladino@risel.com.br; frotaor@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'PLN': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'SBC': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'SUPRI': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' }
+};
+
+export const DEFAULT_CC_EMAILS = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
+
+export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
+    let localParsed: Record<string, { to: string; cc: string }> = {};
+    const local = safeGetItem('risel_placa_email_mappings');
+    if (local) {
+        try {
+            localParsed = JSON.parse(local);
+        } catch (e) {
+            console.error("Erro ao carregar e-mails por placa locais:", e);
+        }
+    }
+
+    try {
+        const cloudMappings = await fetchEmailMappingsSupabase('placa');
+        if (cloudMappings && typeof cloudMappings === 'object' && Object.keys(cloudMappings).length > 0) {
+            const merged = { ...cloudMappings, ...localParsed };
+            safeSetItem('risel_placa_email_mappings', JSON.stringify(merged));
+            return merged;
+        }
+    } catch (e) {
+        console.warn("Aviso ao buscar mapeamento de e-mails da placa:", e);
+    }
+
+    return localParsed;
+};
+
+export const savePlacaEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
+    const sanitized: Record<string, { to: string; cc: string }> = {};
+    Object.entries(mappings).forEach(([placa, val]) => {
+        let ccStr = (val.cc || '').trim();
+        if (!ccStr.toLowerCase().includes('lorena.padilha@risel.com.br')) {
+            ccStr = ccStr ? `${ccStr}; lorena.padilha@risel.com.br` : 'lorena.padilha@risel.com.br';
+        }
+        if (!ccStr.toLowerCase().includes('deny.goncalves@risel.com.br')) {
+            ccStr = `${ccStr}; deny.goncalves@risel.com.br`;
+        }
+        sanitized[placa.toUpperCase().trim()] = { to: val.to || '', cc: ccStr };
+    });
+
+    safeSetItem('risel_placa_email_mappings', JSON.stringify(sanitized));
+    saveEmailMappingsSupabase('placa', sanitized).catch(e => console.warn("Aviso ao salvar mapeamento:", e));
+    return { success: true };
+};
+
+export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
+    let baseMap: Record<string, { to: string; cc: string }> = DEFAULT_EMAIL_MAPPINGS;
+    const local = safeGetItem('risel_base_email_mappings');
+    if (local) {
+        try { baseMap = { ...DEFAULT_EMAIL_MAPPINGS, ...JSON.parse(local) }; } catch (e) {}
+    }
+
+    try {
+        const cloudBase = await fetchEmailMappingsSupabase('base');
+        if (cloudBase && typeof cloudBase === 'object') {
+            baseMap = { ...baseMap, ...cloudBase };
+            safeSetItem('risel_base_email_mappings', JSON.stringify(baseMap));
+        }
+    } catch (e) {}
+
+    return baseMap;
+};
+
+export const saveBaseEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
+    safeSetItem('risel_base_email_mappings', JSON.stringify(mappings));
+    saveEmailMappingsSupabase('base', mappings).catch(e => console.warn("Aviso ao salvar mapeamento de base:", e));
+    return { success: true };
 };
 
 // Setters

@@ -13,8 +13,16 @@ import rateLimit from "express-rate-limit";
 import firebase from "firebase/compat/app";
 import "firebase/compat/auth";
 import "firebase/compat/firestore";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { getRiselSmtpConfig, getSafeSmtpStatus, decryptSecret, getSenderNameForModule, ENCRYPTED_FALLBACK_PASSWORD, appendRiselSignatureToHtml } from "./src/services/smtpSecurity";
 import { sanitizeRequestBody, cleanHtmlContent, validateAppsScriptUrl, validateOneDriveUrl, isValidSafeHttpsUrl } from "./src/services/securityMiddleware";
+
+// Inicialização do cliente Supabase oficial no servidor para garantir persistência mesmo com instabilidade no cliente
+const SERVER_SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://ihowbxlqfcjzzzleasqq.supabase.co";
+const SERVER_SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlob3dieGxxZmNqenp6bGVhc3FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NDAwNzksImV4cCI6MjEwMTMxNjA3OX0.nTbdmUa16BrXPlcX_RyWAzpPmCjqeivR1Yo1qjF_Ld0";
+const serverSupabase = createSupabaseClient(SERVER_SUPABASE_URL, SERVER_SUPABASE_KEY, {
+  auth: { persistSession: false }
+});
 
 // Forçar resolução IPv4 prioritária no Node.js para evitar ENETUNREACH em contêineres de nuvem (Render, Docker, Cloud Run)
 if (dns && typeof (dns as any).setDefaultResultOrder === "function") {
@@ -372,6 +380,8 @@ const SINISTROS_FILE = path.join(DATA_DIR, "sinistros.json");
 const SINISTROS_CONFIG_FILE = path.join(DATA_DIR, "sinistros_config.json");
 const MULTAS_FILE = path.join(DATA_DIR, "multas_frota_leve.json");
 const VEICULOS_FILE = path.join(DATA_DIR, "veiculos_frota_leve.json");
+const EMAIL_MAPPINGS_FILE = path.join(DATA_DIR, "email_mappings.json");
+const CNH_DIR = path.join(DATA_DIR, "cnh_files");
 const DEFAULT_SINISTROS_SHAREPOINT_URL = "https://riselcombustiveis-my.sharepoint.com/:x:/g/personal/deny_goncalves_risel_com_br/IQAaoMgIpUU5RJT0XwUF7eOzAYV0pCLYDAlOmFtiaTpQbso?e=RIBeKX";
 const DEFAULT_SINISTROS_FORMS_URL = "https://forms.cloud.microsoft/Pages/DesignPageV2.aspx?prevorigin=Marketing&origin=NeoPortalPage&subpage=design&id=--soOq0dkkmCvV864R49jTu3qwhCFQBElTcewqtXSeRUQTE2N0tGUjlEMjREQU5OUzFKN1NSR1pQWS4u";
 const DEFAULT_SINISTROS_DRIVE_FOLDER = "https://drive.google.com/drive/folders/1A62QNaC-5m7xMVzZtUxvXxBCHREp_jse?hl=pt-br";
@@ -4530,7 +4540,85 @@ async function startServer() {
   });
 
   // --- PERSISTÊNCIA COMPARTILHADA DE VEÍCULOS FROTA LEVE ---
-  app.post("/api/veiculos/save", express.json({ limit: "50mb" }), (req, res) => {
+  const saveCnhFileToDisk = (cleanPlaca: string, base64Data: string, fileName?: string) => {
+    try {
+      if (!fs.existsSync(CNH_DIR)) fs.mkdirSync(CNH_DIR, { recursive: true });
+      const ext = (fileName && fileName.includes(".")) ? path.extname(fileName) : ".jpg";
+      const filePath = path.join(CNH_DIR, `${cleanPlaca}${ext}`);
+      const metaPath = path.join(CNH_DIR, `${cleanPlaca}.json`);
+      fs.writeFileSync(filePath, base64Data, "utf-8");
+      fs.writeFileSync(metaPath, JSON.stringify({
+        placa: cleanPlaca,
+        nomeArquivo: fileName || `cnh_${cleanPlaca}${ext}`,
+        salvoEm: new Date().toISOString()
+      }, null, 2), "utf-8");
+      return `/api/cnh/${cleanPlaca}`;
+    } catch (e) {
+      console.warn("Erro ao salvar CNH em disco:", e);
+      return "";
+    }
+  };
+
+  // Helper para converter objeto do frontend para formato padrão da tabela veiculos no Supabase
+  const mapToSupabaseVeiculoRecord = (v: any) => {
+    const cleanPlaca = String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
+    const resolvedFilial = v.filial || v.base || "Paulínia";
+    
+    // Preparação do JSON extra com todos os campos corporativos completos
+    const extraData = JSON.stringify({
+      modelo: v.modelo || "Veículo Frota",
+      condutor: v.condutor || "Disponível",
+      status: v.status || "Ativo",
+      vencContrato: v.vencContrato || v.venc_contrato || "",
+      cpfCondutor: v.cpfCondutor || v.cpf_condutor || "",
+      cnhValidade: v.cnhValidade || v.cnh_validade || "",
+      cnhNumero: v.cnhNumero || v.cnh_numero || "",
+      cnhAnexoBase64: v.cnhAnexoBase64 || `/api/cnh/${cleanPlaca}`,
+      cnhNomeArquivo: v.cnhNomeArquivo || "",
+      funcao: v.funcao || "Motorista",
+      setor: v.setor || "",
+      contatoMotorista: v.contatoMotorista || v.contato_motorista || "",
+      gestorResp: v.gestorResp || v.gestor_resp || "",
+      email: v.email || "",
+      filial: resolvedFilial,
+      locadora: v.locadora || "Frota Própria",
+      contrato: v.contrato || "",
+      odometro: Number(v.odometro || v.km_atual || 0),
+      combustivel: v.combustivel || v.combustivel_padrao || "Flex",
+      dataTrocaCondutor: v.dataTrocaCondutor || v.data_troca_condutor || "",
+      dataInativacao: v.dataInativacao || "",
+      motivoInativacao: v.motivoInativacao || "",
+      tipoVinculo: v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
+      observacoes: v.observacoes || ""
+    });
+
+    return {
+      placa: cleanPlaca,
+      modelo: v.modelo || "Veículo Frota",
+      marca: v.marca || "",
+      ano: Number(v.ano) || new Date().getFullYear(),
+      tipo: v.tipo || "Leve",
+      base: resolvedFilial,
+      condutor: v.condutor || "Disponível",
+      status: v.status || "Ativo",
+      km_atual: Number(v.odometro || v.km_atual || 0),
+      combustivel_padrao: v.combustivel || v.combustivel_padrao || "Flex",
+      venc_contrato: v.vencContrato || v.venc_contrato || "",
+      funcao: v.funcao || "Motorista",
+      contato_motorista: v.contatoMotorista || v.contato_motorista || "",
+      gestor_resp: v.gestorResp || v.gestor_resp || "",
+      email: v.email || "",
+      filial: resolvedFilial,
+      locadora: v.locadora || "Frota Própria",
+      contrato: v.contrato || "",
+      odometro: Number(v.odometro || v.km_atual || 0),
+      combustivel: v.combustivel || v.combustivel_padrao || "Flex",
+      data_troca_condutor: v.dataTrocaCondutor || v.data_troca_condutor || "",
+      observacoes: extraData
+    };
+  };
+
+  app.post("/api/veiculos/save", express.json({ limit: "50mb" }), async (req, res) => {
     try {
       const payload = req.body;
       let current: any[] = [];
@@ -4540,28 +4628,73 @@ async function startServer() {
           current = JSON.parse(raw) || [];
         } catch (e) {}
       }
+
+      const sanitizeVehicleItem = (v: any) => {
+        if (!v || typeof v !== "object") return v;
+        const cleanPlaca = String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
+        const copy = { ...v, placa: cleanPlaca };
+        // Se contiver anexo de CNH volumoso em base64, salva em disco e mantém URL leve
+        if (copy.cnhAnexoBase64 && typeof copy.cnhAnexoBase64 === "string" && copy.cnhAnexoBase64.length > 2000) {
+          saveCnhFileToDisk(cleanPlaca, copy.cnhAnexoBase64, copy.cnhNomeArquivo);
+          copy.cnhAnexoBase64 = `/api/cnh/${cleanPlaca}`;
+        }
+        return copy;
+      };
+
+      let itemsToUpsertSupabase: any[] = [];
+
       if (Array.isArray(payload)) {
         const map = new Map<string, any>();
         current.forEach(v => {
-          const cleanPlaca = String(v.placa || v.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+          const cleanPlaca = String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
           if (cleanPlaca) map.set(cleanPlaca, v);
         });
         payload.forEach(v => {
-          const cleanPlaca = String(v.placa || v.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-          if (cleanPlaca) map.set(cleanPlaca, { ...(map.get(cleanPlaca) || {}), ...v });
+          const sanitized = sanitizeVehicleItem(v);
+          const cleanPlaca = sanitized.placa;
+          if (cleanPlaca) {
+            const merged = { ...(map.get(cleanPlaca) || {}), ...sanitized };
+            map.set(cleanPlaca, merged);
+            itemsToUpsertSupabase.push(mapToSupabaseVeiculoRecord(merged));
+          }
         });
         current = Array.from(map.values());
       } else if (payload && (payload.placa || payload.id)) {
-        const cleanPlaca = String(payload.placa || payload.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-        const idx = current.findIndex(v => String(v.placa || v.id).replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanPlaca);
+        const sanitized = sanitizeVehicleItem(payload);
+        const cleanPlaca = sanitized.placa;
+        const idx = current.findIndex(v => String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanPlaca);
         if (idx >= 0) {
-          current[idx] = { ...current[idx], ...payload };
+          current[idx] = { ...current[idx], ...sanitized };
+          itemsToUpsertSupabase.push(mapToSupabaseVeiculoRecord(current[idx]));
         } else {
-          current.push(payload);
+          current.push(sanitized);
+          itemsToUpsertSupabase.push(mapToSupabaseVeiculoRecord(sanitized));
         }
       }
+
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(VEICULOS_FILE, JSON.stringify(current, null, 2), "utf-8");
+
+      // Sincronização direta e transparente com o Supabase oficial diretamente do servidor
+      if (itemsToUpsertSupabase.length > 0) {
+        try {
+          // Gravação atômica em lotes de até 50 registros
+          const chunkSize = 50;
+          for (let i = 0; i < itemsToUpsertSupabase.length; i += chunkSize) {
+            const chunk = itemsToUpsertSupabase.slice(i, i + chunkSize);
+            const { error: sbErr } = await serverSupabase
+              .from('veiculos')
+              .upsert(chunk, { onConflict: 'placa' });
+            if (sbErr) {
+              console.warn("[Server Supabase Sync] Aviso ao sincronizar lote de veículos:", sbErr.message);
+            }
+          }
+          console.log(`[Server Supabase Sync] Sincronizados com sucesso ${itemsToUpsertSupabase.length} veículos no Supabase.`);
+        } catch (syncErr: any) {
+          console.warn("[Server Supabase Sync] Falha ao sincronizar com Supabase em background:", syncErr.message);
+        }
+      }
+
       return res.json({ success: true, count: current.length });
     } catch (e: any) {
       console.error("Erro ao salvar veículos no servidor:", e);
@@ -4569,7 +4702,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/veiculos/local", (req, res) => {
+  app.get(["/api/veiculos", "/api/veiculos/local"], (req, res) => {
     try {
       if (fs.existsSync(VEICULOS_FILE)) {
         const raw = fs.readFileSync(VEICULOS_FILE, "utf-8");
@@ -4578,6 +4711,105 @@ async function startServer() {
       return res.json([]);
     } catch (e: any) {
       return res.json([]);
+    }
+  });
+
+  // Endpoints para Anexo de CNH
+  app.get("/api/cnh/:placa", (req, res) => {
+    try {
+      const cleanPlaca = String(req.params.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      if (!fs.existsSync(CNH_DIR)) return res.status(404).json({ error: "Diretório de CNH não encontrado." });
+      
+      const files = fs.readdirSync(CNH_DIR);
+      const match = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
+      if (!match) {
+        return res.status(404).json({ error: "CNH não encontrada para este veículo." });
+      }
+
+      const filePath = path.join(CNH_DIR, match);
+      const content = fs.readFileSync(filePath, "utf-8");
+      let meta: any = {};
+      const metaPath = path.join(CNH_DIR, `${cleanPlaca}.json`);
+      if (fs.existsSync(metaPath)) {
+        try { meta = JSON.parse(fs.readFileSync(metaPath, "utf-8")); } catch (_) {}
+      }
+
+      return res.json({
+        success: true,
+        placa: cleanPlaca,
+        nomeArquivo: meta.nomeArquivo || match,
+        base64: content
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/cnh/:placa", express.json({ limit: "50mb" }), (req, res) => {
+    try {
+      const cleanPlaca = String(req.params.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      const { base64, nomeArquivo } = req.body || {};
+      if (!base64) return res.status(400).json({ error: "Base64 do arquivo não informado." });
+      const url = saveCnhFileToDisk(cleanPlaca, base64, nomeArquivo);
+      return res.json({ success: true, url, nomeArquivo });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- MAPEAMENTOS DE E-MAILS POR BASE E PLACA (CONFIGURAÇÕES MULTAS & FROTA PESADA) ---
+  const DEFAULT_SERVER_BASE_EMAILS: Record<string, { to: string; cc: string }> = {
+    'AGU': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'CPB': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'JLS': { to: 'rodrigo.mosca@risel.com.br; operacional01.jales@risel.com.br; dyorgines.messaros@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'OUR': { to: 'vinicius.paladino@risel.com.br; frotaor@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'PLN': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'SBC': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
+    'SUPRI': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' }
+  };
+
+  app.get("/api/email-mappings/:tipo", (req, res) => {
+    try {
+      const tipo = String(req.params.tipo || "").toLowerCase();
+      let allMappings: any = {};
+      if (fs.existsSync(EMAIL_MAPPINGS_FILE)) {
+        try {
+          const raw = fs.readFileSync(EMAIL_MAPPINGS_FILE, "utf-8");
+          allMappings = JSON.parse(raw) || {};
+        } catch (_) {}
+      }
+
+      if (tipo === "base") {
+        const baseMap = { ...DEFAULT_SERVER_BASE_EMAILS, ...(allMappings.base || {}) };
+        return res.json(baseMap);
+      }
+      return res.json(allMappings[tipo] || {});
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/email-mappings/:tipo", express.json({ limit: "10mb" }), (req, res) => {
+    try {
+      const tipo = String(req.params.tipo || "").toLowerCase();
+      const mappings = req.body || {};
+      let allMappings: any = {};
+      if (fs.existsSync(EMAIL_MAPPINGS_FILE)) {
+        try {
+          const raw = fs.readFileSync(EMAIL_MAPPINGS_FILE, "utf-8");
+          allMappings = JSON.parse(raw) || {};
+        } catch (_) {}
+      }
+
+      allMappings[tipo] = mappings;
+      allMappings.updated_at = new Date().toISOString();
+
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(EMAIL_MAPPINGS_FILE, JSON.stringify(allMappings, null, 2), "utf-8");
+      return res.json({ success: true, count: Object.keys(mappings).length });
+    } catch (e: any) {
+      console.error("Erro ao salvar mapeamentos de email:", e);
+      return res.status(500).json({ error: e.message });
     }
   });
 
