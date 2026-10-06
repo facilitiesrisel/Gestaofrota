@@ -170,6 +170,11 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
 
   const updateReservation = useCallback(async (id: string, data: Partial<Omit<Reservation, 'id'>>) => {
     setReservations(prev => prev.map(r => r.id === id ? { ...r, ...data } : r));
+    try {
+      window.dispatchEvent(new Event('risel_reservations_updated'));
+      window.dispatchEvent(new Event('risel_reserva_data_updated'));
+    } catch (e) {}
+
     await firebaseApi.updateReservation(id, data);
 
     // Se o status foi alterado para Concluída e possui KM Final, atualiza direto no cadastro do veículo
@@ -362,6 +367,10 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   
   const deleteReservation = useCallback(async (id: string) => {
     setReservations(prev => prev.filter(r => r.id !== id));
+    try {
+      window.dispatchEvent(new Event('risel_reservations_updated'));
+      window.dispatchEvent(new Event('risel_reserva_data_updated'));
+    } catch (e) {}
     try {
       await firebaseApi.deleteReservation(id);
     } catch (err) {

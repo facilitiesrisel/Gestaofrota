@@ -1329,16 +1329,55 @@ async function startServer() {
     return serverFirebaseDb;
   }
 
-  // Rota de atualização garantida de reservas (elimina PERMISSION_DENIED do cliente)
+  // Rota de consulta de reservas com sincronização entre Firestore e arquivo local resiliente
+  app.get("/api/reservations", async (req, res) => {
+    try {
+      const list = loadStoredReservations();
+      
+      // Se tivermos Firestore disponível, tenta mesclar em background ou enriquecer caso a lista local esteja vazia
+      if (list.length === 0) {
+        try {
+          const db = await getServerFirestore();
+          const snap = await db.collection("reservations").orderBy("departureDateTime", "desc").get();
+          if (snap.docs.length > 0) {
+            const firestoreItems = snap.docs.map(d => {
+              const data = d.data();
+              return {
+                ...data,
+                id: d.id,
+                departureDateTime: data.departureDateTime?.toDate ? data.departureDateTime.toDate().toISOString() : data.departureDateTime,
+                returnDate: data.returnDate?.toDate ? data.returnDate.toDate().toISOString() : data.returnDate,
+                actualReturnDateTime: data.actualReturnDateTime?.toDate ? data.actualReturnDateTime.toDate().toISOString() : data.actualReturnDateTime,
+              };
+            });
+            saveStoredReservations(firestoreItems);
+            return res.json(firestoreItems);
+          }
+        } catch (fErr: any) {
+          console.warn("[Server Firestore] Consulta remota de reservas falhou, retornando lista local:", fErr.message);
+        }
+      }
+
+      return res.json(list);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Rota de atualização garantida de reservas (sincroniza Firestore + arquivo local resiliente)
   app.post("/api/reservations/update", express.json(), async (req, res) => {
     try {
       const { id, data } = req.body;
       if (!id) {
         return res.status(400).json({ success: false, error: "ID da reserva obrigatório" });
       }
-      const db = await getServerFirestore();
-      // Converte possíveis strings de data para Date para salvar corretamente no Firestore
-      const cleanData = { ...data };
+
+      // 1. Atualiza e persiste imediatamente no arquivo local data/reservations.json
+      const list = loadStoredReservations();
+      const idx = list.findIndex(r => r.id === id);
+      let updatedItem: any;
+      const cleanData: any = { ...data };
+
       if (cleanData.departureDateTime && typeof cleanData.departureDateTime === "string") {
         cleanData.departureDateTime = new Date(cleanData.departureDateTime);
       }
@@ -1348,25 +1387,66 @@ async function startServer() {
       if (cleanData.actualReturnDateTime && typeof cleanData.actualReturnDateTime === "string") {
         cleanData.actualReturnDateTime = new Date(cleanData.actualReturnDateTime);
       }
-      await db.collection("reservations").doc(id).set(cleanData, { merge: true });
-      console.log(`[Server Firestore] Reserva ${id} atualizada com sucesso no Firestore:`, cleanData.status || "campos atualizados");
-      return res.json({ success: true });
+
+      if (idx !== -1) {
+        list[idx] = { 
+          ...list[idx], 
+          ...data, 
+          id, 
+          updatedAt: new Date().toISOString() 
+        };
+        updatedItem = list[idx];
+      } else {
+        updatedItem = { 
+          id, 
+          ...data, 
+          updatedAt: new Date().toISOString() 
+        };
+        list.unshift(updatedItem);
+      }
+      saveStoredReservations(list);
+      console.log(`[Risel Backend] Reserva ${id} salva no arquivo persistente. Status: ${updatedItem.status}`);
+
+      // 2. Persiste no Firestore com conta administrativa de serviço
+      try {
+        const db = await getServerFirestore();
+        await db.collection("reservations").doc(id).set(cleanData, { merge: true });
+        console.log(`[Server Firestore] Reserva ${id} atualizada com sucesso no Firestore:`, cleanData.status || "campos atualizados");
+      } catch (firestoreErr: any) {
+        console.warn(`[Server Firestore] Aviso ao atualizar Firestore para reserva ${id}:`, firestoreErr.message);
+      }
+
+      return res.json({ success: true, id, updated: updatedItem });
     } catch (err: any) {
-      console.error("[Server Firestore] Erro ao atualizar reserva:", err);
+      console.error("[Server Backend] Erro ao atualizar reserva:", err);
       return res.status(500).json({ success: false, error: err.message });
     }
   });
 
+  // Rota de exclusão de reservas (sincroniza Firestore + arquivo local)
   app.post("/api/reservations/delete", express.json(), async (req, res) => {
     try {
       const { id } = req.body;
       if (!id) {
         return res.status(400).json({ success: false, error: "ID da reserva obrigatório" });
       }
-      const db = await getServerFirestore();
-      await db.collection("reservations").doc(id).delete();
-      console.log(`[Server Firestore] Reserva ${id} removida com sucesso`);
-      return res.json({ success: true });
+
+      // 1. Remove do arquivo local
+      const list = loadStoredReservations();
+      const filtered = list.filter(r => r.id !== id);
+      saveStoredReservations(filtered);
+      console.log(`[Risel Backend] Reserva ${id} removida do arquivo local.`);
+
+      // 2. Remove do Firestore
+      try {
+        const db = await getServerFirestore();
+        await db.collection("reservations").doc(id).delete();
+        console.log(`[Server Firestore] Reserva ${id} removida com sucesso do Firestore`);
+      } catch (firestoreErr: any) {
+        console.warn(`[Server Firestore] Aviso ao deletar no Firestore para reserva ${id}:`, firestoreErr.message);
+      }
+
+      return res.json({ success: true, id });
     } catch (err: any) {
       console.error("[Server Firestore] Erro ao excluir reserva:", err);
       return res.status(500).json({ success: false, error: err.message });
@@ -5509,53 +5589,7 @@ async function startServer() {
     }
   });
 
-  // --- Rotas de Gestão e Persistência de Reservas (Backend Resiliente) ---
-  app.get("/api/reservations", (req, res) => {
-    try {
-      const list = loadStoredReservations();
-      return res.json(list);
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
 
-
-  app.post("/api/reservations/update", express.json(), (req, res) => {
-    try {
-      const { id, data } = req.body;
-      if (!id || !data) return res.status(400).json({ error: "ID ou dados da reserva ausentes." });
-      const list = loadStoredReservations();
-      const idx = list.findIndex(r => r.id === id);
-      let updatedItem;
-      if (idx !== -1) {
-        list[idx] = { ...list[idx], ...data, id, updatedAt: new Date().toISOString() };
-        updatedItem = list[idx];
-      } else {
-        updatedItem = { id, ...data, updatedAt: new Date().toISOString() };
-        list.unshift(updatedItem);
-      }
-      saveStoredReservations(list);
-      console.log(`[Risel Backend] Reserva atualizada com sucesso: ID ${id}, Status: ${updatedItem.status}`);
-      return res.json({ success: true, id, updated: updatedItem });
-    } catch (err: any) {
-      console.error("Erro no /api/reservations/update:", err);
-      return res.status(500).json({ error: err.message || "Erro ao atualizar reserva" });
-    }
-  });
-
-  app.post("/api/reservations/delete", express.json(), (req, res) => {
-    try {
-      const { id } = req.body;
-      if (!id) return res.status(400).json({ error: "ID ausente." });
-      const list = loadStoredReservations();
-      const filtered = list.filter(r => r.id !== id);
-      saveStoredReservations(filtered);
-      console.log(`[Risel Backend] Reserva deletada com sucesso: ID ${id}`);
-      return res.json({ success: true, id });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
 
   // Endpoint de Assistente de IA Administrativo com Gemini (Restrito e Server-Side)
   app.post("/api/gemini-assistant", express.json(), async (req, res) => {

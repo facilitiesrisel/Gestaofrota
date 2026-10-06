@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "motion/react";
-import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users, ExternalLink } from "lucide-react";
+import { Save, AlertCircle, Info, ChevronDown, ChevronUp, Search, Filter, Settings, Trash2, Edit2, MapPin, CalendarDays, Calendar, X, Check, ArrowRight, Clock, AlertTriangle, Bell, SlidersHorizontal, Upload, FileText, Sparkles, CheckSquare, Square, Eye, EyeOff, Database, Server, RefreshCw, Copy, CheckCircle2, ShieldCheck, Zap, Plus, Building, Mail, Layers, GripVertical, RotateCcw, ArrowUp, ArrowDown, Send, Users, ExternalLink, Download } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -548,6 +549,17 @@ export default function Lancamento() {
   const [activeVencTab, setActiveVencTab] = useState("Próximos");
   const [emailSentNotice, setEmailSentNotice] = useState<{ title: string; desc: string } | null>(null);
 
+  // Fecha o drawer de vencimentos ao pressionar Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isVencimentosOpen) {
+        setIsVencimentosOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isVencimentosOpen]);
+
   // Estados para Gestão Completa de Bases / Filiais
   const [isManageBasesModalOpen, setIsManageBasesModalOpen] = useState(false);
   const [newBaseCodigo, setNewBaseCodigo] = useState("");
@@ -1008,13 +1020,13 @@ export default function Lancamento() {
     }
   }, [lancamentos.length]);
 
-  // Vencimentos dinâmicos derivados diretamente dos lançamentos reais (sem dados fictícios)
-  // REQUISITO OFICIAL: Só mostrar alerta de vencimentos próximos para documentos com status de "Aguardando aprovação"
+  // Vencimentos dinâmicos derivados diretamente dos lançamentos reais
+  // REQUISITO OFICIAL: Considerar como Próximos/Em Atraso SOMENTE as faturas com status de "Aguardando Aprovação"
   const vencimentosReais = useMemo(() => {
     return lancamentos
       .filter(item => {
         const s = String(item.status || "").trim().toLowerCase();
-        return s === "aguardando aprovação" || s === "aguardando aprovacao";
+        return s === "aguardando aprovação" || s === "aguardando aprovacao" || s === "aguardando";
       })
       .map(item => {
         const vencCalc = calcularDiasAteVencimento(item.dataVencimento, item.status);
@@ -1035,28 +1047,96 @@ export default function Lancamento() {
   }, [lancamentos]);
 
   // Contas Recorrentes/Mensais Reais calculadas a partir dos lançamentos
+  // REQUISITO OFICIAL: Em Mensais alertar SOMENTE faturas cadastradas como mensais emitidas até a mesma data no mês anterior, que ainda não tiveram lançamento realizado no mês atual.
   const mensaisPendentes = useMemo(() => {
-    return lancamentos
-      .filter(item => {
-        const freq = (item.frequencia || "").toLowerCase();
-        const tipoDoc = (item.tipo || "").toLowerCase();
-        return freq.includes("mensal") || freq.includes("recorrente") || tipoDoc.includes("mensal");
-      })
-      .map(item => {
-        const vencCalc = calcularDiasAteVencimento(item.dataVencimento, item.status);
-        return {
-          id: item.id,
-          fornecedor: item.fornecedor,
-          doc: item.doc,
-          valor: item.valor,
-          vencimento: item.dataVencimento,
-          status: item.status,
-          diasAtraso: vencCalc.days < 0 ? Math.abs(vencCalc.days) : 0,
-          diasText: vencCalc.text,
-          emissaoAnt: item.dataEmissao || item.dataLancamento || new Date().toISOString().split('T')[0],
-          lancamentoOriginal: item
-        };
-      });
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1; // 1-12
+    const currentDay = today.getDate(); // 1-31
+    const currentMonthPrefix = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
+
+    // Determina o mês anterior (tratando virada de ano)
+    const prevMonthDate = new Date(currentYear, today.getMonth() - 1, 1);
+    const prevMonthYear = prevMonthDate.getFullYear();
+    const prevMonth = prevMonthDate.getMonth() + 1; // 1-12
+    const prevMonthPrefix = `${prevMonthYear}-${String(prevMonth).padStart(2, "0")}`;
+
+    // 1. Filtrar lançamentos cadastrados como mensais
+    const lancamentosMensais = lancamentos.filter(item => {
+      const freq = String(item.frequencia || "").trim().toLowerCase();
+      const tipoDoc = String(item.tipo || "").trim().toLowerCase();
+      return freq.includes("mensal") || freq.includes("recorrente") || tipoDoc.includes("mensal");
+    });
+
+    // 2. Mapear fornecedores / CNPJs que JÁ tiveram lançamento realizado no mês corrente
+    const lancadosNoMesAtual = new Set<string>();
+    lancamentos.forEach(item => {
+      const dataEmissaoRef = normalizeDateToInput(item.dataEmissao);
+      const dataLancRef = normalizeDateToInput(item.dataLancamento);
+      const dataVencRef = normalizeDateToInput(item.dataVencimento);
+
+      const isDesteMes = (dataEmissaoRef && dataEmissaoRef.startsWith(currentMonthPrefix)) ||
+                         (dataLancRef && dataLancRef.startsWith(currentMonthPrefix)) ||
+                         (dataVencRef && dataVencRef.startsWith(currentMonthPrefix));
+
+      if (isDesteMes) {
+        const normForn = String(item.fornecedor || "").trim().toUpperCase();
+        const normCnpj = String(item.cnpj || "").replace(/\D/g, "");
+        if (normForn) lancadosNoMesAtual.add(normForn);
+        if (normCnpj) lancadosNoMesAtual.add(normCnpj);
+      }
+    });
+
+    // 3. Identificar faturas mensais emitidas no mês anterior até o dia de hoje que ainda não foram lançadas este mês
+    const pendentesMap = new Map<string, any>();
+
+    lancamentosMensais.forEach(item => {
+      const dataEmissaoRef = normalizeDateToInput(item.dataEmissao || item.dataLancamento);
+      if (!dataEmissaoRef) return;
+
+      // Verifica se a emissão ocorreu no mês anterior
+      if (dataEmissaoRef.startsWith(prevMonthPrefix)) {
+        const parsedEmissao = parseDateToLocalDay(dataEmissaoRef);
+        const diaEmissao = parsedEmissao ? parsedEmissao.getDate() : parseInt(dataEmissaoRef.slice(8, 10), 10);
+
+        // REGRA: "emitidas até a mesma data no mês anterior"
+        if (!isNaN(diaEmissao) && diaEmissao <= currentDay) {
+          const normForn = String(item.fornecedor || "").trim().toUpperCase();
+          const normCnpj = String(item.cnpj || "").replace(/\D/g, "");
+          const chaveUnica = normCnpj ? `cnpj_${normCnpj}` : `forn_${normForn}`;
+
+          // REGRA: "que ainda não tiveram lançamento realizado"
+          const jaLancado = (normForn && lancadosNoMesAtual.has(normForn)) || 
+                            (normCnpj && lancadosNoMesAtual.has(normCnpj));
+
+          if (!jaLancado) {
+            if (!pendentesMap.has(chaveUnica)) {
+              const diffDias = currentDay - diaEmissao;
+              const diasText = diffDias === 0 
+                ? "Emissão esperada para hoje" 
+                : `${diffDias} dia(s) após a data habitual`;
+
+              pendentesMap.set(chaveUnica, {
+                id: item.id,
+                fornecedor: item.fornecedor,
+                cnpj: item.cnpj,
+                doc: item.doc,
+                valor: item.valor,
+                vencimento: item.dataVencimento,
+                emissaoMesAnterior: dataEmissaoRef,
+                diaEmissaoHabitual: diaEmissao,
+                status: "Aguardando Lançamento do Mês",
+                diasText,
+                diffDias,
+                lancamentoOriginal: item
+              });
+            }
+          }
+        }
+      }
+    });
+
+    return Array.from(pendentesMap.values()).sort((a, b) => b.diffDias - a.diffDias);
   }, [lancamentos]);
 
   const [formData, setFormData] = useState(() => ({
@@ -2366,17 +2446,56 @@ export default function Lancamento() {
   const handleEditFromVencimentos = (v: any) => {
     setIsVencimentosOpen(false);
     
+    // Se for um alerta de fatura mensal que ainda não teve lançamento realizado neste mês:
+    // Abre o formulário limpo para criar o NOVO lançamento do mês atual com dados herdados
+    if (v.status === "Aguardando Lançamento do Mês" || v.diaEmissaoHabitual) {
+      const orig = v.lancamentoOriginal || {};
+      const valorLimpo = v.valor ? String(v.valor).replace("R$ ", "").replace(/\./g, "").replace(",", ".").trim() : "";
+      
+      // Projeta vencimento para o mês atual no mesmo dia habitual
+      let projectedVenc = getLocalTodayISO();
+      if (orig.dataVencimento) {
+        const parsedVenc = parseDateToLocalDay(normalizeDateToInput(orig.dataVencimento));
+        if (parsedVenc) {
+          const diaHabitual = parsedVenc.getDate();
+          const hoje = new Date();
+          const mesVenc = hoje.getMonth() + 1;
+          const anoVenc = hoje.getFullYear();
+          projectedVenc = `${anoVenc}-${String(mesVenc).padStart(2, "0")}-${String(diaHabitual).padStart(2, "0")}`;
+        }
+      }
+
+      setEditingId(null);
+      setFormData({
+        ...getInitialFormState(),
+        fornecedor: v.fornecedor || orig.fornecedor || "",
+        cnpj: v.cnpj || orig.cnpj || "",
+        valorNf: valorLimpo,
+        dataEmissao: getLocalTodayISO(),
+        dataVencimento: projectedVenc,
+        codigoLancamento: "",
+        tipo: "Mensal",
+        tipoDocumento: orig.tipo || "NF-e",
+        estabelecimento: orig.estabelecimento || "",
+        centroCusto: orig.centroCusto || "",
+        formaPagamento: orig.formaPagto || orig.formaPagamento || "Boleto",
+        observacao: `Fatura mensal referente ao mês ${String(new Date().getMonth() + 1).padStart(2, "0")}/${new Date().getFullYear()}. Gerado a partir do Alerta de Mensais.`
+      });
+      setIsFormOpen(true);
+      return;
+    }
+
     // Buscar se esse vencimento já tem um lançamento correspondente
     const matchedLancamento = lancamentos.find(item => 
       item.id === v.id || 
-      (v.doc && item.doc.toLowerCase() === v.doc.toLowerCase())
+      (v.doc && item.doc && item.doc.toLowerCase() === v.doc.toLowerCase())
     );
 
     if (matchedLancamento) {
       handleEditLancamento(matchedLancamento);
     } else {
       // Se não houver lançamento, abre o formulário pré-preenchido para criar
-      const valorLimpo = v.valor ? v.valor.replace("R$ ", "").replace(/\./g, "").replace(",", ".") : "";
+      const valorLimpo = v.valor ? String(v.valor).replace("R$ ", "").replace(/\./g, "").replace(",", ".").trim() : "";
       const dataVenc = normalizeDateToInput(v.vencimento) || getLocalTodayISO();
       const docCode = v.doc ? (v.doc.split(" ")[1] || v.doc) : "";
 
@@ -2398,6 +2517,113 @@ export default function Lancamento() {
       ...prev,
       [col]: !prev[col]
     }));
+  };
+
+  // Contagem de vencimentos para visualização nos botões (apenas Aguardando Aprovação com dias >= 0)
+  const proximosVencimentosCount = useMemo(() => vencimentosReais.filter(v => v.dias >= 0).length, [vencimentosReais]);
+
+  // Exportar lançamentos filtrados para arquivo CSV com todos os dados dos lançamentos
+  const handleExportFilteredCSV = () => {
+    if (sortedLancamentos.length === 0) {
+      alert("Nenhum lançamento encontrado com os filtros atuais para exportação.");
+      return;
+    }
+
+    const headers = [
+      "ID Lançamento",
+      "Status",
+      "Fornecedor",
+      "CNPJ / CPF",
+      "Tipo de Documento",
+      "Número do Documento / Fatura",
+      "Código OC",
+      "Código Lançamento",
+      "Descrição / Item",
+      "Valor (R$)",
+      "Valor Numérico",
+      "Data de Emissão",
+      "Data de Vencimento",
+      "Data de Lançamento",
+      "Data de Aprovação",
+      "Estabelecimento / Filial",
+      "Centro de Custo",
+      "Forma de Pagamento",
+      "Frequência",
+      "Alçada de Aprovação / Aprovadores",
+      "Lançado Por",
+      "Cidade",
+      "UF",
+      "Telefone",
+      "E-mail",
+      "Situação do Vencimento",
+      "Dias Restantes / Atraso",
+      "Observações",
+      "Possui Anexos",
+      "Quantidade de Anexos",
+      "Arquivos Anexos"
+    ];
+
+    const escapeCsv = (val: any): string => {
+      if (val === undefined || val === null) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const rows = sortedLancamentos.map(item => {
+      const vencInfo = calcularDiasAteVencimento(item.dataVencimento, item.status);
+      const numVal = parseCurrencyToNumber(item.valor);
+      const anexos = Array.isArray(item.anexos) ? item.anexos : [];
+      const nomesAnexos = anexos.map((a: any) => a?.nome || "").filter(Boolean).join(" | ") || (item.nomeArquivoAnexo || "");
+      const qtdAnexos = anexos.length > 0 ? anexos.length : (item.nomeArquivoAnexo || item.arquivoAnexoBase64 ? 1 : 0);
+      const temAnexo = qtdAnexos > 0 ? "Sim" : "Não";
+
+      return [
+        escapeCsv(item.id),
+        escapeCsv(item.status || "Pendente"),
+        escapeCsv(item.fornecedor || ""),
+        escapeCsv(item.cnpj || ""),
+        escapeCsv(item.tipo || ""),
+        escapeCsv(item.doc || ""),
+        escapeCsv(item.codLancamentoOc || ""),
+        escapeCsv(item.codigoLancamento || ""),
+        escapeCsv(item.descricao || item.itemSistema || ""),
+        escapeCsv(item.valor || ""),
+        escapeCsv(numVal > 0 ? numVal.toFixed(2).replace('.', ',') : "0,00"),
+        escapeCsv(formatDateDisplay(item.dataEmissao)),
+        escapeCsv(formatDateDisplay(item.dataVencimento)),
+        escapeCsv(formatDateDisplay(item.dataLancamento)),
+        escapeCsv(formatDateDisplay(item.dataAprovacao)),
+        escapeCsv(item.estabelecimento || ""),
+        escapeCsv(item.centroCusto || ""),
+        escapeCsv(item.formaPagto || item.formaPagamento || ""),
+        escapeCsv(item.frequencia || "Esporádico"),
+        escapeCsv(item.alcadaAprovacao || item.aprovadores || ""),
+        escapeCsv(item.lancadoPor || ""),
+        escapeCsv(item.cidade || ""),
+        escapeCsv(item.uf || ""),
+        escapeCsv(item.telefone || ""),
+        escapeCsv(item.email || ""),
+        escapeCsv(vencInfo.text),
+        escapeCsv(vencInfo.days),
+        escapeCsv(item.observacao || item.observacoes || ""),
+        escapeCsv(temAnexo),
+        escapeCsv(qtdAnexos),
+        escapeCsv(nomesAnexos)
+      ].join(";");
+    });
+
+    // Adiciona BOM UTF-8 (\uFEFF) para garantir abertura com caracteres corretos no Microsoft Excel
+    const csvContent = "\uFEFF" + [headers.join(";"), ...rows].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const dataHoje = new Date().toISOString().slice(0, 10);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `lancamentos_documentos_${dataHoje}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -2455,11 +2681,33 @@ export default function Lancamento() {
             <div className="flex items-center gap-2">
 
               <button 
-                onClick={() => setIsVencimentosOpen(true)}
-                className="px-3 py-2 rounded-xl text-xs font-bold bg-amber-50/50 hover:bg-amber-100/70 text-amber-700 border border-amber-200/50 transition-all flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer"
+                onClick={() => setIsVencimentosOpen(prev => !prev)}
+                className={cn(
+                  "px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer",
+                  isVencimentosOpen 
+                    ? "bg-amber-100 text-amber-900 border border-amber-300 ring-2 ring-amber-400/30 font-extrabold" 
+                    : "bg-amber-50/50 hover:bg-amber-100/70 text-amber-700 border border-amber-200/50"
+                )}
+                title={isVencimentosOpen ? "Fechar painel de vencimentos" : "Ver alertas de vencimentos e faturas mensais"}
               >
                 <CalendarDays className="w-3.5 h-3.5 text-amber-600" />
                 <span>Vencimentos</span>
+                {proximosVencimentosCount > 0 && (
+                  <span className="bg-amber-500 text-white text-[9px] font-extrabold px-1.5 py-0.2 rounded-full">
+                    {proximosVencimentosCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Botão discreto de exportação CSV de acordo com o filtro solicitado */}
+              <button 
+                onClick={handleExportFilteredCSV}
+                title={`Exportar ${sortedLancamentos.length} lançamentos filtrados para arquivo CSV completo`}
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 hover:border-slate-300 transition-all flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Exportar CSV</span>
+                <span className="text-[10px] text-slate-400 font-semibold">({sortedLancamentos.length})</span>
               </button>
 
               {/* Seletor Discreto de Colunas e Reordenação Personalizada */}
@@ -4183,36 +4431,37 @@ export default function Lancamento() {
               onClick={() => setIsVencimentosOpen(false)}
             />
 
-            <div className="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10">
+            <div className="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-6 sm:pl-10">
               <motion.div 
                 initial={{ x: "100%" }}
                 animate={{ x: 0 }}
                 exit={{ x: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                className="pointer-events-auto w-screen max-w-md"
+                className="pointer-events-auto w-screen max-w-md h-full flex flex-col"
               >
-                <div className="flex h-full flex-col overflow-y-scroll bg-white shadow-2xl border-l border-slate-200">
-                  {/* Header */}
-                  <div className="bg-[#114D38] px-6 py-6 text-white">
-                    <div className="flex items-start justify-between">
+                <div className="flex h-full flex-col bg-white shadow-2xl border-l border-slate-200 overflow-hidden">
+                  {/* Header fixo - NUNCA some da tela com a rolagem */}
+                  <div className="bg-[#114D38] px-6 py-5 text-white shrink-0 sticky top-0 z-20 shadow-sm">
+                    <div className="flex items-center justify-between">
                       <div>
                         <h2 className="text-xl font-bold font-display" id="slide-over-title">Alertas e Vencimentos</h2>
-                        <p className="mt-1 text-xs text-emerald-100">Controle discreto de vencimentos de faturas</p>
+                        <p className="mt-1 text-xs text-emerald-100">Controle de vencimentos e faturas mensais pendentes</p>
                       </div>
-                      <div className="ml-3 flex h-7 items-center">
+                      <div className="ml-3 flex items-center">
                         <button
                           type="button"
-                          className="rounded-md text-emerald-200 hover:text-white outline-none focus:ring-2 focus:ring-white cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-900/80 hover:bg-emerald-900 text-white font-bold text-xs border border-emerald-600/50 shadow-sm transition-all cursor-pointer"
                           onClick={() => setIsVencimentosOpen(false)}
+                          title="Fechar painel de vencimentos (Esc)"
                         >
-                          <span className="sr-only">Fechar painel</span>
-                          <X className="h-6 w-6" aria-hidden="true" />
+                          <X className="w-4 h-4" />
+                          <span>Fechar</span>
                         </button>
                       </div>
                     </div>
 
                     {/* Tabs */}
-                    <div className="mt-6 flex bg-[#0c3728] p-1 rounded-lg border border-emerald-800/40">
+                    <div className="mt-5 flex bg-[#0c3728] p-1 rounded-xl border border-emerald-800/40">
                       {["Próximos", "Em Atraso", "Mensais"].map(tab => {
                         const proximos = vencimentosReais.filter(v => v.dias >= 0);
                         const atrasados = vencimentosReais.filter(v => v.dias < 0);
@@ -4223,29 +4472,33 @@ export default function Lancamento() {
                             type="button"
                             onClick={() => setActiveVencTab(tab)}
                             className={cn(
-                              "flex-1 text-center py-2 text-xs font-bold rounded-md transition-all cursor-pointer",
+                              "flex-1 text-center py-2 text-xs font-bold rounded-lg transition-all cursor-pointer",
                               activeVencTab === tab
-                                ? "bg-white text-[#114D38] shadow"
+                                ? "bg-white text-[#114D38] shadow-sm"
                                 : "text-emerald-100/70 hover:text-white"
                             )}
                           >
                             {tab}
-                            {tab === "Próximos" && <span className="ml-1 bg-emerald-500 text-white px-1.5 py-0.5 rounded-full text-[9px]">{proximos.length}</span>}
-                            {tab === "Em Atraso" && <span className="ml-1 bg-rose-500 text-white px-1.5 py-0.5 rounded-full text-[9px]">{atrasados.length}</span>}
-                            {tab === "Mensais" && <span className="ml-1 bg-amber-500 text-white px-1.5 py-0.5 rounded-full text-[9px]">{mensaisPendentes.length}</span>}
+                            {tab === "Próximos" && <span className="ml-1 bg-emerald-500 text-white px-1.5 py-0.5 rounded-full text-[9px] font-extrabold">{proximos.length}</span>}
+                            {tab === "Em Atraso" && <span className="ml-1 bg-rose-500 text-white px-1.5 py-0.5 rounded-full text-[9px] font-extrabold">{atrasados.length}</span>}
+                            {tab === "Mensais" && <span className="ml-1 bg-amber-500 text-white px-1.5 py-0.5 rounded-full text-[9px] font-extrabold">{mensaisPendentes.length}</span>}
                           </button>
                         );
                       })}
                     </div>
                   </div>
 
-                  {/* Content */}
-                  <div className="relative flex-1 px-6 py-6 bg-slate-50">
+                  {/* Conteúdo com rolagem independente */}
+                  <div className="relative flex-1 overflow-y-auto px-6 py-5 bg-slate-50 min-h-0">
                     <div className="space-y-4">
                       {activeVencTab === "Próximos" && (
                         vencimentosReais.filter(v => v.dias >= 0).length === 0 ? (
-                          <div className="text-center py-8 text-slate-400 font-bold text-xs">
-                            Nenhum vencimento próximo cadastrado.
+                          <div className="text-center py-10 px-4 bg-white rounded-2xl border border-slate-200/80 shadow-2xs">
+                            <div className="w-10 h-10 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center mx-auto mb-2">
+                              <Calendar className="w-5 h-5" />
+                            </div>
+                            <p className="text-slate-700 font-bold text-xs">Nenhum vencimento próximo aguardando aprovação.</p>
+                            <p className="text-[11px] text-slate-400 mt-1">Apenas faturas com status "Aguardando Aprovação" com vencimento futuro são listadas aqui.</p>
                           </div>
                         ) : (
                           vencimentosReais.filter(v => v.dias >= 0).map(v => (
@@ -4262,7 +4515,7 @@ export default function Lancamento() {
                                   <span className="font-bold text-sm text-slate-800 mr-2">{v.valor}</span>
                                   <button
                                     onClick={() => handleEditFromVencimentos(v)}
-                                    className="p-1 rounded bg-slate-100 hover:bg-[#114D38]/10 text-slate-500 hover:text-[#114D38] transition-colors cursor-pointer"
+                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-[#114D38]/10 text-slate-500 hover:text-[#114D38] transition-colors cursor-pointer"
                                     title="Editar este lançamento direto"
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
@@ -4276,8 +4529,9 @@ export default function Lancamento() {
 
                       {activeVencTab === "Em Atraso" && (
                         vencimentosReais.filter(v => v.dias < 0).length === 0 ? (
-                          <div className="text-center py-8 text-emerald-600 font-bold text-xs">
-                            🎉 Nenhuma fatura em atraso no momento!
+                          <div className="text-center py-10 px-4 bg-white rounded-2xl border border-emerald-100 shadow-2xs">
+                            <p className="text-emerald-700 font-bold text-xs">🎉 Nenhuma fatura em atraso no momento!</p>
+                            <p className="text-[11px] text-slate-400 mt-1">Todas as faturas aguardando aprovação estão dentro do prazo de vencimento.</p>
                           </div>
                         ) : (
                           vencimentosReais.filter(v => v.dias < 0).map(v => (
@@ -4294,7 +4548,7 @@ export default function Lancamento() {
                                   <span className="font-bold text-sm text-rose-600 mr-2">{v.valor}</span>
                                   <button
                                     onClick={() => handleEditFromVencimentos(v)}
-                                    className="p-1 rounded bg-slate-100 hover:bg-[#114D38]/10 text-slate-500 hover:text-[#114D38] transition-colors cursor-pointer"
+                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-[#114D38]/10 text-slate-500 hover:text-[#114D38] transition-colors cursor-pointer"
                                     title="Editar este lançamento direto"
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
@@ -4312,8 +4566,10 @@ export default function Lancamento() {
                             <div className="w-10 h-10 rounded-full bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mx-auto mb-2">
                               <Calendar className="w-5 h-5" />
                             </div>
-                            <p className="text-slate-700 font-bold text-xs">Nenhum lançamento recorrente/mensal cadastrado.</p>
-                            <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">Ao cadastrar ou editar um lançamento, escolha a frequência <span className="font-bold text-amber-700">"Mensal"</span> para acompanhá-lo nesta guia.</p>
+                            <p className="text-slate-700 font-bold text-xs">Nenhuma fatura mensal pendente para hoje (dia {new Date().getDate()}).</p>
+                            <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                              Alertamos faturas mensais emitidas até a mesma data no mês anterior que ainda não tiveram lançamento neste mês.
+                            </p>
                           </div>
                         ) : (
                           mensaisPendentes.map(v => (
@@ -4323,18 +4579,18 @@ export default function Lancamento() {
                                 <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded">{v.diasText}</span>
                               </div>
                               <h4 className="font-bold text-sm text-slate-800">{v.fornecedor}</h4>
-                              <p className="text-xs text-slate-500 font-medium mt-1">{v.doc} • {v.valor}</p>
+                              <p className="text-xs text-slate-500 font-medium mt-1">{v.doc || 'Fatura Recorrente'} • {v.valor}</p>
                               <p className="text-[11px] text-slate-400 mt-2 flex items-center gap-1 mb-2">
-                                <Clock className="w-3.5 h-3.5" /> Data: {formatDateDisplay(v.vencimento)}
+                                <Clock className="w-3.5 h-3.5" /> Emissão Habitual: dia {v.diaEmissaoHabitual} ({formatDateDisplay(v.emissaoMesAnterior)})
                               </p>
                               <div className="border-t border-slate-100 pt-2 flex justify-end">
                                 <button
                                   onClick={() => handleEditFromVencimentos(v)}
-                                  className="px-3 py-1.5 rounded-lg bg-[#114D38]/10 hover:bg-[#114D38]/20 text-[#114D38] font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                                  title="Editar este lançamento direto"
+                                  className="px-3 py-1.5 rounded-lg bg-[#114D38] hover:bg-[#0d3b2b] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                                  title="Abrir novo lançamento pré-preenchido para este mês"
                                 >
                                   <Edit2 className="w-3 h-3" />
-                                  <span>Lançar / Editar Fatura</span>
+                                  <span>Novo Lançamento do Mês</span>
                                 </button>
                               </div>
                             </div>
@@ -4342,6 +4598,23 @@ export default function Lancamento() {
                         )
                       )}
                     </div>
+                  </div>
+
+                  {/* Rodapé Fixo com Botão Claro e Visual para Fechar */}
+                  <div className="shrink-0 bg-white border-t border-slate-200 px-6 py-3.5 flex items-center justify-between gap-3 shadow-md z-20">
+                    <span className="text-xs text-slate-500 font-semibold">
+                      {activeVencTab === "Próximos" && `${vencimentosReais.filter(v => v.dias >= 0).length} faturas aguardando aprovação`}
+                      {activeVencTab === "Em Atraso" && `${vencimentosReais.filter(v => v.dias < 0).length} faturas em atraso`}
+                      {activeVencTab === "Mensais" && `${mensaisPendentes.length} pendentes do mês`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsVencimentosOpen(false)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Fechar Painel</span>
+                    </button>
                   </div>
                 </div>
               </motion.div>
