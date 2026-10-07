@@ -481,22 +481,22 @@ const ReservationsView: React.FC = () => {
     e.preventDefault();
     if (!selectedReservation) return;
 
-    if (!finalizeFormData.actualReturnDateTime) {
-      showToast("Informe a data e hora de devolução efetiva.", "error");
-      return;
+    // Data e horário: qualquer data e horário sem restrições (retroativa, presente ou futura)
+    let returnDateObj = new Date();
+    if (finalizeFormData.actualReturnDateTime) {
+      const parsedDate = new Date(finalizeFormData.actualReturnDateTime);
+      if (!isNaN(parsedDate.getTime())) {
+        returnDateObj = parsedDate;
+      }
     }
 
-    const finalKmNum = parseInt(finalizeFormData.finalKm, 10);
-    if (!finalizeFormData.finalKm || isNaN(finalKmNum) || finalKmNum <= 0) {
-      showToast("É obrigatório informar o KM Final do veículo para concluir a reserva.", "error");
-      return;
-    }
-
-    const currentVeh = vehicles.find(v => v.id === selectedReservation.vehicleId);
-    const minAllowedKm = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
-    if (minAllowedKm > 0 && finalKmNum < minAllowedKm) {
-      showToast(`O KM final (${finalKmNum} km) não pode ser menor que o KM atual registrado (${minAllowedKm} km).`, "error");
-      return;
+    // KM: qualquer KM sem restrições (pode ser qualquer número positivo, zero ou livre)
+    let finalKmNum: number | null = null;
+    if (finalizeFormData.finalKm !== undefined && finalizeFormData.finalKm !== null && String(finalizeFormData.finalKm).trim() !== '') {
+      const parsedKm = Number(finalizeFormData.finalKm);
+      if (!isNaN(parsedKm)) {
+        finalKmNum = parsedKm;
+      }
     }
 
     try {
@@ -504,11 +504,15 @@ const ReservationsView: React.FC = () => {
         selectedReservation.id,
         selectedReservation.vehicleId,
         finalKmNum,
-        new Date(finalizeFormData.actualReturnDateTime)
+        returnDateObj
       );
       setIsFinalizeModalOpen(false);
       setSelectedReservation(null);
-      showToast(`Reserva concluída com sucesso! Cadastro do veículo atualizado para ${finalKmNum.toLocaleString('pt-BR')} km.`, 'success');
+      if (finalKmNum !== null) {
+        showToast(`Reserva concluída com sucesso! Hodômetro atualizado para ${finalKmNum.toLocaleString('pt-BR')} km.`, 'success');
+      } else {
+        showToast('Reserva concluída com sucesso!', 'success');
+      }
     } catch (e: any) {
       showToast(e.message || "Erro ao concluir reserva.", 'error');
     }
@@ -827,35 +831,35 @@ const ReservationsView: React.FC = () => {
 
                <div>
                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                   Data e Hora Efetiva de Devolução <span className="text-red-500">*</span>
+                   Data e Hora Efetiva de Devolução <span className="text-emerald-700 font-semibold">(Sem restrições)</span>
                  </label>
                  <input 
                    type="datetime-local" 
                    value={finalizeFormData.actualReturnDateTime} 
                    onChange={e => setFinalizeFormData({...finalizeFormData, actualReturnDateTime: e.target.value})} 
-                   required 
                    className="w-full text-sm border border-slate-300 p-2.5 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none" 
                  />
+                 <p className="text-[11px] text-slate-500 mt-1">
+                   Admin: Permite digitar qualquer data e horário retroativo ou futuro sem restrições.
+                 </p>
                </div>
 
                <div>
                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                   KM Final no Hodômetro <span className="text-red-500">* (Obrigatório)</span>
+                   KM Final no Hodômetro <span className="text-emerald-700 font-semibold">(Sem restrições)</span>
                  </label>
                  <div className="relative">
                    <input 
                      type="number" 
-                     placeholder={`Ex: ${currentKm > 0 ? currentKm + 50 : 50000}`}
+                     placeholder="Digite qualquer KM desejado"
                      value={finalizeFormData.finalKm} 
                      onChange={e => setFinalizeFormData({...finalizeFormData, finalKm: e.target.value})} 
-                     required
-                     min={currentKm > 0 ? currentKm : 1}
                      className="w-full text-sm border border-slate-300 p-2.5 pr-14 rounded-xl font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none" 
                    />
                    <span className="absolute right-3.5 top-2.5 text-xs font-bold text-slate-400 pointer-events-none">KM</span>
                  </div>
-                 <p className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1 font-medium">
-                   <span>⚡</span> Este valor atualizará diretamente o hodômetro no cadastro do veículo.
+                 <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1 font-medium">
+                   <span>⚡</span> Admin: Permite digitar qualquer quilometragem sem limites mínimos ou bloqueios.
                  </p>
                </div>
 

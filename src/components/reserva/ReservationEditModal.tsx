@@ -49,19 +49,12 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validação estrita se o status for Concluída
-    if (formData.status === ReservationStatus.Completed) {
-      const finalKmNum = Number(formData.finalKm);
-      if (!formData.finalKm || isNaN(finalKmNum) || finalKmNum <= 0) {
-        alert("Para alterar o status da reserva para Concluída, é obrigatório informar o KM Final do veículo.");
-        return;
-      }
-
-      const currentVeh = vehicles.find(v => v.id === formData.vehicleId);
-      const minAllowed = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
-      if (minAllowed > 0 && finalKmNum < minAllowed) {
-        alert(`O KM final (${finalKmNum} km) não pode ser menor que o hodômetro atual do veículo (${minAllowed} km).`);
-        return;
+    // Se o status for Concluída, processa KM final caso digitado (qualquer valor sem restrições)
+    let processedFinalKm: number | undefined = undefined;
+    if (formData.finalKm !== undefined && formData.finalKm !== null && String(formData.finalKm).trim() !== '') {
+      const parsedKm = Number(formData.finalKm);
+      if (!isNaN(parsedKm)) {
+        processedFinalKm = parsedKm;
       }
     }
 
@@ -81,6 +74,8 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
         departureDateTime: formData.departureDateTime ? new Date(formData.departureDateTime as any) : undefined,
         // Support saving full Return Date & Time
         returnDate: formData.returnDate ? parseDateTime(String(formData.returnDate)) : undefined,
+        actualReturnDateTime: formData.actualReturnDateTime ? new Date(formData.actualReturnDateTime as any) : undefined,
+        finalKm: processedFinalKm !== undefined ? processedFinalKm : (formData.finalKm !== undefined ? Number(formData.finalKm) : undefined),
         distanceKm: formData.distanceKm ? Number(formData.distanceKm) : undefined,
     };
 
@@ -160,47 +155,47 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
               const currentVeh = vehicles.find(v => v.id === formData.vehicleId);
               const currentKm = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
               return (
-                <div className="md:col-span-2 bg-amber-50/70 p-4 rounded-xl border border-amber-300 space-y-3">
-                  <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
+                <div className="md:col-span-2 bg-emerald-50/70 p-4 rounded-xl border border-emerald-300 space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-900 font-bold text-sm">
                     <span>🏁</span>
-                    <span>Dados de Conclusão e Devolução do Veículo (Obrigatórios)</span>
+                    <span>Dados de Conclusão e Devolução do Veículo (Sem restrições)</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Hodômetro / KM Final <span className="text-red-600">* (Obrigatório)</span>
+                        Hodômetro / KM Final <span className="text-emerald-700 font-semibold">(Livre / Sem restrições)</span>
                       </label>
                       <div className="relative">
                         <input
                           type="number"
                           name="finalKm"
-                          required
-                          min={currentKm > 0 ? currentKm : 1}
                           value={formData.finalKm || ''}
                           onChange={handleChange}
-                          placeholder={`Mínimo: ${currentKm} km`}
-                          className="w-full text-sm border border-amber-300 bg-white p-2.5 pr-12 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                          placeholder="Digite qualquer KM desejado"
+                          className="w-full text-sm border border-emerald-300 bg-white p-2.5 pr-12 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
                         />
                         <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400">KM</span>
                       </div>
-                      <p className="text-[11px] text-amber-800 mt-1">
-                        KM atual do veículo: <strong>{currentKm.toLocaleString('pt-BR')} km</strong>. Atualizará o cadastro do veículo.
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        KM atual do veículo: <strong>{currentKm.toLocaleString('pt-BR')} km</strong>. Permitido qualquer valor sem bloqueios.
                       </p>
                     </div>
 
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Data e Hora Efetiva de Devolução <span className="text-red-600">*</span>
+                        Data e Hora Efetiva de Devolução <span className="text-emerald-700 font-semibold">(Sem restrições)</span>
                       </label>
                       <input
                         type="datetime-local"
                         name="actualReturnDateTime"
-                        required
                         value={formData.actualReturnDateTime ? new Date(formData.actualReturnDateTime).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16)}
                         onChange={(e) => setFormData({ ...formData, actualReturnDateTime: new Date(e.target.value) as any })}
-                        className="w-full text-sm border border-amber-300 bg-white p-2.5 rounded-lg text-slate-900 focus:ring-2 focus:ring-amber-500"
+                        className="w-full text-sm border border-emerald-300 bg-white p-2.5 rounded-lg text-slate-900 focus:ring-2 focus:ring-emerald-500"
                       />
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        Permitido digitar qualquer data/hora retroativa ou futura.
+                      </p>
                     </div>
                   </div>
                 </div>

@@ -177,8 +177,8 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
 
     await firebaseApi.updateReservation(id, data);
 
-    // Se o status foi alterado para Concluída e possui KM Final, atualiza direto no cadastro do veículo
-    if (data.status === ReservationStatus.Completed && data.finalKm !== undefined && data.finalKm !== null && Number(data.finalKm) > 0) {
+    // Se o status foi alterado para Concluída e possui KM Final, atualiza direto no cadastro do veículo (qualquer KM sem restrições)
+    if (data.status === ReservationStatus.Completed && data.finalKm !== undefined && data.finalKm !== null && !isNaN(Number(data.finalKm))) {
       const finalKmNum = Number(data.finalKm);
       const targetVehicleId = data.vehicleId || reservations.find(r => r.id === id)?.vehicleId;
       if (targetVehicleId) {
@@ -385,23 +385,22 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         throw new Error("Reserva não encontrada para finalizar.");
     }
 
-    if (finalKm === null || finalKm === undefined || Number(finalKm) <= 0) {
-      throw new Error("É obrigatório informar o KM Final do veículo para concluir a reserva.");
-    }
-
-    const finalKmNum = Number(finalKm);
-
     try {
       const updateData: any = {
         status: ReservationStatus.Completed,
-        actualReturnDateTime,
-        finalKm: finalKmNum,
+        actualReturnDateTime: actualReturnDateTime || new Date(),
       };
 
-      // Atualiza o cadastro do veículo imediatamente na UI e no backend
-      setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, lastKm: finalKmNum } : v));
-      await firebaseApi.updateVehicle(vehicleId, { lastKm: finalKmNum });
-      checkAndSendMaintenanceAlert(vehicleId, finalKmNum);
+      // Aceita qualquer KM digitado sem restrições
+      if (finalKm !== null && finalKm !== undefined && !isNaN(Number(finalKm))) {
+        const finalKmNum = Number(finalKm);
+        updateData.finalKm = finalKmNum;
+
+        // Atualiza o cadastro do veículo na UI e no backend
+        setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, lastKm: finalKmNum } : v));
+        await firebaseApi.updateVehicle(vehicleId, { lastKm: finalKmNum });
+        checkAndSendMaintenanceAlert(vehicleId, finalKmNum);
+      }
 
       // Atualiza a reserva na UI e no backend
       setReservations(prev => prev.map(r => r.id === id ? { ...r, ...updateData } : r));
