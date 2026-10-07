@@ -2675,12 +2675,6 @@ export default function Lancamento() {
                   <p className="text-[10px] text-slate-400 font-bold">
                     {lancamentos.length} documentos salvos
                   </p>
-                  {isAuthorizedRestoreUser && (
-                    <span className="inline-flex items-center gap-1 text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60" title="Sincronização em tempo real ativa no Render e Supabase (Exclusivo Deny Gonçalves)">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Tempo Real Ativo
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
