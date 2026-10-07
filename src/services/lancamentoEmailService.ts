@@ -536,12 +536,12 @@ export function generateLancamentoAprovacaoEmailHtml(data: LancamentoEmailData):
  */
 export async function sendLancamentoAprovacaoEmail(data: LancamentoEmailData): Promise<boolean> {
   // Destinatários principais: usar os passados em data.destinatariosPara ou o padrão
-  const targetTo = (data.destinatariosPara && data.destinatariosPara.length > 0)
+  const targetTo = (Array.isArray(data.destinatariosPara) && data.destinatariosPara.length > 0)
     ? Array.from(new Set(data.destinatariosPara.filter(Boolean)))
     : DEFAULT_LANCAMENTO_TO_EMAILS;
 
-  // Cópia (CC): usar os passados em data.destinatariosCc ou o padrão
-  const targetCc = (data.destinatariosCc && data.destinatariosCc.length > 0)
+  // Cópia (CC): se o usuário informou a lista (inclusive vazia []), respeita integralmente
+  const targetCc = Array.isArray(data.destinatariosCc)
     ? Array.from(new Set(data.destinatariosCc.filter(Boolean)))
     : DEFAULT_LANCAMENTO_CC_EMAILS;
   

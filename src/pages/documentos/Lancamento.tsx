@@ -449,6 +449,7 @@ export default function Lancamento() {
 
   // Acesso exclusivo de restauração e segurança: somente deny.goncalves@risel.com.br
   const currentEmail = (user?.email || "").toLowerCase().trim();
+  const userEmailLogado = currentEmail;
   const isAuthorizedRestoreUser = Boolean(
     currentEmail === 'deny.goncalves@risel.com.br' ||
     currentEmail === 'deny.risel@gmail.com'
@@ -1987,14 +1988,17 @@ export default function Lancamento() {
         data: { ...formData, docName, id: editingId }
       });
     } else {
-      // Ao salvar, em vez de disparar o e-mail direto, abre modal para o usuário escolher destinatários e cópias
+      // Ao salvar e enviar e-mail, por padrão manter SOMENTE o e-mail do usuário que está realizando o lançamento
+      const userEmailLogado = (user?.email || "").toLowerCase().trim();
+      const defaultUserEmail = userEmailLogado || "deny.goncalves@risel.com.br";
+
       setEmailDispatchModal({
         isOpen: true,
         editingId: editingId,
         docData: { ...formData, id: editingId },
         calculatedDocName: docName,
-        toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
-        ccRecipients: [...DEFAULT_LANCAMENTO_CC_EMAILS],
+        toRecipients: [defaultUserEmail],
+        ccRecipients: [],
         newToInput: "",
         newCcInput: "",
         isSaving: false,
@@ -2206,8 +2210,10 @@ export default function Lancamento() {
       savedItem.status = "Aguardando Aprovação";
       savedItem.dataAprovacao = "";
       await saveLancamentoUnified(savedItem);
-      const paraLista = options.toRecipients && options.toRecipients.length > 0 ? options.toRecipients : DEFAULT_LANCAMENTO_TO_EMAILS;
-      const ccLista = options.ccRecipients || DEFAULT_LANCAMENTO_CC_EMAILS;
+      const userEmailLogado = (user?.email || "").toLowerCase().trim();
+      const defaultUserEmail = userEmailLogado || "deny.goncalves@risel.com.br";
+      const paraLista = options.toRecipients && options.toRecipients.length > 0 ? options.toRecipients : [defaultUserEmail];
+      const ccLista = options.ccRecipients !== undefined ? options.ccRecipients : [];
 
       sendLancamentoAprovacaoEmail({
         ...savedItem,
@@ -2218,9 +2224,10 @@ export default function Lancamento() {
       }).then(sent => {
         if (sent) {
           const saudacaoUsada = getSaudacaoDestinatarios(paraLista);
+          const textoCc = ccLista.length > 0 ? ` com cópia para ${ccLista.join(", ")}.` : ".";
           setEmailSentNotice({
             title: "E-mail de Aprovação Enviado",
-            desc: `E-mail de aprovação (${saudacaoUsada}) encaminhado para ${paraLista.join(", ")} com cópia para ${ccLista.join(", ")}.`
+            desc: `E-mail de aprovação (${saudacaoUsada}) encaminhado para ${paraLista.join(", ")}${textoCc}`
           });
           setTimeout(() => setEmailSentNotice(null), 8000);
         }
@@ -2310,8 +2317,8 @@ export default function Lancamento() {
         dataAprovacao: item.dataAprovacao
       },
       calculatedDocName: item.doc,
-      toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
-      ccRecipients: [...DEFAULT_LANCAMENTO_CC_EMAILS],
+      toRecipients: [userEmailLogado || "deny.goncalves@risel.com.br"],
+      ccRecipients: [],
       newToInput: "",
       newCcInput: "",
       isSaving: false,
@@ -4403,8 +4410,8 @@ export default function Lancamento() {
                     editingId: duplicateWarning.data.id !== undefined ? duplicateWarning.data.id : editingId,
                     docData: duplicateWarning.data,
                     calculatedDocName: duplicateWarning.data.docName,
-                    toRecipients: [...DEFAULT_LANCAMENTO_TO_EMAILS],
-                    ccRecipients: [...DEFAULT_LANCAMENTO_CC_EMAILS],
+                    toRecipients: [userEmailLogado || "deny.goncalves@risel.com.br"],
+                    ccRecipients: [],
                     newToInput: "",
                     newCcInput: "",
                     isSaving: false,
@@ -5160,11 +5167,52 @@ export default function Lancamento() {
                   )}
                 </div>
 
+                {/* Helper com informação de padrão e sugestões rápidas corporativas */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-1 text-[11px] text-slate-500">
+                  <span className="font-semibold text-emerald-800 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block" />
+                    Padrão: Apenas o e-mail do autor do lançamento. Você pode incluir livremente mais destinatários.
+                  </span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">Adicionar rápido:</span>
+                    {[
+                      { nome: "Cesar", email: "csouza@risel.com.br" },
+                      { nome: "Wesley", email: "wbreda@risel.com.br" },
+                      { nome: "Deny", email: "deny.goncalves@risel.com.br" },
+                      { nome: "Lorena", email: "lorena.padilha@risel.com.br" }
+                    ].map(sug => {
+                      const jaAdicionado = emailDispatchModal.toRecipients.includes(sug.email);
+                      return (
+                        <button
+                          key={sug.email}
+                          type="button"
+                          disabled={jaAdicionado}
+                          onClick={() => {
+                            setEmailDispatchModal(prev => prev ? {
+                              ...prev,
+                              toRecipients: Array.from(new Set([...prev.toRecipients, sug.email]))
+                            } : null);
+                          }}
+                          className={cn(
+                            "px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors cursor-pointer",
+                            jaAdicionado 
+                              ? "bg-slate-100 text-slate-400 border-slate-200 cursor-default opacity-60" 
+                              : "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200"
+                          )}
+                          title={jaAdicionado ? "Já está nos destinatários" : `Adicionar ${sug.nome} (${sug.email}) aos destinatários`}
+                        >
+                          + {sug.nome}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {/* Adicionar novo e-mail To */}
                 <div className="flex gap-2 pt-1">
                   <input
                     type="email"
-                    placeholder="Adicionar outro e-mail (ex: diretor@risel.com.br)..."
+                    placeholder="Digite ou cole e-mails (pode separar por vírgula ou espaço)..."
                     value={emailDispatchModal.newToInput}
                     onChange={(e) =>
                       setEmailDispatchModal((prev) => (prev ? { ...prev, newToInput: e.target.value } : null))
@@ -5172,13 +5220,14 @@ export default function Lancamento() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        const val = emailDispatchModal.newToInput.trim().toLowerCase();
-                        if (val && val.includes("@") && !emailDispatchModal.toRecipients.includes(val)) {
+                        const raw = emailDispatchModal.newToInput.trim().toLowerCase();
+                        const emails = raw.split(/[,;\s]+/).filter(item => item && item.includes("@"));
+                        if (emails.length > 0) {
                           setEmailDispatchModal((prev) =>
                             prev
                               ? {
                                   ...prev,
-                                  toRecipients: [...prev.toRecipients, val],
+                                  toRecipients: Array.from(new Set([...prev.toRecipients, ...emails])),
                                   newToInput: ""
                                 }
                               : null
@@ -5191,13 +5240,14 @@ export default function Lancamento() {
                   <button
                     type="button"
                     onClick={() => {
-                      const val = emailDispatchModal.newToInput.trim().toLowerCase();
-                      if (val && val.includes("@") && !emailDispatchModal.toRecipients.includes(val)) {
+                      const raw = emailDispatchModal.newToInput.trim().toLowerCase();
+                      const emails = raw.split(/[,;\s]+/).filter(item => item && item.includes("@"));
+                      if (emails.length > 0) {
                         setEmailDispatchModal((prev) =>
                           prev
                             ? {
                                 ...prev,
-                                toRecipients: [...prev.toRecipients, val],
+                                toRecipients: Array.from(new Set([...prev.toRecipients, ...emails])),
                                 newToInput: ""
                               }
                             : null
@@ -5269,16 +5319,51 @@ export default function Lancamento() {
                   })}
                   {emailDispatchModal.ccRecipients.length === 0 && (
                     <span className="text-xs text-slate-400 italic p-1">
-                      Nenhum e-mail em cópia configurado.
+                      Nenhum e-mail em cópia configurado (opcional).
                     </span>
                   )}
+                </div>
+
+                {/* Sugestões rápidas para CC */}
+                <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase">Adicionar em Cópia:</span>
+                  {[
+                    { nome: "Lorena", email: "lorena.padilha@risel.com.br" },
+                    { nome: "Deny", email: "deny.goncalves@risel.com.br" },
+                    { nome: "Cesar", email: "csouza@risel.com.br" },
+                    { nome: "Wesley", email: "wbreda@risel.com.br" }
+                  ].map(sug => {
+                    const jaAdicionado = emailDispatchModal.ccRecipients.includes(sug.email);
+                    return (
+                      <button
+                        key={sug.email}
+                        type="button"
+                        disabled={jaAdicionado}
+                        onClick={() => {
+                          setEmailDispatchModal(prev => prev ? {
+                            ...prev,
+                            ccRecipients: Array.from(new Set([...prev.ccRecipients, sug.email]))
+                          } : null);
+                        }}
+                        className={cn(
+                          "px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors cursor-pointer",
+                          jaAdicionado 
+                            ? "bg-slate-100 text-slate-400 border-slate-200 cursor-default opacity-60" 
+                            : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-300"
+                        )}
+                        title={jaAdicionado ? "Já está em cópia" : `Adicionar ${sug.nome} (${sug.email}) em cópia`}
+                      >
+                        + {sug.nome}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Adicionar novo e-mail CC */}
                 <div className="flex gap-2 pt-1">
                   <input
                     type="email"
-                    placeholder="Adicionar e-mail em cópia..."
+                    placeholder="Digite ou cole e-mails em cópia (pode separar por vírgula)..."
                     value={emailDispatchModal.newCcInput}
                     onChange={(e) =>
                       setEmailDispatchModal((prev) => (prev ? { ...prev, newCcInput: e.target.value } : null))
@@ -5286,13 +5371,14 @@ export default function Lancamento() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        const val = emailDispatchModal.newCcInput.trim().toLowerCase();
-                        if (val && val.includes("@") && !emailDispatchModal.ccRecipients.includes(val)) {
+                        const raw = emailDispatchModal.newCcInput.trim().toLowerCase();
+                        const emails = raw.split(/[,;\s]+/).filter(item => item && item.includes("@"));
+                        if (emails.length > 0) {
                           setEmailDispatchModal((prev) =>
                             prev
                               ? {
                                   ...prev,
-                                  ccRecipients: [...prev.ccRecipients, val],
+                                  ccRecipients: Array.from(new Set([...prev.ccRecipients, ...emails])),
                                   newCcInput: ""
                                 }
                               : null
@@ -5305,13 +5391,14 @@ export default function Lancamento() {
                   <button
                     type="button"
                     onClick={() => {
-                      const val = emailDispatchModal.newCcInput.trim().toLowerCase();
-                      if (val && val.includes("@") && !emailDispatchModal.ccRecipients.includes(val)) {
+                      const raw = emailDispatchModal.newCcInput.trim().toLowerCase();
+                      const emails = raw.split(/[,;\s]+/).filter(item => item && item.includes("@"));
+                      if (emails.length > 0) {
                         setEmailDispatchModal((prev) =>
                           prev
                             ? {
                                 ...prev,
-                                ccRecipients: [...prev.ccRecipients, val],
+                                ccRecipients: Array.from(new Set([...prev.ccRecipients, ...emails])),
                                 newCcInput: ""
                               }
                             : null
