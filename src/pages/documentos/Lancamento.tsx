@@ -2327,7 +2327,7 @@ export default function Lancamento() {
     });
   };
 
-  // Alteração e persistência direta de status na linha da tabela
+  // Alteração e persistência direta de status na linha da tabela (sem disparo automático de e-mail)
   const handleInlineStatusChange = async (id: number, newStatus: string) => {
     const existing = lancamentos.find(item => Number(item.id) === Number(id));
     if (!existing) return;
@@ -2348,30 +2348,12 @@ export default function Lancamento() {
       dataAprovacao: dataAprovacao
     };
 
+    // Atualiza estado local de imediato para resposta visual instantânea na interface
+    setLancamentos(prev => prev.map(item => Number(item.id) === Number(id) ? updatedItem : item));
+
+    // Salva no banco de dados e sincroniza eventos
     await saveLancamentoUnified(updatedItem);
     window.dispatchEvent(new Event("risel_lancamentos_updated"));
-
-    // Se o status for alterado para Aguardando aprovação ou Aprovado, dispara o e-mail oficial correspondente
-    if (newStatus.toLowerCase().includes("aguardando") || newStatus.toLowerCase().includes("aprovado")) {
-      sendLancamentoAprovacaoEmail({
-        ...updatedItem,
-        columnOrder,
-        visibleCols
-      }).then(sent => {
-        if (sent) {
-          const isAppr = newStatus.toLowerCase().includes("aprovado");
-          setEmailSentNotice({
-            title: isAppr ? "E-mail de Homologação / Aprovação Enviado" : "E-mail de Aprovação Enviado",
-            desc: isAppr
-              ? `E-mail corporativo com identidade visual de APROVADO e anexo original encaminhado para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
-              : `E-mail com anexo e tabela formatada encaminhado automaticamente para lorena.padilha@risel.com.br e deny.goncalves@risel.com.br.`
-          });
-          setTimeout(() => setEmailSentNotice(null), 8000);
-        }
-      }).catch(err => {
-        console.warn("Falha no disparo de e-mail ao alterar status:", err);
-      });
-    }
   };
 
   // Abrir o formulário de edição de Lançamento

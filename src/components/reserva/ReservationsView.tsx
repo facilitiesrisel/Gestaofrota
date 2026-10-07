@@ -14,7 +14,7 @@ import { AdditionalRecipientsInput } from './AdditionalRecipientsInput';
 import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
 import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
-import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList, RefreshCw } from 'lucide-react';
+import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList, RefreshCw, Flag } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor } from '../../utils/setorOperacional';
@@ -1389,6 +1389,11 @@ const ReservationsView: React.FC = () => {
                                   </td>
                                   <td className="px-6 py-4">{getStatusChip(res.status)}</td>
                                   <td className="px-6 py-4 flex gap-2 justify-end">
+                                      {res.status === ReservationStatus.InUse && (
+                                          <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-emerald-150 cursor-pointer" title="Finalizar Reserva / Concluir Devolução">
+                                              <Flag className="h-4 w-4" />
+                                          </button>
+                                      )}
                                       <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-blue-150 cursor-pointer" title="Ver / Editar"><PencilIcon className="h-5 w-5"/></button>
                                       <button onClick={() => handleOpenDeleteModal(res)} className="text-gray-400 hover:text-red-600 hover:bg-gray-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-red-150 cursor-pointer" title="Excluir"><TrashIcon className="h-5 w-5"/></button>
                                   </td>
@@ -1548,10 +1553,17 @@ const ReservationsView: React.FC = () => {
                                       {res.status === ReservationStatus.Approved && (
                                           <>
                                               <button onClick={() => handleStartReservation(res)} className="text-green-700 p-1 cursor-pointer" title="Iniciar Viagem"><PlayIcon className="h-6 w-6" /></button>
+                                              <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 p-1 cursor-pointer" title="Finalizar Reserva"><Flag className="h-6 w-6" /></button>
                                               <button onClick={() => handleCancel(res)} className="text-gray-500 hover:text-red-600 p-1 cursor-pointer" title="Cancelar"><XCircleIcon className="h-6 w-6" /></button>
+                                              <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-emerald-150 cursor-pointer" title="Finalizar Reserva / Concluir Devolução">
+                                                  <Flag className="h-4 w-4" />
+                                              </button>
                                           </>
                                       )}
                                       
+                                      {res.status === ReservationStatus.InUse && (
+                                          <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 p-1 cursor-pointer" title="Finalizar Reserva"><Flag className="h-6 w-6" /></button>
+                                      )}
                                       <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 p-1 cursor-pointer" title="Editar"><PencilIcon className="h-6 w-6"/></button>
                                       <button onClick={() => handleOpenDeleteModal(res)} className="text-gray-400 hover:text-red-600 p-1 cursor-pointer" title="Excluir"><TrashIcon className="h-6 w-6"/></button>
                                 </div>
