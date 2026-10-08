@@ -111,18 +111,23 @@ const UserDailyUseForm: React.FC = () => {
 
     const { user: globalUser } = useGlobalAuth();
 
-    // Acesso de Administrador: liberado no computador e no celular
+    // Acesso de Administrador: permitido no computador APENAS se estiver autenticado no ERP com perfil admin
     const isAdmin = Boolean(
-        (globalUser && (
+        globalUser && (
             globalUser.role === 'admin' ||
             globalUser.permissions?.admin === true ||
-            globalUser.email?.toLowerCase().includes('deny') ||
             globalUser.email?.toLowerCase() === 'deny.goncalves@risel.com.br' ||
             globalUser.email?.toLowerCase() === 'deny.risel@gmail.com'
-        )) ||
-        localStorage.getItem("reserva_admin_logado") === "true" ||
-        localStorage.getItem("risel_session") !== null
+        )
     );
+
+    useEffect(() => {
+        if (!isAdmin) {
+            try {
+                localStorage.removeItem("reserva_admin_logado");
+            } catch (e) {}
+        }
+    }, [isAdmin]);
 
     // Detecção segura de dispositivo Celular / Mobile
     const checkIsMobileDevice = (): boolean => {

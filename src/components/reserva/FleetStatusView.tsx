@@ -105,12 +105,12 @@ interface FleetStatusViewProps {
 const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation, isAdmin: propIsAdmin }) => {
     const { vehicles, reservations, dailyTrips, isLoading } = useReservations();
     const { user: globalUser } = useGlobalAuth();
-    const { user: resUser } = useReservationAuth();
     const isAuthAdmin = Boolean(
-        (globalUser && globalUser.email) || 
-        (resUser && !resUser.isAnonymous) || 
-        localStorage.getItem("reserva_admin_logado") === "true" ||
-        localStorage.getItem("risel_session") !== null
+        globalUser && (
+            globalUser.role === 'admin' || 
+            globalUser.permissions?.admin === true ||
+            globalUser.email?.toLowerCase() === 'deny.goncalves@risel.com.br'
+        )
     );
     const isAdmin = propIsAdmin !== undefined ? propIsAdmin : isAuthAdmin;
     const [, setSearchParams] = useSearchParams();

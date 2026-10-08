@@ -281,13 +281,21 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean }> = ({ forcePubli
     const [searchParams] = useSearchParams();
     const subParam = searchParams.get("sub");
     
-    const isUserAdmin = Boolean((globalUser && globalUser.email) || (fbUser && !fbUser.isAnonymous));
+    const isUserAdmin = Boolean(
+        !forcePublic && 
+        globalUser && 
+        (globalUser.role === 'admin' || globalUser.permissions?.admin === true || globalUser.email?.toLowerCase() === 'deny.goncalves@risel.com.br')
+    );
 
     useEffect(() => {
         if (!loading) {
             const currentStored = localStorage.getItem("reserva_admin_logado") === "true";
             if (isUserAdmin !== currentStored) {
-                localStorage.setItem("reserva_admin_logado", isUserAdmin ? "true" : "false");
+                if (isUserAdmin) {
+                    localStorage.setItem("reserva_admin_logado", "true");
+                } else {
+                    localStorage.removeItem("reserva_admin_logado");
+                }
                 window.dispatchEvent(new Event("risel_submodule_auth_change"));
             }
         }

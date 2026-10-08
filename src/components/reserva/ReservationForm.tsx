@@ -49,9 +49,14 @@ interface ReservationFormProps {
 
 const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onSuccess }) => {
   const { vehicles, reservations, dailyTrips, addReservation, getVehicleById } = useReservations();
-  const { user } = useAuth();
   const { user: globalUser } = useGlobalAuth();
-  const isAdmin = Boolean((user && !user.isAnonymous) || (globalUser && globalUser.email));
+  const isAdmin = Boolean(
+    globalUser && (
+      globalUser.role === 'admin' ||
+      globalUser.permissions?.admin === true ||
+      globalUser.email?.toLowerCase() === 'deny.goncalves@risel.com.br'
+    )
+  );
 
   const [formData, setFormData] = useState({
     requesterName: globalUser?.name ? globalUser.name.toUpperCase() : '',
