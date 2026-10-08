@@ -14,7 +14,7 @@ import { AdditionalRecipientsInput } from './AdditionalRecipientsInput';
 import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
 import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
-import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList, RefreshCw, Flag } from 'lucide-react';
+import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList, RefreshCw } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor } from '../../utils/setorOperacional';
@@ -37,6 +37,21 @@ const formatDuration = (start: Date | string, end: Date | string) => {
     if (days === 0 && minutes > 0) parts.push(`${minutes}m`);
     
     return parts.join(' ') || '0m';
+};
+
+const isReservationArchived = (s: any): boolean => {
+  const str = String(s || '').toLowerCase().trim();
+  return str === 'concluída' || str === 'concluida' || str === 'completed' || str === 'finalizada' || str === 'finalizado' ||
+         str === 'rejeitada' || str === 'rejeitado' || str === 'rejected' ||
+         str === 'cancelada' || str === 'cancelado' || str === 'cancelled';
+};
+
+const isReservationActive = (s: any): boolean => {
+  const str = String(s || '').toLowerCase().trim();
+  if (isReservationArchived(str)) return false;
+  return str === 'pendente' || str === 'pending' ||
+         str === 'aprovada' || str === 'aprovado' || str === 'approved' ||
+         str === 'em uso' || str === 'inuse' || str === 'in_use';
 };
 
 const ReservationsView: React.FC = () => {
@@ -65,9 +80,8 @@ const ReservationsView: React.FC = () => {
   const overdueReservations = useMemo(() => {
     const now = new Date();
     return reservations.filter(res => {
-        // Apenas reservas "Aprovada" ou "Em Uso" (ativas)
-        const isActive = [ReservationStatus.Approved, ReservationStatus.InUse].includes(res.status);
-        if (!isActive) return false;
+        // Apenas reservas ativas (não concluídas ou arquivadas)
+        if (!isReservationActive(res.status) || isReservationArchived(res.status)) return false;
 
         const returnLimit = new Date(res.returnDate);
         return now > returnLimit;
@@ -80,11 +94,11 @@ const ReservationsView: React.FC = () => {
   }, [overdueReservations, readNotificationIds]);
 
   const activeReservationsCount = useMemo(() => {
-    return reservations.filter(r => [ReservationStatus.Pending, ReservationStatus.Approved, ReservationStatus.InUse].includes(r.status)).length;
+    return reservations.filter(r => isReservationActive(r.status) && !isReservationArchived(r.status)).length;
   }, [reservations]);
 
   const historyReservationsCount = useMemo(() => {
-    return reservations.filter(r => [ReservationStatus.Completed, ReservationStatus.Rejected, ReservationStatus.Cancelled].includes(r.status)).length;
+    return reservations.filter(r => isReservationArchived(r.status)).length;
   }, [reservations]);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null);
@@ -540,11 +554,11 @@ const ReservationsView: React.FC = () => {
       : [];
 
     return reservations.filter(res => {
-        // Aba ativa x histórico
+        // Aba ativa x histórico (blindagem contra qualquer variação ortográfica ou legado)
         if (activeTab === 'active') {
-            if (![ReservationStatus.Pending, ReservationStatus.Approved, ReservationStatus.InUse].includes(res.status)) return false;
+            if (!isReservationActive(res.status) || isReservationArchived(res.status)) return false;
         } else {
-            if (![ReservationStatus.Completed, ReservationStatus.Rejected, ReservationStatus.Cancelled].includes(res.status)) return false;
+            if (!isReservationArchived(res.status)) return false;
         }
 
         if (filterStartDate && new Date(res.departureDateTime) < new Date(filterStartDate)) return false;
@@ -1389,11 +1403,6 @@ const ReservationsView: React.FC = () => {
                                   </td>
                                   <td className="px-6 py-4">{getStatusChip(res.status)}</td>
                                   <td className="px-6 py-4 flex gap-2 justify-end">
-                                      {res.status === ReservationStatus.InUse && (
-                                          <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-emerald-150 cursor-pointer" title="Finalizar Reserva / Concluir Devolução">
-                                              <Flag className="h-4 w-4" />
-                                          </button>
-                                      )}
                                       <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-blue-150 cursor-pointer" title="Ver / Editar"><PencilIcon className="h-5 w-5"/></button>
                                       <button onClick={() => handleOpenDeleteModal(res)} className="text-gray-400 hover:text-red-600 hover:bg-gray-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-red-150 cursor-pointer" title="Excluir"><TrashIcon className="h-5 w-5"/></button>
                                   </td>
@@ -1553,17 +1562,10 @@ const ReservationsView: React.FC = () => {
                                       {res.status === ReservationStatus.Approved && (
                                           <>
                                               <button onClick={() => handleStartReservation(res)} className="text-green-700 p-1 cursor-pointer" title="Iniciar Viagem"><PlayIcon className="h-6 w-6" /></button>
-                                              <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 p-1 cursor-pointer" title="Finalizar Reserva"><Flag className="h-6 w-6" /></button>
                                               <button onClick={() => handleCancel(res)} className="text-gray-500 hover:text-red-600 p-1 cursor-pointer" title="Cancelar"><XCircleIcon className="h-6 w-6" /></button>
-                                              <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-emerald-150 cursor-pointer" title="Finalizar Reserva / Concluir Devolução">
-                                                  <Flag className="h-4 w-4" />
-                                              </button>
                                           </>
                                       )}
                                       
-                                      {res.status === ReservationStatus.InUse && (
-                                          <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 p-1 cursor-pointer" title="Finalizar Reserva"><Flag className="h-6 w-6" /></button>
-                                      )}
                                       <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 p-1 cursor-pointer" title="Editar"><PencilIcon className="h-6 w-6"/></button>
                                       <button onClick={() => handleOpenDeleteModal(res)} className="text-gray-400 hover:text-red-600 p-1 cursor-pointer" title="Excluir"><TrashIcon className="h-6 w-6"/></button>
                                 </div>

@@ -1329,35 +1329,52 @@ async function startServer() {
     return serverFirebaseDb;
   }
 
+  function normalizeReservationStatus(status: any): string {
+    if (!status) return "Pendente";
+    const s = String(status).toLowerCase().trim();
+    if (s === "completed" || s === "concluída" || s === "concluida" || s === "finalizada" || s === "finalizado") return "Concluída";
+    if (s === "inuse" || s === "in_use" || s === "em uso" || s === "em_uso") return "Em Uso";
+    if (s === "pending" || s === "pendente") return "Pendente";
+    if (s === "approved" || s === "aprovada" || s === "aprovado") return "Aprovada";
+    if (s === "rejected" || s === "rejeitada" || s === "rejeitado") return "Rejeitada";
+    if (s === "cancelled" || s === "cancelada" || s === "cancelado") return "Cancelada";
+    return status;
+  }
+
   // Rota de consulta de reservas com sincronização entre Firestore e arquivo local resiliente
   app.get("/api/reservations", async (req, res) => {
     try {
-      const list = loadStoredReservations();
-      
-      // Se tivermos Firestore disponível, tenta mesclar em background ou enriquecer caso a lista local esteja vazia
-      if (list.length === 0) {
-        try {
-          const db = await getServerFirestore();
-          const snap = await db.collection("reservations").orderBy("departureDateTime", "desc").get();
-          if (snap.docs.length > 0) {
-            const firestoreItems = snap.docs.map(d => {
-              const data = d.data();
-              return {
-                ...data,
-                id: d.id,
-                departureDateTime: data.departureDateTime?.toDate ? data.departureDateTime.toDate().toISOString() : data.departureDateTime,
-                returnDate: data.returnDate?.toDate ? data.returnDate.toDate().toISOString() : data.returnDate,
-                actualReturnDateTime: data.actualReturnDateTime?.toDate ? data.actualReturnDateTime.toDate().toISOString() : data.actualReturnDateTime,
-              };
-            });
-            saveStoredReservations(firestoreItems);
-            return res.json(firestoreItems);
-          }
-        } catch (fErr: any) {
-          console.warn("[Server Firestore] Consulta remota de reservas falhou, retornando lista local:", fErr.message);
+      // 1. Tenta sincronizar com o Firestore para garantir dados em tempo real atualizados
+      try {
+        const db = await getServerFirestore();
+        const snapPromise = db.collection("reservations").orderBy("departureDateTime", "desc").get();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2500));
+        const snap: any = await Promise.race([snapPromise, timeoutPromise]);
+        if (snap && snap.docs && snap.docs.length > 0) {
+          const firestoreItems = snap.docs.map((d: any) => {
+            const data = d.data();
+            return {
+              ...data,
+              id: d.id,
+              status: normalizeReservationStatus(data.status),
+              departureDateTime: data.departureDateTime?.toDate ? data.departureDateTime.toDate().toISOString() : data.departureDateTime,
+              returnDate: data.returnDate?.toDate ? data.returnDate.toDate().toISOString() : data.returnDate,
+              actualReturnDateTime: data.actualReturnDateTime?.toDate ? data.actualReturnDateTime.toDate().toISOString() : data.actualReturnDateTime,
+              requestTimestamp: data.requestTimestamp?.toDate ? data.requestTimestamp.toDate().toISOString() : data.requestTimestamp,
+            };
+          });
+          saveStoredReservations(firestoreItems);
+          return res.json(firestoreItems);
         }
+      } catch (fErr: any) {
+        console.warn("[Server Firestore] Consulta remota falhou ou excedeu tempo, usando cache local persistente:", fErr.message);
       }
 
+      // 2. Fallback resiliente: lê arquivo local persistente com status devidamente normalizados
+      const list = loadStoredReservations().map(r => ({
+        ...r,
+        status: normalizeReservationStatus(r.status)
+      }));
       return res.json(list);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

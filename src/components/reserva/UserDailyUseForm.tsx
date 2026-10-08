@@ -469,6 +469,13 @@ const UserDailyUseForm: React.FC = () => {
     const handleEndSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+
+        // Validação de dispositivo obrigatório (Celular) para usuários não-administradores
+        if (!isMobile && !isAdmin) {
+            setError("O encerramento do Uso Diário deve ser realizado exclusivamente pelo Celular para garantir a conferência fidedigna do odômetro e nível do tanque no veículo.");
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+        }
         
         if (!activeTripId || !activeTrip) {
             setError("Viagem ativa não encontrada.");

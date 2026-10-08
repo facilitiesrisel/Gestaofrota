@@ -1086,6 +1086,7 @@ export const getReservationsFromLocalStorage = (): Reservation[] => {
     if (Array.isArray(parsed)) {
       return parsed.map((item: any) => ({
         ...item,
+        status: normalizeStatus(item.status),
         departureDateTime: item.departureDateTime ? new Date(item.departureDateTime) : new Date(),
         returnDate: item.returnDate ? new Date(item.returnDate) : new Date(),
         actualReturnDateTime: item.actualReturnDateTime ? new Date(item.actualReturnDateTime) : undefined,
@@ -1217,7 +1218,7 @@ export const getReservations = async (): Promise<Reservation[]> => {
         const isRecent = (recent && (Date.now() - recent.timestamp < 30000)) || 
                          (persistent && (Date.now() - persistent.timestamp < 30000));
         
-        let finalStatus = remoteRes.status;
+        let finalStatus = normalizeStatus(remoteRes.status);
         let finalNotes = remoteRes.adminNotes;
 
         if (isRecent) {
@@ -1282,10 +1283,14 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                         ...(existing || b),
                         ...b,
                         ...overrideData,
-                        status: overrideData.status ? normalizeStatus(overrideData.status) : b.status
+                        status: overrideData.status ? normalizeStatus(overrideData.status) : normalizeStatus(b.status)
                     });
                 } else {
-                    map.set(b.id, { ...(existing || {}), ...b });
+                    map.set(b.id, { 
+                        ...(existing || {}), 
+                        ...b,
+                        status: normalizeStatus(b.status || existing?.status)
+                    });
                 }
             });
             const merged = Array.from(map.values()).sort((a, b) => 
