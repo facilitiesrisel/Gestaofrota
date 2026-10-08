@@ -1,11 +1,17 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useReservations } from '../../context/ReservationContext';
+import { useAuth as useGlobalAuth } from '../../context/AuthContext';
 import { FuelLevel, ReservationStatus } from '../../types_reserva';
 import { SP_CITIES, ADMIN_EMAIL_RECIPIENTS } from '../../constants_reserva';
 import { getSubmoduleRecipientsSync } from '../../services/emailRecipientsService';
 import { ExclamationTriangleIcon, SteeringWheelIcon, CheckIcon, CarIcon } from './icons';
-import { Clock, Check as LucideCheck, AlertTriangle, Car as LucideCar, Unlink, MapPin, Gauge, Fuel, CheckCircle2, ChevronRight, RefreshCw } from 'lucide-react';
+import { 
+  Clock, Check as LucideCheck, AlertTriangle, Car as LucideCar, Unlink, MapPin, Gauge, Fuel, 
+  CheckCircle2, ChevronRight, RefreshCw, Smartphone, QrCode, Copy, Check, ShieldCheck, 
+  AlertCircle, Info, ExternalLink, Share2, ArrowRight
+} from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { calculateDrivingDistance } from '../../services/distanceService';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import DailyUseGuideModal from './DailyUseGuideModal';
@@ -102,6 +108,65 @@ const UserDailyUseForm: React.FC = () => {
         title: '',
         content: null,
     });
+
+    const { user: globalUser } = useGlobalAuth();
+
+    // Acesso de Administrador: liberado no computador e no celular
+    const isAdmin = Boolean(
+        (globalUser && (
+            globalUser.role === 'admin' ||
+            globalUser.permissions?.admin === true ||
+            globalUser.email?.toLowerCase().includes('deny') ||
+            globalUser.email?.toLowerCase() === 'deny.goncalves@risel.com.br' ||
+            globalUser.email?.toLowerCase() === 'deny.risel@gmail.com'
+        )) ||
+        localStorage.getItem("reserva_admin_logado") === "true" ||
+        localStorage.getItem("risel_session") !== null
+    );
+
+    // Detecção segura de dispositivo Celular / Mobile
+    const checkIsMobileDevice = (): boolean => {
+        if (typeof window === 'undefined') return false;
+        const ua = (navigator.userAgent || navigator.vendor || (window as any).opera || '').toLowerCase();
+        const isMobileUA = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|crios|fennec/i.test(ua);
+        const hasTouch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+        const isSmallScreen = window.innerWidth <= 768;
+        
+        const isMobileData = (navigator as any)?.userAgentData?.mobile;
+        if (typeof isMobileData === 'boolean') {
+            return isMobileData || (hasTouch && isSmallScreen);
+        }
+
+        return isMobileUA || (hasTouch && isSmallScreen);
+    };
+
+    const [isMobile, setIsMobile] = useState<boolean>(() => checkIsMobileDevice());
+    const [copiedLink, setCopiedLink] = useState(false);
+
+    useEffect(() => {
+        const handleResize = () => {
+            setIsMobile(checkIsMobileDevice());
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    const mobileDailyUseUrl = `${window.location.origin}/reservas?tab=dailyUse`;
+
+    const handleCopyLink = () => {
+        if (navigator?.clipboard?.writeText) {
+            navigator.clipboard.writeText(mobileDailyUseUrl).then(() => {
+                setCopiedLink(true);
+                setTimeout(() => setCopiedLink(false), 3000);
+            }).catch(() => {
+                setCopiedLink(true);
+                setTimeout(() => setCopiedLink(false), 3000);
+            });
+        } else {
+            setCopiedLink(true);
+            setTimeout(() => setCopiedLink(false), 3000);
+        }
+    };
 
     useEffect(() => {
         const updateMinTime = () => {
@@ -243,6 +308,14 @@ const UserDailyUseForm: React.FC = () => {
 
     const handleStartSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        // Validação de dispositivo obrigatório (Celular) para usuários não-administradores
+        if (!isMobile && !isAdmin) {
+            setError("As solicitações de Uso Diário são permitidas exclusivamente pelo Celular para garantir a confiabilidade dos dados da frota (leitura real do odômetro e conferência do tanque no veículo).");
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+        }
+
         setIsLoading(true);
         setError('');
         try {
@@ -522,6 +595,179 @@ const UserDailyUseForm: React.FC = () => {
         );
     }
     
+    // Informativo para computadores / desktops (para não-administradores)
+    if (!isMobile && !isAdmin) {
+        return (
+            <div className="w-full bg-white md:rounded-[24px] shadow-sm border border-slate-200 overflow-hidden text-left font-sans animate-fadeIn">
+                <DailyUseGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+
+                {/* Header Institucional Risel */}
+                <div className="bg-gradient-to-r from-[#114D38] via-[#0d3b2b] to-[#114D38] p-5 sm:p-6 text-white border-b border-emerald-900">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[11px] font-bold text-emerald-200 uppercase tracking-wider mb-2">
+                                Frota Leve Risel &bull; Diretriz Operacional
+                            </div>
+                            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                                Diário de Bordo • Uso Diário
+                            </h2>
+                        </div>
+
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-200 text-xs font-bold self-start sm:self-center shadow-xs">
+                            <Smartphone className="w-4 h-4 text-amber-300 animate-pulse" />
+                            <span>Solicitação Exclusiva no Celular</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-6 sm:p-8 bg-slate-50/60 space-y-6">
+                    {/* BANNER PRINCIPAL COM INFORMATIVO DE CONFIABILIDADE */}
+                    <div className="bg-gradient-to-br from-amber-50 via-white to-orange-50/40 border-2 border-amber-300/80 rounded-2xl p-6 shadow-sm">
+                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-5 border-b border-amber-200/60">
+                            <div className="flex items-start gap-3.5">
+                                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#114D38] to-[#0a3123] text-white flex items-center justify-center shrink-0 shadow-md ring-4 ring-emerald-100">
+                                    <Smartphone className="w-6 h-6 text-amber-300" />
+                                </div>
+                                <div>
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300/60">
+                                        Confiabilidade dos Dados & Auditoria
+                                    </span>
+                                    <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">
+                                        O Uso Diário deve ser solicitado direto pelo Celular
+                                    </h3>
+                                    <p className="text-xs text-slate-600 font-medium mt-1 leading-relaxed max-w-2xl">
+                                        Para assegurar a máxima confiabilidade dos registros da frota, as solicitações e encerramentos de Uso Diário são permitidos <strong>exclusivamente a partir do celular</strong>, estando presencialmente no interior do veículo.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* MOTIVOS DA REGRA OPERACIONAL */}
+                        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+                                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center">
+                                    <Gauge className="w-4 h-4" />
+                                </div>
+                                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                                    KM Real do Hodômetro
+                                </h4>
+                                <p className="text-[11px] text-slate-600 leading-normal">
+                                    Evita digitações de quilometragem estimadas ou incorretas. O motorista confere a leitura exata no painel antes de sair.
+                                </p>
+                            </div>
+
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+                                <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center">
+                                    <Fuel className="w-4 h-4" />
+                                </div>
+                                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                                    Nível do Tanque Preciso
+                                </h4>
+                                <p className="text-[11px] text-slate-600 leading-normal">
+                                    Elimina informações de combustível divergentes, registrando o estado visual autêntico do marcador na saída e no retorno.
+                                </p>
+                            </div>
+
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+                                <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center">
+                                    <LucideCar className="w-4 h-4" />
+                                </div>
+                                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                                    Presença Obrigatória no Veículo
+                                </h4>
+                                <p className="text-[11px] text-slate-600 leading-normal">
+                                    Impede aberturas antecipadas à distância enquanto o condutor ainda não assumiu a direção do carro na garagem.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* SEÇÃO COM QR CODE E LINK PARA O CELULAR */}
+                    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                        <div className="flex flex-col md:flex-row items-center gap-6 justify-between">
+                            <div className="space-y-3 max-w-md">
+                                <div className="inline-flex items-center gap-2 text-xs font-extrabold text-[#114D38]">
+                                    <QrCode className="w-4 h-4" />
+                                    <span>Como abrir no seu smartphone agora:</span>
+                                </div>
+                                <h4 className="text-base font-black text-slate-900 leading-snug">
+                                    Aponte a câmera do seu celular para o QR Code ao lado
+                                </h4>
+                                <p className="text-xs text-slate-500 leading-relaxed">
+                                    Você será direcionado diretamente ao Diário de Bordo móvel para selecionar o veículo e conferir o painel com a ignição ligada.
+                                </p>
+
+                                {/* Link e Botão de Cópia */}
+                                <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                    <div className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-[11px] font-mono text-slate-700 truncate select-all">
+                                        {mobileDailyUseUrl}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleCopyLink}
+                                        className="px-4 py-2 bg-[#114D38] hover:bg-[#0c3929] text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-sm"
+                                    >
+                                        {copiedLink ? (
+                                            <>
+                                                <Check className="w-3.5 h-3.5 text-emerald-300" />
+                                                <span>Link Copiado!</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Copy className="w-3.5 h-3.5" />
+                                                <span>Copiar Link</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+
+                                <div className="pt-1">
+                                    <a
+                                        href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Link do Diário de Bordo Risel para Celular: ${mobileDailyUseUrl}`)}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline"
+                                    >
+                                        <Share2 className="w-3.5 h-3.5" />
+                                        <span>Enviar link para mim mesmo no WhatsApp</span>
+                                    </a>
+                                </div>
+                            </div>
+
+                            {/* QR CODE CONTAINER */}
+                            <div className="flex flex-col items-center justify-center p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-emerald-300 shadow-inner shrink-0">
+                                <div className="p-3 bg-white rounded-xl shadow-md border border-slate-200">
+                                    <QRCodeSVG 
+                                        value={mobileDailyUseUrl} 
+                                        size={140}
+                                        level="M"
+                                        fgColor="#00361C"
+                                    />
+                                </div>
+                                <span className="text-[10px] font-black uppercase text-slate-500 mt-2 tracking-wider">
+                                    Escaneie com a Câmera
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* ALERTA SE HOUVER VIAGEM EM ANDAMENTO */}
+                    {activeTripId && (
+                        <div className="p-4 bg-amber-50 border border-amber-300 text-amber-900 rounded-2xl flex items-start gap-3">
+                            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                            <div className="text-xs">
+                                <p className="font-extrabold uppercase">Atenção: Viagem em Andamento</p>
+                                <p className="mt-0.5">
+                                    Consta uma utilização ativa registrada. Para concluir a devolução do veículo (KM final e nível do tanque), acesse também pelo celular diretamente junto ao painel do carro para registro fidedigno.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="w-full bg-white md:rounded-[24px] shadow-sm border border-slate-200 overflow-hidden text-left font-sans">
             <DailyUseGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
@@ -557,6 +803,21 @@ const UserDailyUseForm: React.FC = () => {
                     </button>
                 </div>
             </div>
+
+            {/* Aviso Informativo para Administradores que acessam pelo Computador */}
+            {isAdmin && !isMobile && (
+                <div className="bg-gradient-to-r from-emerald-950 via-[#0a3123] to-[#114D38] border-b border-emerald-700/60 px-5 py-3 text-xs text-emerald-100 flex items-center justify-between gap-3 shadow-inner">
+                    <div className="flex items-center gap-2.5">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span className="font-bold">
+                            Modo Administrador Ativo: Acesso liberado no computador para fins de gestão operacional da frota.
+                        </span>
+                    </div>
+                    <span className="text-[10px] bg-emerald-800/90 text-emerald-200 px-2.5 py-0.5 rounded-full font-mono font-black border border-emerald-600/50 uppercase tracking-wider shrink-0">
+                        ADMINISTRADOR
+                    </span>
+                </div>
+            )}
 
             <div className="p-5 sm:p-8 bg-slate-50/50 space-y-6">
                 {error && (

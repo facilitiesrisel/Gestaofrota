@@ -135,7 +135,7 @@ const PublicLayout: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="w-full md:max-w-3xl mx-auto bg-white md:rounded-[24px] md:shadow-sm h-full md:h-auto overflow-y-auto md:mt-4 md:mb-8 border border-slate-200">
+                        <div className="w-full md:max-w-4xl mx-auto bg-white md:rounded-[24px] md:shadow-sm h-full md:h-auto overflow-y-auto md:mt-4 md:mb-8 border border-slate-200">
                             <UserDailyUseForm />
                         </div>
                     </div>
