@@ -39,19 +39,28 @@ const formatDuration = (start: Date | string, end: Date | string) => {
     return parts.join(' ') || '0m';
 };
 
-const isReservationArchived = (s: any): boolean => {
+const isReservationArchived = (s: any, res?: any): boolean => {
   const str = String(s || '').toLowerCase().trim();
-  return str === 'concluída' || str === 'concluida' || str === 'completed' || str === 'finalizada' || str === 'finalizado' ||
-         str === 'rejeitada' || str === 'rejeitado' || str === 'rejected' ||
-         str === 'cancelada' || str === 'cancelado' || str === 'cancelled';
+  if (
+    str === 'concluída' || str === 'concluida' || str === 'completed' || str === 'finalizada' || str === 'finalizado' ||
+    str === 'rejeitada' || str === 'rejeitado' || str === 'rejected' ||
+    str === 'cancelada' || str === 'cancelado' || str === 'cancelled'
+  ) {
+    return true;
+  }
+  // Se possuir data real de devolução ou km final registrado, é comprovadamente finalizada/arquivada
+  if (res && (res.actualReturnDateTime || (res.finalKm !== undefined && res.finalKm !== null && Number(res.finalKm) > 0))) {
+    return true;
+  }
+  return false;
 };
 
-const isReservationActive = (s: any): boolean => {
+const isReservationActive = (s: any, res?: any): boolean => {
+  if (isReservationArchived(s, res)) return false;
   const str = String(s || '').toLowerCase().trim();
-  if (isReservationArchived(str)) return false;
   return str === 'pendente' || str === 'pending' ||
          str === 'aprovada' || str === 'aprovado' || str === 'approved' ||
-         str === 'em uso' || str === 'inuse' || str === 'in_use';
+         str === 'em uso' || str === 'inuse' || str === 'em_uso' || str === 'in_use';
 };
 
 const ReservationsView: React.FC = () => {
@@ -81,7 +90,7 @@ const ReservationsView: React.FC = () => {
     const now = new Date();
     return reservations.filter(res => {
         // Apenas reservas ativas (não concluídas ou arquivadas)
-        if (!isReservationActive(res.status) || isReservationArchived(res.status)) return false;
+        if (!isReservationActive(res.status, res) || isReservationArchived(res.status, res)) return false;
 
         const returnLimit = new Date(res.returnDate);
         return now > returnLimit;
@@ -94,11 +103,11 @@ const ReservationsView: React.FC = () => {
   }, [overdueReservations, readNotificationIds]);
 
   const activeReservationsCount = useMemo(() => {
-    return reservations.filter(r => isReservationActive(r.status) && !isReservationArchived(r.status)).length;
+    return reservations.filter(r => isReservationActive(r.status, r) && !isReservationArchived(r.status, r)).length;
   }, [reservations]);
 
   const historyReservationsCount = useMemo(() => {
-    return reservations.filter(r => isReservationArchived(r.status)).length;
+    return reservations.filter(r => isReservationArchived(r.status, r)).length;
   }, [reservations]);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null);
@@ -556,9 +565,9 @@ const ReservationsView: React.FC = () => {
     return reservations.filter(res => {
         // Aba ativa x histórico (blindagem contra qualquer variação ortográfica ou legado)
         if (activeTab === 'active') {
-            if (!isReservationActive(res.status) || isReservationArchived(res.status)) return false;
+            if (!isReservationActive(res.status, res) || isReservationArchived(res.status, res)) return false;
         } else {
-            if (!isReservationArchived(res.status)) return false;
+            if (!isReservationArchived(res.status, res)) return false;
         }
 
         if (filterStartDate && new Date(res.departureDateTime) < new Date(filterStartDate)) return false;

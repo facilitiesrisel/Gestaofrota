@@ -1084,14 +1084,21 @@ export const getReservationsFromLocalStorage = (): Reservation[] => {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.map((item: any) => ({
-        ...item,
-        status: normalizeStatus(item.status),
-        departureDateTime: item.departureDateTime ? new Date(item.departureDateTime) : new Date(),
-        returnDate: item.returnDate ? new Date(item.returnDate) : new Date(),
-        actualReturnDateTime: item.actualReturnDateTime ? new Date(item.actualReturnDateTime) : undefined,
-        requestTimestamp: item.requestTimestamp ? new Date(item.requestTimestamp) : undefined
-      }));
+      return parsed.map((item: any) => {
+        let normStatus = normalizeStatus(item.status);
+        // Blindagem contra cache defasado no F5: se possuir actualReturnDateTime ou finalKm, a devolução já ocorreu
+        if (item.actualReturnDateTime || (item.finalKm !== undefined && item.finalKm !== null && Number(item.finalKm) > 0)) {
+          normStatus = ReservationStatus.Completed;
+        }
+        return {
+          ...item,
+          status: normStatus,
+          departureDateTime: item.departureDateTime ? new Date(item.departureDateTime) : new Date(),
+          returnDate: item.returnDate ? new Date(item.returnDate) : new Date(),
+          actualReturnDateTime: item.actualReturnDateTime ? new Date(item.actualReturnDateTime) : undefined,
+          requestTimestamp: item.requestTimestamp ? new Date(item.requestTimestamp) : undefined
+        };
+      });
     }
     return [];
   } catch (err) {
@@ -1277,19 +1284,26 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                 const isRecent = (recent && (Date.now() - recent.timestamp < 30000)) ||
                                  (persistent && (Date.now() - persistent.timestamp < 30000));
                 
-                if (isRecent) {
+                const normBackendStatus = normalizeStatus(b.status);
+                const isBackendFinalized = normBackendStatus === ReservationStatus.Completed ||
+                                          normBackendStatus === ReservationStatus.Rejected ||
+                                          normBackendStatus === ReservationStatus.Cancelled ||
+                                          Boolean(b.actualReturnDateTime) ||
+                                          (b.finalKm !== undefined && b.finalKm !== null && Number(b.finalKm) > 0);
+
+                if (isRecent && !isBackendFinalized) {
                     const overrideData = recent?.data || persistent;
                     map.set(b.id, {
                         ...(existing || b),
                         ...b,
                         ...overrideData,
-                        status: overrideData.status ? normalizeStatus(overrideData.status) : normalizeStatus(b.status)
+                        status: overrideData.status ? normalizeStatus(overrideData.status) : normBackendStatus
                     });
                 } else {
                     map.set(b.id, { 
                         ...(existing || {}), 
                         ...b,
-                        status: normalizeStatus(b.status || existing?.status)
+                        status: isBackendFinalized ? ReservationStatus.Completed : normBackendStatus
                     });
                 }
             });
@@ -1309,7 +1323,7 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
             const persistentOverrides = getPersistentReservationOverrides();
 
             // Reconciliação canônica: o Firestore é a fonte da verdade oficial.
-            // Apenas alterações hiper-recentes desta mesma sessão (< 30s) recebem override transitório.
+            // Se o documento no Firestore já é Concluída, Rejeitada ou Cancelada, ou possui devolução física, NUNCA reverte!
             const reconciled = reservations.map(remoteRes => {
                 const recent = recentReservationUpdates.get(remoteRes.id);
                 const persistent = persistentOverrides[remoteRes.id];
@@ -1319,7 +1333,13 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                 let finalStatus = remoteRes.status;
                 let finalNotes = remoteRes.adminNotes;
 
-                if (isRecent) {
+                const isRemoteFinalized = remoteRes.status === ReservationStatus.Completed ||
+                                          remoteRes.status === ReservationStatus.Rejected ||
+                                          remoteRes.status === ReservationStatus.Cancelled ||
+                                          Boolean(remoteRes.actualReturnDateTime) ||
+                                          (remoteRes.finalKm !== undefined && remoteRes.finalKm !== null && Number(remoteRes.finalKm) > 0);
+
+                if (isRecent && !isRemoteFinalized) {
                     const overrideData = recent?.data || persistent;
                     if (overrideData?.status) finalStatus = normalizeStatus(overrideData.status);
                     if (overrideData?.adminNotes !== undefined) finalNotes = overrideData.adminNotes;
@@ -1333,7 +1353,7 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
 
                 return {
                     ...remoteRes,
-                    status: finalStatus,
+                    status: isRemoteFinalized ? ReservationStatus.Completed : finalStatus,
                     adminNotes: finalNotes
                 };
             });

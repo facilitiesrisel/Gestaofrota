@@ -111,13 +111,18 @@ const UserDailyUseForm: React.FC = () => {
 
     const { user: globalUser } = useGlobalAuth();
 
-    // Acesso de Administrador: permitido no computador APENAS se estiver autenticado no ERP com perfil admin
+    // Acesso de Administrador: permitido no computador APENAS se estiver autenticado no ERP com perfil admin/gestão
     const isAdmin = Boolean(
         globalUser && (
             globalUser.role === 'admin' ||
             globalUser.permissions?.admin === true ||
+            globalUser.permissions?.frota === true ||
+            globalUser.permissions?.frota_veiculos === true ||
+            globalUser.email?.toLowerCase().includes('deny') ||
+            globalUser.email?.toLowerCase().includes('lorena') ||
             globalUser.email?.toLowerCase() === 'deny.goncalves@risel.com.br' ||
-            globalUser.email?.toLowerCase() === 'deny.risel@gmail.com'
+            globalUser.email?.toLowerCase() === 'deny.risel@gmail.com' ||
+            globalUser.email?.toLowerCase() === 'lorena.padilha@risel.com.br'
         )
     );
 
@@ -129,18 +134,30 @@ const UserDailyUseForm: React.FC = () => {
         }
     }, [isAdmin]);
 
-    // Detecção segura de dispositivo Celular / Mobile
+    // Detecção segura e fidedigna de dispositivo Celular / Smartphone
     const checkIsMobileDevice = (): boolean => {
         if (typeof window === 'undefined') return false;
         const ua = (navigator.userAgent || navigator.vendor || (window as any).opera || '').toLowerCase();
-        const isMobileUA = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|crios|fennec/i.test(ua);
-        const hasTouch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
-        const isSmallScreen = window.innerWidth <= 768;
         
+        // Dispositivos móveis expressos por User Agent
+        const isMobileUA = /android|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|crios|fennec|windows phone/i.test(ua);
+        
+        // Client Hints modernos da Web API
         const isMobileData = (navigator as any)?.userAgentData?.mobile;
         if (typeof isMobileData === 'boolean') {
-            return isMobileData || (hasTouch && isSmallScreen);
+            if (isMobileData) return true;
+            // Se o navegador afirma categoricamente que NÃO é mobile, é computador/desktop
+            return false;
         }
+
+        // Se for sistema operacional desktop típico (Windows, Mac, Linux x86) e não for mobile UA
+        const isDesktopOS = /windows nt|macintosh|mac os x|x11|linux x86_64/i.test(ua);
+        if (isDesktopOS && !isMobileUA) {
+            return false;
+        }
+
+        const hasTouch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+        const isSmallScreen = window.innerWidth <= 768;
 
         return isMobileUA || (hasTouch && isSmallScreen);
     };
@@ -156,7 +173,8 @@ const UserDailyUseForm: React.FC = () => {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const mobileDailyUseUrl = `${window.location.origin}/reservas?tab=dailyUse`;
+    // Link oficial da aba pública de Uso Diário com sub=dailyUse
+    const mobileDailyUseUrl = `${window.location.origin}/reservas?sub=dailyUse`;
 
     const handleCopyLink = () => {
         if (navigator?.clipboard?.writeText) {
@@ -641,14 +659,19 @@ const UserDailyUseForm: React.FC = () => {
                                     <Smartphone className="w-6 h-6 text-amber-300" />
                                 </div>
                                 <div>
-                                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300/60">
-                                        Confiabilidade dos Dados & Auditoria
-                                    </span>
-                                    <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300/60">
+                                            Confiabilidade dos Dados & Auditoria
+                                        </span>
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-red-700 bg-red-100 px-2 py-0.5 rounded-md border border-red-300">
+                                            🚫 Cadastro Bloqueado no Computador
+                                        </span>
+                                    </div>
+                                    <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1.5">
                                         O Uso Diário deve ser solicitado direto pelo Celular
                                     </h3>
                                     <p className="text-xs text-slate-600 font-medium mt-1 leading-relaxed max-w-2xl">
-                                        Para assegurar a máxima confiabilidade dos registros da frota, as solicitações e encerramentos de Uso Diário são permitidos <strong>exclusivamente a partir do celular</strong>, estando presencialmente no interior do veículo.
+                                        Para assegurar a máxima confiabilidade dos registros da frota, as solicitações e encerramentos de Uso Diário são permitidos <strong>exclusivamente a partir do celular</strong>, estando presencialmente no interior do veículo. O formulário não é disponibilizado no computador.
                                     </p>
                                 </div>
                             </div>
@@ -691,6 +714,26 @@ const UserDailyUseForm: React.FC = () => {
                                     Impede aberturas antecipadas à distância enquanto o condutor ainda não assumiu a direção do carro na garagem.
                                 </p>
                             </div>
+                        </div>
+
+                        {/* ATALHO PARA RESERVA REGULAR CASO O USUÁRIO QUEIRA AGENDAR VIAGEM FUTURA */}
+                        <div className="mt-5 pt-4 border-t border-amber-200/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-amber-50/50 p-3 rounded-xl border border-amber-200/80">
+                            <div className="text-xs text-amber-900">
+                                <span className="font-extrabold block">Precisa agendar uma viagem corporativa com antecedência?</span>
+                                <span className="text-[11px] text-slate-600">Para viagens programadas, utilize o agendamento regular de Frota Leve, liberado no computador.</span>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const url = new URL(window.location.href);
+                                    url.searchParams.set('sub', 'request');
+                                    window.location.href = url.toString();
+                                }}
+                                className="px-4 py-2 bg-gradient-to-r from-[#114D38] to-[#0a3123] hover:from-[#0d3b2b] hover:to-[#07251a] text-white rounded-xl text-xs font-black tracking-wide shrink-0 transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                            >
+                                <LucideCar className="w-3.5 h-3.5 text-amber-300" />
+                                <span>Solicitar Reserva (Frota Leve)</span>
+                            </button>
                         </div>
                     </div>
 
