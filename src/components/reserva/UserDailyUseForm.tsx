@@ -142,32 +142,41 @@ const UserDailyUseForm: React.FC = () => {
         }
     }, [isAdmin]);
 
-    // Detecção segura e fidedigna de dispositivo Celular / Smartphone
+    // Detecção segura e fidedigna de dispositivo Celular / Smartphone (Mobile / Tablet)
     const checkIsMobileDevice = (): boolean => {
         if (typeof window === 'undefined') return false;
         const ua = (navigator.userAgent || navigator.vendor || (window as any).opera || '').toLowerCase();
         
-        // Dispositivos móveis expressos por User Agent
-        const isMobileUA = /android|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|crios|fennec|windows phone/i.test(ua);
-        
-        // Client Hints modernos da Web API
+        // 1. Client Hints modernos da Web API: se o navegador do desktop diz mobile: false, é computador
         const isMobileData = (navigator as any)?.userAgentData?.mobile;
-        if (typeof isMobileData === 'boolean') {
-            if (isMobileData) return true;
-            // Se o navegador afirma categoricamente que NÃO é mobile, é computador/desktop
+        if (typeof isMobileData === 'boolean' && !isMobileData) {
             return false;
         }
 
-        // Se for sistema operacional desktop típico (Windows, Mac, Linux x86) e não for mobile UA
-        const isDesktopOS = /windows nt|macintosh|mac os x|x11|linux x86_64/i.test(ua);
-        if (isDesktopOS && !isMobileUA) {
+        // 2. Se for sistema operacional desktop característico (Windows, Mac OS X, Linux x86/64, Chrome OS Desktop)
+        const isDesktopOS = /windows nt|macintosh|mac os x|x11|linux x86_64|cros/i.test(ua);
+        const hasMobileUAWord = /android|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|crios|fennec|windows phone/i.test(ua);
+        
+        // Computadores com touch screen (ex: Dell/Lenovo touch, monitores touch) continuam sendo computadores!
+        if (isDesktopOS && !hasMobileUAWord) {
+            return false;
+        }
+
+        // 3. Se for mobile explícito no User Agent
+        if (hasMobileUAWord) {
+            return true;
+        }
+
+        // 4. Fallback de tela e ponteiro: se tela for larga (> 1024px) e tiver mouse preciso, é computador
+        const hasFinePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: fine)').matches;
+        if (window.innerWidth > 900 && hasFinePointer) {
             return false;
         }
 
         const hasTouch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
         const isSmallScreen = window.innerWidth <= 768;
 
-        return isMobileUA || (hasTouch && isSmallScreen);
+        return Boolean(hasTouch && isSmallScreen);
     };
 
     const [isMobile, setIsMobile] = useState<boolean>(() => checkIsMobileDevice());
@@ -1200,7 +1209,7 @@ const UserDailyUseForm: React.FC = () => {
                                                 Já registrou a saída e está retornando?
                                             </h4>
                                             <p className="text-[11px] sm:text-xs text-amber-800 mt-0.5 font-medium">
-                                                Se você já iniciou o uso diário e precisa digitar o KM Final e nível do tanque, localize seu veículo para abrir a tela de devolução.
+                                                Se você já iniciou o uso diário neste ou em outro aparelho, localize seu veículo para abrir <strong>exclusivamente a sua tela de retorno</strong>.
                                             </p>
                                         </div>
                                     </div>
@@ -1210,39 +1219,70 @@ const UserDailyUseForm: React.FC = () => {
                                         className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0 self-start sm:self-center"
                                     >
                                         <Search className="w-3.5 h-3.5" />
-                                        <span>{isLocateTripOpen ? 'Fechar Lista' : 'Localizar Meu Retorno'}</span>
+                                        <span>{isLocateTripOpen ? 'Fechar Busca' : 'Localizar Minha Viagem'}</span>
                                         {isLocateTripOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                     </button>
                                 </div>
 
                                 {isLocateTripOpen && (
                                     <div className="mt-4 pt-3.5 border-t border-amber-200/80 space-y-3 animate-fadeIn">
-                                        <p className="text-[11px] font-black text-amber-950 uppercase tracking-wider">
-                                            Selecione o seu veículo em trânsito para abrir a tela de retorno:
-                                        </p>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
-                                            {ongoingTrips.map(trip => {
-                                                const veh = getVehicleById(trip.vehicleId);
-                                                return (
-                                                    <div
-                                                        key={trip.id}
-                                                        onClick={() => handleSelectOngoingTrip(trip)}
-                                                        className="p-3 bg-white hover:bg-emerald-50/80 border border-slate-200 hover:border-emerald-500 rounded-xl cursor-pointer transition-all flex items-center justify-between gap-2 shadow-xs group"
+                                        <div className="space-y-1.5">
+                                            <p className="text-[11px] font-black text-amber-950 uppercase tracking-wider">
+                                                Digite sua placa ou seu nome para abrir o retorno:
+                                            </p>
+                                            <div className="relative">
+                                                <input 
+                                                    type="text"
+                                                    value={searchVehicleQuery}
+                                                    onChange={(e) => setSearchVehicleQuery(e.target.value)}
+                                                    placeholder="Buscar por placa ou motorista..."
+                                                    className="w-full px-3.5 py-2 pl-9 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38]"
+                                                />
+                                                <Search className="w-3.5 h-3.5 text-amber-700 absolute left-3 top-1/2 -translate-y-1/2" />
+                                                {searchVehicleQuery && (
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={() => setSearchVehicleQuery('')}
+                                                        className="text-xs text-slate-400 hover:text-slate-700 font-bold absolute right-3 top-1/2 -translate-y-1/2"
                                                     >
-                                                        <div className="min-w-0">
-                                                            <span className="font-mono font-black text-xs text-slate-900 block truncate">
-                                                                {veh?.plate || (trip as any).plate || '---'} • {veh?.model || (trip as any).model || 'Veículo'}
-                                                            </span>
-                                                            <span className="text-[11px] text-slate-600 font-medium block truncate mt-0.5">
-                                                                Condutor: <strong>{trip.driverName}</strong>
+                                                        ✕
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
+                                            {ongoingTrips
+                                                .filter(trip => {
+                                                    if (!searchVehicleQuery.trim()) return true;
+                                                    const q = searchVehicleQuery.toLowerCase().trim();
+                                                    const veh = getVehicleById(trip.vehicleId);
+                                                    const plate = (veh?.plate || (trip as any).plate || '').toLowerCase();
+                                                    const driver = (trip.driverName || '').toLowerCase();
+                                                    return plate.includes(q) || driver.includes(q);
+                                                })
+                                                .map(trip => {
+                                                    const veh = getVehicleById(trip.vehicleId);
+                                                    return (
+                                                        <div
+                                                            key={trip.id}
+                                                            onClick={() => handleSelectOngoingTrip(trip)}
+                                                            className="p-3 bg-white hover:bg-emerald-50/80 border border-slate-200 hover:border-emerald-500 rounded-xl cursor-pointer transition-all flex items-center justify-between gap-2 shadow-xs group"
+                                                        >
+                                                            <div className="min-w-0">
+                                                                <span className="font-mono font-black text-xs text-slate-900 block truncate">
+                                                                    {veh?.plate || (trip as any).plate || '---'} • {veh?.model || (trip as any).model || 'Veículo'}
+                                                                </span>
+                                                                <span className="text-[11px] text-slate-600 font-medium block truncate mt-0.5">
+                                                                    Condutor: <strong>{trip.driverName}</strong>
+                                                                </span>
+                                                            </div>
+                                                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2.5 py-1 rounded-lg shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-all uppercase">
+                                                                Abrir Meu Retorno
                                                             </span>
                                                         </div>
-                                                        <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2.5 py-1 rounded-lg shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-all uppercase">
-                                                            Devolver
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })}
+                                                    );
+                                                })}
                                         </div>
                                     </div>
                                 )}
