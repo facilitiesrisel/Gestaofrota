@@ -243,8 +243,8 @@ const ReservationsView: React.FC = () => {
             window.location.origin,
             `Prezado(a) ${resSnapshot.requesterName}, informamos que sua solicitação de reserva de veículo da frota Risel foi aprovada com sucesso.`,
             finalNotes && finalNotes.trim() 
-              ? `Observações da Gestão de Frota: ${finalNotes.trim()}` 
-              : "Orientamos realizar o checklist antes de sair. Lembre-se de devolver o veículo abastecido e preencher a KM Final e Diário de Bordo ao retornar.",
+              ? `Observações da Gestão de Frota: ${finalNotes.trim()}<br/><br/>Lembre-se de devolver o veículo abastecido, e informar o KM Final ao Setor de GR.` 
+              : "Lembre-se de devolver o veículo abastecido, e informar o KM Final ao Setor de GR.",
             "#114D38"
         );
 
