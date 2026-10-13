@@ -4,30 +4,16 @@ import 'firebase/compat/firestore';
 import { auth, db } from '../firebaseConfig';
 import { Vehicle, Reservation, ReservationStatus, DailyTrip, FuelLevel, RacRental } from '../types_reserva';
 import { normalizeNomeSetor } from '../utils/setorOperacional';
+import { parseLocalDateTime } from '../utils/reservaDateUtils';
 
 export { auth }; // Re-export auth for other modules to use
 
 // Helper to safely convert Firestore Timestamps or date strings to JS Date objects.
 const convertFirestoreDate = (dateValue: any): Date => {
   if (!dateValue) {
-    console.warn('Received a null or undefined required date value from Firestore. Returning a default date.');
-    return new Date('1970-01-01T00:00:00Z');
+    return new Date();
   }
-  if (dateValue && typeof dateValue.toDate === 'function') { // Firestore Timestamp
-    return dateValue.toDate();
-  }
-  if (dateValue && typeof dateValue.seconds === 'number' && typeof dateValue.nanoseconds === 'number') {
-    return new Date(dateValue.seconds * 1000 + dateValue.nanoseconds / 1000000);
-  }
-  if (dateValue instanceof Date) { // Already a Date
-    return dateValue;
-  }
-  const parsedDate = new Date(dateValue); // String or number
-  if (!isNaN(parsedDate.getTime())) {
-    return parsedDate;
-  }
-  console.error('Could not parse required date value from Firestore, returning default:', dateValue);
-  return new Date('1970-01-01T00:00:00Z');
+  return parseLocalDateTime(dateValue);
 };
 
 // Helper for optional dates, returning undefined if invalid.
@@ -35,24 +21,10 @@ const convertOptionalFirestoreDate = (dateValue: any): Date | undefined => {
     if (!dateValue) {
         return undefined;
     }
-    
-    let parsedDate: Date;
-
-    if (dateValue && typeof dateValue.toDate === 'function') { 
-      parsedDate = dateValue.toDate();
-    } else if (dateValue && typeof dateValue.seconds === 'number') {
-      parsedDate = new Date(dateValue.seconds * 1000 + (dateValue.nanoseconds || 0) / 1000000);
-    } else if (dateValue instanceof Date) { 
-      parsedDate = dateValue;
-    } else {
-      parsedDate = new Date(dateValue);
-    }
-
-    // Filter out invalid dates AND Epoch dates (often defaults in legacy data)
+    const parsedDate = parseLocalDateTime(dateValue);
     if (isNaN(parsedDate.getTime()) || parsedDate.getFullYear() <= 1970) {
       return undefined;
     }
-    
     return parsedDate;
 };
 
@@ -1093,10 +1065,10 @@ export const getReservationsFromLocalStorage = (): Reservation[] => {
         return {
           ...item,
           status: normStatus,
-          departureDateTime: item.departureDateTime ? new Date(item.departureDateTime) : new Date(),
-          returnDate: item.returnDate ? new Date(item.returnDate) : new Date(),
-          actualReturnDateTime: item.actualReturnDateTime ? new Date(item.actualReturnDateTime) : undefined,
-          requestTimestamp: item.requestTimestamp ? new Date(item.requestTimestamp) : undefined
+          departureDateTime: item.departureDateTime ? parseLocalDateTime(item.departureDateTime) : new Date(),
+          returnDate: item.returnDate ? parseLocalDateTime(item.returnDate) : new Date(),
+          actualReturnDateTime: item.actualReturnDateTime ? parseLocalDateTime(item.actualReturnDateTime) : undefined,
+          requestTimestamp: item.requestTimestamp ? parseLocalDateTime(item.requestTimestamp) : undefined
         };
       });
     }

@@ -43,13 +43,12 @@ const BASE_CITIES = [
   'Rio de Janeiro - RJ'
 ];
 
-const parseDateTime = (dateTimeStr: string) => {
-  if (!dateTimeStr) return new Date();
-  const [datePart, timePart] = dateTimeStr.split('T');
-  const [y, m, d] = (datePart || '').split('-').map(Number);
-  const [hours, mins] = (timePart || '08:00').split(':').map(Number);
-  return new Date(y, m - 1, d, hours || 8, mins || 0, 0, 0);
-};
+import { 
+  parseLocalDateTime, 
+  formatDateTimeBR, 
+  formatToDateTimeLocalInput, 
+  validateReservationDates 
+} from '../../utils/reservaDateUtils';
 
 interface UserRacRequestFormProps {
   onSuccess?: (rental: RacRental) => void;
@@ -216,19 +215,23 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
   // Cálculo da duração estimada em dias e horas
   const rentalDurationText = useMemo(() => {
     if (!formData.pickupDateTime || !formData.returnDateTime) return '';
-    const start = parseDateTime(formData.pickupDateTime).getTime();
-    const end = parseDateTime(formData.returnDateTime).getTime();
-    const diffMs = end - start;
+    try {
+      const start = parseLocalDateTime(formData.pickupDateTime).getTime();
+      const end = parseLocalDateTime(formData.returnDateTime).getTime();
+      const diffMs = end - start;
 
-    if (diffMs <= 0) return 'Data de devolução deve ser posterior à de retirada';
+      if (diffMs <= 0) return 'Data de devolução deve ser posterior à de retirada';
 
-    const hoursTotal = Math.floor(diffMs / (1000 * 60 * 60));
-    const days = Math.floor(hoursTotal / 24);
-    const remainingHours = hoursTotal % 24;
+      const hoursTotal = Math.floor(diffMs / (1000 * 60 * 60));
+      const days = Math.floor(hoursTotal / 24);
+      const remainingHours = hoursTotal % 24;
 
-    if (days === 0) return `Duração estimada: ${remainingHours} horas`;
-    if (remainingHours === 0) return `Duração estimada: ${days} dia(s) (${days} diárias)`;
-    return `Duração estimada: ${days} dia(s) e ${remainingHours}h (${days + (remainingHours > 2 ? 1 : 0)} diárias)`;
+      if (days === 0) return `Duração estimada: ${remainingHours} horas`;
+      if (remainingHours === 0) return `Duração estimada: ${days} dia(s) (${days} diárias)`;
+      return `Duração estimada: ${days} dia(s) e ${remainingHours}h (${days + (remainingHours > 2 ? 1 : 0)} diárias)`;
+    } catch (e) {
+      return '';
+    }
   }, [formData.pickupDateTime, formData.returnDateTime]);
 
   // Submissão do formulário
@@ -270,11 +273,11 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
     setIsSubmitting(true);
 
     try {
-      const pickupDateObj = parseDateTime(formData.pickupDateTime);
-      const returnDateObj = parseDateTime(formData.returnDateTime);
+      const pickupDateObj = parseLocalDateTime(formData.pickupDateTime);
+      const returnDateObj = parseLocalDateTime(formData.returnDateTime);
 
-      if (returnDateObj <= pickupDateObj) {
-        throw new Error('A data de devolução deve ser posterior à data de retirada do veículo.');
+      if (returnDateObj.getTime() <= pickupDateObj.getTime()) {
+        throw new Error('A data e horário de devolução devem ser posteriores à data de retirada do veículo.');
       }
 
       // Gera código de protocolo único
@@ -438,11 +441,11 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-bold">Retirada:</span>
-                <span className="font-extrabold text-slate-800">{formData.pickupCity} ({new Date(pickupDateObj).toLocaleDateString('pt-BR')} às {new Date(pickupDateObj).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })})</span>
+                <span className="font-extrabold text-slate-800">{formData.pickupCity} ({formatDateTimeBR(pickupDateObj)})</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-bold">Devolução:</span>
-                <span className="font-extrabold text-slate-800">{formData.returnCity} ({new Date(returnDateObj).toLocaleDateString('pt-BR')} às {new Date(returnDateObj).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })})</span>
+                <span className="font-extrabold text-slate-800">{formData.returnCity} ({formatDateTimeBR(returnDateObj)})</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-bold">Status CNH:</span>

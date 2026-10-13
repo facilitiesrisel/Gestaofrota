@@ -18,6 +18,7 @@ import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardLi
 import { QRCodeSVG } from 'qrcode.react';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor } from '../../utils/setorOperacional';
+import { formatDateTimeBR, formatDateBR, parseLocalDateTime } from '../../utils/reservaDateUtils';
 
 // Helper para calcular duração estimada
 const formatDuration = (start: Date | string, end: Date | string) => {
@@ -207,16 +208,10 @@ const ReservationsView: React.FC = () => {
 
         // 3. Monta dados detalhados para o e-mail
         const vehicle = getVehicleById(resSnapshot.vehicleId);
-        const departureDate = resSnapshot.departureDateTime instanceof Date 
-          ? resSnapshot.departureDateTime 
-          : new Date(resSnapshot.departureDateTime || Date.now());
-        const returnDate = resSnapshot.returnDate instanceof Date 
-          ? resSnapshot.returnDate 
-          : new Date(resSnapshot.returnDate || Date.now());
+        const departureDate = parseLocalDateTime(resSnapshot.departureDateTime);
+        const returnDate = parseLocalDateTime(resSnapshot.returnDate);
 
-        const formattedDate = !isNaN(departureDate.getTime()) 
-          ? departureDate.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-')
-          : 'Data Agendada';
+        const formattedDate = formatDateTimeBR(departureDate).replace(/\//g, '-');
 
         const details = [
             { label: "Status", value: "✅ APROVADA" },
@@ -225,8 +220,8 @@ const ReservationsView: React.FC = () => {
             { label: "Departamento", value: resSnapshot.department || "Geral" },
             { label: "Categoria Pretendida", value: vehicle ? `${vehicle.model} (${vehicle.type || 'Passeio / Operações'})` : ((resSnapshot as any).category || 'Hatch Compacto') },
             { label: "Veículo Aprovado", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
-            { label: "Data de Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : "A Definir" },
-            { label: "Retorno Previsto", value: !isNaN(returnDate.getTime()) ? returnDate.toLocaleString('pt-BR') : "A Definir" },
+            { label: "Data de Saída", value: formatDateTimeBR(departureDate) },
+            { label: "Retorno Previsto", value: formatDateTimeBR(returnDate) },
             { label: "Destino", value: `${resSnapshot.destinationCity || ''} - ${resSnapshot.destination || ''}` },
             { label: "Distância Estimada", value: resSnapshot.distanceKm ? `${resSnapshot.distanceKm.toLocaleString('pt-BR')} km` : 'N/A' },
             { label: "Motivo / Finalidade", value: resSnapshot.purpose || "Deslocamento Corporativo" }
@@ -320,8 +315,8 @@ const ReservationsView: React.FC = () => {
         status: ReservationStatus.Rejected, 
         rejectReason: reason 
       });
-      const departureDate = new Date(resSnapshot.departureDateTime);
-      const returnDate = new Date(resSnapshot.returnDate);
+      const departureDate = parseLocalDateTime(resSnapshot.departureDateTime);
+      const returnDate = parseLocalDateTime(resSnapshot.returnDate);
       const vehicle = getVehicleById(resSnapshot.vehicleId);
       const emailHtml = generateEmailHtml(
           "Solicitação de Reserva Recusada",
@@ -331,8 +326,8 @@ const ReservationsView: React.FC = () => {
               { label: "Condutor", value: resSnapshot.driverName || resSnapshot.requesterName || "Não Informado" },
               { label: "Departamento", value: resSnapshot.department || "Geral" },
               { label: "Veículo Solicitado", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
-              { label: "Data de Saída", value: !isNaN(departureDate.getTime()) ? departureDate.toLocaleString('pt-BR') : 'Data Agendada' },
-              { label: "Retorno Previsto", value: !isNaN(returnDate.getTime()) ? returnDate.toLocaleString('pt-BR') : 'Data Agendada' },
+              { label: "Data de Saída", value: formatDateTimeBR(departureDate) },
+              { label: "Retorno Previsto", value: formatDateTimeBR(returnDate) },
               { label: "Destino", value: `${resSnapshot.destinationCity} - ${resSnapshot.destination}` },
               { label: "Motivo da Solicitação", value: resSnapshot.purpose || "Deslocamento Corporativo" },
               { label: "Motivo da Recusa", value: reason }
@@ -376,8 +371,8 @@ const ReservationsView: React.FC = () => {
               
               // Disparo de notificação de cancelamento por e-mail
               try {
-                const departureDate = new Date(reservation.departureDateTime);
-                const returnDate = new Date(reservation.returnDate);
+                const departureDate = parseLocalDateTime(reservation.departureDateTime);
+                const returnDate = parseLocalDateTime(reservation.returnDate);
                 const vehicle = getVehicleById(reservation.vehicleId);
                 const emailHtml = generateEmailHtml(
                     "Solicitação de Reserva Cancelada",
@@ -387,8 +382,8 @@ const ReservationsView: React.FC = () => {
                         { label: "Condutor", value: reservation.driverName || reservation.requesterName || "Não Informado" },
                         { label: "Departamento", value: reservation.department || "Geral" },
                         { label: "Veículo", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
-                        { label: "Data de Saída Prevista", value: departureDate.toLocaleString('pt-BR') },
-                        { label: "Retorno Previsto", value: returnDate.toLocaleString('pt-BR') },
+                        { label: "Data de Saída Prevista", value: formatDateTimeBR(departureDate) },
+                        { label: "Retorno Previsto", value: formatDateTimeBR(returnDate) },
                         { label: "Destino", value: `${reservation.destinationCity} - ${reservation.destination}` },
                         { label: "Motivo Original", value: reservation.purpose || "Deslocamento Corporativo" },
                         { label: "Situação", value: "Reserva cancelada no sistema de gestão de frotas." }
@@ -778,11 +773,9 @@ const ReservationsView: React.FC = () => {
           </div>
       </Modal>
 
-      {/* Modals (Keep existing implementations) */}
-      <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Nova Reserva (Admin)">
-          <div className="max-h-[80vh] overflow-y-auto pr-2">
-              <ReservationForm onSuccess={() => setIsAddModalOpen(false)} />
-          </div>
+      {/* Modals */}
+      <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Nova Reserva (Admin)" maxWidth="max-w-3xl">
+          <ReservationForm onSuccess={() => setIsAddModalOpen(false)} isModal={true} />
       </Modal>
       <Modal isOpen={isChangeVehicleModalOpen} onClose={() => setIsChangeVehicleModalOpen(false)} title="Alterar Veículo">
           {selectedReservation && (
@@ -808,7 +801,7 @@ const ReservationsView: React.FC = () => {
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1.5">
                     <p><strong className="text-slate-700">Solicitante:</strong> {selectedReservation.requesterName}</p>
                     <p><strong className="text-slate-700">Destino:</strong> {normalizeCidade(selectedReservation.destinationCity)} - {selectedReservation.destination}</p>
-                    <p><strong className="text-slate-700">Data de Saída:</strong> {new Date(selectedReservation.departureDateTime).toLocaleString('pt-BR')}</p>
+                    <p><strong className="text-slate-700">Data de Saída:</strong> {formatDateTimeBR(selectedReservation.departureDateTime)}</p>
                 </div>
             )}
             <div className="flex justify-end gap-3 pt-2">
@@ -934,7 +927,7 @@ const ReservationsView: React.FC = () => {
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Período:</span>
                 <span className="font-bold text-slate-900">
-                  {new Date(selectedReservation.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} até {new Date(selectedReservation.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  {formatDateTimeBR(selectedReservation.departureDateTime)} até {formatDateTimeBR(selectedReservation.returnDate)}
                 </span>
               </div>
             </div>
@@ -1034,7 +1027,7 @@ const ReservationsView: React.FC = () => {
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Período:</span>
                 <span className="font-bold text-slate-900">
-                  {new Date(selectedReservation.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} até {new Date(selectedReservation.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  {formatDateTimeBR(selectedReservation.departureDateTime)} até {formatDateTimeBR(selectedReservation.returnDate)}
                 </span>
               </div>
             </div>
@@ -1212,11 +1205,11 @@ const ReservationsView: React.FC = () => {
                                                     <span className="text-red-400 text-xs font-bold flex items-center gap-1">
                                                         <ClockIcon className="h-3.5 w-3.5" /> Prazo Excedido
                                                     </span>
-                                                    <span className="text-[9px] text-slate-550">{new Date(res.departureDateTime).toLocaleDateString('pt-BR')}</span>
+                                                    <span className="text-[9px] text-slate-550">{formatDateBR(res.departureDateTime)}</span>
                                                 </div>
                                                 <p className="text-xs font-bold text-slate-100 group-hover:text-amber-400 transition-colors">{res.requesterName}</p>
                                                 <p className="text-[11px] text-slate-400 mt-0.5">Veículo: {vehicle ? `${vehicle.model} - ${vehicle.plate}` : 'N/A'}</p>
-                                                <p className="text-[11px] text-slate-400">Retorno em: <span className="text-red-400 font-semibold">{limitDate.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span></p>
+                                                <p className="text-[11px] text-slate-400">Retorno em: <span className="text-red-400 font-semibold">{formatDateTimeBR(limitDate)}</span></p>
                                                 <div className="mt-2 flex justify-end">
                                                     <span className="text-[10px] font-bold text-slate-900 bg-amber-400 group-hover:bg-amber-300 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1">
                                                         <PencilIcon className="h-3 w-3" /> Editar e Tratar
@@ -1376,12 +1369,12 @@ const ReservationsView: React.FC = () => {
                                       ) : <span className="text-gray-400">N/A</span>}
                                   </td>
                                   <td className="px-6 py-4 text-xs font-medium">
-                                      <div className="text-slate-800 font-bold">Saída: {new Date(res.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                                      <div className="text-slate-800 font-bold">Saída: {formatDateTimeBR(res.departureDateTime)}</div>
                                       <div className="text-slate-500 mt-0.5">
                                           {res.actualReturnDateTime ? (
-                                              <span className="text-emerald-700 font-semibold">Devolvido: {new Date(res.actualReturnDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                                              <span className="text-emerald-700 font-semibold">Devolvido: {formatDateTimeBR(res.actualReturnDateTime)}</span>
                                           ) : (
-                                              <span>Previsto: {new Date(res.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                                              <span>Previsto: {formatDateTimeBR(res.returnDate)}</span>
                                           )}
                                       </div>
                                   </td>
@@ -1507,8 +1500,8 @@ const ReservationsView: React.FC = () => {
                                       ) : <span className="text-gray-400">N/A</span>}
                                   </td>
                                   <td className="px-6 py-4 text-sm font-medium">
-                                      <div>{new Date(res.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
-                                      <div className="text-xs text-slate-550 font-medium">até {new Date(res.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                                      <div>{formatDateTimeBR(res.departureDateTime)}</div>
+                                      <div className="text-xs text-slate-550 font-medium">até {formatDateTimeBR(res.returnDate)}</div>
                                   </td>
                                   <td className="px-6 py-4 text-sm font-medium text-slate-750">{normalizeCidade(res.destinationCity)}</td>
                                   <td className="px-6 py-4">{getStatusChip(res.status)}</td>
@@ -1557,8 +1550,8 @@ const ReservationsView: React.FC = () => {
                                 </div>
                                 <div className="text-sm text-gray-600 mt-2 space-y-1">
                                     <p><strong>Veículo:</strong> {getVehicleById(res.vehicleId)?.model} - {getVehicleById(res.vehicleId)?.plate}</p>
-                                    <p><strong>Saída:</strong> {new Date(res.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
-                                    <p><strong>Retorno Previsto:</strong> {new Date(res.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                                    <p><strong>Saída:</strong> {formatDateTimeBR(res.departureDateTime)}</p>
+                                    <p><strong>Retorno Previsto:</strong> {formatDateTimeBR(res.returnDate)}</p>
                                     <p><strong>Destino:</strong> {normalizeCidade(res.destinationCity)}</p>
                                 </div>
                                 <div className="flex justify-end mt-3 gap-3 border-t pt-3">

@@ -6,6 +6,11 @@ import Modal from './Modal';
 import { SP_CITIES } from '../../constants_reserva';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
+import { 
+  parseLocalDateTime, 
+  formatToDateTimeLocalInput, 
+  validateReservationDates 
+} from '../../utils/reservaDateUtils';
 
 interface ReservationEditModalProps {
   isOpen: boolean;
@@ -17,26 +22,23 @@ interface ReservationEditModalProps {
 const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onClose, reservation, onSave }) => {
   const { vehicles, reservations, dailyTrips } = useReservations();
   const [formData, setFormData] = useState<Partial<Reservation>>({});
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (reservation) {
-      // Format dates for datetime-local and date inputs
-      const departure = new Date(reservation.departureDateTime);
-      departure.setMinutes(departure.getMinutes() - departure.getTimezoneOffset());
-      
-      const returnD = new Date(reservation.returnDate);
-      returnD.setMinutes(returnD.getMinutes() - returnD.getTimezoneOffset());
-      
+      setErrorMessage(null);
       setFormData({
         ...reservation,
-        departureDateTime: departure.toISOString().slice(0, 16) as any,
-        returnDate: returnD.toISOString().slice(0, 16) as any,
+        departureDateTime: formatToDateTimeLocalInput(reservation.departureDateTime) as any,
+        returnDate: formatToDateTimeLocalInput(reservation.returnDate) as any,
+        actualReturnDateTime: reservation.actualReturnDateTime ? formatToDateTimeLocalInput(reservation.actualReturnDateTime) as any : undefined,
       });
     }
   }, [reservation]);
   
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
+    setErrorMessage(null);
     const upperCaseFields = ['requesterName', 'department', 'role', 'destination', 'destinationCity', 'purpose'];
 
     if (upperCaseFields.includes(name)) {
@@ -48,7 +50,17 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     
+    // Validação de intervalo de datas (permite datas passadas pois é tela de edição administrativa)
+    if (formData.departureDateTime && formData.returnDate) {
+      const validation = validateReservationDates(formData.departureDateTime, formData.returnDate, { allowPast: true });
+      if (!validation.isValid) {
+        setErrorMessage(validation.errorMessage || 'Verifique as datas e horários.');
+        return;
+      }
+    }
+
     // Se o status for Concluída, processa KM final caso digitado (qualquer valor sem restrições)
     let processedFinalKm: number | undefined = undefined;
     if (formData.finalKm !== undefined && formData.finalKm !== null && String(formData.finalKm).trim() !== '') {
@@ -58,23 +70,13 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
       }
     }
 
-    // Helper to safely parse date and time string to Local Date
-    const parseDateTime = (dateTimeStr: string) => {
-        if (!dateTimeStr) return undefined;
-        const [datePart, timePart] = dateTimeStr.split('T');
-        const [y, m, d] = datePart.split('-').map(Number);
-        const [hours, mins] = (timePart || "12:00").split(':').map(Number);
-        return new Date(y, m - 1, d, hours, mins, 0, 0);
-    };
-
     const dataToSave: { [key: string]: any } = {
         ...formData,
         department: formData.department ? normalizeNomeSetor(formData.department) : formData.department,
         destinationCity: formData.destinationCity ? normalizeCidade(formData.destinationCity) : formData.destinationCity,
-        departureDateTime: formData.departureDateTime ? new Date(formData.departureDateTime as any) : undefined,
-        // Support saving full Return Date & Time
-        returnDate: formData.returnDate ? parseDateTime(String(formData.returnDate)) : undefined,
-        actualReturnDateTime: formData.actualReturnDateTime ? new Date(formData.actualReturnDateTime as any) : undefined,
+        departureDateTime: formData.departureDateTime ? parseLocalDateTime(formData.departureDateTime) : undefined,
+        returnDate: formData.returnDate ? parseLocalDateTime(formData.returnDate) : undefined,
+        actualReturnDateTime: formData.actualReturnDateTime ? parseLocalDateTime(formData.actualReturnDateTime) : undefined,
         finalKm: processedFinalKm !== undefined ? processedFinalKm : (formData.finalKm !== undefined ? Number(formData.finalKm) : undefined),
         distanceKm: formData.distanceKm ? Number(formData.distanceKm) : undefined,
     };
@@ -97,6 +99,11 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Editar Reserva">
       <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+        {errorMessage && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-bold animate-shake">
+            ⚠️ {errorMessage}
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <label className="block text-sm font-medium text-gray-700">Solicitante</label>

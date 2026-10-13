@@ -13,6 +13,7 @@
  */
 
 import { Vehicle } from '../types_reserva';
+import { parseLocalDateTime } from '../utils/reservaDateUtils';
 
 export interface RodizioRestriction {
   isRestricted: boolean;
@@ -104,8 +105,8 @@ export function getPlateFinalDigit(plate?: string): number | null {
  * Retorna os dias da semana (0 = Dom, 1 = Seg, ..., 6 = Sab) contemplados pelo período da viagem
  */
 export function getTripWeekdays(departureDate: Date | string, returnDate?: Date | string): number[] {
-  const start = new Date(departureDate);
-  const end = returnDate ? new Date(returnDate) : new Date(departureDate);
+  const start = parseLocalDateTime(departureDate);
+  const end = returnDate ? parseLocalDateTime(returnDate) : start;
 
   if (isNaN(start.getTime())) return [];
   if (isNaN(end.getTime()) || end < start) {

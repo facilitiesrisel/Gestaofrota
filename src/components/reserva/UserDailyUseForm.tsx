@@ -92,9 +92,12 @@ const UserDailyUseForm: React.FC = () => {
         }
     });
 
-    // Controle de gaveta/modal para motorista que já iniciou viagem em outro navegador e precisa concluir a devolução
+    // Controle de resgate estrito e privativo para condutor que iniciou viagem em outro navegador
     const [isLocateTripOpen, setIsLocateTripOpen] = useState(false);
-    const [searchVehicleQuery, setSearchVehicleQuery] = useState('');
+    const [locatePlate, setLocatePlate] = useState('');
+    const [locateDriverName, setLocateDriverName] = useState('');
+    const [locateError, setLocateError] = useState('');
+    const [locateSuccessTrip, setLocateSuccessTrip] = useState<any | null>(null);
 
     const errorRef = useRef<HTMLDivElement>(null);
     
@@ -337,7 +340,50 @@ const UserDailyUseForm: React.FC = () => {
             finalFuelLevel: trip.initialFuelLevel || FuelLevel.Full
         });
         setIsLocateTripOpen(false);
+        setLocateSuccessTrip(null);
+        setLocatePlate('');
+        setLocateDriverName('');
+        setLocateError('');
         window.dispatchEvent(new Event('risel_daily_trip_updated'));
+    };
+
+    // Conferência restrita: permite que o próprio condutor resgate a sua viagem sem listar viagens de colegas
+    const handleSearchMyTrip = (e: React.FormEvent) => {
+        e.preventDefault();
+        setLocateError('');
+        setLocateSuccessTrip(null);
+
+        const cleanPlate = locatePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
+        const cleanDriver = locateDriverName.trim().toLowerCase();
+
+        if (!cleanPlate) {
+            setLocateError('Informe a placa do veículo.');
+            return;
+        }
+        if (!cleanDriver || cleanDriver.length < 3) {
+            setLocateError('Informe o seu nome (mínimo 3 letras) ou CPF cadastrado.');
+            return;
+        }
+
+        const found = ongoingTrips.find(t => {
+            const veh = getVehicleById(t.vehicleId);
+            const rawT = t as any;
+            const tripPlate = (rawT.plate || veh?.plate || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
+            const tripDriver = (t.driverName || '').toLowerCase().trim();
+            const tripCpf = (rawT.driverCpf || '').replace(/\D/g, '');
+            const searchDigits = cleanDriver.replace(/\D/g, '');
+
+            const plateMatches = tripPlate === cleanPlate;
+            const driverMatches = tripDriver.includes(cleanDriver) || cleanDriver.includes(tripDriver) || (searchDigits.length >= 4 && tripCpf.includes(searchDigits));
+
+            return plateMatches && driverMatches;
+        });
+
+        if (found) {
+            setLocateSuccessTrip(found);
+        } else {
+            setLocateError('Nenhuma viagem em andamento localizada com esta placa e condutor. Certifique-se de que a placa e o nome foram digitados como no momento da saída.');
+        }
     };
 
     // Permite desvincular viagem caso o condutor precise trocar ou cancelar a tela de retorno neste aparelho
@@ -1196,98 +1242,115 @@ const UserDailyUseForm: React.FC = () => {
                 ) : (
                     /* TELA DE REGISTRO DE NOVA SAÍDA (Para novos motoristas que utilizarão outras placas) */
                     <div className="space-y-6">
-                        {/* BANNER DE RESGATE PARA QUEM JÁ INICIOU VIAGEM EM OUTRO NAVEGADOR E PRECISA FINALIZAR */}
-                        {ongoingTrips.length > 0 && (
-                            <div className="bg-gradient-to-r from-amber-50 via-white to-orange-50/40 border-2 border-amber-300/80 rounded-2xl p-4 sm:p-5 shadow-xs">
-                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                    <div className="flex items-start gap-3">
-                                        <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 font-bold">
-                                            <KeyRound className="w-4 h-4 text-amber-700" />
-                                        </div>
-                                        <div>
-                                            <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide">
-                                                Já registrou a saída e está retornando?
-                                            </h4>
-                                            <p className="text-[11px] sm:text-xs text-amber-800 mt-0.5 font-medium">
-                                                Se você já iniciou o uso diário neste ou em outro aparelho, localize seu veículo para abrir <strong>exclusivamente a sua tela de retorno</strong>.
-                                            </p>
-                                        </div>
+                        {/* RESGATE PRIVATIVO E SEGURO: Apenas para quem já iniciou a viagem e precisa resgatar no aparelho sem expor dados de colegas */}
+                        <div className="bg-gradient-to-r from-amber-50 via-white to-orange-50/40 border border-amber-300/70 rounded-2xl p-4 sm:p-5 shadow-xs">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div className="flex items-start gap-3">
+                                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 font-bold">
+                                        <KeyRound className="w-4 h-4 text-amber-700" />
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsLocateTripOpen(prev => !prev)}
-                                        className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0 self-start sm:self-center"
-                                    >
-                                        <Search className="w-3.5 h-3.5" />
-                                        <span>{isLocateTripOpen ? 'Fechar Busca' : 'Localizar Minha Viagem'}</span>
-                                        {isLocateTripOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                                    </button>
+                                    <div>
+                                        <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide">
+                                            Já iniciou viagem e precisa concluir a devolução?
+                                        </h4>
+                                        <p className="text-[11px] sm:text-xs text-amber-800 mt-0.5 font-medium">
+                                            Se você já registrou a saída em outro navegador ou limpou os dados deste celular, informe sua placa e nome para abrir <strong>exclusivamente o seu retorno</strong>.
+                                        </p>
+                                    </div>
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setIsLocateTripOpen(prev => !prev);
+                                        setLocateError('');
+                                        setLocateSuccessTrip(null);
+                                    }}
+                                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0 self-start sm:self-center"
+                                >
+                                    <Search className="w-3.5 h-3.5" />
+                                    <span>{isLocateTripOpen ? 'Fechar Resgate' : 'Resgatar Minha Viagem'}</span>
+                                    {isLocateTripOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                </button>
+                            </div>
 
-                                {isLocateTripOpen && (
-                                    <div className="mt-4 pt-3.5 border-t border-amber-200/80 space-y-3 animate-fadeIn">
-                                        <div className="space-y-1.5">
-                                            <p className="text-[11px] font-black text-amber-950 uppercase tracking-wider">
-                                                Digite sua placa ou seu nome para abrir o retorno:
-                                            </p>
-                                            <div className="relative">
+                            {isLocateTripOpen && (
+                                <div className="mt-4 pt-3.5 border-t border-amber-200/80 space-y-3 animate-fadeIn">
+                                    <form onSubmit={handleSearchMyTrip} className="space-y-3">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-[11px] font-black text-amber-950 uppercase tracking-wider mb-1">
+                                                    Placa do Veículo *
+                                                </label>
                                                 <input 
                                                     type="text"
-                                                    value={searchVehicleQuery}
-                                                    onChange={(e) => setSearchVehicleQuery(e.target.value)}
-                                                    placeholder="Buscar por placa ou motorista..."
-                                                    className="w-full px-3.5 py-2 pl-9 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38]"
+                                                    value={locatePlate}
+                                                    onChange={(e) => setLocatePlate(e.target.value.toUpperCase())}
+                                                    placeholder="Ex: BRA2E19"
+                                                    maxLength={8}
+                                                    className="w-full px-3.5 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 uppercase font-mono outline-none focus:ring-2 focus:ring-[#114D38]"
                                                 />
-                                                <Search className="w-3.5 h-3.5 text-amber-700 absolute left-3 top-1/2 -translate-y-1/2" />
-                                                {searchVehicleQuery && (
-                                                    <button 
-                                                        type="button" 
-                                                        onClick={() => setSearchVehicleQuery('')}
-                                                        className="text-xs text-slate-400 hover:text-slate-700 font-bold absolute right-3 top-1/2 -translate-y-1/2"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                )}
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-black text-amber-950 uppercase tracking-wider mb-1">
+                                                    Seu Nome ou CPF (Informado na Saída) *
+                                                </label>
+                                                <input 
+                                                    type="text"
+                                                    value={locateDriverName}
+                                                    onChange={(e) => setLocateDriverName(e.target.value)}
+                                                    placeholder="Digite seu nome ou CPF"
+                                                    className="w-full px-3.5 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38]"
+                                                />
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
-                                            {ongoingTrips
-                                                .filter(trip => {
-                                                    if (!searchVehicleQuery.trim()) return true;
-                                                    const q = searchVehicleQuery.toLowerCase().trim();
-                                                    const veh = getVehicleById(trip.vehicleId);
-                                                    const plate = (veh?.plate || (trip as any).plate || '').toLowerCase();
-                                                    const driver = (trip.driverName || '').toLowerCase();
-                                                    return plate.includes(q) || driver.includes(q);
-                                                })
-                                                .map(trip => {
-                                                    const veh = getVehicleById(trip.vehicleId);
-                                                    return (
-                                                        <div
-                                                            key={trip.id}
-                                                            onClick={() => handleSelectOngoingTrip(trip)}
-                                                            className="p-3 bg-white hover:bg-emerald-50/80 border border-slate-200 hover:border-emerald-500 rounded-xl cursor-pointer transition-all flex items-center justify-between gap-2 shadow-xs group"
-                                                        >
-                                                            <div className="min-w-0">
-                                                                <span className="font-mono font-black text-xs text-slate-900 block truncate">
-                                                                    {veh?.plate || (trip as any).plate || '---'} • {veh?.model || (trip as any).model || 'Veículo'}
-                                                                </span>
-                                                                <span className="text-[11px] text-slate-600 font-medium block truncate mt-0.5">
-                                                                    Condutor: <strong>{trip.driverName}</strong>
-                                                                </span>
-                                                            </div>
-                                                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2.5 py-1 rounded-lg shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-all uppercase">
-                                                                Abrir Meu Retorno
-                                                            </span>
-                                                        </div>
-                                                    );
-                                                })}
+                                        {locateError && (
+                                            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-semibold flex items-center gap-2">
+                                                <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                                                <span>{locateError}</span>
+                                            </div>
+                                        )}
+
+                                        <div className="flex justify-end gap-2">
+                                            <button
+                                                type="submit"
+                                                className="px-4 py-2 bg-[#114D38] hover:bg-[#0d3b2b] text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm"
+                                            >
+                                                <Search className="w-3.5 h-3.5" />
+                                                <span>Localizar e Conferir</span>
+                                            </button>
                                         </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                                    </form>
+
+                                    {/* Resultado Positivo Privativo (Apenas a viagem do condutor é exibida) */}
+                                    {locateSuccessTrip && (
+                                        <div className="mt-3 p-4 bg-emerald-50 border-2 border-emerald-500 rounded-xl space-y-2 animate-fadeIn">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div>
+                                                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200">
+                                                        Viagem Confirmada
+                                                    </span>
+                                                    <h5 className="text-sm font-black text-emerald-950 mt-1 font-mono">
+                                                        {locateSuccessTrip.plate || getVehicleById(locateSuccessTrip.vehicleId)?.plate} • {locateSuccessTrip.model || getVehicleById(locateSuccessTrip.vehicleId)?.model}
+                                                    </h5>
+                                                    <p className="text-xs text-emerald-800 font-semibold mt-0.5">
+                                                        Condutor: <strong>{locateSuccessTrip.driverName}</strong> ({locateSuccessTrip.department})
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSelectOngoingTrip(locateSuccessTrip)}
+                                                    className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all flex items-center gap-1.5 shrink-0"
+                                                >
+                                                    <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                                                    <span>Vincular a Este Celular</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
 
                         {/* FORMULÁRIO DE NOVA VIAGEM */}
                         <section className="transition-all duration-300">

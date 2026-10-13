@@ -3,6 +3,12 @@ import React, { useState } from 'react';
 import { useReservations } from '../../context/ReservationContext';
 import { Reservation, ReservationStatus } from '../../types_reserva';
 import ReservationEditModal from './ReservationEditModal';
+import { 
+  formatDateTimeBR, 
+  formatDateBR, 
+  formatTimeBR, 
+  parseLocalDateTime 
+} from '../../utils/reservaDateUtils';
 
 const CalendarView: React.FC = () => {
   const { reservations, getVehicleById, updateReservation } = useReservations();
@@ -35,11 +41,27 @@ const CalendarView: React.FC = () => {
 
   const reservationsByDate: { [key: string]: any[] } = {};
   approvedReservations.forEach((res) => {
-    const dateKey = new Date(res.departureDateTime).toDateString();
-    if (!reservationsByDate[dateKey]) {
-      reservationsByDate[dateKey] = [];
+    const depDate = parseLocalDateTime(res.departureDateTime);
+    const retDate = parseLocalDateTime(res.returnDate);
+
+    // Mapeia todos os dias em que a reserva está ativa (da saída até o retorno)
+    const cur = new Date(depDate);
+    cur.setHours(0, 0, 0, 0);
+    const endDay = new Date(retDate);
+    endDay.setHours(23, 59, 59, 999);
+
+    let step = 0;
+    while (cur <= endDay && step < 31) {
+      const dateKey = cur.toDateString();
+      if (!reservationsByDate[dateKey]) {
+        reservationsByDate[dateKey] = [];
+      }
+      if (!reservationsByDate[dateKey].some(r => r.id === res.id)) {
+        reservationsByDate[dateKey].push(res);
+      }
+      cur.setDate(cur.getDate() + 1);
+      step++;
     }
-    reservationsByDate[dateKey].push(res);
   });
   
   const handlePrevMonth = () => {
@@ -94,8 +116,8 @@ const CalendarView: React.FC = () => {
             <div className="space-y-2 text-gray-700">
                 <p><span className="font-semibold text-gray-900">Solicitante:</span> {hoveredInfo.res.requesterName}</p>
                 <p><span className="font-semibold text-gray-900">Setor:</span> {hoveredInfo.res.department}</p>
-                <p><span className="font-semibold text-gray-900">Destino:</span> {hoveredInfo.res.destinationCity} - {hoveredInfo.res.destination}</p>
-                 <p><span className="font-semibold text-gray-900">Horário:</span> {new Date(hoveredInfo.res.departureDateTime).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})} - {new Date(hoveredInfo.res.returnDate).toLocaleDateString('pt-BR', {day: '2-digit', month:'2-digit'})}</p>
+                 <p><span className="font-semibold text-gray-900">Destino:</span> {hoveredInfo.res.destinationCity} - {hoveredInfo.res.destination}</p>
+                 <p><span className="font-semibold text-gray-900">Período:</span> {formatDateTimeBR(hoveredInfo.res.departureDateTime)} até {formatDateTimeBR(hoveredInfo.res.returnDate)}</p>
                 {hoveredInfo.res.purpose && (
                     <div className="mt-2 p-2 bg-gray-50 rounded text-xs italic text-gray-600 border border-gray-100">
                         "{hoveredInfo.res.purpose}"
@@ -117,7 +139,7 @@ const CalendarView: React.FC = () => {
         {weekDays.map(wd => <div key={wd} className="text-center font-semibold text-gray-600 py-2 text-sm md:text-base">{wd}</div>)}
         {days.map((d, index) => {
           const dateKey = d.toDateString();
-          const dayReservations = (reservationsByDate[dateKey] || []).sort((a,b) => new Date(a.departureDateTime).getTime() - new Date(b.departureDateTime).getTime());
+          const dayReservations = (reservationsByDate[dateKey] || []).sort((a,b) => parseLocalDateTime(a.departureDateTime).getTime() - parseLocalDateTime(b.departureDateTime).getTime());
           const isCurrentMonth = d.getMonth() === currentDate.getMonth();
           const isToday = d.toDateString() === new Date().toDateString();
 
@@ -131,7 +153,7 @@ const CalendarView: React.FC = () => {
               <div className="flex-1 overflow-y-auto flex flex-col gap-1 custom-scrollbar">
                 {dayReservations.map(res => {
                     const vehicle = getVehicleById(res.vehicleId);
-                    const time = new Date(res.departureDateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    const time = formatTimeBR(res.departureDateTime);
                     const firstName = res.requesterName.split(' ')[0];
                     
                     return (

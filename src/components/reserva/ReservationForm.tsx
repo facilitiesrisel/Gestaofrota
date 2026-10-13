@@ -18,6 +18,13 @@ import Modal from './Modal';
 import { CarIcon, MapPinIcon, CalendarIcon, DocumentTextIcon, CheckIcon, ExclamationTriangleIcon } from './icons';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
+import { 
+  parseLocalDateTime, 
+  formatToDateTimeLocalInput, 
+  formatDateTimeBR, 
+  getDefaultReservationDates, 
+  validateReservationDates 
+} from '../../utils/reservaDateUtils';
 
 // User Icon (Not in standard set, creating local)
 const UserIcon = ({ className }: { className?: string }) => (
@@ -33,21 +40,13 @@ const BuildingIcon = ({ className }: { className?: string }) => (
     </svg>
 );
 
-const parseDateTime = (dateTimeStr: string) => {
-    if (!dateTimeStr) return new Date();
-    // Format is assumed to be YYYY-MM-DDTHH:MM
-    const [datePart, timePart] = dateTimeStr.split('T');
-    const [y, m, d] = datePart.split('-').map(Number);
-    const [hours, mins] = (timePart || "12:00").split(':').map(Number);
-    return new Date(y, m - 1, d, hours, mins, 0, 0);
-};
-
 interface ReservationFormProps {
     initialVehicleId?: string | null;
     onSuccess?: () => void;
+    isModal?: boolean;
 }
 
-const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onSuccess }) => {
+const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onSuccess, isModal }) => {
   const { vehicles, reservations, dailyTrips, addReservation, getVehicleById } = useReservations();
   const { user: globalUser } = useGlobalAuth();
   const isAdmin = Boolean(
@@ -58,18 +57,22 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     )
   );
 
-  const [formData, setFormData] = useState({
-    requesterName: globalUser?.name ? globalUser.name.toUpperCase() : '',
-    department: (globalUser as any)?.department ? normalizeNomeSetor((globalUser as any).department) : '',
-    role: globalUser?.role === 'admin' ? 'DIRETORIA / GESTÃO' : (globalUser?.role ? globalUser.role.toUpperCase() : ''),
-    email: globalUser?.email || '',
-    departureDateTime: '',
-    returnDate: '',
-    destination: '',
-    destinationCity: '',
-    purpose: '',
-    driverName: '', // Added separate driverName field
-    driverRole: '', // Added separate driverRole field for hierarchy check
+  // Inicializa datas com valores padrão coerentes (horário comercial futuro sem erro)
+  const [formData, setFormData] = useState(() => {
+    const defaultDates = getDefaultReservationDates();
+    return {
+      requesterName: globalUser?.name ? globalUser.name.toUpperCase() : '',
+      department: (globalUser as any)?.department ? normalizeNomeSetor((globalUser as any).department) : '',
+      role: globalUser?.role === 'admin' ? 'DIRETORIA / GESTÃO' : (globalUser?.role ? globalUser.role.toUpperCase() : ''),
+      email: globalUser?.email || '',
+      departureDateTime: defaultDates.departureDateTime,
+      returnDate: defaultDates.returnDate,
+      destination: '',
+      destinationCity: '',
+      purpose: '',
+      driverName: '', // Added separate driverName field
+      driverRole: '', // Added separate driverRole field for hierarchy check
+    };
   });
 
   // Atualiza automaticamente os dados se o usuário logar enquanto o formulário estiver aberto
@@ -100,14 +103,11 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
           return;
       }
       const updateMinTime = () => {
-          const now = new Date();
-          // Adjust to local timezone string ISO format
-          now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-          const isoString = now.toISOString().slice(0, 16);
-          setMinDateTime(isoString);
+          const nowIso = formatToDateTimeLocalInput(new Date());
+          setMinDateTime(nowIso);
           
-          // Default min return date is today with time
-          setMinReturnDate(isoString);
+          // Default min return date is now
+          setMinReturnDate(nowIso);
       };
       updateMinTime();
       // Update every minute to keep "now" accurate
@@ -125,6 +125,25 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         // Update minReturnDate based on selected departure
         if (value) {
             setMinReturnDate(value);
+            // Prevenção ativa de erro: se a data de retorno atual for menor ou igual à nova saída, ajusta retorno
+            try {
+              const depD = parseLocalDateTime(value);
+              const retD = formData.returnDate ? parseLocalDateTime(formData.returnDate) : null;
+              if (!retD || retD.getTime() <= depD.getTime()) {
+                const autoReturn = new Date(depD);
+                if (depD.getHours() < 16) {
+                  autoReturn.setHours(18, 0, 0, 0);
+                } else {
+                  autoReturn.setHours(depD.getHours() + 3, 0, 0, 0);
+                }
+                setFormData(prev => ({
+                  ...prev,
+                  departureDateTime: value,
+                  returnDate: formatToDateTimeLocalInput(autoReturn)
+                }));
+                return;
+              }
+            } catch (e) {}
         }
     }
 
@@ -139,9 +158,109 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     e.preventDefault();
     setIsSubmitting(true);
 
-    // Use exact date and time requested to improve vehicle availability
-    const reqStartDate = parseDateTime(formData.departureDateTime);
-    const reqEndDate = parseDateTime(formData.returnDate);
+    // Validação estrita de todos os campos obrigatórios (garante que nada chegue incompleto pelo celular)
+    const missingFields: string[] = [];
+    if (!formData.requesterName.trim()) missingFields.push('Nome Completo do Solicitante');
+    if (!formData.email.trim() || !formData.email.includes('@')) missingFields.push('E-mail Corporativo válido');
+    if (!formData.department.trim()) missingFields.push('Setor / Departamento');
+    if (!formData.role.trim()) missingFields.push('Cargo / Função');
+    if (!isDriverSameAsRequester) {
+      if (!formData.driverName.trim()) missingFields.push('Nome Completo do Condutor');
+      if (!formData.driverRole.trim()) missingFields.push('Cargo / Função do Condutor');
+    }
+    if (!formData.departureDateTime) missingFields.push('Data e Hora de Saída');
+    if (!formData.returnDate) missingFields.push('Data e Horário de Retorno Previsto');
+    if (!formData.destinationCity.trim()) missingFields.push('Cidade de Destino');
+    if (!formData.destination.trim()) missingFields.push('Local Específico de Destino');
+    if (!formData.purpose.trim() || formData.purpose.trim().length < 5) missingFields.push('Motivo & Justificativa da Viagem (mínimo 5 caracteres)');
+
+    if (missingFields.length > 0) {
+      setModalState({
+        isOpen: true,
+        title: 'Informações Incompletas',
+        content: (
+          <div className="space-y-4 text-left">
+            <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl flex items-start gap-3">
+              <div className="bg-amber-100 p-2 rounded-full shrink-0 text-amber-700 mt-0.5">
+                <ExclamationTriangleIcon className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="font-extrabold text-sm text-amber-950 uppercase tracking-wide">
+                  Preencha todos os campos obrigatórios:
+                </h4>
+                <ul className="mt-2 text-xs text-amber-800 space-y-1 list-disc list-inside font-medium">
+                  {missingFields.map((field, idx) => (
+                    <li key={idx}>{field}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              Para evitar dados incompletos e agilizar a aprovação da frota, todos os campos marcados com * são indispensáveis.
+            </p>
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalState(prev => ({ ...prev, isOpen: false }));
+                  setIsSubmitting(false);
+                }}
+                className="bg-[#114D38] text-white font-extrabold py-2.5 px-5 rounded-xl text-xs hover:bg-emerald-800 transition-colors shadow-sm cursor-pointer uppercase tracking-wider"
+              >
+                Completar Informações
+              </button>
+            </div>
+          </div>
+        )
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Validação estrita e amigável das datas e horários antes de qualquer verificação
+    const dateValidation = validateReservationDates(formData.departureDateTime, formData.returnDate, { allowPast: isAdmin });
+    if (!dateValidation.isValid || !dateValidation.departureDate || !dateValidation.returnDate) {
+      setModalState({
+        isOpen: true,
+        title: 'Verifique a Data e Horário',
+        content: (
+          <div className="space-y-4 text-left">
+            <div className="flex items-start gap-3 bg-amber-50 p-4 rounded-xl border border-amber-200 text-amber-900">
+              <div className="bg-amber-100 p-2 rounded-full shrink-0 text-amber-700 mt-0.5">
+                <ExclamationTriangleIcon className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-amber-950">Inconsistência de Data / Horário</h4>
+                <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                  {dateValidation.errorMessage || 'Por favor, revise as datas de saída e de retorno informado.'}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600">
+              Certifique-se de que a data de saída não esteja no passado e que o horário de retorno previsto seja posterior ao horário de saída.
+            </p>
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalState(prev => ({ ...prev, isOpen: false }));
+                  setIsSubmitting(false);
+                }}
+                className="bg-[#114D38] text-white font-bold py-2 px-4 rounded-xl text-xs hover:bg-emerald-800 transition-colors shadow-sm cursor-pointer"
+              >
+                Entendido, vou ajustar
+              </button>
+            </div>
+          </div>
+        )
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Datas validadas e devidamente tratadas no horário local fidedigno
+    const reqStartDate = dateValidation.departureDate;
+    const reqEndDate = dateValidation.returnDate;
     
     // Check for conflicts: Overlap Logic based on exact dates and times
     const reservedVehicleIds = reservations
@@ -149,8 +268,8 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
         const isActive = r.status === ReservationStatus.Approved || r.status === ReservationStatus.Pending || r.status === ReservationStatus.InUse;
         if (!isActive) return false;
 
-        const resStart = new Date(r.departureDateTime);
-        const resEnd = new Date(r.returnDate);
+        const resStart = parseLocalDateTime(r.departureDateTime);
+        const resEnd = parseLocalDateTime(r.returnDate);
 
         // Check if ranges overlap (exclusive bounds check to allow back-to-back rentals)
         return reqStartDate < resEnd && reqEndDate > resStart;
@@ -248,7 +367,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                     </div>
                     
                     <p className="text-gray-600 text-sm mb-6 leading-relaxed">
-                        No momento, todos os veículos do modelo HB20 {isSPTrip ? 'estão reservados ou restritos pelo rodízio municipal' : 'estão reservados'} para o período de <strong>{new Date(formData.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</strong> a <strong>{parseDateTime(formData.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</strong>.
+                        No momento, todos os veículos do modelo HB20 {isSPTrip ? 'estão reservados ou restritos pelo rodízio municipal' : 'estão reservados'} para o período de <strong>{formatDateTimeBR(reqStartDate)}</strong> a <strong>{formatDateTimeBR(reqEndDate)}</strong>.
                     </p>
                     
                     <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
@@ -435,20 +554,21 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     // Determina o nome do condutor
     const finalDriverName = isDriverSameAsRequester ? formData.requesterName : formData.driverName;
 
-    // Parse proposed return date and time using local timezone utility
-    const returnDateFixed = parseDateTime(formData.returnDate);
+    // Conversão de datas e horários com integridade absoluta (sem desvios de timezone)
+    const departureDateFixed = parseLocalDateTime(formData.departureDateTime);
+    const returnDateFixed = parseLocalDateTime(formData.returnDate);
 
     // Checagem de rodízio para São Paulo Capital
     const isSP = isDestinationSaoPaulo(city, formData.destination);
     const plateFinal = getPlateFinalDigit(vehicleToReserve.plate);
-    const rodizioInfo = checkVehicleRodizio(vehicleToReserve.plate, formData.departureDateTime, formData.returnDate);
+    const rodizioInfo = checkVehicleRodizio(vehicleToReserve.plate, departureDateFixed, returnDateFixed);
 
     const reservationData: Omit<Reservation, 'id' | 'status' | 'actualReturnDateTime' | 'finalKm' | 'requestTimestamp'> = {
       requesterName: formData.requesterName,
       department: normalizeNomeSetor(formData.department),
       role: formData.role,
       email: formData.email,
-      departureDateTime: new Date(formData.departureDateTime),
+      departureDateTime: departureDateFixed,
       returnDate: returnDateFixed,
       destination: formData.destination,
       destinationCity: city,
@@ -463,15 +583,15 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
 
     await addReservation(reservationData);
     
-    // Preparar lista de detalhes para o e-mail
+    // Preparar lista de detalhes para o e-mail com formatação garantida
     const emailDetails = [
         { label: "Solicitante", value: formData.requesterName },
         { label: "Condutor", value: finalDriverName },
         { label: "Departamento", value: normalizeNomeSetor(formData.department) },
         { label: "Categoria Pretendida", value: vehicleToReserve.model ? `${vehicleToReserve.model} (${vehicleToReserve.type || 'Passeio / Operações'})` : 'Hatch Compacto' },
         { label: "Veículo Sugerido", value: `${vehicleToReserve.model} - ${vehicleToReserve.plate}` },
-        { label: "Data de Saída", value: new Date(formData.departureDateTime).toLocaleString('pt-BR') },
-        { label: "Retorno Previsto", value: returnDateFixed.toLocaleString('pt-BR') },
+        { label: "Data de Saída", value: formatDateTimeBR(departureDateFixed) },
+        { label: "Retorno Previsto", value: formatDateTimeBR(returnDateFixed) },
         { label: "Destino", value: `${city} - ${formData.destination}` },
         { label: "Distância Estimada", value: distance ? `${distance.toLocaleString('pt-BR')} km` : 'N/A' },
         { label: "Motivo", value: formData.purpose }
@@ -815,9 +935,15 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                               onChange={handleChange} 
                               required 
                               min={minDateTime} 
-                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all" 
+                              className="w-full px-3.5 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all shadow-2xs" 
                           />
                       </div>
+                      {formData.departureDateTime && (
+                          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-800 font-bold bg-emerald-50/80 px-2.5 py-1 rounded-lg border border-emerald-200">
+                              <span>📅 Saída Confirmada:</span>
+                              <span className="font-mono">{formatDateTimeBR(formData.departureDateTime)}</span>
+                          </div>
+                      )}
                   </div>
                   <div>
                       <label htmlFor="returnDate" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -831,9 +957,15 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                               onChange={handleChange} 
                               required 
                               min={minReturnDate} 
-                              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all" 
+                              className="w-full px-3.5 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38] focus:bg-white transition-all shadow-2xs" 
                           />
                       </div>
+                      {formData.returnDate && (
+                          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-800 font-bold bg-emerald-50/80 px-2.5 py-1 rounded-lg border border-emerald-200">
+                              <span>🏁 Retorno Previsto:</span>
+                              <span className="font-mono">{formatDateTimeBR(formData.returnDate)}</span>
+                          </div>
+                      )}
                   </div>
                   <div>
                       <label htmlFor="destinationCity" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
