@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useReservations } from '../../context/ReservationContext';
 import { ReservationStatus, Vehicle, Reservation, FuelLevel } from '../../types_reserva';
 import { SP_CITIES, LEADERSHIP_ROLES, ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
@@ -117,6 +117,26 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
 
   const preSelectedVehicle = initialVehicleId ? getVehicleById(initialVehicleId) : null;
 
+  // Barra de integridade e completude dos dados (Garante visualização integral no celular para não gerar dados incompletos)
+  const formProgress = useMemo(() => {
+    const checks = [
+      { id: 'requesterName', label: 'Solicitante', filled: Boolean(formData.requesterName.trim()) },
+      { id: 'email', label: 'E-mail Corporativo', filled: Boolean(formData.email.trim() && formData.email.includes('@')) },
+      { id: 'department', label: 'Setor', filled: Boolean(formData.department.trim()) },
+      { id: 'role', label: 'Cargo', filled: Boolean(formData.role.trim()) },
+      { id: 'driverName', label: 'Condutor', filled: isDriverSameAsRequester ? true : Boolean(formData.driverName.trim() && formData.driverRole.trim()) },
+      { id: 'departureDateTime', label: 'Data/Hora Saída', filled: Boolean(formData.departureDateTime) },
+      { id: 'returnDate', label: 'Data/Hora Retorno', filled: Boolean(formData.returnDate) },
+      { id: 'destinationCity', label: 'Destino', filled: Boolean(formData.destinationCity.trim() && formData.destination.trim()) },
+      { id: 'purpose', label: 'Motivo/Justificativa', filled: Boolean(formData.purpose.trim() && formData.purpose.trim().length >= 5) },
+    ];
+    const total = checks.length;
+    const completed = checks.filter(c => c.filled).length;
+    const percent = Math.round((completed / total) * 100);
+    const isReady = completed === total;
+    return { checks, total, completed, percent, isReady };
+  }, [formData, isDriverSameAsRequester]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     const upperCaseFields = ['requesterName', 'department', 'role', 'destination', 'destinationCity', 'purpose', 'driverName', 'driverRole'];
@@ -158,56 +178,82 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
     e.preventDefault();
     setIsSubmitting(true);
 
-    // Validação estrita de todos os campos obrigatórios (garante que nada chegue incompleto pelo celular)
-    const missingFields: string[] = [];
-    if (!formData.requesterName.trim()) missingFields.push('Nome Completo do Solicitante');
-    if (!formData.email.trim() || !formData.email.includes('@')) missingFields.push('E-mail Corporativo válido');
-    if (!formData.department.trim()) missingFields.push('Setor / Departamento');
-    if (!formData.role.trim()) missingFields.push('Cargo / Função');
+    // Validação estrita de todos os campos obrigatórios com mapeamento de IDs para auto-scroll no celular
+    const missingFieldsMap: Array<{ id: string; label: string }> = [];
+    if (!formData.requesterName.trim()) missingFieldsMap.push({ id: 'requesterName', label: 'Nome Completo do Solicitante' });
+    if (!formData.email.trim() || !formData.email.includes('@')) missingFieldsMap.push({ id: 'email', label: 'E-mail Corporativo válido' });
+    if (!formData.department.trim()) missingFieldsMap.push({ id: 'department', label: 'Setor / Departamento' });
+    if (!formData.role.trim()) missingFieldsMap.push({ id: 'role', label: 'Cargo / Função do Solicitante' });
     if (!isDriverSameAsRequester) {
-      if (!formData.driverName.trim()) missingFields.push('Nome Completo do Condutor');
-      if (!formData.driverRole.trim()) missingFields.push('Cargo / Função do Condutor');
+      if (!formData.driverName.trim()) missingFieldsMap.push({ id: 'driverName', label: 'Nome Completo do Condutor' });
+      if (!formData.driverRole.trim()) missingFieldsMap.push({ id: 'driverRole', label: 'Cargo / Função do Condutor' });
     }
-    if (!formData.departureDateTime) missingFields.push('Data e Hora de Saída');
-    if (!formData.returnDate) missingFields.push('Data e Horário de Retorno Previsto');
-    if (!formData.destinationCity.trim()) missingFields.push('Cidade de Destino');
-    if (!formData.destination.trim()) missingFields.push('Local Específico de Destino');
-    if (!formData.purpose.trim() || formData.purpose.trim().length < 5) missingFields.push('Motivo & Justificativa da Viagem (mínimo 5 caracteres)');
+    if (!formData.departureDateTime) missingFieldsMap.push({ id: 'departureDateTime', label: 'Data e Hora de Saída' });
+    if (!formData.returnDate) missingFieldsMap.push({ id: 'returnDate', label: 'Data e Horário de Retorno Previsto' });
+    if (!formData.destinationCity.trim()) missingFieldsMap.push({ id: 'destinationCity', label: 'Cidade de Destino' });
+    if (!formData.destination.trim()) missingFieldsMap.push({ id: 'destination', label: 'Local Específico de Destino' });
+    if (!formData.purpose.trim() || formData.purpose.trim().length < 5) missingFieldsMap.push({ id: 'purpose', label: 'Motivo & Justificativa da Viagem (mínimo 5 caracteres)' });
 
-    if (missingFields.length > 0) {
+    const scrollToField = (fieldId: string) => {
+      setModalState(prev => ({ ...prev, isOpen: false }));
+      setIsSubmitting(false);
+      setTimeout(() => {
+        const el = document.getElementById(fieldId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.focus();
+          el.classList.add('ring-4', 'ring-rose-500/40', 'border-rose-500');
+          setTimeout(() => {
+            el.classList.remove('ring-4', 'ring-rose-500/40', 'border-rose-500');
+          }, 3500);
+        }
+      }, 150);
+    };
+
+    if (missingFieldsMap.length > 0) {
       setModalState({
         isOpen: true,
-        title: 'Informações Incompletas',
+        title: 'Informações Incompletas no Formulário',
         content: (
           <div className="space-y-4 text-left">
             <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl flex items-start gap-3">
               <div className="bg-amber-100 p-2 rounded-full shrink-0 text-amber-700 mt-0.5">
                 <ExclamationTriangleIcon className="h-5 w-5" />
               </div>
-              <div>
+              <div className="w-full">
                 <h4 className="font-extrabold text-sm text-amber-950 uppercase tracking-wide">
-                  Preencha todos os campos obrigatórios:
+                  Identificamos campos pendentes:
                 </h4>
-                <ul className="mt-2 text-xs text-amber-800 space-y-1 list-disc list-inside font-medium">
-                  {missingFields.map((field, idx) => (
-                    <li key={idx}>{field}</li>
+                <p className="text-xs text-amber-800 mt-0.5">
+                  No celular, todos os dados são necessários para que a solicitação não seja gerada com dados incompletos.
+                </p>
+                <div className="mt-3 space-y-1.5">
+                  {missingFieldsMap.map((item, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => scrollToField(item.id)}
+                      className="w-full flex items-center justify-between text-left p-2 rounded-xl bg-white/80 hover:bg-white border border-amber-200 text-xs font-bold text-amber-900 cursor-pointer transition-all active:scale-95"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                        {item.label}
+                      </span>
+                      <span className="text-[10px] text-emerald-800 font-extrabold uppercase bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        Preencher ➔
+                      </span>
+                    </button>
                   ))}
-                </ul>
+                </div>
               </div>
             </div>
-            <p className="text-xs text-slate-500">
-              Para evitar dados incompletos e agilizar a aprovação da frota, todos os campos marcados com * são indispensáveis.
-            </p>
             <div className="flex justify-end pt-2">
               <button
                 type="button"
-                onClick={() => {
-                  setModalState(prev => ({ ...prev, isOpen: false }));
-                  setIsSubmitting(false);
-                }}
-                className="bg-[#114D38] text-white font-extrabold py-2.5 px-5 rounded-xl text-xs hover:bg-emerald-800 transition-colors shadow-sm cursor-pointer uppercase tracking-wider"
+                onClick={() => scrollToField(missingFieldsMap[0].id)}
+                className="bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold py-2.5 px-5 rounded-xl text-xs transition-colors shadow-sm cursor-pointer uppercase tracking-wider"
               >
-                Completar Informações
+                Ir para o primeiro campo pendente
               </button>
             </div>
           </div>
@@ -642,38 +688,94 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
       console.warn("Aviso: reserva gravada no sistema, porém o despacho de e-mail oscilou:", emailErr);
     }
 
+    const protocolNumber = `RES-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const handleCopySuccessSummary = () => {
+      const summaryText = [
+        `🚗 *COMPROVANTE DE SOLICITAÇÃO DE RESERVA DE VEÍCULO - RISEL*`,
+        `📋 *Protocolo:* ${protocolNumber}`,
+        `👤 *Solicitante:* ${formData.requesterName} (${formData.department || 'Geral'})`,
+        `💼 *Cargo:* ${formData.role}`,
+        `📧 *E-mail:* ${formData.email}`,
+        `🧑‍✈️ *Condutor:* ${isDriverSameAsRequester ? `${formData.requesterName} (Próprio Solicitante)` : `${formData.driverName} (${formData.driverRole})`}`,
+        `📍 *Destino:* ${city} - ${formData.destination}`,
+        `📅 *Saída:* ${formatDateTimeBR(formData.departureDateTime)}`,
+        `🏁 *Retorno:* ${formatDateTimeBR(formData.returnDate)}`,
+        `🚙 *Veículo:* ${vehicleToReserve.model} • Placa ${vehicleToReserve.plate}`,
+        distance ? `📏 *Distância Estimada:* ${distance.toLocaleString('pt-BR')} km (ida e volta)` : null,
+        `📝 *Motivo:* ${formData.purpose}`,
+        `⏱️ *Status:* Aguardando Homologação da Frota`
+      ].filter(Boolean).join('\n');
+
+      navigator.clipboard?.writeText(summaryText);
+      alert('Comprovante copiado com sucesso! Você pode colá-lo no WhatsApp ou e-mail.');
+    };
+
     setModalState({
         isOpen: true,
         title: 'Solicitação Enviada com Sucesso!',
         content: (
-          <div className="space-y-4 text-left">
-            <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-[#114D38] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+          <div className="space-y-4 text-left max-h-[80vh] overflow-y-auto pr-1">
+            <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl flex items-start gap-3 shadow-xs">
+                <div className="w-9 h-9 rounded-full bg-[#114D38] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm font-black">
                     <CheckIcon className="h-5 w-5"/>
                 </div>
                 <div>
-                    <h4 className="font-extrabold text-sm uppercase tracking-wide text-emerald-950">
-                        Reserva registrada com sucesso!
-                    </h4>
-                    <p className="text-xs text-emerald-800 mt-1">
-                        Sua solicitação de veículo próprio foi cadastrada no sistema.
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-extrabold text-sm uppercase tracking-wide text-emerald-950">
+                          Reserva Registrada com Sucesso!
+                      </h4>
+                      <span className="text-[10px] font-mono font-bold bg-white text-emerald-800 px-2 py-0.5 rounded-md border border-emerald-200 shadow-2xs">
+                        {protocolNumber}
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
+                        Todos os dados da sua solicitação foram validados e registrados sem qualquer omissão.
                     </p>
-                    <p className="text-xs text-emerald-900 font-bold mt-1.5 bg-emerald-100/70 p-2 rounded-lg border border-emerald-200">
-                        A análise e confirmação serão enviadas para: <span className="underline">{formData.email}</span>
+                    <p className="text-xs text-emerald-900 font-bold mt-1.5 bg-emerald-100/70 p-2 rounded-xl border border-emerald-200">
+                        Confirmação e notificações enviadas para: <span className="underline">{formData.email}</span>
                     </p>
                 </div>
             </div>
 
-            <div className="bg-slate-50 p-4 rounded-xl text-left space-y-2.5 text-xs border border-slate-200">
+            {/* Comprovante Oficial Completo */}
+            <div className="bg-slate-50 p-4 rounded-2xl text-left space-y-2.5 text-xs border border-slate-200 shadow-inner">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                    <span className="text-slate-500 font-bold uppercase">Veículo Sugerido:</span>
-                    <span className="font-extrabold text-slate-800 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                        {vehicleToReserve.model} • {vehicleToReserve.plate}
+                    <span className="text-slate-500 font-bold uppercase text-[11px]">Veículo Alocado:</span>
+                    <span className="font-black text-slate-800 bg-white px-2.5 py-1 rounded-xl border border-slate-200 shadow-2xs">
+                        {vehicleToReserve.model} • <span className="font-mono text-emerald-800">{vehicleToReserve.plate}</span>
                     </span>
                 </div>
+
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-slate-500 font-bold uppercase text-[11px]">Condutor:</span>
+                    <span className="font-extrabold text-slate-800">
+                        {isDriverSameAsRequester ? `${formData.requesterName} (Próprio Solicitante)` : `${formData.driverName} (${formData.driverRole})`}
+                    </span>
+                </div>
+
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-slate-500 font-bold uppercase text-[11px]">Período da Viagem:</span>
+                    <div className="text-right">
+                        <div className="font-mono font-bold text-slate-800">
+                          Saída: {formatDateTimeBR(formData.departureDateTime)}
+                        </div>
+                        <div className="font-mono font-bold text-slate-600 mt-0.5">
+                          Retorno: {formatDateTimeBR(formData.returnDate)}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-slate-500 font-bold uppercase text-[11px]">Destino Completo:</span>
+                    <span className="font-bold text-slate-800 text-right max-w-[240px] truncate">
+                      {city} — {formData.destination}
+                    </span>
+                </div>
+
                 {isSP && (
                     <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                        <span className="text-slate-500 font-bold uppercase">Rodízio SP Capital:</span>
+                        <span className="text-slate-500 font-bold uppercase text-[11px]">Rodízio SP Capital:</span>
                         <span className={`font-extrabold px-2 py-0.5 rounded text-[11px] border ${
                             rodizioInfo.isRestricted 
                                 ? 'bg-amber-100 text-amber-900 border-amber-300' 
@@ -681,37 +783,52 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                         }`}>
                             {rodizioInfo.isRestricted 
                                 ? `Atenção: Restrito na(s) ${rodizioInfo.restrictedDays.join(', ')}` 
-                                : `✅ Liberado (Final ${plateFinal})`}
+                                : `✅ Placa Liberada (Final ${plateFinal})`}
                         </span>
                     </div>
                 )}
+
                 {distance && (
                     <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                        <span className="text-slate-500 font-bold uppercase">Distância Estimada (Ida/Volta):</span>
-                        <span className="font-extrabold text-emerald-700">{distance.toLocaleString('pt-BR')} km</span>
+                        <span className="text-slate-500 font-bold uppercase text-[11px]">Distância Estimada:</span>
+                        <span className="font-extrabold text-emerald-800 font-mono">{distance.toLocaleString('pt-BR')} km (ida e volta)</span>
                     </div>
                 )}
-                <div className="flex items-center justify-between">
-                    <span className="text-slate-500 font-bold uppercase">Destino:</span>
-                    <span className="font-semibold text-slate-700">{city} - {formData.destination}</span>
+
+                <div className="pt-1">
+                    <span className="text-slate-500 font-bold uppercase text-[11px] block mb-1">Finalidade:</span>
+                    <p className="text-slate-700 bg-white p-2.5 rounded-xl border border-slate-200 text-xs italic">
+                      "{formData.purpose}"
+                    </p>
                 </div>
             </div>
 
-            <button
-                onClick={() => {
-                    setModalState({ ...modalState, isOpen: false });
-                    setFormData({
-                        requesterName: '', department: '', role: '', email: '',
-                        departureDateTime: '', returnDate: '', destination: '',
-                        destinationCity: '', purpose: '', driverName: '', driverRole: ''
-                    });
-                    setIsDriverSameAsRequester(true);
-                    onSuccess?.();
-                }}
-                className="w-full py-3.5 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-[#0d3b2b] hover:to-[#092b1f] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer"
-            >
-              Concluir e Fechar
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <button
+                  type="button"
+                  onClick={handleCopySuccessSummary}
+                  className="w-full py-3 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95"
+              >
+                <span>📋 Copiar Comprovante (WhatsApp)</span>
+              </button>
+
+              <button
+                  type="button"
+                  onClick={() => {
+                      setModalState({ ...modalState, isOpen: false });
+                      setFormData({
+                          requesterName: '', department: '', role: '', email: '',
+                          departureDateTime: '', returnDate: '', destination: '',
+                          destinationCity: '', purpose: '', driverName: '', driverRole: ''
+                      });
+                      setIsDriverSameAsRequester(true);
+                      onSuccess?.();
+                  }}
+                  className="w-full py-3 bg-gradient-to-r from-[#114D38] to-[#0d3b2b] hover:from-[#0d3b2b] hover:to-[#092b1f] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+              >
+                <span>Concluir e Fechar</span>
+              </button>
+            </div>
           </div>
         ),
       });
@@ -778,6 +895,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                       </label>
                       <input 
                           type="text" 
+                          id="requesterName"
                           name="requesterName" 
                           placeholder="Digite seu nome completo" 
                           value={formData.requesterName} 
@@ -792,6 +910,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                       </label>
                       <input 
                           type="email" 
+                          id="email"
                           name="email" 
                           placeholder="seu.email@risel.com.br" 
                           value={formData.email} 
@@ -806,6 +925,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                       </label>
                       <input 
                           type="text" 
+                          id="department"
                           name="department" 
                           list="setores-oficiais-list"
                           placeholder="Ex: Comercial, Logística, Manutenção" 
@@ -826,6 +946,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                       </label>
                       <input 
                           type="text" 
+                          id="role"
                           name="role" 
                           placeholder="Ex: Analista, Coordenador, Gerente" 
                           value={formData.role} 
@@ -879,6 +1000,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                                   </label>
                                   <input 
                                       type="text" 
+                                      id="driverName"
                                       name="driverName" 
                                       placeholder="Nome completo do motorista" 
                                       value={formData.driverName} 
@@ -893,6 +1015,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                                   </label>
                                   <input 
                                       type="text" 
+                                      id="driverRole"
                                       name="driverRole" 
                                       placeholder="Ex: Supervisor, Operador" 
                                       value={formData.driverRole} 
@@ -930,6 +1053,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                       <div className="relative">
                           <input 
                               type="datetime-local" 
+                              id="departureDateTime"
                               name="departureDateTime" 
                               value={formData.departureDateTime} 
                               onChange={handleChange} 
@@ -952,6 +1076,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                       <div className="relative">
                           <input 
                               type="datetime-local" 
+                              id="returnDate"
                               name="returnDate" 
                               value={formData.returnDate} 
                               onChange={handleChange} 
@@ -994,6 +1119,7 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                       </label>
                       <input 
                           type="text" 
+                          id="destination"
                           name="destination" 
                           value={formData.destination} 
                           onChange={handleChange} 
@@ -1053,7 +1179,11 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
               </div>
 
               <div>
+                  <label htmlFor="purpose" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Finalidade e Justificativa da Utilização *
+                  </label>
                   <textarea 
+                      id="purpose"
                       name="purpose" 
                       rows={3}
                       value={formData.purpose} 
@@ -1064,6 +1194,105 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                   />
                   <p className="text-[11px] text-slate-400 mt-1 text-right">Campos marcados com * são obrigatórios</p>
               </div>
+          </div>
+
+          {/* PAINEL DE CONFERÊNCIA PRÉVIA E AUDITORIA VISUAL (MOBILE FIRST: VISIBILIDADE INTEGRAL) */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#114D38] flex items-center justify-center font-black text-xs border border-emerald-200">
+                          ✓
+                      </div>
+                      <div>
+                          <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">
+                              Conferência dos Dados da Reserva
+                          </h3>
+                          <p className="text-[11px] text-slate-500 font-medium">
+                              Todas as informações abaixo foram consolidadas para evitar dados incompletos
+                          </p>
+                      </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider border ${
+                          formProgress.isReady 
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                              : 'bg-amber-50 text-amber-900 border-amber-200'
+                      }`}>
+                          {formProgress.completed} de {formProgress.total} itens preenchidos ({formProgress.percent}%)
+                      </span>
+                  </div>
+              </div>
+
+              {/* Barra de Progresso Visual */}
+              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <div 
+                      className={`h-full transition-all duration-300 ${formProgress.isReady ? 'bg-[#00CA71]' : 'bg-[#F47920]'}`}
+                      style={{ width: `${formProgress.percent}%` }}
+                  />
+              </div>
+
+              {/* Grade de Resumo Mobile de Todos os Dados */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Solicitante:</span>
+                      <span className="font-extrabold text-slate-800 truncate block mt-0.5">
+                          {formData.requesterName || <span className="text-amber-600 font-bold">⚠️ Não informado</span>}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block truncate">
+                          {formData.department ? `${formData.department}` : ''} {formData.role ? `• ${formData.role}` : ''}
+                      </span>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Condutor:</span>
+                      <span className="font-extrabold text-slate-800 truncate block mt-0.5">
+                          {isDriverSameAsRequester 
+                              ? (formData.requesterName ? `${formData.requesterName} (Próprio Solicitante)` : <span className="text-amber-600">⚠️ Solicitante</span>)
+                              : (formData.driverName ? `${formData.driverName} (${formData.driverRole || 'Sem cargo'})` : <span className="text-amber-600 font-bold">⚠️ Condutor pendente</span>)}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block truncate">
+                          {formData.email || 'E-mail corporativo'}
+                      </span>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Destino da Viagem:</span>
+                      <span className="font-extrabold text-slate-800 truncate block mt-0.5">
+                          {formData.destinationCity ? `${formData.destinationCity}` : <span className="text-amber-600 font-bold">⚠️ Cidade pendente</span>}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block truncate">
+                          {formData.destination ? formData.destination : 'Local específico pendente'}
+                      </span>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 sm:col-span-2 lg:col-span-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Período Selecionado:</span>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mt-0.5 font-mono">
+                          <span className="text-slate-700 font-bold text-[11px]">
+                              Saída: <span className="text-emerald-800">{formData.departureDateTime ? formatDateTimeBR(formData.departureDateTime) : '⚠️ Definir saída'}</span>
+                          </span>
+                          <span className="text-slate-700 font-bold text-[11px]">
+                              Retorno: <span className="text-emerald-800">{formData.returnDate ? formatDateTimeBR(formData.returnDate) : '⚠️ Definir retorno'}</span>
+                          </span>
+                      </div>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Veículo Alocado:</span>
+                      <span className="font-extrabold text-[#114D38] truncate block mt-0.5">
+                          {preSelectedVehicle ? `${preSelectedVehicle.model} (${preSelectedVehicle.plate})` : 'Frota Leve / Alocação Automática'}
+                      </span>
+                  </div>
+              </div>
+
+              {!formProgress.isReady && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs flex items-center gap-2">
+                      <span className="text-base">⚠️</span>
+                      <span className="font-semibold">
+                          Existem campos obrigatórios em branco acima. Complete-os para que sua reserva seja enviada sem omissões.
+                      </span>
+                  </div>
+              )}
           </div>
 
           <div className="pt-2">

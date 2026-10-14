@@ -5,6 +5,8 @@ import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOpera
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
 import { addRacRental, sendEmail, generateRacEmailHtml } from '../../services/firebaseService';
 import { checkDriverCnhStatus, saveDriverCnhRecord } from '../../services/cnhService';
+import { optimizeCnhFile, formatFileSize } from '../../utils/imageOptimizer';
+import { uploadRacCnhFileToDrive, GOOGLE_DRIVE_RAC_CNH_FOLDER_URL } from '../../services/googleDriveService';
 import Modal from './Modal';
 import { 
   CarIcon, 
@@ -99,6 +101,9 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const [isProcessingCnh, setIsProcessingCnh] = useState(false);
+  const [cnhOptimizationNote, setCnhOptimizationNote] = useState<string | null>(null);
 
   // Inicializa datas mínimas
   useEffect(() => {
@@ -166,7 +171,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
     }));
   };
 
-  // Manipulador de upload de arquivo CNH
+  // Manipulador de upload de arquivo CNH (arquivo ou câmera)
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -174,28 +179,36 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
     }
   };
 
-  const processCnhFile = (file: File) => {
-    // Validar tamanho máximo (15MB)
-    if (file.size > 15 * 1024 * 1024) {
-      alert('O arquivo selecionado é muito grande. O tamanho máximo permitido é 15MB.');
-      return;
-    }
-
-    const isImage = file.type.startsWith('image/');
-    const reader = new FileReader();
-    
-    reader.onload = () => {
-      const base64 = reader.result as string;
+  const processCnhFile = async (file: File) => {
+    setIsProcessingCnh(true);
+    setCnhOptimizationNote(null);
+    try {
+      const targetDriverName = (isDriverSameAsRequester ? formData.requesterName : formData.driverName) || 'Condutor';
+      
+      // Otimização e compressão client-side (previne OutOfMemory e erro de cota no celular)
+      const optimized = await optimizeCnhFile(file, targetDriverName);
+      
       setCnhFile({
-        file,
-        fileName: file.name,
-        base64,
-        previewUrl: isImage ? base64 : '',
-        isImage
+        file: optimized.file,
+        fileName: optimized.file.name,
+        base64: optimized.dataUrl,
+        previewUrl: optimized.previewUrl,
+        isImage: optimized.isImage
       });
-    };
 
-    reader.readAsDataURL(file);
+      if (optimized.reductionPercentage > 0) {
+        setCnhOptimizationNote(
+          `Foto da câmera otimizada: ${formatFileSize(optimized.originalSize)} ➔ ${formatFileSize(optimized.compressedSize)} (${optimized.reductionPercentage}% de memória economizada)`
+        );
+      } else {
+        setCnhOptimizationNote(`Documento pronto para envio: ${formatFileSize(optimized.compressedSize)}`);
+      }
+    } catch (err: any) {
+      console.error('Erro ao processar CNH:', err);
+      alert('Não foi possível processar a imagem da CNH. Por favor, tente novamente ou selecione outro arquivo.');
+    } finally {
+      setIsProcessingCnh(false);
+    }
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -207,10 +220,15 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
 
   const handleRemoveCnh = () => {
     setCnhFile(null);
+    setCnhOptimizationNote(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
   };
+
 
   // Cálculo da duração estimada em dias e horas
   const rentalDurationText = useMemo(() => {
@@ -297,7 +315,50 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         : (formData.filial?.trim() || 'Paulínia');
       const finalFilial = normalizeBaseOperacional(rawFilial);
 
-      // Monta objeto da locação RAC
+      // Nome padronizado oficial exigido: CNH - [Nome do Condutor].[ext]
+      const ext = cnhFile ? (cnhFile.isImage ? 'jpg' : 'pdf') : 'jpg';
+      const officialCnhFileName = `CNH - ${finalDriverName}.${ext}`;
+
+      // Upload oficial da CNH para a pasta do Google Drive da Risel:
+      // https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br
+      let cnhDriveUrl = GOOGLE_DRIVE_RAC_CNH_FOLDER_URL;
+      let cnhDriveFileId = '';
+
+      if (cnhFile && cnhFile.base64) {
+        try {
+          const uploadRes = await fetch('/api/rac/upload-cnh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              driverName: finalDriverName,
+              fileData: cnhFile.base64,
+              mimeType: cnhFile.file.type || (cnhFile.isImage ? 'image/jpeg' : 'application/pdf')
+            })
+          });
+
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json();
+            if (uploadJson.cnhDriveUrl) {
+              cnhDriveUrl = uploadJson.cnhDriveUrl;
+              cnhDriveFileId = uploadJson.cnhDriveFileId || '';
+            }
+          } else {
+            const directDriveResult = await uploadRacCnhFileToDrive(
+              cnhFile.file,
+              finalDriverName,
+              cnhFile.file.type
+            );
+            if (directDriveResult?.webViewLink) {
+              cnhDriveUrl = directDriveResult.webViewLink;
+              cnhDriveFileId = directDriveResult.id || '';
+            }
+          }
+        } catch (uploadErr) {
+          console.warn('Aviso no upload direto da CNH, vinculando à pasta do Drive:', uploadErr);
+        }
+      }
+
+      // Monta objeto da locação RAC (evitando superlotação do Supabase com base64)
       const newRentalData: Omit<RacRental, 'id'> = {
         rentalCompany: 'A Definir (Cotação RAC)',
         plate: 'A DEFINIR',
@@ -325,8 +386,12 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         purpose: formData.purpose.trim(),
         observations: formData.observations.trim(),
         hasCnhCopy: hasCnhAlready || isAttachingNow,
-        cnhFileName: cnhFile?.fileName || cnhStatus.cnhRecord?.fileName || '',
-        cnhBase64: cnhFile?.base64 || cnhStatus.cnhRecord?.cnhData || '',
+        cnhFileName: officialCnhFileName,
+        cnhDriveUrl: cnhDriveUrl,
+        cnhDriveFolderUrl: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
+        cnhDriveFileId: cnhDriveFileId,
+        // NÃO salvar base64 pesado no Supabase / Firestore para evitar superlotação
+        cnhBase64: undefined,
         cnhUploadDate: new Date(),
         protocolNumber: protocolNumber
       };
@@ -338,16 +403,18 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         id: createdRef?.id || `local_${Date.now()}`
       };
 
-      // 2. Se anexou CNH nova, salva no cofre de CNHs para solicitações futuras
+      // 2. Se anexou CNH nova, salva no cofre de CNHs vinculada ao Drive
       if (cnhFile) {
         saveDriverCnhRecord({
           driverName: finalDriverName,
           email: formData.requesterEmail,
           phone: formData.requesterPhone,
-          fileName: cnhFile.fileName,
+          fileName: officialCnhFileName,
           fileType: cnhFile.file.type,
           fileSize: cnhFile.file.size,
-          cnhData: cnhFile.base64,
+          cnhDriveUrl: cnhDriveUrl,
+          cnhDriveFolderUrl: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
+          cnhDriveFileId: cnhDriveFileId,
           uploadDate: new Date().toISOString(),
           lastRacProtocol: protocolNumber
         });
@@ -991,7 +1058,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
             </div>
           )}
 
-          {/* Área de Upload / Dropzone */}
+          {/* Área de Upload / Dropzone com suporte a Câmera Móvel e Google Drive */}
           <div
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
@@ -1003,72 +1070,137 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
                 : 'border-slate-300 bg-slate-50/60 hover:bg-slate-50'
             }`}
           >
+            {/* Input para galeria / arquivos / PDFs */}
             <input
               type="file"
               ref={fileInputRef}
-              accept=".pdf,image/png,image/jpeg,image/jpg"
+              accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/heic"
               onChange={handleFileSelect}
               className="hidden"
               id="cnh-file-input"
             />
 
-            {cnhFile ? (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-emerald-200 shadow-xs">
-                <div className="flex items-center gap-3 text-left">
-                  {cnhFile.isImage ? (
-                    <img
-                      src={cnhFile.previewUrl}
-                      alt="Preview CNH"
-                      className="w-16 h-12 object-cover rounded-lg border border-slate-200 shadow-2xs"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 rounded-lg bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs">
-                      PDF
+            {/* Input direto para acionar a câmera do celular (evita estouro de memória com compressão automática) */}
+            <input
+              type="file"
+              ref={cameraInputRef}
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileSelect}
+              className="hidden"
+              id="cnh-camera-input"
+            />
+
+            {isProcessingCnh ? (
+              <div className="py-6 flex flex-col items-center justify-center gap-3">
+                <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+                <div className="text-center">
+                  <p className="text-xs font-bold text-slate-800">
+                    Otimizando foto da CNH para o celular...
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Comprimindo a imagem para prevenir erros de memória e direcionando para o Google Drive
+                  </p>
+                </div>
+              </div>
+            ) : cnhFile ? (
+              <div className="flex flex-col gap-3 bg-white p-4 rounded-xl border border-emerald-200 shadow-xs">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 text-left">
+                    {cnhFile.isImage ? (
+                      <img
+                        src={cnhFile.previewUrl}
+                        alt="Preview CNH"
+                        className="w-16 h-12 object-cover rounded-lg border border-slate-200 shadow-2xs"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-lg bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs">
+                        PDF
+                      </div>
+                    )}
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-900 truncate max-w-xs">
+                        {cnhFile.fileName}
+                      </h5>
+                      <p className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1">
+                        <span>✅ CNH pronta para upload na pasta oficial do Google Drive</span>
+                      </p>
+                      {cnhOptimizationNote && (
+                        <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                          {cnhOptimizationNote}
+                        </p>
+                      )}
                     </div>
-                  )}
-                  <div>
-                    <h5 className="text-xs font-bold text-slate-900 truncate max-w-xs">
-                      {cnhFile.fileName}
-                    </h5>
-                    <p className="text-[10px] text-emerald-700 font-semibold">
-                      Arquivo pronto para envio e anexo automático no e-mail
-                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1"
+                    >
+                      📸 Tirar Outra Foto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                    >
+                      Trocar Arquivo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemoveCnh}
+                      className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                    >
+                      Remover
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                <div className="text-[10px] text-blue-700 bg-blue-50/70 py-1.5 px-3 rounded-lg border border-blue-200/60 text-left flex items-center justify-between gap-2">
+                  <span>📁 Destino: <strong>Google Drive Oficial Risel (Locações RAC)</strong></span>
+                  <a
+                    href={GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold underline text-blue-800 shrink-0"
                   >
-                    Trocar Arquivo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRemoveCnh}
-                    className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold rounded-lg transition-colors cursor-pointer"
-                  >
-                    Remover
-                  </button>
+                    Ver Pasta ↗
+                  </a>
                 </div>
               </div>
             ) : (
               <div>
                 <DocumentTextIcon className="w-10 h-10 text-slate-400 mx-auto mb-2" />
                 <p className="text-xs font-extrabold text-slate-700">
-                  Arraste e solte a cópia da CNH aqui ou clique para selecionar
+                  Anexar CNH do Condutor (Câmera do Celular ou Arquivo)
                 </p>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Formatos aceitos: PDF, PNG, JPG ou JPEG (máx. 15MB)
+                <p className="text-[11px] text-slate-500 mt-1 max-w-md mx-auto">
+                  Você pode tirar uma foto nítida diretamente pelo aparelho ou selecionar um arquivo/PDF. O sistema otimiza a imagem automaticamente para evitar consumo de memória.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-3 px-4 py-2 bg-white hover:bg-slate-50 text-[#114D38] border border-emerald-700 font-extrabold text-xs rounded-xl shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1.5"
-                >
-                  Selecionar Arquivo da CNH
-                </button>
+
+                <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center justify-center gap-2"
+                  >
+                    📸 Tirar Foto com a Câmera
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-white hover:bg-slate-50 text-[#114D38] border border-emerald-700 font-extrabold text-xs rounded-xl shadow-2xs transition-all cursor-pointer inline-flex items-center justify-center gap-1.5"
+                  >
+                    📁 Selecionar Arquivo ou Galeria (PDF/JPG)
+                  </button>
+                </div>
+
+                <div className="mt-3 text-[10px] text-slate-400 flex items-center justify-center gap-1">
+                  <span>📁 Arquivamento direto no Google Drive corporativo da Risel</span>
+                </div>
               </div>
             )}
           </div>

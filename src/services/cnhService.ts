@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export const RAC_CNH_DRIVE_FOLDER_URL = 'https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br';
+export const RAC_CNH_DRIVE_FOLDER_ID = '1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U';
+
 export interface DriverCnhRecord {
   driverName: string;
   email?: string;
@@ -10,7 +13,10 @@ export interface DriverCnhRecord {
   fileName: string;
   fileType?: string;
   fileSize?: number;
-  cnhData?: string; // base64 / data URL
+  cnhData?: string; // base64 / data URL (otimizado e leve)
+  cnhDriveUrl?: string; // Link direto oficial para a CNH no Google Drive
+  cnhDriveFolderUrl?: string; // Link oficial da pasta do Google Drive
+  cnhDriveFileId?: string; // ID do arquivo no Google Drive
   uploadDate: string; // ISO date string
   lastRacProtocol?: string;
 }
@@ -102,23 +108,79 @@ export function checkDriverCnhStatus(
 
 /**
  * Salva ou atualiza o registro de CNH de um condutor/solicitante
+ * Evita armazenar strings base64 pesadas no localStorage para não estourar a memória do navegador,
+ * priorizando o link da pasta do Google Drive.
  */
 export function saveDriverCnhRecord(record: DriverCnhRecord): void {
   try {
     const records = getAllCnhRecords();
     
-    if (record.email) {
-      const emailKey = `email_${normalizeKey(record.email)}`;
-      records[emailKey] = record;
+    // Padroniza nome do arquivo: CNH - [Nome do Condutor].[ext]
+    const cleanName = (record.driverName || 'Condutor').trim();
+    const ext = (record.fileName && record.fileName.toLowerCase().endsWith('.pdf')) ? 'pdf' : 'jpg';
+    const standardizedFileName = `CNH - ${cleanName}.${ext}`;
+
+    const safeRecord: DriverCnhRecord = {
+      ...record,
+      fileName: standardizedFileName,
+      cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
+      cnhDriveUrl: record.cnhDriveUrl || RAC_CNH_DRIVE_FOLDER_URL,
+      // Se a imagem for maior que 80KB, limpa o base64 para evitar QuotaExceededError
+      cnhData: (record.cnhData && record.cnhData.length > 80000) ? undefined : record.cnhData
+    };
+    
+    if (safeRecord.email) {
+      const emailKey = `email_${normalizeKey(safeRecord.email)}`;
+      records[emailKey] = safeRecord;
     }
     
-    if (record.driverName) {
-      const nameKey = `name_${normalizeKey(record.driverName)}`;
-      records[nameKey] = record;
+    if (safeRecord.driverName) {
+      const nameKey = `name_${normalizeKey(safeRecord.driverName)}`;
+      records[nameKey] = safeRecord;
     }
 
     localStorage.setItem(CNH_STORAGE_KEY, JSON.stringify(records));
   } catch (err) {
-    console.error('Erro ao salvar registro de CNH:', err);
+    console.warn('Aviso ao salvar registro de CNH no cofre (cota prevenida):', err);
   }
 }
+
+/**
+ * Migra e audita todos os registros do cofre de CNHs para a pasta oficial do Google Drive
+ * removendo base64 pesado para evitar superlotação do Supabase e do localStorage.
+ */
+export function cleanAndMigrateVaultToGoogleDrive(): { migratedCount: number; freedBytesEstimate: number } {
+  let migratedCount = 0;
+  let freedBytesEstimate = 0;
+
+  try {
+    const records = getAllCnhRecords();
+    const updated: Record<string, DriverCnhRecord> = {};
+
+    Object.entries(records).forEach(([key, rec]) => {
+      const cleanName = (rec.driverName || 'Condutor').trim();
+      const ext = (rec.fileName && rec.fileName.toLowerCase().endsWith('.pdf')) ? 'pdf' : 'jpg';
+      const standardizedFileName = `CNH - ${cleanName}.${ext}`;
+
+      if (rec.cnhData && rec.cnhData.length > 500) {
+        freedBytesEstimate += rec.cnhData.length;
+        migratedCount++;
+      }
+
+      updated[key] = {
+        ...rec,
+        fileName: standardizedFileName,
+        cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
+        cnhDriveUrl: rec.cnhDriveUrl || RAC_CNH_DRIVE_FOLDER_URL,
+        cnhData: undefined // Purga base64 pesado
+      };
+    });
+
+    localStorage.setItem(CNH_STORAGE_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.warn('Erro ao migrar cofre de CNHs para o Google Drive:', e);
+  }
+
+  return { migratedCount, freedBytesEstimate };
+}
+

@@ -4,6 +4,7 @@ import 'firebase/compat/firestore';
 import { auth, db } from '../firebaseConfig';
 import { Vehicle, Reservation, ReservationStatus, DailyTrip, FuelLevel, RacRental } from '../types_reserva';
 import { normalizeNomeSetor } from '../utils/setorOperacional';
+import { normalizeBaseOperacional } from '../utils/baseOperacional';
 import { parseLocalDateTime } from '../utils/reservaDateUtils';
 
 export { auth }; // Re-export auth for other modules to use
@@ -964,13 +965,43 @@ const docToDailyTrip = (doc: any): DailyTrip | null => {
     };
 };
 
+/**
+ * Identifica se uma locação RAC é registro fictício, teste ou divergente
+ * Garante que o sistema retenha exclusivamente dados reais da operação
+ */
+export const isMockRacRental = (rental: any): boolean => {
+    if (!rental) return true;
+    const id = String(rental.id || '').toLowerCase().trim();
+    if (id.startsWith('rac-0') || /^rac-0[1-5]$/i.test(id) || id.startsWith('mock_') || id.startsWith('teste_') || id.startsWith('demo_')) return true;
+    
+    const plate = String(rental.plate || rental.placa || '').toUpperCase().trim();
+    const mockPlates = ['UBF3H43', 'RVO9E45', 'SGA2C10', 'RWS4F88', 'TGB5K22', 'ABC1234', 'ABC-1234', 'AAA0000', 'AAA-0000', 'XYZ9999', 'XYZ-9999', 'BRA2E19', 'TESTE', 'MOCK'];
+    if (mockPlates.includes(plate) || plate.startsWith('TEST') || plate.startsWith('MOCK')) return true;
+
+    const resNum = String(rental.reservationNumber || rental.numeroReserva || '').toUpperCase().trim();
+    const mockResNums = ['MV-984210', 'LOC-778219', 'SM-332190', 'LOC-882341', 'UN-554109', 'TESTE', 'MOCK', 'TEST'];
+    if (mockResNums.includes(resNum) || resNum.includes('TEST') || resNum.includes('MOCK')) return true;
+
+    const reqName = String(rental.requesterName || rental.solicitante || '').trim().toLowerCase();
+    const driverName = String(rental.driverName || rental.condutor || '').trim().toLowerCase();
+    const mockNames = ['wesley sidlei breda', 'marcos vinicius pereira', 'juliana silveira dias', 'carlos alberto souza', 'roberto carlos lima', 'teste', 'usuario teste', 'motorista teste', 'condutor teste', 'mock user'];
+    if (mockNames.includes(reqName) || mockNames.includes(driverName) || reqName.includes('teste') || driverName.includes('teste')) {
+        return true;
+    }
+
+    return false;
+};
+
 const docToRacRental = (doc: any): RacRental | null => {
     const data = doc.data();
     if (!data) return null;
+    if (isMockRacRental({ id: doc.id, ...data })) return null;
 
     const rentalCompany = data.rentalCompany || data.locadora || data.empresaLocadora || data.company || '';
     const requesterName = data.requesterName || data.solicitante || data.nomeSolicitante || data.condutor || data.driverName || 'Colaborador';
     const plate = (data.plate || data.placa || '').toUpperCase().trim();
+    const rawFilial = data.filial || data.base || 'Paulínia (Matriz)';
+    const normalizedFilial = normalizeBaseOperacional(rawFilial);
 
     return {
         id: doc.id,
@@ -985,8 +1016,9 @@ const docToRacRental = (doc: any): RacRental | null => {
         reservationNumber: data.reservationNumber || data.numeroReserva || data.reserva || data.contrato || '',
         driverName: data.driverName || data.condutor || data.nomeCondutor || requesterName,
         driverRole: data.driverRole || data.cargoCondutor || '',
-        status: data.status || 'Em Uso',
-        base: data.base || data.filial || 'Matriz',
+        status: data.status || 'Solicitada',
+        filial: normalizedFilial,
+        base: normalizedFilial,
         createdByUser: data.createdByUser || data.usuario || '',
         reservationDate: convertFirestoreDate(data.reservationDate || data.dataReserva || data.created || new Date()),
         pickupDate: convertFirestoreDate(data.pickupDate || data.dataRetirada || data.dataInicio || data.dataSaida || new Date()),
@@ -995,14 +1027,27 @@ const docToRacRental = (doc: any): RacRental | null => {
         returnStore: data.returnStore || data.lojaDevolucao || '',
         pickupCity: data.pickupCity || data.cidadeRetirada || '',
         returnCity: data.returnCity || data.cidadeDevolucao || '',
+        destinationCity: data.destinationCity || data.returnCity || data.cidadeDevolucao || '',
+        destination: data.destination || data.itinerario || '',
         category: data.category || data.categoria || '',
         purpose: data.purpose || data.motivo || data.finalidade || '',
         observations: data.observations || data.observacoes || '',
-        hasCnhCopy: !!(data.hasCnhCopy || data.cnhFileName || data.cnhBase64),
+        adminNotes: data.adminNotes || data.observacoesAdmin || '',
+        rejectReason: data.rejectReason || '',
+        hasCnhCopy: !!(data.hasCnhCopy || data.cnhFileName || data.cnhBase64 || data.cnhDriveUrl),
         cnhFileName: data.cnhFileName || '',
         cnhBase64: data.cnhBase64 || '',
+        cnhDriveUrl: data.cnhDriveUrl || '',
+        cnhDriveFolderUrl: data.cnhDriveFolderUrl || (data.cnhDriveUrl ? 'https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br' : ''),
+        cnhDriveFileId: data.cnhDriveFileId || '',
         cnhUploadDate: data.cnhUploadDate ? convertFirestoreDate(data.cnhUploadDate) : undefined,
-        protocolNumber: data.protocolNumber || data.protocolo || ''
+        cnhAlreadyOnRecord: !!(data.cnhAlreadyOnRecord),
+        hasVoucher: !!(data.hasVoucher || data.voucherBase64 || data.voucherFileName),
+        voucherFileName: data.voucherFileName || '',
+        voucherBase64: data.voucherBase64 || '',
+        voucherUploadDate: data.voucherUploadDate ? convertFirestoreDate(data.voucherUploadDate) : undefined,
+        protocolNumber: data.protocolNumber || data.protocol || data.protocolo || '',
+        protocol: data.protocol || data.protocolNumber || data.protocolo || ''
     };
 };
 
@@ -1571,117 +1616,26 @@ export const deleteDailyUseTrip = async (id: string) => {
 
 // --- Funções CRUD para Locações RAC ---
 
-export const INITIAL_RAC_RENTALS: RacRental[] = [
-  {
-    id: 'rac-01',
-    rentalCompany: 'Movida',
-    plate: 'UBF3H43',
-    requesterName: 'Wesley Sidlei Breda',
-    requesterSector: 'Comercial & Vendas',
-    value: 2850.00,
-    reservationNumber: 'MV-984210',
-    driverName: 'Wesley Sidlei Breda',
-    status: 'Em Uso',
-    filial: 'Betim',
-    base: 'Betim',
-    createdByUser: 'admin@risel.com.br',
-    reservationDate: new Date('2026-06-15T10:00:00'),
-    pickupDate: new Date('2026-06-16T08:00:00'),
-    pickupStore: 'Movida Aeroporto Confins',
-    returnDate: new Date('2026-07-16T18:00:00'),
-    returnStore: 'Movida Betim Centro'
-  },
-  {
-    id: 'rac-02',
-    rentalCompany: 'Localiza Gestão de Frotas',
-    plate: 'RVO9E45',
-    requesterName: 'Marcos Vinicius Pereira',
-    requesterSector: 'Operações & Logística',
-    value: 3420.50,
-    reservationNumber: 'LOC-778219',
-    driverName: 'Marcos Vinicius Pereira',
-    status: 'Em Uso',
-    filial: 'Campinas',
-    base: 'Campinas',
-    createdByUser: 'admin@risel.com.br',
-    reservationDate: new Date('2026-06-20T14:30:00'),
-    pickupDate: new Date('2026-06-22T09:00:00'),
-    pickupStore: 'Localiza Campinas Amoreiras',
-    returnDate: new Date('2026-07-22T18:00:00'),
-    returnStore: 'Localiza Campinas Amoreiras'
-  },
-  {
-    id: 'rac-03',
-    rentalCompany: 'Super Mais',
-    plate: 'SGA2C10',
-    requesterName: 'Juliana Silveira Dias',
-    requesterSector: 'Diretoria Executiva',
-    value: 1980.00,
-    reservationNumber: 'SM-332190',
-    driverName: 'Juliana Silveira Dias',
-    status: 'Finalizada',
-    filial: 'Paulínia (Matriz)',
-    base: 'Matriz',
-    createdByUser: 'admin@risel.com.br',
-    reservationDate: new Date('2026-05-10T11:00:00'),
-    pickupDate: new Date('2026-05-12T08:30:00'),
-    pickupStore: 'Super Mais BH Centro',
-    returnDate: new Date('2026-06-12T17:00:00'),
-    returnStore: 'Super Mais BH Centro'
-  },
-  {
-    id: 'rac-04',
-    rentalCompany: 'Localiza Gestão de Frotas',
-    plate: 'RWS4F88',
-    requesterName: 'Carlos Alberto Souza',
-    requesterSector: 'Engenharia & Manutenção',
-    value: 2150.00,
-    reservationNumber: 'LOC-882341',
-    driverName: 'Carlos Alberto Souza',
-    status: 'Aguardando retirada',
-    filial: 'Paulínia (Matriz)',
-    base: 'Paulínia',
-    createdByUser: 'admin@risel.com.br',
-    reservationDate: new Date('2026-07-01T09:00:00'),
-    pickupDate: new Date('2026-07-10T08:00:00'),
-    pickupStore: 'Localiza Paulínia Centro',
-    returnDate: new Date('2026-07-25T18:00:00'),
-    returnStore: 'Localiza Paulínia Centro'
-  },
-  {
-    id: 'rac-05',
-    rentalCompany: 'Unidas Locadora',
-    plate: 'TGB5K22',
-    requesterName: 'Roberto Carlos Lima',
-    requesterSector: 'Operações de Campo',
-    value: 3100.00,
-    reservationNumber: 'UN-554109',
-    driverName: 'Roberto Carlos Lima',
-    status: 'Em Uso',
-    filial: 'Betim',
-    base: 'Betim',
-    createdByUser: 'admin@risel.com.br',
-    reservationDate: new Date('2026-06-28T16:00:00'),
-    pickupDate: new Date('2026-07-01T08:00:00'),
-    pickupStore: 'Unidas Betim Shopping',
-    returnDate: new Date('2026-07-31T18:00:00'),
-    returnStore: 'Unidas Betim Shopping'
-  }
-];
+export const INITIAL_RAC_RENTALS: RacRental[] = [];
 
 let useRacLocalStorageFallback = false;
 const racListeners: ((data: RacRental[]) => void)[] = [];
 
 export const isRacRentalUsingFallback = () => useRacLocalStorageFallback;
 
-// Helper to get from local storage
+// Helper to get from local storage - estritamente dados reais
 const getRacRentalsFromLocalStorage = (): RacRental[] => {
   try {
     const data = localStorage.getItem('fallback_rac_rentals');
     if (data) {
       const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((r: any) => ({
+      if (Array.isArray(parsed)) {
+        // Filtra e purga qualquer registro fictício / mock inicial
+        const realRentals = parsed.filter((r: any) => !isMockRacRental(r));
+        if (realRentals.length !== parsed.length) {
+          saveRacRentalsToLocalStorage(realRentals);
+        }
+        return realRentals.map((r: any) => ({
           ...r,
           reservationDate: convertFirestoreDate(r.reservationDate),
           pickupDate: convertFirestoreDate(r.pickupDate),
@@ -1693,15 +1647,15 @@ const getRacRentalsFromLocalStorage = (): RacRental[] => {
     console.error("Error reading RAC rentals from localStorage:", err);
   }
 
-  // Seed with default initial RAC rentals if empty
-  saveRacRentalsToLocalStorage(INITIAL_RAC_RENTALS);
-  return INITIAL_RAC_RENTALS;
+  // Não semear com dados fictícios. Retorna array vazio se não houver dados reais salvos.
+  return [];
 };
 
 // Helper to save to local storage
 const saveRacRentalsToLocalStorage = (rentals: RacRental[]) => {
   try {
-    localStorage.setItem('fallback_rac_rentals', JSON.stringify(rentals));
+    const realOnly = rentals.filter(r => !isMockRacRental(r));
+    localStorage.setItem('fallback_rac_rentals', JSON.stringify(realOnly));
   } catch (err) {
     console.error("Error saving RAC rentals to localStorage:", err);
   }
@@ -1726,7 +1680,7 @@ export const getRacRentals = async (): Promise<RacRental[]> => {
     const snapshot = await racRentalsCollection.orderBy('pickupDate', 'desc').get();
     const firestoreRentals = snapshot.docs
       .map(docToRacRental)
-      .filter((r): r is RacRental => r !== null);
+      .filter((r): r is RacRental => r !== null && !isMockRacRental(r));
       
     if (firestoreRentals.length === 0) {
       return getRacRentalsFromLocalStorage();
@@ -1752,7 +1706,19 @@ export const subscribeToRacRentals = (onUpdate: (data: RacRental[]) => void, onE
         onUpdate(getRacRentalsFromLocalStorage());
         return;
       }
-      const rentals = snapshot.docs.map(docToRacRental).filter((r): r is RacRental => r !== null);
+
+      // Purga assíncrona no Firestore de qualquer registro mock residual
+      snapshot.docs.forEach(doc => {
+        const d = doc.data();
+        if (isMockRacRental({ id: doc.id, ...d })) {
+          racRentalsCollection.doc(doc.id).delete().catch(() => {});
+        }
+      });
+
+      const rentals = snapshot.docs
+        .map(docToRacRental)
+        .filter((r): r is RacRental => r !== null && !isMockRacRental(r));
+
       if (rentals.length === 0) {
         onUpdate(getRacRentalsFromLocalStorage());
       } else {
@@ -1899,14 +1865,16 @@ export const syncLocalRacRentalsWithFirebase = async (): Promise<void> => {
     throw new Error(`O servidor do Firebase ainda está recusando conexões para Locações RAC. Verifique se as Regras de Segurança foram publicadas e propagadas corretamente. Detalhes: ${detail}`);
   }
 
-  const localRentals = getRacRentalsFromLocalStorage();
+  const localRentals = getRacRentalsFromLocalStorage().filter(r => !isMockRacRental(r));
   if (localRentals.length === 0) {
     // No local rentals to upload, but since check passed, we cleared the fallback!
+    localStorage.removeItem('fallback_rac_rentals');
     return;
   }
 
   try {
     for (const rental of localRentals) {
+      if (isMockRacRental(rental)) continue;
       const { id, ...dataToUpload } = rental;
       
       const cleanedData = {

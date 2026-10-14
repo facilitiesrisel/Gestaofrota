@@ -588,13 +588,15 @@ export default function Dashboard() {
     });
 
     const colors: Record<string, string> = {
-      "Aprovado": "#10b981",
+      "Aprovado": "#2563eb",
       "Finalizado": "#059669",
       "Aguardando Aprovação": "#f59e0b",
       "Aguardando aprovação": "#f59e0b",
-      "Aguardando lançamento": "#3b82f6",
+      "Aguardando lançamento": "#0284c7",
       "Aguardando Boleto": "#f59e0b",
-      "Lançado": "#6366f1"
+      "Lançado": "#10b981",
+      "Em Contestação": "#9333ea",
+      "Cancelado": "#e11d48"
     };
 
     return Object.entries(statusCounts).map(([name, val]) => ({

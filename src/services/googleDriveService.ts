@@ -10,6 +10,10 @@ export const GOOGLE_DRIVE_SINISTROS_ROOT_FOLDER_URL = `https://drive.google.com/
 export const GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_ID = "1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz";
 export const GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_URL = `https://drive.google.com/drive/folders/${GOOGLE_DRIVE_LANCAMENTOS_ROOT_FOLDER_ID}?hl=pt-br`;
 
+// Pasta corporativa oficial do Google Drive para CNHs de Locações RAC da Risel Combustíveis
+export const GOOGLE_DRIVE_RAC_CNH_FOLDER_ID = "1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U";
+export const GOOGLE_DRIVE_RAC_CNH_FOLDER_URL = `https://drive.google.com/drive/folders/${GOOGLE_DRIVE_RAC_CNH_FOLDER_ID}?hl=pt-br`;
+
 export interface GoogleDriveFile {
   id: string;
   name: string;
@@ -435,4 +439,121 @@ export async function uploadLancamentoFileToDrive(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Salva a CNH de locação RAC diretamente na pasta oficial do Google Drive da Risel,
+ * renomeada rigorosamente com o nome do Condutor:
+ * Padrão: "CNH - [Nome do Condutor].[ext]"
+ * Exemplo: "CNH - Deny Gonçalves.jpg" ou "CNH - Carlos Eduardo.pdf"
+ * 
+ * Pasta Oficial: https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br
+ * Evita superlotação do Supabase mantendo o arquivo centralizado no Google Drive da empresa.
+ */
+export async function uploadRacCnhFileToDrive(
+  fileOrBlob: File | Blob,
+  driverName: string,
+  mimeType = "image/jpeg",
+  token?: string | null
+): Promise<GoogleDriveFile> {
+  const cleanDriverName = (driverName || "Condutor")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, " ");
+
+  const ext = mimeType.includes("pdf") ? "pdf" : "jpg";
+  const customFileName = `CNH - ${cleanDriverName}.${ext}`;
+
+  const accessToken = token || (await getValidDriveToken());
+
+  // Se não houver token Google autenticado no browser do dispositivo,
+  // retorna registro estruturado apontando para a pasta oficial do Drive
+  if (!accessToken) {
+    return {
+      id: `cnh_drive_${Date.now()}`,
+      name: customFileName,
+      mimeType,
+      webViewLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
+      webContentLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL
+    };
+  }
+
+  const metadata = {
+    name: customFileName,
+    parents: [GOOGLE_DRIVE_RAC_CNH_FOLDER_ID]
+  };
+
+  const boundary = "-------314159265358979323846";
+  const delimiter = `\r\n--${boundary}\r\n`;
+  const closeDelimiter = `\r\n--${boundary}--`;
+
+  const reader = new FileReader();
+
+  return new Promise((resolve, reject) => {
+    reader.onload = async () => {
+      try {
+        const fileContent = reader.result;
+        const base64Data = (fileContent as string).includes(",")
+          ? (fileContent as string).split(",")[1]
+          : fileContent;
+
+        const multipartRequestBody =
+          delimiter +
+          "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+          JSON.stringify(metadata) +
+          delimiter +
+          `Content-Type: ${mimeType || "application/octet-stream"}\r\n` +
+          "Content-Transfer-Encoding: base64\r\n\r\n" +
+          base64Data +
+          closeDelimiter;
+
+        const res = await fetch(
+          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": `multipart/related; boundary=${boundary}`
+            },
+            body: multipartRequestBody
+          }
+        );
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          console.warn("Aviso na chamada direta à API do Google Drive:", err);
+          return resolve({
+            id: `cnh_drive_${Date.now()}`,
+            name: customFileName,
+            mimeType,
+            webViewLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
+            webContentLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL
+          });
+        }
+
+        const data: GoogleDriveFile = await res.json();
+        resolve(data);
+      } catch (e) {
+        console.warn("Falha no upload de CNH para o Google Drive, mantendo link da pasta:", e);
+        resolve({
+          id: `cnh_drive_${Date.now()}`,
+          name: customFileName,
+          mimeType,
+          webViewLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
+          webContentLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL
+        });
+      }
+    };
+    reader.onerror = () => {
+      resolve({
+        id: `cnh_drive_${Date.now()}`,
+        name: customFileName,
+        mimeType,
+        webViewLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
+        webContentLink: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL
+      });
+    };
+    reader.readAsDataURL(fileOrBlob);
+  });
+}
+
 

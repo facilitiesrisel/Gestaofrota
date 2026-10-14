@@ -27,13 +27,15 @@ import {
   syncLocalRacRentalsWithFirebase,
   INITIAL_RAC_RENTALS,
   sendEmail,
-  generateRacEmailHtml
+  generateRacEmailHtml,
+  isMockRacRental
 } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients, FILIAIS_RISEL } from '../../constants_reserva';
 import { getAllSystemUsersEmails } from '../../services/perimeterAlertService';
 import { resolveReservationRecipients } from '../../services/reservaEmailHelper';
 import { normalizeCidade, normalizeBaseOperacional } from '../../utils/baseOperacional';
 import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacional';
+import { GOOGLE_DRIVE_RAC_CNH_FOLDER_URL } from '../../services/googleDriveService';
 import { useAuth } from '../../context/ReservationAuthContext';
 import { 
   PlusIcon, 
@@ -477,22 +479,22 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
         returnStore: '',
     });
 
-    // Subscribe to Firebase real-time data
+    // Subscribe to Firebase real-time data - assegura estritamente dados reais da operação
     useEffect(() => {
         const unsubscribe = subscribeToRacRentals(
             (data) => {
-                if (data && data.length > 0) {
-                    setRentals(data);
-                } else {
-                    setRentals(INITIAL_RAC_RENTALS);
-                }
+                const realData = (data && data.length > 0)
+                    ? data.filter(r => !isMockRacRental(r))
+                    : INITIAL_RAC_RENTALS.filter(r => !isMockRacRental(r));
+                setRentals(realData);
                 setIsLoading(false);
                 setUsingFallback(isRacRentalUsingFallback());
                 setLocalRentalsCount(getLocalRacRentalsCount());
             },
             (error) => {
                 console.error("Error syncing RAC rentals:", error);
-                setRentals(INITIAL_RAC_RENTALS);
+                const realFallback = INITIAL_RAC_RENTALS.filter(r => !isMockRacRental(r));
+                setRentals(realFallback);
                 if (isRacRentalUsingFallback()) {
                     setUsingFallback(true);
                 } else {
@@ -531,6 +533,9 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
             setIsSyncing(false);
         }
     };
+
+
+
 
     // Gather all unique bases from existing rentals, plus defaults
     const uniqueBases = useMemo(() => {
@@ -1366,6 +1371,16 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     )}
                     
                     <div className="flex items-center gap-2 flex-wrap ml-auto">
+                        <a 
+                            href={GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold border rounded-xl transition-all cursor-pointer bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-xs active:scale-95"
+                            title="Abrir pasta oficial do Google Drive com as CNHs das locações RAC"
+                        >
+                            <span>📁 Pasta CNHs</span>
+                        </a>
+
                         <button 
                             onClick={() => setIsStatsDashboardOpen(!isStatsDashboardOpen)} 
                             className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold border rounded-xl transition-all cursor-pointer ${
@@ -2215,29 +2230,23 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </div>
                                                 <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                                                     {hasCnhAttached ? (
-                                                        <button
-                                                            onClick={() => {
-                                                                if (r.cnhBase64) {
-                                                                    setViewingCnh({
-                                                                        isOpen: true,
-                                                                        name: r.driverName || r.requesterName,
-                                                                        url: r.cnhBase64,
-                                                                        fileName: r.cnhFileName || 'cnh_anexo.jpg'
-                                                                    });
-                                                                } else {
-                                                                    showToast("CNH já cadastrada no histórico do condutor.", "success");
-                                                                }
-                                                            }}
-                                                            className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
-                                                            title="Visualizar CNH"
+                                                        <a
+                                                            href={r.cnhDriveUrl || GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                                                            title={`Abrir CNH de ${r.driverName || 'Condutor'} na pasta oficial do Drive`}
                                                         >
-                                                            📎 CNH
-                                                        </button>
+                                                            <span>🪪 CNH</span>
+                                                            <span className="text-[9px] text-slate-400">↗</span>
+                                                        </a>
                                                     ) : (
                                                         <span className="text-[10px] text-slate-400">
                                                             {r.cnhAlreadyOnRecord ? '✅ CNH OK' : 'Sem CNH'}
                                                         </span>
                                                     )}
+
+
 
                                                     {hasVoucherAttached ? (
                                                         <button
@@ -2608,6 +2617,21 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
                                 />
                             </div>
+                            {selectedRental && (selectedRental.hasCnhCopy || selectedRental.cnhDriveUrl || selectedRental.cnhFileName) && (
+                                <div className="sm:col-span-3 flex items-center justify-between p-2.5 bg-slate-100/80 rounded-xl border border-slate-200">
+                                    <span className="text-xs text-slate-700 font-medium flex items-center gap-1.5 truncate mr-2">
+                                        <span>🪪</span> <span className="truncate">{selectedRental.cnhFileName || `CNH - ${selectedRental.driverName}`}</span>
+                                    </span>
+                                    <a
+                                        href={selectedRental.cnhDriveUrl || GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs font-semibold text-blue-700 hover:text-blue-900 bg-white px-2.5 py-1 rounded-lg border border-slate-200 hover:border-blue-300 transition-colors shrink-0 inline-flex items-center gap-1"
+                                    >
+                                        Abrir CNH ↗
+                                    </a>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -3013,15 +3037,21 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 O voucher anexado será encaminhado automaticamente no e-mail de aprovação para o solicitante e gestores.
                             </p>
 
-                            {selectedRental?.cnhBase64 && (
-                                <div className="p-2 bg-blue-50/80 border border-blue-200 rounded-lg flex items-center justify-between text-xs text-blue-900 font-semibold">
-                                    <div className="flex items-center gap-1.5 truncate">
-                                        <span>🪪</span>
-                                        <span className="truncate">CNH do Condutor anexada ({selectedRental.cnhFileName || 'CNH_Condutor.pdf'})</span>
+                            {(selectedRental?.hasCnhCopy || selectedRental?.cnhDriveUrl || selectedRental?.cnhFileName || selectedRental?.cnhBase64) && (
+                                <div className="p-2 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs text-slate-700">
+                                    <div className="flex items-center gap-1.5 truncate mr-2">
+                                        <span className="text-sm shrink-0">🪪</span>
+                                        <span className="truncate font-medium">{selectedRental.cnhFileName || `CNH - ${selectedRental.driverName || 'Condutor'}`}</span>
                                     </div>
-                                    <span className="text-[10px] font-bold text-blue-700 bg-white px-2 py-0.5 rounded border border-blue-200 shrink-0">
-                                        Mantida no anexo
-                                    </span>
+                                    <a
+                                        href={selectedRental.cnhDriveUrl || GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 px-2.5 py-1 rounded-lg transition-colors shrink-0 inline-flex items-center gap-1 shadow-2xs"
+                                        title="Abrir CNH na pasta oficial do Google Drive"
+                                    >
+                                        <span>Abrir CNH ↗</span>
+                                    </a>
                                 </div>
                             )}
 
@@ -3259,31 +3289,77 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     title={
                         <div className="flex items-center gap-2 text-white">
                             <span className="text-base">📄</span>
-                            <span className="font-bold text-sm text-white">CNH de {viewingCnh.name}</span>
+                            <span className="font-bold text-sm text-white">CNH do Condutor • {viewingCnh.name}</span>
                         </div>
                     }
                 >
                     <div className="space-y-4 flex flex-col items-center">
+                        <div className="w-full bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between text-xs">
+                            <div>
+                                <span className="font-extrabold text-blue-950 block">📁 Pasta Oficial Google Drive Risel</span>
+                                <span className="text-[11px] text-blue-800 font-mono">{viewingCnh.fileName}</span>
+                            </div>
+                            <a
+                                href={viewingCnh.url.startsWith('http') ? viewingCnh.url : GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg font-bold text-xs shadow-xs transition-all inline-flex items-center gap-1"
+                            >
+                                Abrir no Drive ↗
+                            </a>
+                        </div>
+
                         {viewingCnh.url.startsWith('data:image/') ? (
                             <img 
                                 src={viewingCnh.url} 
                                 alt={`CNH ${viewingCnh.name}`} 
-                                className="max-h-[60vh] rounded-xl border border-slate-200 shadow-sm object-contain"
+                                className="max-h-[55vh] rounded-xl border border-slate-200 shadow-sm object-contain"
                             />
+                        ) : viewingCnh.url.startsWith('http') ? (
+                            <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200 w-full space-y-3">
+                                <span className="text-4xl block">☁️</span>
+                                <div>
+                                    <p className="text-sm font-bold text-slate-800">Arquivo arquivado no Google Drive</p>
+                                    <p className="text-xs text-slate-500 font-mono mt-0.5">{viewingCnh.fileName}</p>
+                                </div>
+                                <p className="text-[11px] text-emerald-700 font-semibold max-w-sm mx-auto">
+                                    O arquivo original da CNH está armazenado diretamente na pasta oficial do Google Drive, mantendo o Supabase descarregado e leve.
+                                </p>
+                                <a
+                                    href={viewingCnh.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-4 py-2 bg-[#114D38] hover:bg-[#0d3b2b] text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-2 shadow-xs"
+                                >
+                                    Visualizar CNH no Google Drive ↗
+                                </a>
+                            </div>
                         ) : (
                             <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200 w-full">
                                 <p className="text-sm font-bold text-slate-700 mb-2">Documento Anexado</p>
                                 <p className="text-xs text-slate-500">{viewingCnh.fileName}</p>
                             </div>
                         )}
+
                         <div className="flex items-center justify-between w-full pt-2">
-                            <a
-                                href={viewingCnh.url}
-                                download={viewingCnh.fileName}
-                                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5"
-                            >
-                                ⬇️ Baixar CNH
-                            </a>
+                            {viewingCnh.url.startsWith('data:') ? (
+                                <a
+                                    href={viewingCnh.url}
+                                    download={viewingCnh.fileName}
+                                    className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5"
+                                >
+                                    ⬇️ Baixar Imagem
+                                </a>
+                            ) : (
+                                <a
+                                    href={GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5"
+                                >
+                                    📁 Ir para Pasta de CNHs
+                                </a>
+                            )}
                             <button
                                 onClick={() => setViewingCnh(null)}
                                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"

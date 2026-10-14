@@ -121,9 +121,12 @@ export interface RacRental {
   adminNotes?: string; // Observações do administrador / parecer da gestão
   rejectReason?: string; // Motivo da recusa (quando reprovada)
   hasCnhCopy?: boolean; // Se possui cópia da CNH vinculada
-  cnhFileName?: string; // Nome do arquivo da CNH
-  cnhBase64?: string; // Cópia da CNH em formato base64/dataURL para anexo
+  cnhFileName?: string; // Nome oficial padronizado do arquivo da CNH (ex: CNH - [Nome do Condutor].jpg)
+  cnhBase64?: string; // Cópia da CNH em formato base64/dataURL (leve / otimizado)
   cnhUploadDate?: Date; // Data em que a CNH foi enviada
+  cnhDriveUrl?: string; // Link direto oficial para a CNH no Google Drive
+  cnhDriveFolderUrl?: string; // Link oficial da pasta raiz no Google Drive (https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br)
+  cnhDriveFileId?: string; // ID do arquivo armazenado no Google Drive
   protocolNumber?: string; // Número de protocolo da solicitação (ex: RAC-2026-0829-01)
   protocol?: string; // Alias de protocolo para compatibilidade
   cnhAlreadyOnRecord?: boolean; // Se a CNH já consta no arquivo

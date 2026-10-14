@@ -4028,13 +4028,26 @@ export default function Lancamento() {
                 tableDensity === "comfortable" ? "text-[11.5px]" : "text-[10px]"
               )}>
                 {sortedLancamentos.map((item) => {
+                  const itemStatusClean = String(item.status || "").trim();
+                  const statusLower = itemStatusClean.toLowerCase();
+                  const isItemApproved = statusLower === "aprovado" || (statusLower.includes("aprovado") && !statusLower.includes("aguardando"));
+                  const isItemFinalized = statusLower === "finalizado" || statusLower === "lançado" || statusLower === "lancado";
                   const isOrange = item.status.includes("Aguardando");
-                  const isGreen = item.status.includes("Aprovado") || item.status.includes("Finalizado");
                   const vencInfo = calcularDiasAteVencimento(item.dataVencimento, item.status);
                   const cellPadding = tableDensity === "comfortable" ? "px-3.5 py-2.5" : "px-3 py-1.5";
                   
                   return (
-                    <tr key={item.id} className="hover:bg-slate-100/60 transition-colors odd:bg-slate-50/20 even:bg-white border-b border-slate-200/50 last:border-b-0 group">
+                    <tr 
+                      key={item.id} 
+                      className={cn(
+                        "transition-colors border-b border-slate-200/60 last:border-b-0 group",
+                        isItemApproved 
+                          ? "bg-blue-50/70 hover:bg-blue-100/80 border-l-4 border-l-blue-600 shadow-2xs" 
+                          : isItemFinalized 
+                          ? "bg-emerald-50/40 hover:bg-emerald-100/60 border-l-4 border-l-emerald-600" 
+                          : "odd:bg-slate-50/20 even:bg-white hover:bg-slate-100/60"
+                      )}
+                    >
                       <td className={cn(cellPadding, "text-slate-400 text-center border-r border-slate-200/50")}>
                         <div className="flex items-center justify-center gap-1.5">
                           <button 
@@ -4071,10 +4084,12 @@ export default function Lancamento() {
                         if (colKey === "status") {
                           const rawStatus = item.status || "Aguardando Aprovação";
                           const currentStatus = rawStatus === "Aguardando aprovação" ? "Aguardando Aprovação" : rawStatus;
-                          const isApproved = currentStatus === "Aprovado" || currentStatus === "Finalizado" || currentStatus === "Lançado";
-                          const isContested = currentStatus === "Em Contestação" || currentStatus === "Em contestação";
-                          const isPending = currentStatus.includes("Aguardando");
-                          const isCanceled = currentStatus === "Cancelado";
+                          const currentStatusLower = currentStatus.toLowerCase();
+                          const isApproved = currentStatusLower === "aprovado" || (currentStatusLower.includes("aprovado") && !currentStatusLower.includes("aguardando"));
+                          const isFinalized = currentStatusLower === "finalizado" || currentStatusLower === "lançado" || currentStatusLower === "lancado";
+                          const isContested = currentStatusLower === "em contestação" || currentStatusLower === "em contestacao";
+                          const isPending = currentStatusLower.includes("aguardando");
+                          const isCanceled = currentStatusLower === "cancelado";
 
                           return (
                             <td key="status" className={cn(cellPadding, "border-r border-slate-200/50")}>
@@ -4082,12 +4097,13 @@ export default function Lancamento() {
                                 value={currentStatus}
                                 onChange={(e) => handleInlineStatusChange(item.id, e.target.value)}
                                 className={cn(
-                                  "px-2 py-1 rounded-lg text-[10.5px] font-bold border whitespace-nowrap inline-block cursor-pointer outline-none shadow-2xs transition-all",
-                                  isApproved ? "bg-emerald-50 text-emerald-800 border-emerald-300/80 hover:bg-emerald-100/80" :
+                                  "px-2.5 py-1 rounded-lg text-[10.5px] font-black border whitespace-nowrap inline-block cursor-pointer outline-none shadow-2xs transition-all",
+                                  isApproved ? "bg-blue-100 text-blue-900 border-blue-500 hover:bg-blue-200/90 ring-1 ring-blue-500/40 font-black shadow-xs" :
+                                  isFinalized ? "bg-emerald-50 text-emerald-800 border-emerald-300/80 hover:bg-emerald-100/80 font-black" :
                                   isContested ? "bg-purple-50 text-purple-800 border-purple-300/80 hover:bg-purple-100/80 font-black" :
-                                  isPending ? "bg-amber-50 text-amber-900 border-amber-300/80 hover:bg-amber-100/80" :
-                                  isCanceled ? "bg-rose-50 text-rose-800 border-rose-300/80 hover:bg-rose-100/80" :
-                                  "bg-slate-50 text-slate-700 border-slate-300/80 hover:bg-slate-100"
+                                  isPending ? "bg-amber-50 text-amber-900 border-amber-300/80 hover:bg-amber-100/80 font-bold" :
+                                  isCanceled ? "bg-rose-50 text-rose-800 border-rose-300/80 hover:bg-rose-100/80 font-bold" :
+                                  "bg-slate-50 text-slate-700 border-slate-300/80 hover:bg-slate-100 font-bold"
                                 )}
                               >
                                 <option value="Aguardando Aprovação">Aguardando Aprovação</option>
@@ -4097,7 +4113,7 @@ export default function Lancamento() {
                                 <option value="Cancelado">Cancelado</option>
                               </select>
                               {item.dataAprovacao && (
-                                <div className="text-[9.5px] font-semibold text-emerald-700 mt-1 block whitespace-nowrap">
+                                <div className={cn("text-[9.5px] font-bold mt-1 block whitespace-nowrap", isApproved ? "text-blue-700 font-extrabold" : "text-emerald-700")}>
                                   Aprovado em: {item.dataAprovacao}
                                 </div>
                               )}
@@ -5047,6 +5063,8 @@ export default function Lancamento() {
                     <span className={cn(
                       "font-black px-2 py-0.5 rounded border text-[11px]",
                       String(emailDispatchModal.docData?.status || "").toLowerCase().includes("aprovado")
+                        ? "bg-blue-100 text-blue-800 border-blue-300 ring-1 ring-blue-400/20"
+                        : String(emailDispatchModal.docData?.status || "").toLowerCase().includes("finalizado") || String(emailDispatchModal.docData?.status || "").toLowerCase().includes("lançado")
                         ? "bg-emerald-100 text-emerald-800 border-emerald-300"
                         : "bg-amber-50 text-amber-800 border-amber-200"
                     )}>
@@ -5056,8 +5074,8 @@ export default function Lancamento() {
                 </div>
 
                 {String(emailDispatchModal.docData?.status || "").toLowerCase().includes("aprovado") && (
-                  <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-800 text-[11px] font-semibold flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div className="p-2 bg-blue-50 rounded-lg border border-blue-200 text-blue-800 text-[11px] font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
                     <span>Lançamento com status <strong>Aprovado</strong>: o e-mail será disparado com a identidade visual oficial de aprovação e homologação.</span>
                   </div>
                 )}

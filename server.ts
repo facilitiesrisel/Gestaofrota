@@ -4405,6 +4405,165 @@ async function startServer() {
     }
   });
 
+  // Diretório local seguro para cache temporário de CNHs caso necessário
+  const RAC_CNHS_DIR = path.join(DATA_DIR, "rac_cnhs");
+  if (!fs.existsSync(RAC_CNHS_DIR)) {
+    try { fs.mkdirSync(RAC_CNHS_DIR, { recursive: true }); } catch (e) {}
+  }
+
+  const RAC_CNH_DRIVE_FOLDER_ID = "1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U";
+  const RAC_CNH_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br";
+
+  /**
+   * Endpoint de upload de CNH para o Google Drive oficial da Risel
+   * Pasta: https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br
+   * Padrão oficial: "CNH - [Nome do Condutor].[ext]"
+   */
+  app.post("/api/rac/upload-cnh", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { driverName, fileData, mimeType, token } = req.body;
+      if (!fileData) {
+        return res.status(400).json({ error: "Dados do arquivo não informados." });
+      }
+
+      const cleanDriverName = (driverName || "Condutor")
+        .trim()
+        .replace(/[\\/:*?"<>|]/g, "")
+        .replace(/\s+/g, " ");
+
+      const ext = (mimeType && mimeType.includes("pdf")) ? "pdf" : "jpg";
+      const officialFileName = `CNH - ${cleanDriverName}.${ext}`;
+
+      const cleanBase64 = fileData.includes(",") ? fileData.split(",")[1] : fileData;
+      const buffer = Buffer.from(cleanBase64, "base64");
+
+      // Salva cópia local segura no servidor para garantir persistência física
+      const localFilePath = path.join(RAC_CNHS_DIR, officialFileName);
+      fs.writeFileSync(localFilePath, buffer);
+
+      let driveFileId = `cnh_${Date.now()}`;
+      let driveUrl = RAC_CNH_DRIVE_FOLDER_URL;
+
+      // Se houver token do Google Drive, faz o upload direto para a API oficial do Google Drive
+      if (token) {
+        try {
+          const metadata = {
+            name: officialFileName,
+            parents: [RAC_CNH_DRIVE_FOLDER_ID]
+          };
+
+          const boundary = "-------314159265358979323846";
+          const delimiter = `\r\n--${boundary}\r\n`;
+          const closeDelimiter = `\r\n--${boundary}--`;
+
+          const multipartRequestBody =
+            delimiter +
+            "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+            JSON.stringify(metadata) +
+            delimiter +
+            `Content-Type: ${mimeType || "image/jpeg"}\r\n` +
+            "Content-Transfer-Encoding: base64\r\n\r\n" +
+            cleanBase64 +
+            closeDelimiter;
+
+          const driveRes = await fetch(
+            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,webContentLink",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": `multipart/related; boundary=${boundary}`
+              },
+              body: multipartRequestBody
+            }
+          );
+
+          if (driveRes.ok) {
+            const driveData: any = await driveRes.json();
+            driveFileId = driveData.id || driveFileId;
+            driveUrl = driveData.webViewLink || `https://drive.google.com/file/d/${driveFileId}/view`;
+            console.log(`[Risel Google Drive] CNH salva no Drive: ${officialFileName} (ID: ${driveFileId})`);
+          }
+        } catch (driveErr: any) {
+          console.warn("[Risel Google Drive] Aviso no upload da CNH:", driveErr.message);
+        }
+      }
+
+      return res.json({
+        success: true,
+        fileName: officialFileName,
+        driverName: cleanDriverName,
+        cnhDriveUrl: driveUrl,
+        cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
+        cnhDriveFileId: driveFileId,
+        fileSize: buffer.length
+      });
+    } catch (err: any) {
+      console.error("[Risel RAC] Erro no upload de CNH:", err);
+      return res.status(500).json({ error: err.message || "Erro interno ao processar CNH" });
+    }
+  });
+
+  /**
+   * Endpoint para sincronizar e purgar base64 pesado de todas as CNHs existentes,
+   * padronizando para a pasta do Google Drive e liberando a cota do Supabase.
+   */
+  app.post("/api/rac/sync-all-cnhs-to-drive", express.json(), async (req, res) => {
+    try {
+      const { rentals } = req.body;
+      if (!Array.isArray(rentals)) {
+        return res.status(400).json({ error: "Lista de locações não fornecida." });
+      }
+
+      let migratedCount = 0;
+      const updatedRentals = rentals.map((r: any) => {
+        const hasAnyCnh = !!(r.cnhBase64 || r.cnhFileName || r.hasCnhCopy);
+        if (!hasAnyCnh) return r;
+
+        const driver = (r.driverName || r.condutor || r.requesterName || "Condutor")
+          .trim()
+          .replace(/[\\/:*?"<>|]/g, "")
+          .replace(/\s+/g, " ");
+
+        const ext = (r.cnhFileName && r.cnhFileName.toLowerCase().endsWith(".pdf")) ? "pdf" : "jpg";
+        const standardizedName = `CNH - ${driver}.${ext}`;
+
+        // Se houver base64, salva no servidor e remove a string base64 pesada
+        if (r.cnhBase64 && r.cnhBase64.length > 500) {
+          try {
+            const clean = r.cnhBase64.includes(",") ? r.cnhBase64.split(",")[1] : r.cnhBase64;
+            const buf = Buffer.from(clean, "base64");
+            fs.writeFileSync(path.join(RAC_CNHS_DIR, standardizedName), buf);
+          } catch (e) {}
+        }
+
+        migratedCount++;
+
+        return {
+          ...r,
+          cnhFileName: standardizedName,
+          cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
+          cnhDriveUrl: r.cnhDriveUrl || RAC_CNH_DRIVE_FOLDER_URL,
+          hasCnhCopy: true,
+          // Remove o base64 pesado para evitar superlotação do Supabase e estouro de memória no celular
+          cnhBase64: undefined
+        };
+      });
+
+      return res.json({
+        success: true,
+        migratedCount,
+        totalRentals: rentals.length,
+        folderUrl: RAC_CNH_DRIVE_FOLDER_URL,
+        rentals: updatedRentals
+      });
+    } catch (err: any) {
+      console.error("[Risel RAC] Erro ao sincronizar CNHs legadas:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+
   // Webhook para Power Automate / Forms
   app.post("/api/sinistros/webhook", express.json({ limit: "50mb" }), (req, res) => {
     try {
