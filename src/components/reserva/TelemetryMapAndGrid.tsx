@@ -6,7 +6,7 @@ import {
   List, Table, EyeOff, AlertTriangle, CheckCircle2, Search, Filter, Calendar, User, ChevronDown, ChevronUp, Clock, Car
 } from 'lucide-react';
 import L from 'leaflet';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, LayersControl } from 'react-leaflet';
 import { ALLOWED_PLATES } from '../../constants_reserva';
 import { getProcessedFleetWithReservations, ProcessedTelemetryVehicle } from '../../utils/telemetryFleetHelper';
 import { normalizeBaseOperacional, isSameCityOrBase } from '../../utils/baseOperacional';
@@ -145,6 +145,19 @@ const FitMapBounds: React.FC<{ vehicles: any[] }> = ({ vehicles }) => {
   return null;
 };
 
+// Componente para forçar o recálculo do tamanho do mapa e evitar tiles cinzas
+const MapInvalidator: React.FC = () => {
+  const map = useMap();
+  useEffect(() => {
+    map.invalidateSize();
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [map]);
+  return null;
+};
+
 // Helper para calcular a orientação angular (heading) perfeitamente alinhada à direção da via/rodovia
 const calculateRoadHeading = (v: any): number => {
   // 1. Se o rastreador já enviou o curso/heading GPS
@@ -276,6 +289,7 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
   dailyTrips,
   reservaVehicles
 }) => {
+  const [mapLayers, setMapLayers] = useState(() => mapQuotaService.getLayers());
   const [mapProvidersList, setMapProvidersList] = useState<MapProvider[]>(() => getDynamicMapProviders());
   const [mapType, setMapType] = useState('primary_road');
   const [viewMode, setViewMode] = useState<'map' | 'list' | 'kanban'>('map');
@@ -285,9 +299,10 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
   const [showPois, setShowPois] = useState(true);
   const [gridTab, setGridTab] = useState<'vehicles' | 'pois'>('vehicles');
 
-  // Atualiza provedores caso ocorra failover para Mapbox ou retorno para Google Maps
+  // Atualiza provedores e camadas caso ocorra failover para Mapbox ou retorno para Google Maps
   useEffect(() => {
     const unsubscribe = mapQuotaService.subscribe(() => {
+      setMapLayers(mapQuotaService.getLayers());
       setMapProvidersList(getDynamicMapProviders());
     });
     return () => unsubscribe();
@@ -632,19 +647,17 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
             </label>
           </div>
 
-          {/* Seletor de Tipo de Mapa (Só aplicável se estiver em modo Mapa) */}
+          {/* Seletor de Tipo de Mapa e Indicador de Cota Gratuita */}
           {viewMode === 'map' && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <MapQuotaIndicator compact />
-              <select
-                value={mapType}
-                onChange={(e) => setMapType(e.target.value)}
-                className="bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-xl px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
+              <div 
+                title="Alterne entre Google Maps Ruas, Satélite, Relevo ou OpenStreetMap pelo controle no canto superior direito do mapa"
+                className="hidden md:flex items-center gap-1.5 bg-violet-50 text-violet-800 border border-violet-200/80 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-2xs"
               >
-                {mapProvidersList.map(m => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </select>
+                <span>🗺️ Camadas de Mapa:</span>
+                <span className="text-violet-950 font-extrabold normal-case">Ruas · Satélite · Relevo · OSM</span>
+              </div>
             </div>
           )}
 
@@ -800,29 +813,60 @@ export const TelemetryMapAndGrid: React.FC<TelemetryMapAndGridProps> = ({
             <div className="relative w-full h-[700px] md:h-[740px] lg:h-[780px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 shadow-inner isolate z-0">
               
               {/* Badges de Status Flutuantes Absolutos de Alta Tecnologia e Estilo BI */}
-              <div className="absolute top-3 left-12 z-30 flex flex-col gap-2 pointer-events-none">
+              <div className="absolute top-3 left-12 z-30 flex items-center gap-2 pointer-events-none">
                 <div className="bg-slate-900/95 backdrop-blur text-white px-3 py-1.5 rounded-xl border border-slate-700 flex items-center gap-2 text-[9px] font-black tracking-wide shadow-md">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   <span>SINAL GPS GEO-FROTAS CONECTADO</span>
                 </div>
-              </div>
-
-              <div className="absolute top-3 right-3 z-30 pointer-events-none">
-                <div className="bg-slate-900/95 backdrop-blur text-white px-3 py-1.5 rounded-xl border border-slate-700 text-[9px] font-black shadow-md flex items-center gap-1.5">
-                  <span>VISUAL: {selectedMapProvider.label.toUpperCase()}</span>
+                <div className="hidden sm:flex bg-slate-900/90 backdrop-blur text-white px-2.5 py-1.5 rounded-xl border border-slate-700 text-[9px] font-bold shadow-md items-center gap-1.5">
+                  <span className="text-violet-400">●</span>
+                  <span>{filteredFleet.length} Veículos no Mapa</span>
                 </div>
               </div>
+
               <MapContainer 
                 center={[-22.7682, -47.1539]}
                 zoom={11} 
                 className="w-full h-full"
                 zoomControl={true}
               >
-                {/* TileLayer dinâmico de acordo com o provedor selecionado (Google Maps ou Grátis) */}
-                <TileLayer
-                  url={selectedMapProvider.url}
-                  attribution={selectedMapProvider.attribution}
-                />
+                <MapInvalidator />
+
+                {/* Seletor Oficial de Camadas do Leaflet (Google Maps Ruas, Satélite, Relevo e OSM) - Idêntico ao MapView */}
+                <LayersControl position="topright">
+                  <LayersControl.BaseLayer checked name={mapLayers.streets.label}>
+                    <TileLayer
+                      key={mapLayers.streets.id}
+                      attribution={mapLayers.streets.attribution}
+                      url={mapLayers.streets.url}
+                      maxZoom={mapLayers.streets.maxZoom || 20}
+                    />
+                  </LayersControl.BaseLayer>
+                  <LayersControl.BaseLayer name={mapLayers.satellite.label}>
+                    <TileLayer
+                      key={mapLayers.satellite.id}
+                      attribution={mapLayers.satellite.attribution}
+                      url={mapLayers.satellite.url}
+                      maxZoom={mapLayers.satellite.maxZoom || 20}
+                    />
+                  </LayersControl.BaseLayer>
+                  {mapLayers.terrain && (
+                    <LayersControl.BaseLayer name={mapLayers.terrain.label}>
+                      <TileLayer
+                        key={mapLayers.terrain.id}
+                        attribution={mapLayers.terrain.attribution}
+                        url={mapLayers.terrain.url}
+                        maxZoom={mapLayers.terrain.maxZoom || 20}
+                      />
+                    </LayersControl.BaseLayer>
+                  )}
+                  <LayersControl.BaseLayer name="OpenStreetMap (Padrão)">
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                  </LayersControl.BaseLayer>
+                </LayersControl>
 
                 {/* Enquadra perfeitamente todos os veículos ou foca no veículo selecionado com zoom mais próximo */}
                 <FitMapBounds vehicles={filteredFleet} />
