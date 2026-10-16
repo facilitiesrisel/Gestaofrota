@@ -13,7 +13,7 @@ import { VEICULOS_REAIS } from '../../data/veiculos_reais';
 export interface TelemetryAlertRule {
   id: string;
   name: string;
-  type: 'speed' | 'ignition_offhours' | 'idle_engine' | 'harsh_braking' | 'fence_violation' | 'battery_low' | 'unauthorized_stop';
+  type: 'speed' | 'ignition_offhours' | 'idle_engine' | 'harsh_braking' | 'fence_violation' | 'battery_low' | 'unauthorized_stop' | 'weekend_driving';
   severity: 'critical' | 'warning' | 'info';
   targetPlates: string[]; // ['ALL'] ou placas específicas
   parameters: {
@@ -26,6 +26,8 @@ export interface TelemetryAlertRule {
     fenceName?: string;
     fenceAction?: 'entry' | 'exit' | 'both';
     minBatteryVoltage?: number;
+    minDistanceKm?: number; // Deslocamento em km (ex: > 1 km)
+    ignitionRequired?: boolean; // Ignição ligada obrigatória
   };
   notifications: {
     popup: boolean;
@@ -153,6 +155,26 @@ const DEFAULT_ALERT_RULES: TelemetryAlertRule[] = [
     },
     active: true,
     createdAt: '2026-07-01'
+  },
+  {
+    id: 'rule-weekend-default',
+    name: 'Rodagem em Finais de Semana (Ignição ON & Deslocamento > 1 KM)',
+    type: 'weekend_driving',
+    severity: 'critical',
+    targetPlates: ['ALL'],
+    parameters: {
+      minDistanceKm: 1,
+      ignitionRequired: true,
+      daysOfWeek: ['sab', 'dom']
+    },
+    notifications: {
+      popup: true,
+      email: true,
+      emailRecipients: 'deny.goncalves@risel.com.br, lorena.padilha@risel.com.br, frotaleve@risel.com.br',
+      sound: true
+    },
+    active: true,
+    createdAt: '2026-07-01'
   }
 ];
 
@@ -173,12 +195,25 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
     return processedFleet.map(v => v.plate);
   }, [processedFleet]);
 
-  // Estado das Regras de Alertas (com persistência local)
+  // Estado das Regras de Alertas (com persistência local e garantia de suporte à regra de finais de semana)
   const [rules, setRules] = useState<TelemetryAlertRule[]>(() => {
     try {
       const saved = localStorage.getItem('risel_telemetry_alert_rules_v1');
       if (saved) {
-        return JSON.parse(saved);
+        const parsed: TelemetryAlertRule[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Se o usuário ainda não tiver uma regra de rodagem aos finais de semana, anexa a regra padrão oficial
+          const hasWeekendRule = parsed.some(r => r.type === 'weekend_driving');
+          if (!hasWeekendRule) {
+            const weekendRule = DEFAULT_ALERT_RULES.find(r => r.type === 'weekend_driving');
+            if (weekendRule) {
+              const merged = [...parsed, weekendRule];
+              localStorage.setItem('risel_telemetry_alert_rules_v1', JSON.stringify(merged));
+              return merged;
+            }
+          }
+          return parsed;
+        }
       }
     } catch (e) {}
     return DEFAULT_ALERT_RULES;
@@ -393,6 +428,38 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
               });
             }
           }
+
+          // 4. Rodagem aos Finais de Semana (Ignição Ligada & Deslocamento > 1 KM)
+          if (rule.type === 'weekend_driving') {
+            const now = new Date();
+            const dayOfWeek = now.getDay(); // 0 = Domingo, 6 = Sábado
+            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+            const minDist = rule.parameters.minDistanceKm ?? 1;
+            const requiresIgnition = rule.parameters.ignitionRequired !== false;
+
+            const isIgnitionOn = !!v.ignition;
+            const speed = Number(v.speed) || 0;
+            const isMoving = speed > 3 || (v.todayKm && v.todayKm >= minDist);
+
+            // Dispara se for fim de semana, com ignição ligada e movimentação/deslocamento
+            if (isWeekend && (!requiresIgnition || isIgnitionOn) && isMoving) {
+              newDiscoveredEvents.push({
+                id: `evt-weekend-${v.plate}-${Date.now()}`,
+                ruleId: rule.id,
+                ruleName: rule.name,
+                plate: v.plate,
+                model: v.model,
+                driver: v.driver,
+                type: 'weekend_driving',
+                severity: rule.severity,
+                description: `Circulação em final de semana não autorizada: Ignição ligada e deslocamento superior a ${minDist} km`,
+                value: `Ignição ON | Deslocamento > ${minDist} km`,
+                location: v.address || 'Em trânsito no final de semana',
+                timestamp: 'Agora (Tempo Real)',
+                status: 'pending'
+              });
+            }
+          }
         });
       });
 
@@ -474,6 +541,8 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
   const [formMinBattery, setFormMinBattery] = useState(11.8);
   const [formFenceName, setFormFenceName] = useState('Cerca Base Paulínia');
   const [formFenceAction, setFormFenceAction] = useState<'entry' | 'exit' | 'both'>('both');
+  const [formMinDistanceKm, setFormMinDistanceKm] = useState(1);
+  const [formIgnitionRequired, setFormIgnitionRequired] = useState(true);
   const [formPopup, setFormPopup] = useState(true);
   const [formEmail, setFormEmail] = useState(true);
   const [formEmailRecipients, setFormEmailRecipients] = useState('frotaleve@risel.com.br');
@@ -496,6 +565,8 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
     setFormMinBattery(11.8);
     setFormFenceName('Cerca Base Paulínia');
     setFormFenceAction('both');
+    setFormMinDistanceKm(1);
+    setFormIgnitionRequired(true);
     setFormPopup(true);
     setFormEmail(true);
     setFormEmailRecipients('frotaleve@risel.com.br');
@@ -520,6 +591,8 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
     setFormMinBattery(rule.parameters.minBatteryVoltage || 11.8);
     setFormFenceName(rule.parameters.fenceName || 'Cerca Base Paulínia');
     setFormFenceAction(rule.parameters.fenceAction || 'both');
+    setFormMinDistanceKm(rule.parameters.minDistanceKm ?? 1);
+    setFormIgnitionRequired(rule.parameters.ignitionRequired ?? true);
     setFormPopup(rule.notifications.popup);
     setFormEmail(rule.notifications.email);
     setFormEmailRecipients(rule.notifications.emailRecipients || '');
@@ -545,12 +618,14 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
         maxSpeed: formType === 'speed' ? Number(formMaxSpeed) : undefined,
         startTime: formType === 'ignition_offhours' ? formStartTime : undefined,
         endTime: formType === 'ignition_offhours' ? formEndTime : undefined,
-        daysOfWeek: formType === 'ignition_offhours' ? formDaysOfWeek : undefined,
+        daysOfWeek: formType === 'ignition_offhours' ? formDaysOfWeek : (formType === 'weekend_driving' ? ['sab', 'dom'] : undefined),
         maxIdleMinutes: formType === 'idle_engine' ? Number(formMaxIdleMinutes) : undefined,
         gForceThreshold: formType === 'harsh_braking' ? Number(formGForce) : undefined,
         minBatteryVoltage: formType === 'battery_low' ? Number(formMinBattery) : undefined,
         fenceName: formType === 'fence_violation' ? formFenceName : undefined,
-        fenceAction: formType === 'fence_violation' ? formFenceAction : undefined
+        fenceAction: formType === 'fence_violation' ? formFenceAction : undefined,
+        minDistanceKm: formType === 'weekend_driving' ? Number(formMinDistanceKm) : undefined,
+        ignitionRequired: formType === 'weekend_driving' ? formIgnitionRequired : undefined
       },
       notifications: {
         popup: formPopup,
@@ -1019,7 +1094,8 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
                 harsh_braking: 'Frenagem Brusca / Aceleração',
                 fence_violation: 'Violação de Cerca Virtual',
                 battery_low: 'Tensão de Bateria Baixa',
-                unauthorized_stop: 'Parada Não Autorizada'
+                unauthorized_stop: 'Parada Não Autorizada',
+                weekend_driving: 'Rodagem em Finais de Semana (Vedado)'
               };
 
               return (
@@ -1073,6 +1149,17 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
 
                   {/* Parâmetros da Regra */}
                   <div className="bg-slate-50 rounded-xl p-3 mt-3 text-[11px] space-y-1 font-medium text-slate-600 border border-slate-100">
+                    {rule.type === 'weekend_driving' && (
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5 text-rose-700 font-extrabold text-[10px]">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                          <span>VEDADO O USO AOS FINAIS DE SEMANA</span>
+                        </div>
+                        <p><strong>Condição do Sensor:</strong> {rule.parameters.ignitionRequired !== false ? 'Ignição Ligada (ON)' : 'Qualquer Movimentação'}</p>
+                        <p><strong>Deslocamento Mínimo:</strong> Superior a {rule.parameters.minDistanceKm ?? 1} km</p>
+                        <p><strong>Período Aplicável:</strong> Sábados e Domingos (24 Horas)</p>
+                      </div>
+                    )}
                     {rule.type === 'speed' && (
                       <p><strong>Limite Máximo:</strong> {rule.parameters.maxSpeed} km/h</p>
                     )}
@@ -1242,11 +1329,23 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
                     </label>
                     <select
                       value={formType}
-                      onChange={(e) => setFormType(e.target.value as any)}
+                      onChange={(e) => {
+                        const newType = e.target.value as TelemetryAlertRule['type'];
+                        setFormType(newType);
+                        if (newType === 'weekend_driving') {
+                          if (!formName || formName.startsWith('Excesso') || formName.startsWith('Ignição') || formName.startsWith('Motor')) {
+                            setFormName('Rodagem em Finais de Semana (Ignição ON & Deslocamento > 1 KM)');
+                          }
+                          setFormSeverity('critical');
+                          setFormMinDistanceKm(1);
+                          setFormIgnitionRequired(true);
+                        }
+                      }}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-[#114D38] cursor-pointer"
                     >
+                      <option value="weekend_driving">🚫 Rodagem aos Finais de Semana (Ignição Ligada & Deslocamento &gt; 1 KM)</option>
                       <option value="speed">Excesso de Velocidade</option>
-                      <option value="ignition_offhours">Ignição Fora de Horário</option>
+                      <option value="ignition_offhours">Ignição Fora de Horário Comercial</option>
                       <option value="idle_engine">Motor Ocioso (Marcha Lenta)</option>
                       <option value="harsh_braking">Frenagem / Aceleração Brusca</option>
                       <option value="fence_violation">Cerca Virtual (Entrada/Saída)</option>
@@ -1276,6 +1375,72 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
                   <h4 className="font-black text-slate-800 uppercase tracking-wider text-[10px]">
                     Parâmetros do Sensor
                   </h4>
+
+                  {/* Parâmetros Específicos: Rodagem aos Finais de Semana */}
+                  {formType === 'weekend_driving' && (
+                    <div className="space-y-3">
+                      <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-950 text-[11px] leading-relaxed">
+                        <div className="flex items-center gap-1.5 font-black text-rose-700 uppercase tracking-wider text-[10px] mb-1">
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                          Regra de Conformidade: Circulação Vedada aos Finais de Semana
+                        </div>
+                        Os veículos da Frota Leve <strong>não têm permissão para rodagem aos sábados e domingos</strong>. O sistema monitorará a chave de ignição e deslocamentos acumulados via GPS/GeoFrotas.
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-bold text-slate-700 text-[11px] mb-1">
+                            Deslocamento Superior a (KM) *
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0.1"
+                              max="50"
+                              value={formMinDistanceKm}
+                              onChange={(e) => setFormMinDistanceKm(Number(e.target.value))}
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-[#114D38]"
+                            />
+                            <span className="absolute right-3 top-2 font-mono text-[10px] text-slate-400 font-bold">KM</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-1">Gera o alerta operacional assim que o deslocamento no fim de semana superar este valor (Padrão: 1 km).</p>
+                        </div>
+
+                        <div>
+                          <label className="block font-bold text-slate-700 text-[11px] mb-1">
+                            Status da Ignição do Veículo *
+                          </label>
+                          <label className="flex items-center gap-2 p-2 bg-white border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors mt-0.5">
+                            <input
+                              type="checkbox"
+                              checked={formIgnitionRequired}
+                              onChange={(e) => setFormIgnitionRequired(e.target.checked)}
+                              className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                            />
+                            <div className="text-left">
+                              <span className="font-extrabold text-slate-800 text-[11px] block">Exigir Ignição Ligada (ON)</span>
+                              <span className="text-[9.5px] text-slate-500">Valida chave de ignição ativa pelo sensor</span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block font-bold text-slate-700 text-[11px] mb-1">
+                          Dias de Monitoramento Ativo
+                        </label>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-3 py-1 bg-[#114D38] text-white rounded-lg font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                            <Check className="w-3 h-3 text-emerald-300" /> Sábado (00:00 às 23:59)
+                          </span>
+                          <span className="px-3 py-1 bg-[#114D38] text-white rounded-lg font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                            <Check className="w-3 h-3 text-emerald-300" /> Domingo (00:00 às 23:59)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {formType === 'speed' && (
                     <div>
