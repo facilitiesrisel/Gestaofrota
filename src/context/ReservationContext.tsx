@@ -8,6 +8,8 @@ import { sendEmail, generateEmailHtml } from '../services/firebaseService';
 import { fetchFleetPositions } from '../services/geoFrotasService';
 import { VEICULOS_REAIS } from '../data/veiculos_reais';
 import { checkAndTriggerPerimeterExitAlerts, PerimeterVehicleEvent } from '../services/perimeterAlertService';
+import { evaluateFleetTelemetryRules } from '../services/telemetryAlertEmailService';
+import { getProcessedFleetWithReservations } from '../utils/telemetryFleetHelper';
 
 // Converte os 75 veículos reais cadastrados no sistema para o formato do módulo de reservas
 const getInitialFleetVehicles = (): Vehicle[] => {
@@ -239,10 +241,41 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
     try {
       const positions = await fetchFleetPositions();
       if (!positions || positions.length === 0) return [];
+
+      // 1. Monitoramento de saída do perímetro da sede
       const events = await checkAndTriggerPerimeterExitAlerts(positions, vehicles, reservations, dailyTrips);
+
+      // 2. Auditoria contínua de regras de telemetria (rodagem fds, excesso de velocidade, ignição fora de horário)
+      try {
+        const storedRulesStr = localStorage.getItem('risel_telemetry_alert_rules_v1');
+        let activeRules = [];
+        if (storedRulesStr) {
+          activeRules = JSON.parse(storedRulesStr);
+        }
+        if (!Array.isArray(activeRules) || activeRules.length === 0) {
+          activeRules = [
+            {
+              id: 'rule-weekend-default',
+              name: 'Rodagem em Finais de Semana (Ignição ON & Deslocamento > 1 KM)',
+              type: 'weekend_driving',
+              severity: 'critical',
+              targetPlates: ['ALL'],
+              parameters: { minDistanceKm: 1, ignitionRequired: true, daysOfWeek: ['sab', 'dom'] },
+              notifications: { popup: true, email: true, emailRecipients: 'deny.goncalves@risel.com.br', sound: true },
+              active: true,
+              createdAt: '2026-07-01'
+            }
+          ];
+        }
+        const processedFleet = getProcessedFleetWithReservations(positions, vehicles as any, reservations, dailyTrips);
+        await evaluateFleetTelemetryRules(processedFleet, activeRules);
+      } catch (telErr) {
+        console.warn("Auditoria periódica de telemetria encontrou aviso:", telErr);
+      }
+
       return events;
     } catch (e) {
-      console.warn("Erro ao executar checagem de perímetro da sede:", e);
+      console.warn("Erro ao executar checagem de perímetro e telemetria da sede:", e);
       return [];
     }
   }, [vehicles, reservations, dailyTrips]);

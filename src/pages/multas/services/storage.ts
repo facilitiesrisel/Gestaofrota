@@ -225,556 +225,290 @@ export const setEmailConfig = (serviceId: string, templateId: string, publicKey:
     localStorage.setItem(EMAIL_CONFIG_KEY, JSON.stringify(config));
 };
 
+const request = async (payload: any) => {
+  const url = getApiUrl();
+  if (!url) return null;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      redirect: 'follow',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { success: true, message: "OK" };
+    }
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.error("API Error:", error);
+    return null;
+  }
+};
+
+let localStore: { veiculos: Veiculo[]; motoristas: Motorista[]; codigos: CodigoMulta[]; multas: Multa[] } = {
+  veiculos: [],
+  motoristas: [],
+  codigos: mockCodigosMulta,
+  multas: []
+};
+
+const updateCacheOptimistically = (
+  entity: 'veiculos' | 'motoristas' | 'codigos' | 'multas',
+  item: any,
+  originalId: string | undefined,
+  action: 'save' | 'delete'
+) => {
+  if (!localStore[entity]) return;
+  const list = [...(localStore[entity] as any[])];
+  const targetId = originalId || item?.id || item?.ait || item?.placa;
+
+  if (action === 'delete') {
+    localStore[entity] = list.filter((i: any) => (i.id || i.ait || i.placa) !== targetId) as any;
+  } else {
+    const idx = list.findIndex((i: any) => (i.id || i.ait || i.placa) === targetId);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...item };
+    } else {
+      list.push(item);
+    }
+    localStore[entity] = list as any;
+  }
+
+  safeSetItem(CACHE_KEY, JSON.stringify({
+    timestamp: Date.now(),
+    data: localStore
+  }));
+};
+
+const mapMultaToPayload = (multa: Multa) => {
+  return {
+    "ID": multa.id,
+    "STATUS": multa.status,
+    "PLACA": multa.placa,
+    "BASE": multa.base,
+    "FROTA": multa.frota,
+    "TIPO": multa.tipo,
+    "AIT": multa.ait,
+    "DATA_INFRACAO": multa.dataHoraInfracao,
+    "DATA_RECEBIMENTO": multa.dataRecebimento,
+    "PRAZO_INDICACAO": multa.prazoIndicacao,
+    "ENQUADRAMENTO": multa.enquadramento,
+    "DESCRICAO": multa.descricaoInfracao,
+    "LOCAL": multa.localInfracao,
+    "MUNICIPIO": multa.municipio,
+    "UF": multa.uf,
+    "ORGAO_AUTUADOR": multa.orgaoAutuador,
+    "VALOR": multa.valor,
+    "DESCONTO": multa.desconto,
+    "VALOR_COM_DESCONTO": multa.valorComDesconto,
+    "TAXA_LOCADORA": multa.taxaLocadora,
+    "VALOR_FINAL": (multa as any).valorFinal || multa.valorComDesconto,
+    "DESCONTAR_MOTORISTA": multa.descontar,
+    "RESPONSAVEL_NOME": multa.responsavelNome,
+    "RESPONSAVEL_CPF": multa.responsavelCpf,
+    "RESPONSABILIDADE": multa.responsabilidade,
+    "OBS": multa.obs,
+    "LINK_AIT": multa.linkAit,
+    "LINK_AUTH": multa.linkAuth
+  };
+};
+
 // Cache Helper
 export const clearCache = () => {
     console.log("Limpando cache local...");
     localStorage.removeItem(CACHE_KEY);
+    localStore = { veiculos: [], motoristas: [], codigos: mockCodigosMulta, multas: [] };
 };
 
-const request = async (payload: any) => {
-  const url = getApiUrl();
-  if (!url) return null;
+// Helper para normalização e comparação ágil de strings (Placas, Códigos, Chaves)
+export const cleanString = (val: any): string => {
+  if (!val) return '';
+  return String(val)
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .trim();
+};
 
-  // Se for ação de leitura pura ('read'), usa GET que tem resposta instantânea e sem redirecionamento bloqueante no Google Apps Script
-  if (payload && payload.action === 'read') {
-    try {
-      const getRes = await fetch(`${url}${url.includes('?') ? '&' : '?'}action=read`, {
-        method: 'GET',
-        redirect: 'follow'
-      });
-      const getText = await getRes.text();
-      try {
-        const parsed = JSON.parse(getText);
-        if (parsed && typeof parsed === 'object') return parsed;
-      } catch (e) {}
-    } catch (e) {
-      console.warn("Aviso ao tentar leitura via GET, tentando POST:", e);
-    }
-  }
+export const formatInputText = (val: any): string => {
+  if (val === undefined || val === null) return '';
+  return String(val).toUpperCase();
+};
 
+export const deleteDriveFiles = async (urls: string[]): Promise<void> => {
   try {
-    const response = await fetch(url, { 
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: JSON.stringify(payload),
-        redirect: 'follow'
+    const url = getApiUrl();
+    if (!url) return;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_drive_files', urls })
     });
-    
-    const text = await response.text();
-    try {
-        return JSON.parse(text);
-    } catch (e) {
-        console.warn("Resposta não-JSON do servidor:", text);
-        if (text.includes('<!DOCTYPE html>') || text.includes('Error')) {
-             if (payload && payload.action === 'read') {
-               try {
-                 const fallbackRes = await fetch(`${url}${url.includes('?') ? '&' : '?'}action=read`);
-                 const fallbackText = await fallbackRes.text();
-                 return JSON.parse(fallbackText);
-               } catch (_) {}
-             }
-             return { success: false, error: "Erro no Servidor Google (HTML retornado). Verifique a URL do Script e permissões." };
-        }
-        return { success: true, message: "Processado (sem JSON)" }; 
-    }
-  } catch (error) {
-    console.error("API Error:", error);
-    throw error;
+  } catch (e) {
+    console.warn("Aviso ao deletar arquivos temporários do drive:", e);
   }
 };
 
 export const testConnection = async () => {
-    return await request({ action: 'read' });
+  try {
+    const url = getApiUrl();
+    if (!url) return { success: false, error: "URL da API não configurada" };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read' })
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
 };
 
-// Dashboard Config (Cloud)
 export const fetchDashboardConfig = async () => {
-    const response = await request({ action: 'get_config' });
+  try {
+    const url = getApiUrl();
+    if (!url) return null;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_config' })
+    });
+    const response = await res.json();
     if (response && response.success && response.config) {
-        return response.config;
+      return response.config;
     }
     return null;
-};
-
-export const saveDashboardConfigApi = async (config: any) => {
-    return await request({ action: 'save_config', payload: config });
-};
-
-let localStore = { veiculos: [], motoristas: [], codigos: mockCodigosMulta, multas: [] };
-
-// --- OPTIMISTIC CACHE UPDATER ---
-export const updateCacheOptimistically = (
-  type: 'veiculos' | 'motoristas' | 'multas' | 'codigos',
-  item: any,
-  originalKey?: string,
-  action: 'save' | 'delete' = 'save'
-) => {
-  try {
-    const cached = localStorage.getItem(CACHE_KEY);
-    let data = cached ? JSON.parse(cached).data : null;
-    if (!data) {
-      data = { veiculos: [], motoristas: [], codigos: mockCodigosMulta, multas: [] };
-    }
-
-    if (type === 'veiculos') {
-      let list: Veiculo[] = data.veiculos || [];
-      if (action === 'delete') {
-        const idToDelete = originalKey || item?.id || item;
-        list = list.filter((v: Veiculo) => v.id !== idToDelete);
-      } else {
-        if (originalKey && originalKey !== item.id) {
-          list = list.filter((v: Veiculo) => v.id !== originalKey);
-        }
-        const idx = list.findIndex((v: Veiculo) => v.id === item.id);
-        if (idx >= 0) {
-          list[idx] = { ...list[idx], ...item };
-        } else {
-          list.unshift(item);
-        }
-      }
-      data.veiculos = list;
-    } else if (type === 'motoristas') {
-      let list: Motorista[] = data.motoristas || [];
-      if (action === 'delete') {
-        const loginToDelete = originalKey || item?.login || item;
-        list = list.filter((m: Motorista) => m.login !== loginToDelete);
-      } else {
-        if (originalKey && originalKey !== item.login) {
-          list = list.filter((m: Motorista) => m.login !== originalKey);
-        }
-        const idx = list.findIndex((m: Motorista) => m.login === item.login);
-        if (idx >= 0) {
-          list[idx] = { ...list[idx], ...item };
-        } else {
-          list.unshift(item);
-        }
-      }
-      data.motoristas = list;
-    } else if (type === 'multas') {
-      let list: Multa[] = data.multas || [];
-      if (action === 'delete') {
-        const idToDelete = originalKey || item?.id || item;
-        list = list.filter((m: Multa) => m.id !== idToDelete);
-      } else {
-        const idx = list.findIndex((m: Multa) => m.id === item.id);
-        if (idx >= 0) {
-          list[idx] = { ...list[idx], ...item };
-        } else {
-          list.unshift(item);
-        }
-      }
-      data.multas = list;
-    }
-
-    safeSetItem(CACHE_KEY, JSON.stringify({
-      timestamp: Date.now(),
-      data
-    }));
-
-    return data;
   } catch (e) {
-    console.error("Erro ao atualizar cache otimista:", e);
     return null;
   }
 };
 
-// --- FILE HELPERS ---
+export const saveDashboardConfigApi = async (config: any) => {
+  try {
+    const url = getApiUrl();
+    if (!url) return null;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_config', payload: config })
+    });
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+};
 
-export const fileToBase64 = (file: File): Promise<string> => {
+const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.split(',')[1];
-        resolve(base64);
+      const result = reader.result as string;
+      const base64 = result.split(',')[1];
+      resolve(base64);
     };
     reader.onerror = error => reject(error);
   });
 };
 
 export const uploadFileToDrive = async (file: File, folderId: string, customName?: string) => {
-    const base64Data = await fileToBase64(file);
-    try {
-        if (folderId && folderId !== 'LOCAL') {
-            const payload = {
-                action: 'upload',
-                folderId: folderId,
-                fileName: customName || file.name,
-                mimeType: file.type,
-                fileData: base64Data
-            };
-            const response = await request(payload);
-            if (response && response.fileUrl) {
-                return response;
-            }
-        }
-    } catch (e) {
-        console.warn("Upload no Google Drive indisponível/falhou, salvando como Data URL local:", e);
-    }
-    // Fallback zero-custo: Data URL local seguro
-    const dataUrl = `data:${file.type || 'application/octet-stream'};base64,${base64Data}`;
-    return { success: true, fileUrl: dataUrl };
-};
-
-export const getFileIdFromUrl = (url: string): string | null => {
-    if (!url) return null;
-    const dMatch = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (dMatch && dMatch[1]) return dMatch[1];
-    const idMatch = url.match(/[?&]id=([a-zA-Z0-9-_]+)/);
-    if (idMatch && idMatch[1]) return idMatch[1];
-    if (/^[a-zA-Z0-9-_]{20,}$/.test(url.trim())) return url.trim();
-    return null;
-};
-
-export const deleteDriveFiles = async (urls: string[]) => {
-    if (!urls || urls.length === 0) return;
-    for (const url of urls) {
-        if (!url) continue;
-        try {
-            const fileId = getFileIdFromUrl(url) || url;
-            if (fileId) {
-                console.log(`Solicitando deleção do arquivo do Google Drive (ID: ${fileId})...`);
-                await request({
-                    action: 'delete_file',
-                    fileId: fileId,
-                    fileUrl: url
-                });
-            }
-        } catch (e) {
-            console.warn("Erro ao solicitar deleção de arquivo do Drive:", url, e);
-        }
-    }
+  const base64Data = await fileToBase64(file);
+  const payload = {
+    action: 'upload',
+    folderId: folderId,
+    fileName: customName || file.name,
+    mimeType: file.type,
+    fileData: base64Data
+  };
+  const apiUrl = getApiUrl();
+  if (!apiUrl) return null;
+  const res = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  return await res.json();
 };
 
 export const generateAuthPdfDocs = async (data: any, templateId: string, folderId: string) => {
-    const payload = {
-        action: 'generate_pdf',
-        templateId: templateId,
-        folderId: folderId,
-        data: data
-    };
-    return await request(payload);
-}
-
-// --- HELPERS (EXPORTADOS CORRETAMENTE) ---
-
-export const formatInputText = (str: string) => {
-    if (!str) return '';
-    return str.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-};
-
-const normalizeKey = (key: string) => {
-    if (!key) return '';
-    return key.toString().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]/g, "");
-};
-
-const hasAnyKey = (row: any, keys: string[]) => {
-    if (!row || typeof row !== 'object') return false;
-    const normalizedTargetKeys = keys.map(k => normalizeKey(k));
-    const rowKeys = Object.keys(row).map(k => normalizeKey(k));
-    return rowKeys.some(rk => normalizedTargetKeys.includes(rk));
-};
-
-export const cleanString = (str: string) => {
-    return str ? str.toString().replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-};
-
-const parseDate = (val: any) => {
-    if (!val) return undefined;
-    const str = String(val).trim();
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
-        const parts = str.split(' ')[0].split('/'); 
-        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-    }
-    if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-        return str.split('T')[0];
-    }
-    if (str.includes('T')) {
-        return str.split('T')[0];
-    }
-    return str;
-};
-
-const parseDateTime = (val: any) => {
-    if (!val) return undefined;
-    const str = String(val).trim();
-    if (str.endsWith('Z') || (str.includes('T') && str.length > 16)) {
-        const date = new Date(str);
-        if (!isNaN(date.getTime())) {
-            const Y = date.getFullYear();
-            const M = String(date.getMonth() + 1).padStart(2, '0');
-            const D = String(date.getDate()).padStart(2, '0');
-            const H = String(date.getHours()).padStart(2, '0');
-            const m = String(date.getMinutes()).padStart(2, '0');
-            return `${Y}-${M}-${D}T${H}:${m}`;
-        }
-    }
-    if (str.includes('T')) return str.substring(0, 16);
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
-        const [datePart, timePart] = str.split(' ');
-        const d = datePart.split('/');
-        const isoDate = `${d[2]}-${d[1].padStart(2, '0')}-${d[0].padStart(2, '0')}`;
-        const isoTime = timePart ? timePart.substring(0, 5) : '00:00';
-        return `${isoDate}T${isoTime}`;
-    }
-    return str;
-}
-
-const parseCurrency = (val: any): number => {
-    if (val === undefined || val === null || val === '') return 0;
-    if (typeof val === 'number') return val;
-    let str = String(val).trim();
-    if (str.includes(',') && str.includes('.')) {
-        if (str.lastIndexOf(',') > str.lastIndexOf('.')) {
-             str = str.replace(/\./g, '').replace(',', '.'); 
-        } else {
-            str = str.replace(/,/g, ''); 
-        }
-    } else if (str.includes(',')) {
-        str = str.replace(',', '.');
-    }
-    str = str.replace(/[^\d.-]/g, '');
-    const num = parseFloat(str);
-    return isNaN(num) ? 0 : num;
-};
-
-const isPlate = (str: string) => {
-    const s = cleanString(str);
-    return /^[A-Z]{3}[0-9][0-9A-Z][0-9]{2}$/.test(s);
-};
-
-const findValue = (row: any, normalizedKeys: string[]) => {
-    for (const key of normalizedKeys) {
-        if (row[key] !== undefined && row[key] !== "" && row[key] !== null) return row[key];
-        const foundKey = Object.keys(row).find(k => normalizeKey(k) === key);
-        if (foundKey && row[foundKey]) return row[foundKey];
-    }
-    return "";
-};
-
-// --- MAPPERS ---
-const mapMultaFromSheet = (row: any): Multa => {
-  const normalizedRow: any = {};
-  Object.keys(row).forEach(k => normalizedRow[normalizeKey(k)] = row[k]);
-  Object.assign(normalizedRow, row);
-
-  let aitValue = findValue(normalizedRow, ['AIT', 'AUTODEINFRACAO', 'NAIT', 'NUMEROAIT']);
-  if (!aitValue) aitValue = findValue(normalizedRow, ['AITDIGITADO']);
-  let id = findValue(normalizedRow, ['IDSISTEMA', 'ID', 'CODIGO']);
-  if (!id && aitValue) id = aitValue; 
-
-  return {
-    id: String(id || Math.random().toString(36).substr(2, 9)),
-    status: findValue(normalizedRow, ['STATUS', 'SITUACAO']) || 'AGUARDANDO BOLETO',
-    frota: String(findValue(normalizedRow, ['FROTA', 'VEICULO'])).trim(),
-    placa: cleanString(findValue(normalizedRow, ['PLACA'])), 
-    base: findValue(normalizedRow, ['BASE', 'FILIAL', 'UNIDADE']),
-    ait: String(aitValue || '').trim(),
-    tipo: findValue(normalizedRow, ['TIPO']) || 'NOTIFICAÇÃO',
-    dataHoraInfracao: parseDateTime(findValue(normalizedRow, ['DATAEHORARIOINFRACAO', 'DATAHORAINFRACAO', 'DATA', 'DATAINFRACAO'])),
-    dataRecebimento: parseDate(findValue(normalizedRow, ['DATADERECEBIMENTO', 'DATARECEBIMENTO', 'RECEBIMENTO', 'DATADERECEBIMENTO'])),
-    prazoIndicacao: parseDate(findValue(normalizedRow, ['PRAZODEINDICACAO', 'PRAZOINDICACAO', 'PRAZO'])),
-    recebidaComPrazo: findValue(normalizedRow, ['RECEBIDACOMPRAZO']) as any || 'SIM',
-    enquadramento: String(findValue(normalizedRow, ['ENQUADRAMENTODAMULTA', 'ENQUADRAMENTO']) || '').trim(),
-    artigoCtb: String(findValue(normalizedRow, ['ARTIGOCTB', 'ARTIGO', 'BASELEGAL']) || '').trim(),
-    descricaoInfracao: String(findValue(normalizedRow, ['DESCRICAOINFRACAO', 'DESCRICAODAINFRACAO', 'DESCRICAO', 'INFRACAO']) || '').trim(),
-    pontosCnh: Number(findValue(normalizedRow, ['PONTOSNACNH', 'PONTOSNA', 'PONTOS', 'PONTOSCNH'])) || 0,
-    responsavelCodigo: findValue(normalizedRow, ['LOGINMOTORISTA', 'LOGIN', 'RESPONSAVEL']) ? String(findValue(normalizedRow, ['LOGINMOTORISTA', 'LOGIN', 'RESPONSAVEL'])).trim() : '',
-    responsavelNome: String(findValue(normalizedRow, ['NOME', 'NOMEMOTORISTA', 'RESPONSAVEL']) || '').trim(), 
-    orgaoAutuador: findValue(normalizedRow, ['ORGAOAUTUADOR', 'ORGAO']),
-    endereco: findValue(normalizedRow, ['ENDERECOCOMPLETO', 'ENDERECO', 'LOCAL']),
-    municipio: findValue(normalizedRow, ['MUNICIPIO', 'CIDADE']),
-    uf: findValue(normalizedRow, ['UF', 'ESTADO', 'U']), 
-    rodoviaOuUrbano: findValue(normalizedRow, ['RODOVIAOUURBANO', 'RODOVIA OU URBANO', 'RODOVIA', 'URBANO', 'TIPOVIARIO', 'LOCAL', 'TRECHO']) as any || 'URBANO',
-    retornouComPrazo: findValue(normalizedRow, ['RETORNOUCOMPRAZO', 'RETORNO', 'RETORNOU']) as any || 'NÃO',
-    valor: parseCurrency(findValue(normalizedRow, ['VALOR', 'VALORMULTA'])),
-    desconto: parseCurrency(findValue(normalizedRow, ['DESCONTO'])),
-    taxaLocadora: parseCurrency(findValue(normalizedRow, ['TAXALOCADORA', 'TAXA LOCADORA', 'TAXALOC', 'TAXAADM'])) || 0,
-    valorComDesconto: parseCurrency(findValue(normalizedRow, ['VALOR COM DESCONTO', 'VALORCOMDESCONTO', 'LIQUIDO', 'VALOR LIQUIDO', 'COLZ', 'Z'])),
-    empresaOuCondutor: findValue(normalizedRow, ['EMPRESAOUCONDUTOR']) as any || 'CONDUTOR',
-    descontarMotorista: findValue(normalizedRow, ['DESCONTARDOMOTORISTA', 'DESCONTAR']) as any || 'SIM',
-    pagoComDesconto: findValue(normalizedRow, ['PAGOCDESCONTO', 'PAGOCOMDESCONTO', 'PAGO']) as any || 'SIM',
-    descontoEnviadoRH: parseDate(findValue(normalizedRow, ['ENVIADOAORH', 'ENVIADO AO RH', 'DESCONTOENVIADOPARAORH', 'DATARH', 'ENVIADORH', 'RH'])),
-    numDocumento: findValue(normalizedRow, ['NDOCUMENTO', 'DOCUMENTO', 'NUMERODOCUMENTO']),
-    vencimento: parseDate(findValue(normalizedRow, ['VENCIMENTO'])),
-    obs: findValue(normalizedRow, ['OBS', 'OBSERVACOES']),
-    linkAit: findValue(normalizedRow, ['LINKAIT', 'ARQUIVOAIT', 'AITANEXO', 'LINK AIT']),
-    linkAuth: findValue(normalizedRow, ['LINKAUTH', 'LINKAUTORIZACAO', 'AUTORIZACAO', 'LINK AUTORIZACAO'])
+  const payload = {
+    action: 'generate_pdf',
+    templateId: templateId,
+    folderId: folderId,
+    data: data
   };
+  const apiUrl = getApiUrl();
+  if (!apiUrl) return null;
+  const res = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  return await res.json();
 };
 
-const mapVeiculoFromSheet = (row: any): Veiculo => {
-  const normalizedRow: any = {};
-  Object.keys(row).forEach(k => normalizedRow[normalizeKey(k)] = row[k]);
-  Object.assign(normalizedRow, row);
-
-  let rawPlaca = findValue(normalizedRow, ['PLACA', 'VEICULO', 'PLACAS', 'B', 'COLB', 'COLUMNB', '1']);
-  if (!rawPlaca || !isPlate(rawPlaca)) {
-    rawPlaca = '';
-    const values = Object.values(row);
-    for (const val of values) {
-        const str = String(val);
-        if (isPlate(str)) {
-            rawPlaca = cleanString(str);
-            break; 
-        }
-    }
-  }
-
-  let rawId = findValue(normalizedRow, ['FROTA', 'NFROTA', 'ID', 'A', 'COLA', 'COLUMNA', '0']);
-  if ((!rawId || String(rawId).trim() === '') && rawPlaca) {
-      const cleanP = cleanString(String(rawPlaca));
-      const values = Object.values(row);
-      for (const val of values) {
-          const s = String(val).trim();
-          const cleanS = cleanString(s);
-          if (s.length > 0 && s.length <= 10 && cleanS !== cleanP && /^[A-Z0-9\-\.]+$/.test(cleanS)) {
-              if (/^\d+$/.test(cleanS)) { rawId = s; break; }
-              if (!rawId) rawId = s; 
-          }
-      }
-  }
-  if ((!rawId || String(rawId).trim() === '') && rawPlaca) {
-      rawId = rawPlaca;
-  }
-
-  return {
-    id: String(rawId || '').trim(),
-    status: findValue(normalizedRow, ['STATUS', 'SITUACAO', 'ATIVO']) || 'ATIVO',
-    placa: cleanString(String(rawPlaca || '')),
-    filial: findValue(normalizedRow, ['FILIAL', 'BASE', 'UNIDADE', 'C', 'COLC', '2']),
-    marca: findValue(normalizedRow, ['MARCA', 'FABRICANTE']),
-    modelo: findValue(normalizedRow, ['MODELO', 'VEICULO']),
-    ano: findValue(normalizedRow, ['ANO']),
-    tipo: findValue(normalizedRow, ['TIPO', 'CATEGORIA']),
-    capacidade: findValue(normalizedRow, ['CAPACIDADE']),
-    regiao: findValue(normalizedRow, ['REGIAO', 'REGIAO']),
-    proprietario: findValue(normalizedRow, ['PROPRIETARIO']),
-    validadeLicenciamento: parseDate(findValue(normalizedRow, ['LICENCIAMENTO', 'VALIDADE', 'VENCIMENTO', 'K', 'COLK', '10'])),
-    
-    // Novos campos de custos (Mapeamento M, N, O, P)
-    custoLicenciamento2026: parseCurrency(findValue(normalizedRow, ['CUSTOLICENCIAMENTO2026', 'CUSTOLICENCIAMENTO', 'LICENCIAMENTO2026', 'M', 'COLM'])),
-    custoIpva2026: parseCurrency(findValue(normalizedRow, ['CUSTOIPVA2026', 'CUSTOIPVA', 'IPVA2026', 'N', 'COLN'])),
-    custoMultas2026: parseCurrency(findValue(normalizedRow, ['CUSTOMULTAS2026', 'CUSTOMULTAS', 'MULTAS2026', 'O', 'COLO'])),
-    custoTotal2026: parseCurrency(findValue(normalizedRow, ['CUSTOPORPLACA', 'CUSTOTOTAL', 'TOTAL2026', 'P', 'COLP']))
-  };
+// Helper de timeout resiliente para evitar esperas infinitas na rede
+const withTimeout = <T>(promise: Promise<T>, ms: number = 3000, fallback: T): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
+  ]);
 };
 
-const mapMotoristaFromSheet = (row: any): Motorista => {
-  const normalizedRow: any = {};
-  Object.keys(row).forEach(k => normalizedRow[normalizeKey(k)] = row[k]);
-  
-  // Mapeamento atualizado para incluir STATUS e garantir ordem
-  return {
-    status: findValue(normalizedRow, ['STATUS', 'SITUACAO']) || 'ATIVO',
-    login: String(findValue(normalizedRow, ['LOGIN', 'CODIGO', 'ID', 'MATRICULA']) || '').trim(),
-    nome: findValue(normalizedRow, ['NOME', 'MOTORISTA', 'FUNCIONARIO']),
-    base: findValue(normalizedRow, ['BASE', 'FILIAL', 'UNIDADE', 'C', 'COLC', '2'])
-  };
-};
-
-const mapCodigoFromSheet = (row: any): CodigoMulta => {
-  const normalizedRow: any = {};
-  Object.keys(row).forEach(k => normalizedRow[normalizeKey(k)] = row[k]);
-  return {
-    codigo: findValue(normalizedRow, ['CODIGO', 'ENQUADRAMENTO']),
-    baseLegal: findValue(normalizedRow, ['BASELEGAL', 'ARTIGO']),
-    descricao: findValue(normalizedRow, ['DESCRICAO', 'NATUREZA']),
-    pontos: Number(findValue(normalizedRow, ['PTS', 'PONTOS'])) || 0,
-    valor: parseCurrency(findValue(normalizedRow, ['VALOR', 'VALORBASE'])),
-    desconto: parseCurrency(findValue(normalizedRow, ['DESCONTO']))
-  };
-}
-
-const mapMultaToPayload = (multa: Multa) => {
-    return {
-        "ID": multa.id,
-        "STATUS": multa.status,
-        "FROTA": multa.frota,
-        "PLACA": multa.placa,
-        "BASE": multa.base,
-        "AIT": multa.ait,
-        "TIPO": multa.tipo,
-        "DATA INFRACAO": multa.dataHoraInfracao,
-        "DATA RECEBIMENTO": multa.dataRecebimento,
-        "PRAZO INDICACAO": multa.prazoIndicacao,
-        "RECEBIDA COM PRAZO": multa.recebidaComPrazo,
-        "ENQUADRAMENTO": multa.enquadramento,
-        "ARTIGO CTB": multa.artigoCtb,
-        "DESCRICAO INFRACAO": multa.descricaoInfracao,
-        "PONTOS CNH": multa.pontosCnh,
-        "LOGIN MOTORISTA": multa.responsavelCodigo,
-        "NOME MOTORISTA": multa.responsavelNome,
-        "ORGAO AUTUADOR": multa.orgaoAutuador,
-        "ENDERECO": multa.endereco,
-        "MUNICIPIO": multa.municipio,
-        "UF": multa.uf, 
-        "RODOVIA OU URBANO": multa.rodoviaOuUrbano,
-        "RETORNOU COM PRAZO": multa.retornouComPrazo,
-        "VALOR": multa.valor,
-        "DESCONTO": multa.desconto,
-        "TAXA LOCADORA": multa.taxaLocadora || 0,
-        "VALOR COM DESCONTO": multa.valorComDesconto, 
-        "EMPRESA OU CONDUTOR": multa.empresaOuCondutor,
-        "DESCONTAR MOTORISTA": multa.descontarMotorista,
-        "PAGO COM DESCONTO": multa.pagoComDesconto,
-        "OBS": multa.obs,
-        "LINK AIT": multa.linkAit,
-        "LINK AUTORIZACAO": multa.linkAuth,
-        "ENVIADO AO RH": multa.descontoEnviadoRH
-    };
-};
-
-const findDataArray = (data: any, preferredKeys: string[], validator: (rawRow: any) => boolean, excludeKeys: string[] = []) => {
-    for (const key of preferredKeys) {
-        if (excludeKeys.includes(key)) continue;
-        if (data[key] && Array.isArray(data[key])) {
-             if (data[key].length === 0) return { key, data: [] };
-             if (data[key].some(validator)) {
-                 return { key, data: data[key] };
-             }
-        }
-    }
-    for (const key of Object.keys(data)) {
-        if (excludeKeys.includes(key)) continue;
-        if (Array.isArray(data[key]) && data[key].length > 0) {
-             if (data[key].some(validator)) {
-                 return { key, data: data[key] };
-             }
-        }
-    }
-    return null;
-};
-
-// --- DATA FETCHING WITH CACHE ---
+// --- DATA FETCHING WITH CACHE (ULTRA-RÁPIDO / INSTANT LOCAL-FIRST) ---
 export const fetchAllData = async (forceRefresh: boolean = false) => {
   try {
-    // 1. Tenta pegar do Cache se não for forceRefresh
+    // 1. CARREGAMENTO INSTANTÂNEO (Local-First): se já tiver em memória ou cache local, entrega de imediato
     if (!forceRefresh) {
+        if (localStore.multas && localStore.multas.length > 0 && localStore.veiculos && localStore.veiculos.length > 0) {
+            return localStore;
+        }
+
         const cached = localStorage.getItem(CACHE_KEY);
         if (cached) {
             try {
                 const parsed = JSON.parse(cached);
-                const now = Date.now();
-                if (now - parsed.timestamp < CACHE_DURATION) {
-                    console.log("Using cached data (Valid for 1 min)");
+                if (parsed && parsed.data && parsed.data.multas && parsed.data.multas.length > 0) {
+                    localStore = parsed.data;
                     return parsed.data;
                 }
-            } catch (e) {
-                console.warn("Cache inválido, buscando novos dados...");
-            }
+            } catch (e) {}
+        }
+
+        const storedM = localStorage.getItem("risel_frota_multas");
+        if (storedM) {
+            try {
+                const parsedM = JSON.parse(storedM);
+                if (Array.isArray(parsedM) && parsedM.length > 0) {
+                    const fallbackData = {
+                        veiculos: Array.isArray(VEICULOS_REAIS) ? (VEICULOS_REAIS as any) : [],
+                        motoristas: [],
+                        codigos: mockCodigosMulta,
+                        multas: parsedM
+                    };
+                    localStore = fallbackData;
+                    return fallbackData;
+                }
+            } catch (e) {}
         }
     }
 
-    // Carregar veículos com dados completos do Supabase / Controle de Frota Leve
+    // 2. BUSCA PARALELIZADA COM TIMEOUT (Evita travamentos de rede)
+    const [vehiclesResult, serverMultasResult, supabaseMultasResult] = await Promise.allSettled([
+      withTimeout(fetchVeiculosSupabase().catch(() => []), 2500, []),
+      withTimeout(fetch("/api/multas", { cache: "no-store" }).then(r => r.ok ? r.json() : []).catch(() => []), 2500, []),
+      withTimeout(fetchMultasSupabase().catch(() => []), 2500, [])
+    ]);
+
     let localVeiculos: Veiculo[] = [];
-    try {
-      const cloudVehicles = await fetchVeiculosSupabase();
-      if (Array.isArray(cloudVehicles) && cloudVehicles.length > 0) {
-        localVeiculos = cloudVehicles.map((v: any) => ({
+    if (vehiclesResult.status === 'fulfilled' && Array.isArray(vehiclesResult.value) && vehiclesResult.value.length > 0) {
+        localVeiculos = vehiclesResult.value.map((v: any) => ({
           id: v.placa || v.id,
           status: (v.status || 'ATIVO').toUpperCase() === 'INATIVO' ? 'INATIVO' : 'ATIVO',
           placa: cleanString(v.placa || ''),
@@ -792,9 +526,6 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
           validadeLicenciamento: v.vencContrato || '',
           email: v.email || ''
         }));
-      }
-    } catch (e) {
-      console.warn("Aviso ao buscar veículos do Supabase no módulo de multas:", e);
     }
 
     // Mesclar dados enriquecidos de risel_frota_veiculos_v2 para garantir que cpfCondutor e email estejam presentes
@@ -841,48 +572,38 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
       }));
     }
 
-    // Carregar multas (1º: API Servidor Express Compartilhada, 2º: Supabase Cloud, 3º: LocalStorage/IndexedDB)
+    // Carregar multas consolidando fontes
     let localMultas: Multa[] = [];
+    const multasConsolidadasMap = new Map<string, Multa>();
 
-    // 1. Tentar ler do Servidor Compartilhado Express (/api/multas)
-    try {
-      const resp = await fetch("/api/multas", { cache: "no-store" });
-      if (resp.ok) {
-        const serverMultas = await resp.json();
-        if (Array.isArray(serverMultas) && serverMultas.length > 0) {
-          localMultas = serverMultas;
-        }
-      }
-    } catch (e) {
-      console.warn("Aviso ao buscar multas do servidor compartilhado:", e);
+    // 1. Servidor compartilhado
+    if (serverMultasResult.status === 'fulfilled' && Array.isArray(serverMultasResult.value)) {
+        serverMultasResult.value.forEach((m: Multa) => {
+            if (m && (m.id || m.ait)) multasConsolidadasMap.set(String(m.id || m.ait).toUpperCase().trim(), m);
+        });
     }
 
-    // 2. Tentar mesclar com Supabase
-    try {
-      const dbMultas = await fetchMultasSupabase();
-      if (Array.isArray(dbMultas) && dbMultas.length > 0) {
-        const map = new Map<string, Multa>();
-        localMultas.forEach(m => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
-        dbMultas.forEach(m => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
-        localMultas = Array.from(map.values());
-      }
-    } catch (e) {
-      console.warn("Aviso ao buscar multas do Supabase:", e);
+    // 2. Supabase
+    if (supabaseMultasResult.status === 'fulfilled' && Array.isArray(supabaseMultasResult.value)) {
+        supabaseMultasResult.value.forEach((m: Multa) => {
+            if (m && (m.id || m.ait)) multasConsolidadasMap.set(String(m.id || m.ait).toUpperCase().trim(), m);
+        });
     }
 
-    // 3. Mesclar do LocalStorage
+    // 3. LocalStorage
     try {
       const storedM = localStorage.getItem("risel_frota_multas");
       if (storedM) {
         const parsedM = JSON.parse(storedM);
         if (Array.isArray(parsedM) && parsedM.length > 0) {
-          const map = new Map<string, Multa>();
-          parsedM.forEach((m: Multa) => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
-          localMultas.forEach((m: Multa) => map.set(String(m.id || m.ait).toUpperCase().trim(), m));
-          localMultas = Array.from(map.values());
+          parsedM.forEach((m: Multa) => {
+            if (m && (m.id || m.ait)) multasConsolidadasMap.set(String(m.id || m.ait).toUpperCase().trim(), m);
+          });
         }
       }
     } catch (e) {}
+
+    localMultas = Array.from(multasConsolidadasMap.values());
 
     // 4. Mesclar do IndexedDB se disponível
     try {

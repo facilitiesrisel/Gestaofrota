@@ -72,6 +72,17 @@ export function getProcessedFleetWithReservations(
     }
   }
 
+  // Garante a cobertura integral de toda a Frota Leve ativa do Submódulo Controle de Frota Leve
+  if (fleetList.length < VEICULOS_REAIS.length) {
+    const existingPlates = new Set(fleetList.map(v => (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase()));
+    VEICULOS_REAIS.forEach(vr => {
+      const p = (vr.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      if (!existingPlates.has(p)) {
+        fleetList.push(vr);
+      }
+    });
+  }
+
   // 1.1 Verificar quais veículos do Controle de Frota Leve também estão alocados na Gestão de Reservas
   let reservaFleetList: any[] = [];
   if (reservaVehiclesProp && reservaVehiclesProp.length > 0) {

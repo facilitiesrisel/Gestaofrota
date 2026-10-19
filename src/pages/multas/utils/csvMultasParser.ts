@@ -571,7 +571,7 @@ export function parseCsvMultas(
       valor: Number(valorIntegral.toFixed(2)),
       desconto: Number(descontoCalculado.toFixed(2)),
       valorComDesconto: Number(valorComDesconto.toFixed(2)),
-      status: StatusMulta.IMPORTACAO_VAMOS, // Status Importação Vamos no Status
+      status: StatusMulta.AGUARDANDO_BOLETO, // Status padrão oficial da Frota Leve
       tipo: TipoMulta.NOTIFICACAO,
       pontosCnh,
       artigoCtb,

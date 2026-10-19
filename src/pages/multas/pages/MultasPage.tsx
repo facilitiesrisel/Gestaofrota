@@ -29,6 +29,62 @@ declare global {
 const ADMIN_EMAIL = 'deny.goncalves@risel.com.br';
 const LOGISTICA_EMAIL = 'logistica6@risel.com.br';
 
+// Status oficiais de multas para a Frota Leve (opção "IMPORTAÇÃO VAMOS" excluída dos lançamentos)
+export const STATUS_OPCOES_FROTA_LEVE: StatusMulta[] = [
+  StatusMulta.AGUARDANDO_BOLETO,
+  StatusMulta.AGUARDANDO_RETORNO,
+  StatusMulta.INDICACAO_ENVIADA,
+  StatusMulta.RECURSO,
+  StatusMulta.FINALIZADA
+];
+
+/**
+ * Regra Oficial de Cálculo do Valor Final da Multa Risel Frota Leve:
+ * No cálculo do valor final, o sistema precisa pegar o valor da Multa já com o desconto de 20%,
+ * e posteriormente somar o valor da Taxa da Locadora, já com o desconto de 20% aplicado.
+ */
+export const calcularValorFinalMulta = (params: {
+  valorCheio: number;
+  descontoMulta?: number;
+  taxaLocadoraCheia: number;
+  pagoComDesconto?: 'SIM' | 'NÃO';
+}): {
+  multaComDesconto: number;
+  taxaComDesconto: number;
+  valorFinal: number;
+} => {
+  const vCheio = Number(params.valorCheio) || 0;
+  const taxaCheia = Number(params.taxaLocadoraCheia) || 0;
+  const aplicaDesconto = params.pagoComDesconto !== 'NÃO';
+
+  if (!aplicaDesconto) {
+    const vFinal = Number((vCheio + taxaCheia).toFixed(2));
+    return {
+      multaComDesconto: vCheio,
+      taxaComDesconto: taxaCheia,
+      valorFinal: vFinal
+    };
+  }
+
+  // 1. Multa com 20% de desconto
+  const descMulta = params.descontoMulta !== undefined && params.descontoMulta > 0
+    ? Number(params.descontoMulta) 
+    : Number((vCheio * 0.20).toFixed(2));
+  const multaComDesconto = Number((Math.max(0, vCheio - descMulta)).toFixed(2));
+
+  // 2. Taxa da Locadora já com o desconto de 20% aplicado
+  const taxaComDesconto = Number((taxaCheia * 0.80).toFixed(2));
+
+  // 3. Valor Final = Multa com 20% + Taxa com 20%
+  const valorFinal = Number((multaComDesconto + taxaComDesconto).toFixed(2));
+
+  return {
+    multaComDesconto,
+    taxaComDesconto,
+    valorFinal
+  };
+};
+
 const initialMulta: Partial<Multa> = {
   status: StatusMulta.AGUARDANDO_BOLETO,
   tipo: TipoMulta.NOTIFICACAO,
@@ -798,23 +854,16 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   };
 
   useEffect(() => { 
-    // Carregamento inicial com indicador
+    // Carregamento inicial ágil
     loadData(false, false); 
 
-    // Sincronização periódica suave em background (a cada 60s, silenciosa, sem travar tela)
+    // Sincronização periódica suave em background (a cada 90s, silenciosa, sem travar tela)
     const syncTimer = setInterval(() => {
       loadData(false, true);
-    }, 60000);
-
-    const onFocus = () => {
-      // Atualização silenciosa ao focar a aba, sem bloquear a interface do usuário
-      loadData(false, true);
-    };
-    window.addEventListener('focus', onFocus);
+    }, 90000);
 
     return () => {
       clearInterval(syncTimer);
-      window.removeEventListener('focus', onFocus);
     };
   }, []);
 
@@ -1107,11 +1156,14 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
 
     if (matchedCodigo && !matchedCodigo.isNew) {
       const valorNominal = Number(matchedCodigo.valor) || 0;
-      // Regra de cálculo: 20% de desconto sobre o valor cheio da Multa
-      const descVal = Number((valorNominal * 0.20).toFixed(2));
-      const valorMultaComDesc = Math.max(0, valorNominal - descVal);
       const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, valorNominal);
-      const valorFinal = Number((valorMultaComDesc + taxaEmReais).toFixed(2));
+      const calc = calcularValorFinalMulta({
+        valorCheio: valorNominal,
+        taxaLocadoraCheia: taxaEmReais,
+        pagoComDesconto: formData.pagoComDesconto
+      });
+      const descVal = Number((valorNominal - calc.multaComDesconto).toFixed(2));
+      const valorFinal = calc.valorFinal;
 
       setFormData(prev => ({
         ...prev,
@@ -1168,10 +1220,14 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   const selectCodigo = (codigo: any) => {
     if (!codigo) return;
     const valorNominal = Number(codigo.valor) || 0;
-    // Regra: valor cheio com 20% de desconto
-    const descVal = Number((valorNominal * 0.20).toFixed(2));
     const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, valorNominal);
-    const valorFinal = Number((Math.max(0, valorNominal - descVal) + taxaEmReais).toFixed(2));
+    const calc = calcularValorFinalMulta({
+      valorCheio: valorNominal,
+      taxaLocadoraCheia: taxaEmReais,
+      pagoComDesconto: formData.pagoComDesconto
+    });
+    const descVal = Number((valorNominal - calc.multaComDesconto).toFixed(2));
+    const valorFinal = calc.valorFinal;
 
     setFormData(prev => ({
       ...prev, 
@@ -1199,9 +1255,15 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
         const match = findMatchingCodigo(enq, codigos);
         if (match && !match.isNew) {
           const valorNominal = Number(match.valor) || 0;
-          const descVal = Number((valorNominal * 0.20).toFixed(2));
           const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, valorNominal);
-          const valorFinal = Number((Math.max(0, valorNominal - descVal) + taxaEmReais).toFixed(2));
+          const calc = calcularValorFinalMulta({
+            valorCheio: valorNominal,
+            taxaLocadoraCheia: taxaEmReais,
+            pagoComDesconto: prev.pagoComDesconto
+          });
+          const descVal = Number((valorNominal - calc.multaComDesconto).toFixed(2));
+          const valorFinal = calc.valorFinal;
+
           return {
             ...prev,
             artigoCtb: prev.artigoCtb || String(match.baseLegal || '').toUpperCase(),
@@ -1233,13 +1295,17 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       setTaxaInput(rawInput);
 
       const { taxaEmReais } = parseTaxaInputValue(rawInput, tipo, vCheio);
-      const valorMultaComDesc = Math.max(0, vCheio - vDesc);
-      const valorFinal = Number((valorMultaComDesc + taxaEmReais).toFixed(2));
+      const calc = calcularValorFinalMulta({
+        valorCheio: vCheio,
+        descontoMulta: vDesc,
+        taxaLocadoraCheia: taxaEmReais,
+        pagoComDesconto: formData.pagoComDesconto
+      });
 
       setFormData(prev => ({
           ...prev,
           taxaLocadora: taxaEmReais,
-          valorComDesconto: valorFinal
+          valorComDesconto: calc.valorFinal
       }));
   };
 
@@ -1269,16 +1335,20 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
           // Se a taxa da locadora for percentual (ou taxaInput contiver %), recalcula o valor em R$ com base no novo valor cheio
           const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, currentValor);
 
-          // Cálculo exato: valor cheio da Multa, aplicado 20% de desconto, e após isso somada a taxa da locadora
-          const valorMultaComDesconto = Math.max(0, currentValor - currentDesconto);
-          const valorFinal = Number((valorMultaComDesconto + taxaEmReais).toFixed(2));
+          // Cálculo exato: valor da Multa com 20% de desconto + valor da Taxa com 20% de desconto aplicado
+          const calc = calcularValorFinalMulta({
+            valorCheio: currentValor,
+            descontoMulta: currentDesconto,
+            taxaLocadoraCheia: taxaEmReais,
+            pagoComDesconto: prev.pagoComDesconto
+          });
           
           return {
               ...prev,
               [field]: val,
               taxaLocadora: taxaEmReais,
               ...(field === 'valor' ? { desconto: currentDesconto } : {}),
-              valorComDesconto: valorFinal
+              valorComDesconto: calc.valorFinal
           };
       });
       clearError(field);
@@ -1305,32 +1375,26 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    let prazoDate: Date;
-    if (prazo.length === 10 && prazo.includes('-')) {
-        const [year, month, day] = prazo.split('-').map(Number);
-        prazoDate = new Date(year, month - 1, day);
-    } else {
-        prazoDate = new Date(prazo);
-    }
-    
+    const prazoDate = parseLocalDate(prazo);
+    if (!prazoDate) return null;
     prazoDate.setHours(0, 0, 0, 0);
-    if (isNaN(prazoDate.getTime())) return null;
     
     const diffTime = prazoDate.getTime() - today.getTime();
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return Math.round(diffTime / (1000 * 60 * 60 * 24));
   };
 
   const getPrazoInfo = (status: string | undefined, prazoDate: string | undefined) => {
-      if (!prazoDate) return { text: "-", textColor: "text-gray-400 font-mono", cellGradient: "", color: "text-gray-400 font-mono" };
+      if (!prazoDate) return { text: "-", textColor: "text-gray-400 font-mono", cellGradient: "", color: "text-gray-400 font-mono", days: null };
       const days = calculateDaysRemaining(prazoDate);
       const isFinished = status === StatusMulta.FINALIZADA;
       
       if (isFinished) {
           return { 
               text: "Finalizada / Regularizada",
-              textColor: "text-emerald-700 font-medium", 
-              cellGradient: "bg-emerald-50/30",
-              color: "text-emerald-700 font-medium"
+              textColor: "text-emerald-700 font-bold", 
+              cellGradient: "bg-emerald-50/40",
+              color: "text-emerald-800 bg-emerald-100/90 border border-emerald-200",
+              days
           };
       }
       
@@ -2813,7 +2877,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                         <span>Todos</span>
                         <span className={`px-1.5 py-0.2 rounded-full text-[9px] ${!filters.status ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>{multas.length}</span>
                     </button>
-                    {(Object.values(StatusMulta) as string[]).map(st => {
+                    {STATUS_OPCOES_FROTA_LEVE.map(st => {
                         const count = multas.filter(m => m.status === st).length;
                         const isSelected = filters.status === st;
                         return (
@@ -2836,7 +2900,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Data Fim</label><input type="date" className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors" value={filters.dataFim} onChange={e => setFilters({...filters, dataFim: e.target.value})}/></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Mês Ref.</label><select className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors cursor-pointer" value={filters.mes} onChange={e => { setFilters({...filters, mes: e.target.value}); onMonthChange?.(e.target.value); }}><option value="">Todos</option>{availableMonths.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}</select></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Base</label><select className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors cursor-pointer" value={filters.base} onChange={e => setFilters({...filters, base: e.target.value})}><option value="">Todas</option>{availableBases.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
-                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Status</label><select className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors cursor-pointer" value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})}><option value="">Todos</option>{(Object.values(StatusMulta) as string[]).map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                        <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Status</label><select className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors cursor-pointer" value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})}><option value="">Todos</option>{STATUS_OPCOES_FROTA_LEVE.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Responsabilidade</label><select className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors cursor-pointer" value={filters.responsabilidade} onChange={e => setFilters({...filters, responsabilidade: e.target.value})}><option value="">Todos</option><option value="EMPRESA">Empresa</option><option value="CONDUTOR">Condutor</option></select></div>
                         <div><label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Descontar?</label><select className="w-full border rounded-lg p-2 text-xs bg-slate-50 focus:bg-white transition-colors font-bold cursor-pointer text-slate-700" value={filters.descontar} onChange={e => setFilters({...filters, descontar: e.target.value})}><option value="">Todos</option><option value="SIM">Sim</option><option value="NÃO">Não</option></select></div>
                     </div>
@@ -2854,7 +2918,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                     <th onClick={() => handleSort('status')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] text-left border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Status <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('dataHoraInfracao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Multa <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('dataRecebimento')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data do Recebimento <ArrowUpDown size={12}/></div></th>
-                                    <th onClick={() => handleSort('prazoIndicacao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Data Prazo <ArrowUpDown size={12}/></div></th>
+                                    <th onClick={() => handleSort('prazoIndicacao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Prazo de Indicação <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('placa')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Placa <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('ait')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 whitespace-nowrap cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">AIT <ArrowUpDown size={12}/></div></th>
                                     <th onClick={() => handleSort('descricaoInfracao')} className="px-3 py-3 text-white/90 font-bold uppercase tracking-wider text-[10px] border-r border-white/10 min-w-[180px] max-w-[280px] cursor-pointer hover:bg-white/10 group select-none"><div className="flex items-center justify-between">Infração Cometida <ArrowUpDown size={12}/></div></th>
@@ -2891,10 +2955,17 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                                     {formatDateBR(multa.dataRecebimento)}
                                                 </span>
                                             </td>
-                                            <td className={`px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center ${prazoInfo.cellGradient || ''}`}>
-                                                <span className={`text-[11px] font-mono ${prazoInfo.textColor || 'text-gray-700'}`}>
-                                                    {formatDateString(multa.prazoIndicacao)}
-                                                </span>
+                                            <td className={`px-2.5 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle text-center ${prazoInfo.cellGradient || ''}`}>
+                                                <div className="flex flex-col items-center justify-center">
+                                                    <span className="text-[11px] font-mono font-bold text-slate-800">
+                                                        {formatDateString(multa.prazoIndicacao)}
+                                                    </span>
+                                                    {prazoInfo.text && prazoInfo.text !== '-' && (
+                                                        <span className={`text-[9.5px] font-extrabold px-1.5 py-0.5 rounded-md mt-0.5 whitespace-nowrap shadow-2xs ${prazoInfo.color}`}>
+                                                            {prazoInfo.text}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-3 py-2 border-r border-gray-200/50 whitespace-nowrap align-middle">
                                                 <MercosulPlateBadge plate={multa.placa} size="sm" />
@@ -2951,11 +3022,19 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             <td className="px-3 py-2 text-right font-bold text-gray-800 whitespace-nowrap align-middle text-xs">
                                                 <div className="flex flex-col items-end">
                                                     <span className="font-mono font-black text-emerald-800">
-                                                        {formatMoneyString(multa.valorComDesconto || (multa.valor ? Number(multa.valor) * 0.8 + Number(multa.taxaLocadora || 0) : 0))}
+                                                        {formatMoneyString(
+                                                            multa.valorComDesconto ||
+                                                            calcularValorFinalMulta({
+                                                                valorCheio: Number(multa.valor || 0),
+                                                                descontoMulta: Number(multa.desconto || 0),
+                                                                taxaLocadoraCheia: Number(multa.taxaLocadora || 0),
+                                                                pagoComDesconto: multa.pagoComDesconto
+                                                            }).valorFinal
+                                                        )}
                                                     </span>
                                                     {Number(multa.taxaLocadora || 0) > 0 && (
-                                                        <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1 rounded border border-amber-200/50 mt-0.5" title="Taxa aplicada pela Locadora">
-                                                            + {formatMoneyString(multa.taxaLocadora)} taxa
+                                                        <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1 rounded border border-amber-200/50 mt-0.5" title="Taxa da Locadora com 20% de desconto aplicado">
+                                                            + {formatMoneyString(Number(multa.taxaLocadora) * 0.8)} taxa c/ 20%
                                                         </span>
                                                     )}
                                                     {Number(multa.valor || 0) > 0 && (
@@ -3092,7 +3171,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                 value={formData.status} 
                                 onChange={e => setFormData({...formData, status: e.target.value as StatusMulta})}
                             >
-                                {(Object.values(StatusMulta) as string[]).map(s => <option key={s} value={s}>{s}</option>)}
+                                {STATUS_OPCOES_FROTA_LEVE.map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                         </div>
 
@@ -3374,13 +3453,18 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             const vCheio = Number(prev.valor) || 0;
                                             const desc = novoPago === 'SIM' ? Number((vCheio * 0.20).toFixed(2)) : 0;
                                             const { taxaEmReais } = parseTaxaInputValue(taxaInput, taxaTipo, vCheio);
-                                            const vFinal = Number((Math.max(0, vCheio - desc) + taxaEmReais).toFixed(2));
+                                            const calc = calcularValorFinalMulta({
+                                                valorCheio: vCheio,
+                                                descontoMulta: desc,
+                                                taxaLocadoraCheia: taxaEmReais,
+                                                pagoComDesconto: novoPago
+                                            });
                                             return {
                                                 ...prev,
                                                 pagoComDesconto: novoPago,
                                                 desconto: desc,
                                                 taxaLocadora: taxaEmReais,
-                                                valorComDesconto: vFinal
+                                                valorComDesconto: calc.valorFinal
                                             };
                                         });
                                     }}
@@ -3396,7 +3480,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                             <div className="flex items-center justify-between text-slate-600 font-semibold">
                                 <span className="flex items-center gap-1">
                                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                                    Valor Integral (Cheio):
+                                    Valor Integral da Multa:
                                 </span>
                                 <span className="font-mono font-bold text-slate-800">
                                     {Number(formData.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
@@ -3406,7 +3490,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                             <div className="flex items-center justify-between text-emerald-700 font-semibold">
                                 <span className="flex items-center gap-1">
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                    (-) Desconto Pagamento {formData.pagoComDesconto === 'SIM' ? '(20%)' : '(0%)'}:
+                                    (-) Desconto 20% na Multa {formData.pagoComDesconto === 'SIM' ? '(Aplicado)' : '(0%)'}:
                                 </span>
                                 <span className="font-mono font-bold text-emerald-700">
                                     - {Number(formData.desconto || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
@@ -3414,15 +3498,28 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                             </div>
 
                             {Number(formData.taxaLocadora || 0) > 0 && (
-                                <div className="flex items-center justify-between text-amber-700 font-semibold">
-                                    <span className="flex items-center gap-1">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                                        (+) Taxa Locadora:
-                                    </span>
-                                    <span className="font-mono font-bold text-amber-800">
-                                        + {Number(formData.taxaLocadora || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                    </span>
-                                </div>
+                                <>
+                                    <div className="flex items-center justify-between text-amber-700 font-semibold">
+                                        <span className="flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                            Taxa Locadora Nominal:
+                                        </span>
+                                        <span className="font-mono font-bold text-amber-800">
+                                            {Number(formData.taxaLocadora || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                        </span>
+                                    </div>
+                                    {formData.pagoComDesconto !== 'NÃO' && (
+                                        <div className="flex items-center justify-between text-emerald-700 font-semibold pl-2">
+                                            <span className="flex items-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                                (+) Taxa Locadora c/ 20% Desconto:
+                                            </span>
+                                            <span className="font-mono font-bold text-emerald-700">
+                                                + {(Number(formData.taxaLocadora || 0) * 0.80).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                            </span>
+                                        </div>
+                                    )}
+                                </>
                             )}
 
                             <div className="border-t border-slate-200 pt-1 flex items-center justify-between font-black text-slate-900">
@@ -3498,8 +3595,14 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                         <div className="grid grid-cols-2 gap-2">
                             <div>
                                 <div className="flex items-center justify-between mb-0.5">
-                                    <label className="text-[10px] font-extrabold text-red-700 uppercase block">Prazo Limite Indicação</label>
-                                    <span className="text-[8px] font-black text-red-800 bg-red-50 px-1 py-0.2 rounded border border-red-200">DD/MM/AAAA</span>
+                                    <label className="text-[10px] font-extrabold text-red-700 uppercase block">
+                                        Prazo Limite Indicação
+                                    </label>
+                                    {formPrazoInfo.text && formPrazoInfo.text !== '-' && (
+                                        <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded border shadow-2xs ${formPrazoInfo.color}`}>
+                                            {formPrazoInfo.text}
+                                        </span>
+                                    )}
                                 </div>
                                 <input 
                                     type="date" 

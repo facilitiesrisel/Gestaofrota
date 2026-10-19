@@ -1,14 +1,15 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   AlertTriangle, ShieldAlert, Bell, BellRing, Plus, Filter, Search, 
   CheckCircle2, Clock, MapPin, Gauge, Activity, Battery, Flame, 
   Layers, Settings, Trash2, Edit3, Check, X, Mail, Volume2, 
-  FileSpreadsheet, ArrowRight, ShieldCheck, Eye, Zap, AlertCircle
+  FileSpreadsheet, ArrowRight, ShieldCheck, Eye, Zap, AlertCircle, Send
 } from 'lucide-react';
 import { ALLOWED_PLATES } from '../../constants_reserva';
 import { getProcessedFleetWithReservations } from '../../utils/telemetryFleetHelper';
 import { VEICULOS_REAIS } from '../../data/veiculos_reais';
+import { sendTelemetryAlertEmail } from '../../services/telemetryAlertEmailService';
 
 export interface TelemetryAlertRule {
   id: string;
@@ -78,7 +79,7 @@ const DEFAULT_ALERT_RULES: TelemetryAlertRule[] = [
     notifications: {
       popup: true,
       email: true,
-      emailRecipients: 'gestaofrota@risel.com.br, seguranca@risel.com.br',
+      emailRecipients: 'deny.goncalves@risel.com.br',
       sound: true
     },
     active: true,
@@ -98,7 +99,7 @@ const DEFAULT_ALERT_RULES: TelemetryAlertRule[] = [
     notifications: {
       popup: true,
       email: true,
-      emailRecipients: 'gestaofrota@risel.com.br',
+      emailRecipients: 'deny.goncalves@risel.com.br',
       sound: true
     },
     active: true,
@@ -150,7 +151,7 @@ const DEFAULT_ALERT_RULES: TelemetryAlertRule[] = [
     notifications: {
       popup: false,
       email: true,
-      emailRecipients: 'manutencao@risel.com.br',
+      emailRecipients: 'deny.goncalves@risel.com.br',
       sound: false
     },
     active: true,
@@ -170,7 +171,7 @@ const DEFAULT_ALERT_RULES: TelemetryAlertRule[] = [
     notifications: {
       popup: true,
       email: true,
-      emailRecipients: 'deny.goncalves@risel.com.br, lorena.padilha@risel.com.br, frotaleve@risel.com.br',
+      emailRecipients: 'deny.goncalves@risel.com.br',
       sound: true
     },
     active: true,
@@ -195,24 +196,51 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
     return processedFleet.map(v => v.plate);
   }, [processedFleet]);
 
-  // Estado das Regras de Alertas (com persistência local e garantia de suporte à regra de finais de semana)
   const [rules, setRules] = useState<TelemetryAlertRule[]>(() => {
     try {
       const saved = localStorage.getItem('risel_telemetry_alert_rules_v1');
       if (saved) {
         const parsed: TelemetryAlertRule[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Se o usuário ainda não tiver uma regra de rodagem aos finais de semana, anexa a regra padrão oficial
+          // Garante que a regra de rodagem aos finais de semana com os parâmetros oficiais esteja presente
+          const weekendRule = DEFAULT_ALERT_RULES.find(r => r.type === 'weekend_driving')!;
           const hasWeekendRule = parsed.some(r => r.type === 'weekend_driving');
-          if (!hasWeekendRule) {
-            const weekendRule = DEFAULT_ALERT_RULES.find(r => r.type === 'weekend_driving');
-            if (weekendRule) {
-              const merged = [...parsed, weekendRule];
-              localStorage.setItem('risel_telemetry_alert_rules_v1', JSON.stringify(merged));
-              return merged;
+          let merged = hasWeekendRule ? parsed : [...parsed, weekendRule];
+
+          // Garante que o e-mail cadastrado contenha deny.goncalves@risel.com.br
+          merged = merged.map(r => {
+            if (r.type === 'weekend_driving') {
+              return {
+                ...r,
+                parameters: {
+                  ...r.parameters,
+                  minDistanceKm: r.parameters?.minDistanceKm ?? 1,
+                  ignitionRequired: r.parameters?.ignitionRequired ?? true,
+                  daysOfWeek: ['sab', 'dom']
+                },
+                notifications: {
+                  ...r.notifications,
+                  email: true,
+                  emailRecipients: r.notifications?.emailRecipients && r.notifications.emailRecipients.includes('deny.goncalves@risel.com.br')
+                    ? r.notifications.emailRecipients
+                    : 'deny.goncalves@risel.com.br'
+                }
+              };
             }
-          }
-          return parsed;
+            if (r.notifications?.email && (!r.notifications.emailRecipients || !r.notifications.emailRecipients.includes('deny.goncalves@risel.com.br'))) {
+              return {
+                ...r,
+                notifications: {
+                  ...r.notifications,
+                  emailRecipients: 'deny.goncalves@risel.com.br'
+                }
+              };
+            }
+            return r;
+          });
+
+          localStorage.setItem('risel_telemetry_alert_rules_v1', JSON.stringify(merged));
+          return merged;
         }
       }
     } catch (e) {}
@@ -439,7 +467,8 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
 
             const isIgnitionOn = !!v.ignition;
             const speed = Number(v.speed) || 0;
-            const isMoving = speed > 3 || (v.todayKm && v.todayKm >= minDist);
+            const todayKmVal = Number((v as any).todayKm) || 0;
+            const isMoving = speed > 3 || (todayKmVal >= minDist);
 
             // Dispara se for fim de semana, com ignição ligada e movimentação/deslocamento
             if (isWeekend && (!requiresIgnition || isIgnitionOn) && isMoving) {
@@ -470,7 +499,27 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
         
         if (filteredNew.length > 0) {
           saveEvents([...filteredNew, ...alertEvents]);
-          setScanMessage(`Varredura concluída: ${filteredNew.length} nova(s) ocorrência(s) detectada(s).`);
+
+          // DISPARO IMEDIATO DE E-MAIL NO ATO DA VIOLAÇÃO
+          let dispatchedCount = 0;
+          filteredNew.forEach(evt => {
+            const rule = activeRules.find(r => r.id === evt.ruleId) || activeRules.find(r => r.type === evt.type);
+            if (rule && rule.notifications && rule.notifications.email) {
+              dispatchedCount++;
+              sendTelemetryAlertEmail({
+                event: evt,
+                rule: rule
+              }).then(res => {
+                if (res.delivered) {
+                  console.log(`[TelemetryAlerts] E-mail de violação enviado com sucesso para ${evt.plate} (${evt.ruleName})`);
+                }
+              }).catch(err => {
+                console.error('[TelemetryAlerts] Falha ao enviar e-mail de violação:', err);
+              });
+            }
+          });
+
+          setScanMessage(`Varredura concluída: ${filteredNew.length} nova(s) ocorrência(s) detectada(s). ${dispatchedCount > 0 ? `${dispatchedCount} e-mail(s) de alerta enviados aos gestores.` : ''}`);
         } else {
           setScanMessage(`Varredura concluída: Toda a telemetria dos ${processedFleet.length} veículos está em conformidade.`);
         }
@@ -479,7 +528,7 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
       }
 
       setIsScanning(false);
-      setTimeout(() => setScanMessage(null), 4500);
+      setTimeout(() => setScanMessage(null), 5000);
     }, 800);
   };
 
@@ -526,6 +575,139 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
 
+  // Estados de Teste de E-mail & Toast de Feedback
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
+  const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 5000);
+  };
+
+  // Disparo de Teste do Modelo de Alerta por E-mail (Envia estritamente para deny.goncalves@risel.com.br)
+  const handleTestSendAlertEmail = async (targetRule?: TelemetryAlertRule) => {
+    setIsSendingTestEmail(true);
+    try {
+      const ruleToTest = targetRule || rules.find(r => r.type === 'weekend_driving') || rules[0] || DEFAULT_ALERT_RULES[0];
+      const v = processedFleet[0] || { plate: 'FZX1C93', model: 'KWID', driver: 'Gabriela', address: 'Rod. Prof. Zeferino Vaz (SP-332), km 122 - Paulínia/SP' };
+
+      const testEvent: TelemetryAlertEvent = {
+        id: `test-${Date.now()}`,
+        ruleId: ruleToTest.id,
+        ruleName: ruleToTest.name,
+        plate: (v as any).placa || (v as any).plate || 'FZX1C93',
+        model: (v as any).modelo || (v as any).model || 'Renault KWID',
+        driver: (v as any).condutor || (v as any).driver || 'Gabriela',
+        type: ruleToTest.type,
+        severity: ruleToTest.severity,
+        description: ruleToTest.name,
+        value: ruleToTest.type === 'weekend_driving' ? 'Ignição: LIGADA (ON) | Deslocamento: 3.4 KM (Limite Permitido: 1.0 KM)' : '116 km/h (Limite Permitido: 110 km/h)',
+        location: (v as any).address || 'Rod. Prof. Zeferino Vaz (SP-332), km 122 - Paulínia/SP',
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        status: 'pending'
+      };
+
+      const result = await sendTelemetryAlertEmail({
+        event: testEvent,
+        rule: ruleToTest,
+        recipientOverride: 'deny.goncalves@risel.com.br',
+        isTest: true
+      });
+
+      if (result.success && result.delivered) {
+        showToast(`E-mail de teste enviado com sucesso para ${result.recipients.join(', ')}!`, 'success');
+      } else {
+        showToast(result.message || 'Falha ao enviar e-mail de teste.', 'error');
+      }
+    } catch (err: any) {
+      console.error('Erro ao testar envio de e-mail de alerta:', err);
+      showToast(`Erro ao enviar teste: ${err.message || 'Erro de rede'}`, 'error');
+    } finally {
+      setIsSendingTestEmail(false);
+    }
+  };
+
+  // Monitoramento Contínuo Automático: Avalia violações em tempo real e dispara e-mail no ato
+  useEffect(() => {
+    if (!processedFleet || processedFleet.length === 0) return;
+
+    const emailRules = rules.filter(r => r.active && r.notifications && r.notifications.email);
+    if (emailRules.length === 0) return;
+
+    emailRules.forEach((rule) => {
+      processedFleet.forEach((v) => {
+        const applies = rule.targetPlates.includes('ALL') || rule.targetPlates.includes(v.plate);
+        if (!applies) return;
+
+        let hasViolation = false;
+        let eventDescription = '';
+        let eventValue = '';
+
+        // 1. Excesso de Velocidade
+        if (rule.type === 'speed' && rule.parameters.maxSpeed && v.speed > rule.parameters.maxSpeed) {
+          hasViolation = true;
+          eventDescription = `Velocidade aferida de ${Math.round(v.speed)} km/h acima do limite (${rule.parameters.maxSpeed} km/h).`;
+          eventValue = `${Math.round(v.speed)} km/h (Limite: ${rule.parameters.maxSpeed} km/h)`;
+        }
+
+        // 2. Rodagem em Final de Semana (Vedado)
+        if (rule.type === 'weekend_driving') {
+          const now = new Date();
+          const day = now.getDay();
+          const isWeekend = day === 0 || day === 6;
+          const minDist = rule.parameters.minDistanceKm ?? 1;
+          const requiresIgnition = rule.parameters.ignitionRequired !== false;
+          const isIgnitionOn = !!v.ignition;
+          const todayKmVal = Number((v as any).todayKm) || 0;
+          const isMoving = Number(v.speed) > 3 || (todayKmVal >= minDist);
+
+          if (isWeekend && (!requiresIgnition || isIgnitionOn) && isMoving) {
+            hasViolation = true;
+            eventDescription = `Veículo em rodagem no final de semana com chave de ignição ligada e deslocamento superior a ${minDist} km.`;
+            eventValue = `Ignição ON | Deslocamento: ${todayKmVal > 0 ? `${todayKmVal.toFixed(1)} km` : `${Math.round(Number(v.speed))} km/h`}`;
+          }
+        }
+
+        // 3. Motor Ocioso
+        if (rule.type === 'idle_engine' && rule.parameters.maxIdleMinutes && v.ignition && Number(v.speed) === 0) {
+          hasViolation = true;
+          eventDescription = `Veículo parado com motor ligado em marcha lenta excessiva.`;
+          eventValue = `Ignição Ligada (0 km/h)`;
+        }
+
+        if (hasViolation) {
+          const alertEvt: TelemetryAlertEvent = {
+            id: `evt-realtime-${v.plate}-${Date.now()}`,
+            ruleId: rule.id,
+            ruleName: rule.name,
+            plate: v.plate,
+            model: v.model,
+            driver: v.driver,
+            type: rule.type,
+            severity: rule.severity,
+            description: eventDescription,
+            value: eventValue,
+            location: v.address || 'Localização monitorada via satélite',
+            timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+            status: 'pending'
+          };
+
+          // Disparo com proteção de cooldown (1 hora por veículo/regra para evitar repetição)
+          sendTelemetryAlertEmail({
+            event: alertEvt,
+            rule: rule
+          }).then(res => {
+            if (res.delivered) {
+              console.log(`[TelemetryAlerts] E-mail de violação enviado em tempo real para ${v.plate} (${rule.name})`);
+            }
+          }).catch(e => {
+            console.error('[TelemetryAlerts] Falha no envio em tempo real:', e);
+          });
+        }
+      });
+    });
+  }, [processedFleet, rules]);
+
   // Form State
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<TelemetryAlertRule['type']>('speed');
@@ -545,21 +727,21 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
   const [formIgnitionRequired, setFormIgnitionRequired] = useState(true);
   const [formPopup, setFormPopup] = useState(true);
   const [formEmail, setFormEmail] = useState(true);
-  const [formEmailRecipients, setFormEmailRecipients] = useState('frotaleve@risel.com.br');
+  const [formEmailRecipients, setFormEmailRecipients] = useState('deny.goncalves@risel.com.br');
   const [formSound, setFormSound] = useState(false);
 
   // Abrir Modal para Criar
   const handleOpenCreateModal = () => {
     setEditingRuleId(null);
     setFormName('');
-    setFormType('speed');
+    setFormType('weekend_driving');
     setFormSeverity('critical');
     setFormTargetAll(true);
     setFormSelectedPlates([]);
     setFormMaxSpeed(110);
     setFormStartTime('20:00');
     setFormEndTime('06:00');
-    setFormDaysOfWeek(['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom']);
+    setFormDaysOfWeek(['sab', 'dom']);
     setFormMaxIdleMinutes(15);
     setFormGForce(0.45);
     setFormMinBattery(11.8);
@@ -569,7 +751,7 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
     setFormIgnitionRequired(true);
     setFormPopup(true);
     setFormEmail(true);
-    setFormEmailRecipients('frotaleve@risel.com.br');
+    setFormEmailRecipients('deny.goncalves@risel.com.br');
     setFormSound(false);
     setIsModalOpen(true);
   };
@@ -724,7 +906,17 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
   const activeRulesCount = rules.filter(r => r.active).length;
 
   return (
-    <div className="space-y-6 text-left">
+    <div className="space-y-6 text-left relative">
+      {/* TOAST DE FEEDBACK DE ENVIO DE E-MAILS */}
+      {toastMessage && (
+        <div className={`fixed top-24 right-6 z-50 p-4 rounded-2xl shadow-2xl flex items-center gap-3 text-white font-bold text-xs max-w-md animate-in fade-in slide-in-from-top-4 duration-300 ${
+          toastMessage.type === 'success' ? 'bg-[#114D38] border-2 border-emerald-400' : 'bg-rose-600 border-2 border-rose-400'
+        }`}>
+          {toastMessage.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0" /> : <AlertTriangle className="w-5 h-5 text-rose-200 shrink-0" />}
+          <span>{toastMessage.message}</span>
+        </div>
+      )}
+
       {/* HEADER PRINCIPAL */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-150 shadow-sm">
         <div>
@@ -1077,12 +1269,24 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
               <h3 className="text-sm font-extrabold text-slate-800">Regras de Telemetria Configuradas</h3>
               <p className="text-[11px] text-slate-400 mt-0.5">Parâmetros de detecção de infrações operacionais idênticos ao GeoFrotas.</p>
             </div>
-            <button
-              onClick={handleOpenCreateModal}
-              className="px-3.5 py-2 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl cursor-pointer flex items-center gap-1.5 shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" /> Nova Regra
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => handleTestSendAlertEmail()}
+                disabled={isSendingTestEmail}
+                className="px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl cursor-pointer flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+                title="Disparar modelo oficial de alerta de telemetria diretamente para deny.goncalves@risel.com.br"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                {isSendingTestEmail ? 'Enviando Teste...' : 'Testar E-mail (deny.goncalves@risel.com.br)'}
+              </button>
+
+              <button
+                onClick={handleOpenCreateModal}
+                className="px-3.5 py-2 bg-[#114D38] hover:bg-[#0d3b2b] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl cursor-pointer flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+              >
+                <Plus className="w-3.5 h-3.5" /> Nova Regra
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1119,10 +1323,19 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        onClick={() => handleTestSendAlertEmail(rule)}
+                        disabled={isSendingTestEmail}
+                        className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 cursor-pointer flex items-center gap-1 text-[9px] font-black uppercase transition-colors"
+                        title={`Enviar e-mail com o modelo deste alerta para deny.goncalves@risel.com.br`}
+                      >
+                        <Send className="w-3 h-3 text-amber-600" />
+                        <span>Testar</span>
+                      </button>
                       <button
                         onClick={() => handleToggleRuleActive(rule.id)}
-                        className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase cursor-pointer transition-colors ${
+                        className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase cursor-pointer transition-colors ${
                           rule.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
                         }`}
                       >
@@ -1130,14 +1343,14 @@ export const TelemetryAlerts: React.FC<TelemetryAlertsProps> = ({
                       </button>
                       <button
                         onClick={() => handleOpenEditModal(rule)}
-                        className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
+                        className="p-1 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
                         title="Editar Regra"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleDeleteRule(rule.id)}
-                        className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500 cursor-pointer"
+                        className="p-1 rounded-lg hover:bg-rose-50 text-rose-500 cursor-pointer"
                         title="Excluir Regra"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

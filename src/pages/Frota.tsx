@@ -25,6 +25,8 @@ import { TelemetryDashboard } from "../components/reserva/TelemetryDashboard";
 import { TelemetryMapAndGrid } from "../components/reserva/TelemetryMapAndGrid";
 import { TelemetryReportsAndFences } from "../components/reserva/TelemetryReportsAndFences";
 import { TelemetryAlerts } from "../components/reserva/TelemetryAlerts";
+import { evaluateFleetTelemetryRules } from "../services/telemetryAlertEmailService";
+import { getProcessedFleetWithReservations } from "../utils/telemetryFleetHelper";
 import { ChecklistDashboard } from "../components/reserva/ChecklistDashboard";
 import { ChecklistRealizados } from "../components/reserva/ChecklistRealizados";
 import { ChecklistForm } from "../components/reserva/ChecklistForm";
@@ -2065,6 +2067,16 @@ export default function Frota() {
         const positions = await fetchFleetPositions();
         if (positions && positions.length > 0) {
           setGeoPositions(positions);
+          
+          // Avalia imediatamente todas as regras de telemetria ativas para toda a Frota Leve rastreada
+          try {
+            const rulesRaw = localStorage.getItem('risel_telemetry_alert_rules_v1');
+            const rules = rulesRaw ? JSON.parse(rulesRaw) : [];
+            const processed = getProcessedFleetWithReservations(positions, veiculos);
+            evaluateFleetTelemetryRules(processed, rules);
+          } catch (e) {
+            console.warn("Aviso ao avaliar regras de telemetria em Frota.tsx:", e);
+          }
           
           const getFleetDetails = (plate: string, apiModel?: string) => {
             const clean = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();

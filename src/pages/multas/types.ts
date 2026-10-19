@@ -86,12 +86,17 @@ export interface Multa {
   taxaLocadora?: number; // Taxa aplicada pelas locadoras
   valorComDesconto?: number;
   empresaOuCondutor?: 'EMPRESA' | 'CONDUTOR';
+  responsabilidade?: string;
   descontarMotorista?: 'SIM' | 'NÃO';
+  descontar?: string;
+  responsavelCpf?: string;
   pagoComDesconto?: 'SIM' | 'NÃO';
   descontoEnviadoRH?: string; // Date
   numDocumento?: string;
   vencimento?: string; // Date
   obs?: string;
+  localInfracao?: string;
+  valorFinal?: number;
   latitude?: number;
   longitude?: number;
   linkAit?: string; // Link para o arquivo AIT no Drive

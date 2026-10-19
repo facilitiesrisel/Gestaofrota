@@ -207,7 +207,7 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
         valor: Number(item.valor) || 0,
         desconto: Number(item.desconto) || 0,
         valorComDesconto: Number(item.valorComDesconto) || 0,
-        status: StatusMulta.IMPORTACAO_VAMOS, // Status Importação Vamos no Status
+        status: StatusMulta.AGUARDANDO_BOLETO, // Status padrão oficial da Frota Leve
         tipo: item.tipo || TipoMulta.NOTIFICACAO,
         empresaOuCondutor: (item.empresaOuCondutor as 'EMPRESA' | 'CONDUTOR') || 'CONDUTOR',
         descontarMotorista: (item.descontarMotorista as 'SIM' | 'NÃO') || 'SIM',
@@ -333,7 +333,7 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Separação inteligente de Cidade
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Status "IMPORTAÇÃO VAMOS"
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Status "AGUARDANDO BOLETO"
                 </span>
               </div>
             </div>
@@ -640,8 +640,8 @@ export const ImportarMultasCsvModal: React.FC<ImportarMultasCsvModalProps> = ({
                                 R$ {item.valorComDesconto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </td>
                               <td className="py-2 px-3 whitespace-nowrap text-center">
-                                <span className="inline-block px-2 py-0.5 rounded text-[9.5px] font-bold bg-purple-100 text-purple-800 border border-purple-200 uppercase tracking-wider">
-                                  IMPORTAÇÃO VAMOS
+                                <span className="inline-block px-2 py-0.5 rounded text-[9.5px] font-bold bg-orange-100/60 text-orange-800 border border-orange-200 uppercase tracking-wider">
+                                  AGUARDANDO BOLETO
                                 </span>
                               </td>
                             </tr>
