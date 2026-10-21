@@ -1876,12 +1876,11 @@ export default function Lancamento() {
     }, 400);
   };
 
-  const processFiles = (files: FileList | File[]) => {
+  const processFiles = async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
     const currentAnexos = Array.isArray(formData.anexos) ? [...formData.anexos] : [];
-    // Migra anexo legado se existir e a lista estiver vazia
     if (currentAnexos.length === 0 && formData.arquivoAnexoBase64) {
       currentAnexos.push({
         id: `anx-${Date.now()}-legacy`,
@@ -1898,35 +1897,53 @@ export default function Lancamento() {
 
     const filesToProcess = fileArray.slice(0, availableSlots);
 
-    filesToProcess.forEach((file, index) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64 = (event.target?.result as string) || "";
-        const isNf = (formData.tipoDocumento === "NF-e" || formData.tipoDocumento === "NFS-e" || !formData.tipoDocumento) && (currentAnexos.length + index === 0);
-        const nomeSugerido = isNf
-          ? gerarNomePadraoAnexoNf(formData.dataVencimento, formData.fornecedor, file.name, formData.codigoLancamento)
-          : file.name;
+    const readResults = await Promise.all(
+      filesToProcess.map(file => new Promise<{ file: File; base64: string }>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve({ file, base64: (e.target?.result as string) || "" });
+        reader.onerror = () => resolve({ file, base64: "" });
+        reader.readAsDataURL(file);
+      }))
+    );
 
-        setFormData(prev => {
-          const list = Array.isArray(prev.anexos) ? [...prev.anexos] : [];
-          if (list.length >= 4) return prev;
-          const newAnx = {
-            id: `anx-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-            nome: nomeSugerido,
-            base64: base64,
-            tamanho: file.size,
-            tipo: file.type
-          };
-          const updated = [...list, newAnx].slice(0, 4);
-          return {
-            ...prev,
-            anexos: updated,
-            nomeArquivoAnexo: updated[0]?.nome || "",
-            arquivoAnexoBase64: updated[0]?.base64 || ""
-          };
+    setFormData(prev => {
+      const list = Array.isArray(prev.anexos) ? [...prev.anexos] : [];
+      if (list.length === 0 && prev.arquivoAnexoBase64) {
+        list.push({
+          id: `anx-${Date.now()}-legacy`,
+          nome: prev.nomeArquivoAnexo || "Documento_Fiscal.pdf",
+          base64: prev.arquivoAnexoBase64
         });
+      }
+
+      const slotsLeft = 4 - list.length;
+      if (slotsLeft <= 0) return prev;
+
+      const validResults = readResults.filter(r => r.base64).slice(0, slotsLeft);
+      const newItems = validResults.map((r, idx) => {
+        const totalIdx = list.length + idx;
+        const isNf = (prev.tipoDocumento === "NF-e" || prev.tipoDocumento === "NFS-e" || !prev.tipoDocumento) && totalIdx === 0;
+        const nomeSugerido = isNf
+          ? gerarNomePadraoAnexoNf(prev.dataVencimento, prev.fornecedor, r.file.name, prev.codigoLancamento)
+          : r.file.name;
+
+        return {
+          id: `anx-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`,
+          nome: nomeSugerido,
+          base64: r.base64,
+          tamanho: r.file.size,
+          tipo: r.file.type
+        };
+      });
+
+      const updated = [...list, ...newItems].slice(0, 4);
+
+      return {
+        ...prev,
+        anexos: updated,
+        nomeArquivoAnexo: updated[0]?.nome || "",
+        arquivoAnexoBase64: updated[0]?.base64 || ""
       };
-      reader.readAsDataURL(file);
     });
   };
 

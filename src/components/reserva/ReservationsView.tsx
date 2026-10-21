@@ -9,7 +9,7 @@ import { useAuth } from '../../context/ReservationAuthContext';
 import { sendEmail, generateEmailHtml } from '../../services/firebaseService';
 import { ADMIN_EMAIL_RECIPIENTS, getReservasEmailRecipients } from '../../constants_reserva';
 import { getAllSystemUsersEmails } from '../../services/perimeterAlertService';
-import { resolveReservationRecipients, getAllSystemAdminEmails } from '../../services/reservaEmailHelper';
+import { resolveReservationRecipients, getAllSystemAdminEmails, sendReservationApprovalEmail } from '../../services/reservaEmailHelper';
 import { AdditionalRecipientsInput } from './AdditionalRecipientsInput';
 import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
 import RacRentalsView from './RacRentalsView';
@@ -206,63 +206,19 @@ const ReservationsView: React.FC = () => {
           adminNotes: finalNotes.trim() || undefined
         });
 
-        // 3. Monta dados detalhados para o e-mail
+        // 3. Monta e envia o e-mail de aprovação de forma fidedigna
         const vehicle = getVehicleById(resSnapshot.vehicleId);
-        const departureDate = parseLocalDateTime(resSnapshot.departureDateTime);
-        const returnDate = parseLocalDateTime(resSnapshot.returnDate);
-
-        const formattedDate = formatDateTimeBR(departureDate).replace(/\//g, '-');
-
-        const details = [
-            { label: "Status", value: "✅ APROVADA" },
-            { label: "Solicitante", value: resSnapshot.requesterName || "Colaborador" },
-            { label: "Condutor", value: resSnapshot.driverName || resSnapshot.requesterName || "Não Informado" },
-            { label: "Departamento", value: resSnapshot.department || "Geral" },
-            { label: "Categoria Pretendida", value: vehicle ? `${vehicle.model} (${vehicle.type || 'Passeio / Operações'})` : ((resSnapshot as any).category || 'Hatch Compacto') },
-            { label: "Veículo Aprovado", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
-            { label: "Data de Saída", value: formatDateTimeBR(departureDate) },
-            { label: "Retorno Previsto", value: formatDateTimeBR(returnDate) },
-            { label: "Destino", value: `${resSnapshot.destinationCity || ''} - ${resSnapshot.destination || ''}` },
-            { label: "Distância Estimada", value: resSnapshot.distanceKm ? `${resSnapshot.distanceKm.toLocaleString('pt-BR')} km` : 'N/A' },
-            { label: "Motivo / Finalidade", value: resSnapshot.purpose || "Deslocamento Corporativo" }
-        ];
-
-        if (finalNotes && finalNotes.trim()) {
-          details.push({ label: "Observações da Administração", value: finalNotes.trim() });
-        }
-
-        const emailHtml = generateEmailHtml(
-            "Solicitação de Reserva Aprovada",
-            details,
-            "#114D38",
-            window.location.origin,
-            `Prezado(a) ${resSnapshot.requesterName}, informamos que sua solicitação de reserva de veículo da frota Risel foi aprovada com sucesso.`,
-            finalNotes && finalNotes.trim() 
-              ? `Observações da Gestão de Frota: ${finalNotes.trim()}<br/><br/>Lembre-se de devolver o veículo abastecido, e informar o KM Final ao Setor de GR.` 
-              : "Lembre-se de devolver o veículo abastecido, e informar o KM Final ao Setor de GR.",
-            "#114D38"
-        );
-
-        const { primaryTo, ccList, requesterEmail, isRequesterValid } = resolveReservationRecipients(
-          resSnapshot,
+        const emailResult = await sendReservationApprovalEmail(
+          { ...resSnapshot, status: ReservationStatus.Approved, adminNotes: finalNotes.trim() || undefined },
+          vehicle,
+          finalNotes,
           additionalEmailsToSend
         );
 
-        console.log(`[Reservas Frota] Enviando e-mail de aprovação. Para: ${primaryTo.join(', ')} | CC: ${ccList?.join(', ') || 'Nenhum'}`);
-
-        try {
-          await sendEmail(primaryTo, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
-            fromName: "Gestão de Reservas Risel",
-            source: "reservas",
-            cc: ccList
-          });
-          const recipientFeedback = isRequesterValid 
-            ? `Reserva aprovada! E-mail enviado ao solicitante (${requesterEmail}) com cópia para os Administradores.`
-            : `Reserva aprovada! E-mail enviado para a equipe de Administração.`;
-          showToast(recipientFeedback, 'success');
-        } catch (emailErr) {
-          console.warn("Aviso: reserva aprovada no sistema, porém envio de e-mail oscilou:", emailErr);
-          showToast("Reserva aprovada com sucesso! (Aviso: instabilidade temporária no e-mail)", 'warning');
+        if (emailResult.success) {
+          showToast(`Reserva aprovada! ${emailResult.message}`, 'success');
+        } else {
+          showToast(`Reserva aprovada com sucesso! (${emailResult.message || 'Aviso no envio do e-mail'})`, 'warning');
         }
     } catch (updateError) {
         console.error("Falha ao aprovar reserva:", updateError);
@@ -459,8 +415,20 @@ const ReservationsView: React.FC = () => {
   const handleSaveEdit = async (updatedData: Partial<Reservation>) => {
     if(selectedReservation) {
         try {
+          const wasApproved = selectedReservation.status === ReservationStatus.Approved;
+          const isNowApproved = updatedData.status === ReservationStatus.Approved;
+
           await updateReservation(selectedReservation.id, updatedData);
           showToast("Reserva atualizada com sucesso no sistema.", 'success');
+
+          if (isNowApproved && !wasApproved) {
+            const merged = { ...selectedReservation, ...updatedData };
+            const veh = getVehicleById(merged.vehicleId);
+            const emailRes = await sendReservationApprovalEmail(merged, veh, merged.adminNotes);
+            if (emailRes.success) {
+              showToast(`E-mail de aprovação disparado! ${emailRes.message}`, 'success');
+            }
+          }
         } catch (err) {
           console.error("Erro ao salvar edição de reserva:", err);
           showToast("Erro ao atualizar reserva.", 'error');

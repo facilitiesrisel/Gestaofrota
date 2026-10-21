@@ -1,4 +1,6 @@
 import { getReservasEmailRecipients } from '../constants_reserva';
+import { sendEmail, generateEmailHtml } from './firebaseService';
+import { formatDateTimeBR, parseLocalDateTime } from '../utils/reservaDateUtils';
 
 /**
  * Retorna os e-mails de todos os administradores e gestores cadastrados no sistema
@@ -237,5 +239,75 @@ export function resolveReservationRecipients(
       adminEmails: allAdminEmails,
       isRequesterValid: false
     };
+  }
+}
+
+/**
+ * Função centralizada e resiliente para montagem e envio de e-mails de aprovação de reserva
+ */
+export async function sendReservationApprovalEmail(
+  reservation: any,
+  vehicle?: any,
+  notes?: string,
+  additionalEmails: string[] = []
+): Promise<{ success: boolean; recipientEmail?: string; message?: string }> {
+  try {
+    const departureDate = parseLocalDateTime(reservation.departureDateTime);
+    const returnDate = parseLocalDateTime(reservation.returnDate);
+    const formattedDate = formatDateTimeBR(departureDate).replace(/\//g, '-');
+
+    const details = [
+      { label: "Status", value: "✅ APROVADA" },
+      { label: "Solicitante", value: reservation.requesterName || "Colaborador" },
+      { label: "Condutor", value: reservation.driverName || reservation.requesterName || "Não Informado" },
+      { label: "Departamento", value: reservation.department || "Geral" },
+      { label: "Categoria Pretendida", value: vehicle ? `${vehicle.model} (${vehicle.type || 'Passeio / Operações'})` : (reservation.category || 'Hatch Compacto') },
+      { label: "Veículo Aprovado", value: vehicle ? `${vehicle.model} - ${vehicle.plate}` : "Veículo da Frota" },
+      { label: "Data de Saída", value: formatDateTimeBR(departureDate) },
+      { label: "Retorno Previsto", value: formatDateTimeBR(returnDate) },
+      { label: "Destino", value: `${reservation.destinationCity || ''} - ${reservation.destination || ''}` },
+      { label: "Distância Estimada", value: reservation.distanceKm ? `${reservation.distanceKm.toLocaleString('pt-BR')} km` : 'N/A' },
+      { label: "Motivo / Finalidade", value: reservation.purpose || "Deslocamento Corporativo" }
+    ];
+
+    if (notes && notes.trim()) {
+      details.push({ label: "Observações da Administração", value: notes.trim() });
+    }
+
+    const emailHtml = generateEmailHtml(
+      "Solicitação de Reserva Aprovada",
+      details,
+      "#114D38",
+      typeof window !== 'undefined' ? window.location.origin : '',
+      `Prezado(a) ${reservation.requesterName}, informamos que sua solicitação de reserva de veículo da frota Risel foi aprovada com sucesso.`,
+      notes && notes.trim() 
+        ? `Observações da Gestão de Frota: ${notes.trim()}<br/><br/>Lembre-se de devolver o veículo abastecido, e informar o KM Final ao Setor de GR.` 
+        : "Lembre-se de devolver o veículo abastecido, e informar o KM Final ao Setor de GR.",
+      "#114D38"
+    );
+
+    const { primaryTo, ccList, requesterEmail, isRequesterValid } = resolveReservationRecipients(
+      reservation,
+      additionalEmails
+    );
+
+    console.log(`[Reservas Frota] Disparando e-mail de aprovação. Para: ${primaryTo.join(', ')} | CC: ${ccList?.join(', ') || 'Nenhum'}`);
+
+    await sendEmail(primaryTo, `Sua Solicitação de Reserva para o dia ${formattedDate} foi Aprovada`, emailHtml, {
+      fromName: "Gestão de Reservas Risel",
+      source: "reservas",
+      cc: ccList
+    });
+
+    return {
+      success: true,
+      recipientEmail: isRequesterValid ? requesterEmail : primaryTo.join(', '),
+      message: isRequesterValid 
+        ? `E-mail de aprovação enviado ao solicitante (${requesterEmail}) com cópia para os Administradores.`
+        : `E-mail de aprovação enviado para a equipe de Administração.`
+    };
+  } catch (err: any) {
+    console.error("Erro ao enviar e-mail de aprovação de reserva:", err);
+    return { success: false, message: err.message || String(err) };
   }
 }

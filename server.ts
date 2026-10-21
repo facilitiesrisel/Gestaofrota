@@ -112,9 +112,9 @@ async function createSafeTransporter(smtpConfig: any) {
         user: smtpConfig.user,
         pass: smtpConfig.pass,
       },
-      connectionTimeout: 15000,
-      greetingTimeout: 10000,
-      socketTimeout: 20000,
+      connectionTimeout: 4000,
+      greetingTimeout: 3000,
+      socketTimeout: 6000,
     } as any);
   }
 
@@ -142,9 +142,9 @@ async function createSafeTransporter(smtpConfig: any) {
     requireTLS: !isPort465,
     family: 4, // Força conexão IPv4 direta
     lookup: strictIpv4Lookup,
-    connectionTimeout: 15000,
-    greetingTimeout: 10000,
-    socketTimeout: 20000,
+    connectionTimeout: 4000,
+    greetingTimeout: 3000,
+    socketTimeout: 6000,
   } as any);
 }
 
@@ -489,12 +489,26 @@ async function sendEmailViaAppsScript(options: {
   html: string;
   fromName?: string;
   customUrl?: string;
+  attachments?: Array<{ filename: string; content?: Buffer; path?: string; contentType?: string }>;
 }): Promise<{ success: boolean; message?: string; error?: string }> {
   const targetUrl = (options.customUrl || storedAppsScriptUrl || "").trim();
   if (!targetUrl) {
     return { success: false, error: "URL do Google Apps Script não configurada." };
   }
   try {
+    const formattedAttachments = Array.isArray(options.attachments)
+      ? options.attachments.map(att => {
+          if (att && att.content && Buffer.isBuffer(att.content)) {
+            return {
+              filename: att.filename,
+              content: att.content.toString("base64"),
+              contentType: att.contentType || "application/pdf"
+            };
+          }
+          return null;
+        }).filter(Boolean)
+      : undefined;
+
     const res = await fetch(targetUrl, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
@@ -504,7 +518,8 @@ async function sendEmailViaAppsScript(options: {
         cc: options.cc,
         subject: options.subject,
         html: options.html,
-        fromName: options.fromName || "Checklist Frota Leve - Risel"
+        fromName: options.fromName || "Gestão de Reservas Risel",
+        attachments: formattedAttachments
       })
     });
     const text = await res.text();
@@ -2748,7 +2763,35 @@ async function startServer() {
         } catch (err: any) {
           console.warn("[Risel SMTP] Envio via Gmail SMTP encontrou restrição de autenticação ou conexão:", err.message, ". Acionando contingência de alta disponibilidade...");
           
-          // Tentativa 2: Contingência via Brevo HTTP API (Porta 443)
+          // Contingência 1: Google Apps Script (HTTPS sem restrição de portas no Google Workspace / MailApp)
+          if (storedAppsScriptUrl) {
+            try {
+              console.log("[Risel SMTP Router] Acionando envio de alta disponibilidade via Google Apps Script (HTTPS)...");
+              const gsResult = await sendEmailViaAppsScript({
+                to: emailTo,
+                cc: emailCc || undefined,
+                subject: emailSubject,
+                html: emailHtml,
+                fromName: finalSenderName,
+                attachments: mailAttachments
+              });
+              if (gsResult.success) {
+                console.log(`[Risel SMTP] E-mail entregue com sucesso via Google Apps Script para To: ${emailTo} | CC: ${emailCc || 'Nenhum'}`);
+                return res.json({
+                  success: true,
+                  delivered: true,
+                  provider: "Google Apps Script (Google MailApp)",
+                  sender: finalSenderName,
+                  message: `E-mail enviado com sucesso (${finalSenderName}) para ${emailTo}!`,
+                  attachmentsCount: mailAttachments.length
+                });
+              }
+            } catch (gsErr: any) {
+              console.warn("[Risel SMTP Router] Contingência via Google Apps Script falhou:", gsErr.message);
+            }
+          }
+
+          // Contingência 2: Brevo HTTP API (Porta 443)
           if (effectiveBrevoKey) {
             try {
               console.log("[Risel SMTP] Acionando envio via Brevo HTTP API (Porta 443)...");
@@ -2757,7 +2800,7 @@ async function startServer() {
                 cc: emailCc,
                 subject: emailSubject,
                 html: emailHtml,
-                fromName,
+                fromName: finalSenderName,
                 fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
                 attachments: mailAttachments
               }, effectiveBrevoKey);
@@ -2775,7 +2818,34 @@ async function startServer() {
             }
           }
 
-          // Tentativa 3: Contingência corporativa com remetente do módulo preservado
+          // Contingência 3: Resend HTTP API (Porta 443)
+          if (effectiveResendKey) {
+            try {
+              console.log("[Risel SMTP] Acionando envio via Resend HTTP API (Porta 443)...");
+              const resendResult = await sendEmailViaResend({
+                to: emailTo,
+                cc: emailCc,
+                subject: emailSubject,
+                html: emailHtml,
+                fromName: finalSenderName,
+                fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
+                attachments: mailAttachments
+              }, effectiveResendKey);
+
+              return res.json({
+                success: true,
+                delivered: true,
+                provider: "Resend HTTP API (Porta 443)",
+                message: `E-mail entregue com sucesso via Resend HTTP API (Porta 443) para ${emailTo}!`,
+                attachmentsCount: mailAttachments.length,
+                details: resendResult
+              });
+            } catch (resendErr: any) {
+              console.error("[Risel SMTP] Falha no envio via Resend HTTP:", resendErr.message);
+            }
+          }
+
+          // Contingência 4: SMTP Microsoft 365
           try {
             const fallbackTransporter = await createSafeTransporter({
               user: "deny.goncalves@risel.com.br",
@@ -2807,87 +2877,6 @@ async function startServer() {
             });
           } catch (retryErr: any) {
             console.warn("[Risel SMTP] Tentativas SMTP de contingência concluídas com restrição:", retryErr.message);
-
-            // Tentativa 3: Se houver chave de API HTTP configurada (Resend ou Brevo), dispara via HTTPS (Porta 443)
-            const resendKey = effectiveResendKey;
-            const brevoKey = effectiveBrevoKey;
-
-            if (resendKey) {
-              try {
-                console.log("[Risel SMTP] Acionando envio via Resend HTTP API (Porta 443)...");
-                const resendResult = await sendEmailViaResend({
-                  to: emailTo,
-                  cc: emailCc,
-                  subject: emailSubject,
-                  html: emailHtml,
-                  fromName,
-                  fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
-                  attachments: mailAttachments
-                }, resendKey);
-
-                return res.json({
-                  success: true,
-                  delivered: true,
-                  provider: "Resend HTTP API (Porta 443)",
-                  message: `E-mail entregue com sucesso via Resend HTTP API (Porta 443) para ${emailTo}!`,
-                  attachmentsCount: mailAttachments.length,
-                  details: resendResult
-                });
-              } catch (resendErr: any) {
-                console.error("[Risel SMTP] Falha no envio via Resend HTTP:", resendErr.message);
-              }
-            }
-
-            if (brevoKey) {
-              try {
-                console.log("[Risel SMTP] Acionando envio via Brevo HTTP API (Porta 443)...");
-                const brevoResult = await sendEmailViaBrevo({
-                  to: emailTo,
-                  cc: emailCc,
-                  subject: emailSubject,
-                  html: emailHtml,
-                  fromName,
-                  fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
-                  attachments: mailAttachments
-                }, brevoKey);
-
-                return res.json({
-                  success: true,
-                  delivered: true,
-                  provider: "Brevo HTTP API (Porta 443)",
-                  message: `E-mail entregue com sucesso via Brevo HTTP API (Porta 443) para ${emailTo}!`,
-                  attachmentsCount: mailAttachments.length,
-                  details: brevoResult
-                });
-              } catch (brevoErr: any) {
-                console.error("[Risel SMTP] Falha no envio via Brevo HTTP:", brevoErr.message);
-              }
-            }
-
-            // Tentativa 4: Contingência via Google Apps Script (HTTPS sem restrição de portas)
-            if (storedAppsScriptUrl) {
-              try {
-                console.log("[Risel SMTP Router] Acionando contingência automática via Google Apps Script (HTTPS)...");
-                const gsResult = await sendEmailViaAppsScript({
-                  to: emailTo,
-                  cc: emailCc,
-                  subject: emailSubject,
-                  html: emailHtml,
-                  fromName: fromName || "Risel Combustíveis"
-                });
-                if (gsResult.success) {
-                  return res.json({
-                    success: true,
-                    delivered: true,
-                    provider: "Google Apps Script (Contingência Automática)",
-                    message: `E-mail entregue com sucesso para ${emailTo}!`,
-                    attachmentsCount: mailAttachments.length
-                  });
-                }
-              } catch (gsErr: any) {
-                console.warn("[Risel SMTP Router] Contingência via Google Apps Script falhou:", gsErr.message);
-              }
-            }
 
             const isRender = Boolean(process.env.RENDER === "true" || process.env.RENDER_SERVICE_ID || process.env.RENDER_EXTERNAL_URL);
             const errStr = `${err.message || ""} ${retryErr.message || ""}`;

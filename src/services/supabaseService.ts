@@ -233,6 +233,31 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
         }
       }
 
+      let parsedAnexos: any[] = [];
+      if (row.anexos) {
+        if (Array.isArray(row.anexos)) {
+          parsedAnexos = row.anexos;
+        } else if (typeof row.anexos === "string") {
+          try { parsedAnexos = JSON.parse(row.anexos); } catch (e) {}
+        }
+      }
+      if ((!parsedAnexos || parsedAnexos.length === 0) && row.observacao && typeof row.observacao === "string" && row.observacao.includes("[ANEXOS_JSON:")) {
+        try {
+          const match = row.observacao.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
+          if (match && match[1]) {
+            const p = JSON.parse(match[1]);
+            if (Array.isArray(p) && p.length > 0) parsedAnexos = p;
+          }
+        } catch (e) {}
+      }
+      if ((!parsedAnexos || parsedAnexos.length === 0) && (row.arquivo_anexo_base64 || row.nome_arquivo_anexo)) {
+        parsedAnexos = [{
+          id: "anx-1",
+          nome: row.nome_arquivo_anexo || "Documento.pdf",
+          base64: row.arquivo_anexo_base64 || ""
+        }];
+      }
+
       return {
         id: row.id,
         status: row.status,
@@ -248,6 +273,7 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
         estabelecimento: parsedBase || "100 - Paulínia",
         nomeArquivoAnexo: row.nome_arquivo_anexo,
         arquivoAnexoBase64: row.arquivo_anexo_base64,
+        anexos: parsedAnexos,
         itemSistema: row.item_sistema,
         dataEmissao: row.data_emissao,
         observacao: row.observacao,
@@ -401,6 +427,12 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     if (item.driveUrl && !finalObs.includes(item.driveUrl)) {
       finalObs = finalObs ? `${finalObs} [GOOGLE DRIVE: ${item.driveUrl}]` : `[GOOGLE DRIVE: ${item.driveUrl}]`;
     }
+    if (Array.isArray(item.anexos) && item.anexos.length > 0) {
+      const anexosJson = JSON.stringify(item.anexos.slice(0, 4));
+      if (!finalObs.includes("[ANEXOS_JSON:")) {
+        finalObs = finalObs ? `${finalObs} [ANEXOS_JSON: ${anexosJson}]` : `[ANEXOS_JSON: ${anexosJson}]`;
+      }
+    }
 
     // Economia de tráfego e banco de dados: se tiver URL do Supabase Storage ou Google Drive, prioriza URL
     let finalAnexo = item.arquivoAnexoUrl || item.driveUrl || item.arquivoAnexoBase64 || "";
@@ -421,6 +453,8 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       }
     }
 
+    const anexosPayload = Array.isArray(item.anexos) && item.anexos.length > 0 ? item.anexos.slice(0, 4) : [];
+
     // Monta o objeto base
     const baseRecord: any = {
       id: targetId,
@@ -435,8 +469,9 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       descricao: item.descricao || "",
       cnpj: item.cnpj || "",
       estabelecimento: filialBase,
-      nome_arquivo_anexo: item.nomeArquivoAnexo || "",
+      nome_arquivo_anexo: item.nomeArquivoAnexo || (anexosPayload[0]?.nome || ""),
       arquivo_anexo_base64: finalAnexo,
+      anexos: anexosPayload,
       item_sistema: item.itemSistema || "",
       data_emissao: item.dataEmissao || "",
       observacao: finalObs,
@@ -451,7 +486,8 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       centro_custo: centCusto,
       codigo_lancamento: numDoc,
       cod_lancamento_oc: codOc,
-      aprovadores: alcada
+      aprovadores: alcada,
+      anexos: anexosPayload
     };
 
     const firstTry = await client

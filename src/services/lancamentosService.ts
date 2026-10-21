@@ -205,6 +205,26 @@ export function normalizeLancamento(item: any): any {
     }
   }
 
+  let finalAnexos = Array.isArray(item.anexos) && item.anexos.length > 0 ? item.anexos.slice(0, 4) : [];
+  if (finalAnexos.length === 0 && rawObs && typeof rawObs === "string" && rawObs.includes("[ANEXOS_JSON:")) {
+    try {
+      const match = rawObs.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
+      if (match && match[1]) {
+        const parsed = JSON.parse(match[1]);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          finalAnexos = parsed.slice(0, 4);
+        }
+      }
+    } catch (e) {}
+  }
+  if (finalAnexos.length === 0 && (item.arquivoAnexoBase64 || item.arquivo_anexo_base64)) {
+    finalAnexos = [{
+      id: "anx-1",
+      nome: item.nomeArquivoAnexo || item.nome_arquivo_anexo || "Documento.pdf",
+      base64: item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || ""
+    }];
+  }
+
   return {
     ...item,
     id: cleanId,
@@ -224,11 +244,11 @@ export function normalizeLancamento(item: any): any {
     dataVencimento: item.dataVencimento || item.data_vencimento || item.VENCIMENTO || "",
     dataEmissao: item.dataEmissao || item.data_emissao || item.DATA_EMISSAO || "",
     observacao: rawObs,
-    anexos: Array.isArray(item.anexos)
-      ? item.anexos.slice(0, 4)
-      : (item.arquivoAnexoBase64 ? [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }] : [])
+    anexos: finalAnexos,
+    nomeArquivoAnexo: finalAnexos[0]?.nome || item.nomeArquivoAnexo || item.nome_arquivo_anexo || "",
+    arquivoAnexoBase64: finalAnexos[0]?.base64 || item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || ""
   };
-}
+  }
 
 // Função utilitária para atualizar cache local com dados recebidos via BroadcastChannel
 function updateLocalCacheFromBroadcast(items: any[]) {
