@@ -4799,15 +4799,52 @@ async function startServer() {
   const saveCnhFileToDisk = (cleanPlaca: string, base64Data: string, fileName?: string) => {
     try {
       if (!fs.existsSync(CNH_DIR)) fs.mkdirSync(CNH_DIR, { recursive: true });
-      const ext = (fileName && fileName.includes(".")) ? path.extname(fileName) : ".jpg";
+      
+      // 1. Remove qualquer anexo ou arquivo anterior desta placa para garantir sobreposição limpa
+      const oldFiles = fs.readdirSync(CNH_DIR).filter(f => f.startsWith(`${cleanPlaca}.`));
+      for (const oldF of oldFiles) {
+        try { fs.unlinkSync(path.join(CNH_DIR, oldF)); } catch (_) {}
+      }
+
+      // 2. Determina a extensão e decodifica o base64 para binário real
+      let ext = (fileName && fileName.includes(".")) ? path.extname(fileName).toLowerCase() : "";
+      let mimeType = "application/pdf";
+      let pureBase64 = base64Data || "";
+
+      if (pureBase64.startsWith("data:")) {
+        const commaIdx = pureBase64.indexOf(",");
+        const header = pureBase64.slice(0, commaIdx);
+        pureBase64 = pureBase64.slice(commaIdx + 1);
+        const matchMime = header.match(/data:([^;]+)/);
+        if (matchMime) mimeType = matchMime[1];
+      }
+
+      const buffer = Buffer.from(pureBase64.trim(), "base64");
+      
+      // Detecta magic bytes se a extensão não estiver clara
+      if (!ext) {
+        if (buffer.slice(0, 4).toString("utf-8") === "%PDF") {
+          ext = ".pdf";
+        } else if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+          ext = ".jpg";
+        } else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+          ext = ".png";
+        } else {
+          ext = mimeType.includes("pdf") ? ".pdf" : ".jpg";
+        }
+      }
+
       const filePath = path.join(CNH_DIR, `${cleanPlaca}${ext}`);
       const metaPath = path.join(CNH_DIR, `${cleanPlaca}.json`);
-      fs.writeFileSync(filePath, base64Data, "utf-8");
+
+      fs.writeFileSync(filePath, buffer);
       fs.writeFileSync(metaPath, JSON.stringify({
         placa: cleanPlaca,
         nomeArquivo: fileName || `cnh_${cleanPlaca}${ext}`,
+        driveFolderUrl: CNH_DRIVE_FOLDER_URL,
         salvoEm: new Date().toISOString()
       }, null, 2), "utf-8");
+
       return `/api/cnh/${cleanPlaca}`;
     } catch (e) {
       console.warn("Erro ao salvar CNH em disco:", e);
@@ -4820,7 +4857,21 @@ async function startServer() {
     const cleanPlaca = String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
     const resolvedFilial = v.filial || v.base || "Paulínia";
     
-    // Preparação do JSON extra com todos os campos corporativos completos
+    const sanitizeTextOnlyObs = (rawObs: any): string => {
+      if (!rawObs || typeof rawObs !== 'string') return "";
+      let s = rawObs.trim();
+      if (s.startsWith("{") && s.endsWith("}")) {
+        try {
+          const parsed = JSON.parse(s);
+          return typeof parsed.observacoes === 'string' ? sanitizeTextOnlyObs(parsed.observacoes) : "";
+        } catch (_) { return ""; }
+      }
+      return s;
+    };
+
+    const cleanObsText = sanitizeTextOnlyObs(v.observacoes);
+
+    // Preparação do JSON extra enxuto, sem anexos volumosos ou recursividade
     const extraData = JSON.stringify({
       modelo: v.modelo || "Veículo Frota",
       condutor: v.condutor || "Disponível",
@@ -4829,7 +4880,7 @@ async function startServer() {
       cpfCondutor: v.cpfCondutor || v.cpf_condutor || "",
       cnhValidade: v.cnhValidade || v.cnh_validade || "",
       cnhNumero: v.cnhNumero || v.cnh_numero || "",
-      cnhAnexoBase64: v.cnhAnexoBase64 || `/api/cnh/${cleanPlaca}`,
+      cnhDriveFolder: CNH_DRIVE_FOLDER_URL,
       cnhNomeArquivo: v.cnhNomeArquivo || "",
       funcao: v.funcao || "Motorista",
       setor: v.setor || "",
@@ -4845,7 +4896,7 @@ async function startServer() {
       dataInativacao: v.dataInativacao || "",
       motivoInativacao: v.motivoInativacao || "",
       tipoVinculo: v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
-      observacoes: v.observacoes || ""
+      observacoes: cleanObsText
     });
 
     return {
@@ -4970,7 +5021,67 @@ async function startServer() {
     }
   });
 
+  // Constantes da Pasta Oficial de CNHs no Google Drive
+  const CNH_DRIVE_FOLDER_ID = "1tIJ67ADpN6blterYogPq9SObDVHr3xsk";
+  const CNH_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing";
+
   // Endpoints para Anexo de CNH
+  app.get("/api/cnh/config", (req, res) => {
+    let count = 0;
+    if (fs.existsSync(CNH_DIR)) {
+      count = fs.readdirSync(CNH_DIR).filter(f => f.endsWith(".json")).length;
+    }
+    return res.json({
+      folderId: CNH_DRIVE_FOLDER_ID,
+      folderUrl: CNH_DRIVE_FOLDER_URL,
+      totalLocalCnhs: count
+    });
+  });
+
+  app.get("/api/cnh/list", (req, res) => {
+    try {
+      if (!fs.existsSync(CNH_DIR)) return res.json([]);
+      const files = fs.readdirSync(CNH_DIR);
+      const jsonFiles = files.filter(f => f.endsWith(".json"));
+
+      let veiculosMap = new Map<string, any>();
+      if (fs.existsSync(VEICULOS_FILE)) {
+        try {
+          const rawV = JSON.parse(fs.readFileSync(VEICULOS_FILE, "utf-8"));
+          if (Array.isArray(rawV)) {
+            rawV.forEach((v: any) => {
+              if (v && v.placa) veiculosMap.set(String(v.placa).toUpperCase().trim(), v);
+            });
+          }
+        } catch (_) {}
+      }
+
+      const list = jsonFiles.map(jf => {
+        const cleanPlaca = jf.replace(".json", "");
+        let meta: any = {};
+        try { meta = JSON.parse(fs.readFileSync(path.join(CNH_DIR, jf), "utf-8")); } catch (_) {}
+        const binFile = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
+        const v = veiculosMap.get(cleanPlaca);
+        return {
+          placa: cleanPlaca,
+          nomeArquivo: meta.nomeArquivo || binFile || `cnh_${cleanPlaca}.pdf`,
+          condutor: v?.condutor || "Não atribuído",
+          cnhNumero: v?.cnhNumero || "",
+          cnhValidade: v?.cnhValidade || "",
+          salvoEm: meta.salvoEm || "",
+          driveUrl: meta.driveUrl || "",
+          viewUrl: `/api/cnh/${cleanPlaca}`,
+          hasBin: !!binFile
+        };
+      });
+
+      return res.json(list);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Servir arquivo da CNH (PDF ou Imagem nativa) para visualização perfeita em iframe sem "monte de letras"
   app.get("/api/cnh/:placa", (req, res) => {
     try {
       const cleanPlaca = String(req.params.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
@@ -4983,31 +5094,92 @@ async function startServer() {
       }
 
       const filePath = path.join(CNH_DIR, match);
-      const content = fs.readFileSync(filePath, "utf-8");
+      const rawBuffer = fs.readFileSync(filePath);
       let meta: any = {};
       const metaPath = path.join(CNH_DIR, `${cleanPlaca}.json`);
       if (fs.existsSync(metaPath)) {
         try { meta = JSON.parse(fs.readFileSync(metaPath, "utf-8")); } catch (_) {}
       }
 
-      return res.json({
-        success: true,
-        placa: cleanPlaca,
-        nomeArquivo: meta.nomeArquivo || match,
-        base64: content
-      });
+      let buffer: Buffer;
+      let mimeType = "application/pdf";
+
+      // 1. Detecta se o arquivo em disco já é binário nativo puro
+      if (rawBuffer.slice(0, 4).toString("utf-8") === "%PDF") {
+        buffer = rawBuffer;
+        mimeType = "application/pdf";
+      } else if (rawBuffer[0] === 0xff && rawBuffer[1] === 0xd8 && rawBuffer[2] === 0xff) {
+        buffer = rawBuffer;
+        mimeType = "image/jpeg";
+      } else if (rawBuffer[0] === 0x89 && rawBuffer[1] === 0x50 && rawBuffer[2] === 0x4e && rawBuffer[3] === 0x47) {
+        buffer = rawBuffer;
+        mimeType = "image/png";
+      } else {
+        // 2. Fallback caso o arquivo tenha sido gravado como texto data URI base64
+        const textContent = rawBuffer.toString("utf-8");
+        let base64Pure = textContent;
+        if (textContent.startsWith("data:")) {
+          const commaIdx = textContent.indexOf(",");
+          const header = textContent.slice(0, commaIdx);
+          base64Pure = textContent.slice(commaIdx + 1);
+          const matchMime = header.match(/data:([^;]+)/);
+          if (matchMime) mimeType = matchMime[1];
+        } else {
+          if (match.endsWith(".jpg") || match.endsWith(".jpeg")) mimeType = "image/jpeg";
+          else if (match.endsWith(".png")) mimeType = "image/png";
+        }
+        buffer = Buffer.from(base64Pure.trim(), "base64");
+      }
+
+      // Se solicitado expressamente como JSON para APIs
+      if (req.query.json === "true") {
+        return res.json({
+          success: true,
+          placa: cleanPlaca,
+          nomeArquivo: meta.nomeArquivo || match,
+          driveUrl: meta.driveFolderUrl || CNH_DRIVE_FOLDER_URL,
+          base64: `data:${mimeType};base64,${buffer.toString("base64")}`
+        });
+      }
+
+      const safeFilename = encodeURIComponent(meta.nomeArquivo || match);
+
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Disposition", `inline; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
+      res.setHeader("Content-Length", buffer.length);
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Cache-Control", "no-cache, must-revalidate");
+
+      return res.send(buffer);
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
   });
 
-  app.post("/api/cnh/:placa", express.json({ limit: "50mb" }), (req, res) => {
+  app.post("/api/cnh/:placa", express.json({ limit: "50mb" }), async (req, res) => {
     try {
       const cleanPlaca = String(req.params.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-      const { base64, nomeArquivo } = req.body || {};
-      if (!base64) return res.status(400).json({ error: "Base64 do arquivo não informado." });
-      const url = saveCnhFileToDisk(cleanPlaca, base64, nomeArquivo);
-      return res.json({ success: true, url, nomeArquivo });
+      const { base64, nomeArquivo, driveUrl } = req.body || {};
+      if (!base64 && !driveUrl) return res.status(400).json({ error: "Dados do arquivo não informados." });
+      
+      let url = "";
+      if (base64) {
+        url = saveCnhFileToDisk(cleanPlaca, base64, nomeArquivo);
+      }
+
+      // Se veio URL do Google Drive ou já salvou, atualiza metadados
+      const metaPath = path.join(CNH_DIR, `${cleanPlaca}.json`);
+      let meta: any = {};
+      if (fs.existsSync(metaPath)) {
+        try { meta = JSON.parse(fs.readFileSync(metaPath, "utf-8")); } catch (_) {}
+      }
+      meta.placa = cleanPlaca;
+      meta.nomeArquivo = nomeArquivo || meta.nomeArquivo || `cnh_${cleanPlaca}.pdf`;
+      meta.salvoEm = new Date().toISOString();
+      if (driveUrl) meta.driveUrl = driveUrl;
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8");
+
+      return res.json({ success: true, url: `/api/cnh/${cleanPlaca}`, nomeArquivo: meta.nomeArquivo, driveUrl: meta.driveUrl });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }

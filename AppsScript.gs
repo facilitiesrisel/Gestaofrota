@@ -4,8 +4,8 @@
  * - Módulo 1: Gestão de Banco de Dados (Read, Save, Delete, Upload Drive, Termos PDF)
  * - Módulo 2: Importação em Lote / Sincronização Automática (Multas e Abastecimentos)
  * - Módulo 3: Vistorias & Checklists (Gatilho de Formulário, Relatório PDF e E-mails)
+ * - Módulo 4: Central de CNHs da Frota Leve no Google Drive com Sobreposição
  * =================================================================================
- * @OnlyCurrentDoc
  * @Require(DriveApp)
  * @Require(MailApp)
  */
@@ -306,11 +306,51 @@ function deleteData(type, payload) {
   return "Registro não localizado para exclusão.";
 }
 
-function uploadFile(d) {
-  const folder = DriveApp.getFolderById(d.folderId);
-  const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(d.fileData), d.mimeType, d.fileName));
+function uploadCnh(d) {
+  const folderId = d.folderId || "1tIJ67ADpN6blterYogPq9SObDVHr3xsk";
+  const folder = DriveApp.getFolderById(folderId);
+  const placa = String(d.placa || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const nomeCondutor = String(d.condutor || "").trim().replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "_");
+  const ext = (d.fileName && d.fileName.includes(".")) ? d.fileName.split(".").pop() : ((d.nomeArquivo && d.nomeArquivo.includes(".")) ? d.nomeArquivo.split(".").pop() : "pdf");
+  const fileName = d.fileName || (placa ? `CNH_${placa}${nomeCondutor ? "_" + nomeCondutor : ""}.${ext}` : (d.nomeArquivo || "CNH.pdf"));
+
+  // REGRA MANDATÓRIA RISEL: SOBREPOSIÇÃO DE ARQUIVO
+  // Se já existir arquivo com este nome ou para a mesma placa, envia para a lixeira para sobrepor
+  if (placa) {
+    const existingFiles = folder.getFiles();
+    while (existingFiles.hasNext()) {
+      const existing = existingFiles.next();
+      const existingName = existing.getName().toUpperCase();
+      if (existingName === fileName.toUpperCase() || existingName.startsWith("CNH_" + placa + "_") || existingName.startsWith(placa + ".")) {
+        existing.setTrashed(true);
+      }
+    }
+  } else {
+    const existingFiles = folder.getFilesByName(fileName);
+    while (existingFiles.hasNext()) {
+      const existing = existingFiles.next();
+      existing.setTrashed(true);
+    }
+  }
+
+  const rawBase64 = d.fileData.includes("base64,") ? d.fileData.split("base64,")[1] : d.fileData;
+  const decoded = Utilities.base64Decode(rawBase64);
+  const blob = Utilities.newBlob(decoded, d.mimeType || "application/pdf", fileName);
+  const file = folder.createFile(blob);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  return { success: true, fileUrl: file.getUrl() };
+
+  return {
+    success: true,
+    fileId: file.getId(),
+    fileName: fileName,
+    fileUrl: file.getUrl(),
+    embedUrl: "https://drive.google.com/file/d/" + file.getId() + "/preview",
+    downloadUrl: "https://drive.google.com/uc?export=download&id=" + file.getId()
+  };
+}
+
+function uploadFile(d) {
+  return uploadCnh(d);
 }
 
 function generatePdf(d) {

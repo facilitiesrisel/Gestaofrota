@@ -14,9 +14,10 @@ import {
   Clock, MapPin, Gauge, Star, BarChart3, TrendingUp, DollarSign,
   LayoutGrid, ArrowRight, Activity, Edit2, LayoutDashboard, FileSpreadsheet, RefreshCw, RotateCcw,
   CheckCircle, AlertCircle, Info, Database, Copy, ExternalLink, Link2, Lock, Code, Download, Siren, BellRing, Settings,
-  Upload, Trash2, Loader2
+  Upload, Trash2, Loader2, FolderOpen
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
+import { CnhViewerModal } from "../components/CnhViewerModal";
 import Papa from "papaparse";
 import { ReservaSubmoduleContainer } from "../components/reserva/ReservaSubmoduleContainer";
 import { fetchFleetPositions } from "../services/geoFrotasService";
@@ -149,6 +150,49 @@ export interface Veiculo {
   motivoInativacao?: string;
   tipoVinculo?: "Contrato" | "Provisório" | "";
 }
+
+// Pasta Oficial de Armazenamento e Consulta das CNHs da Frota Leve no Google Drive
+export const CNH_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing";
+export const CNH_DRIVE_FOLDER_ID = "1tIJ67ADpN6blterYogPq9SObDVHr3xsk";
+
+// Helper para resolução defensiva e inteligente de URLs de CNH (PDF, Imagem, Google Drive ou Rota Local)
+export const resolveCnhUrl = (raw: string, nome?: string): { url: string; isPdf: boolean; isDrive: boolean } => {
+  if (!raw) return { url: "", isPdf: true, isDrive: false };
+  let url = String(raw).trim();
+
+  // Se porventura a string for um JSON armazenado ou resposta de API exposta
+  if (url.startsWith("{") && (url.includes('"base64"') || url.includes('"url"'))) {
+    try {
+      const parsed = JSON.parse(url);
+      if (parsed.base64) url = parsed.base64;
+      else if (parsed.url) url = parsed.url;
+    } catch (_) {}
+  }
+
+  // Se for link do Google Drive
+  const isDrive = url.includes("drive.google.com");
+  if (isDrive) {
+    let fileId = "";
+    const matchD = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (matchD) fileId = matchD[1];
+    else {
+      const matchId = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (matchId) fileId = matchId[1];
+    }
+    if (fileId) {
+      url = `https://drive.google.com/file/d/${fileId}/preview`;
+    }
+    return { url, isPdf: true, isDrive: true };
+  }
+
+  const nameLower = (nome || "").toLowerCase();
+  const isPdf = url.includes("application/pdf") || 
+                nameLower.endsWith(".pdf") || 
+                url.toLowerCase().includes(".pdf") || 
+                url.startsWith("/api/cnh");
+
+  return { url, isPdf, isDrive: false };
+};
 
 interface Checklist {
   id: string;
@@ -1683,7 +1727,7 @@ export default function Frota() {
   const [modalCnhNumero, setModalCnhNumero] = useState<string>("");
   const [modalCnhAnexoBase64, setModalCnhAnexoBase64] = useState<string>("");
   const [modalCnhNomeArquivo, setModalCnhNomeArquivo] = useState<string>("");
-  const [previewCnhModal, setPreviewCnhModal] = useState<{ url: string; nome: string; isPdf: boolean } | null>(null);
+  const [previewCnhModal, setPreviewCnhModal] = useState<{ url: string; nome: string; condutor?: string; placa?: string; isPdf?: boolean } | null>(null);
 
   // Estados de Sincronização & Persistência em Tempo Real
   const [isSavingVeh, setIsSavingVeh] = useState(false);
@@ -3640,6 +3684,17 @@ export default function Frota() {
                         <span className="hidden sm:inline">Exportar</span> CSV
                       </button>
 
+                      <a
+                        href={CNH_DRIVE_FOLDER_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Abrir pasta oficial de CNHs no Google Drive (40 documentos salvos)"
+                        className="px-3 py-2 rounded-xl text-xs font-bold text-[#114D38] hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5 text-emerald-700" />
+                        <span className="hidden sm:inline">Pasta CNHs</span> (Drive)
+                      </a>
+
                       <button
                         onClick={() => {
                           setEditingVeh(null);
@@ -4165,11 +4220,11 @@ export default function Frota() {
                         {selectedVeiculo.cnhAnexoBase64 && (
                           <button
                             onClick={() => {
-                              const isPdf = selectedVeiculo.cnhAnexoBase64!.includes("application/pdf") || (selectedVeiculo.cnhNomeArquivo || "").toLowerCase().endsWith(".pdf");
                               setPreviewCnhModal({
                                 url: selectedVeiculo.cnhAnexoBase64!,
                                 nome: selectedVeiculo.cnhNomeArquivo || `CNH_${selectedVeiculo.condutor}`,
-                                isPdf
+                                condutor: selectedVeiculo.condutor,
+                                placa: selectedVeiculo.placa
                               });
                             }}
                             className="mt-1 w-full py-1 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
@@ -4468,11 +4523,11 @@ export default function Frota() {
                           <button
                             type="button"
                             onClick={() => {
-                              const isPdf = modalCnhAnexoBase64.includes("application/pdf") || (modalCnhNomeArquivo || "").toLowerCase().endsWith(".pdf");
                               setPreviewCnhModal({
                                 url: modalCnhAnexoBase64,
                                 nome: modalCnhNomeArquivo || "CNH",
-                                isPdf
+                                condutor: editingVeh?.condutor || "Condutor",
+                                placa: editingVeh?.placa || ""
                               });
                             }}
                             className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-200 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
@@ -5463,61 +5518,15 @@ export default function Frota() {
         </div>
       )}
 
-      {/* Modal de Pré-visualização da CNH */}
+      {/* Modal de Pré-visualização da CNH com suporte nativo a PDF, Imagem e Google Drive */}
       {previewCnhModal && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden w-full max-w-2xl max-h-[90vh] flex flex-col">
-            <div className="bg-[#114D38] px-5 py-3 text-white flex justify-between items-center shrink-0">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-emerald-300" />
-                <h3 className="font-display font-bold text-sm truncate max-w-md">{previewCnhModal.nome}</h3>
-              </div>
-              <button 
-                onClick={() => setPreviewCnhModal(null)} 
-                className="p-1 hover:bg-white/10 rounded-lg text-emerald-100 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="p-4 flex-1 overflow-auto flex items-center justify-center bg-slate-100 min-h-[350px]">
-              {previewCnhModal.isPdf ? (
-                <div className="w-full h-[500px] flex flex-col items-center justify-center gap-4">
-                  <iframe 
-                    src={previewCnhModal.url} 
-                    className="w-full h-full rounded-xl border border-slate-300 shadow-sm"
-                    title="Visualização da CNH (PDF)"
-                  />
-                </div>
-              ) : (
-                <img 
-                  src={previewCnhModal.url} 
-                  alt="Cópia da CNH" 
-                  className="max-h-[500px] w-auto max-w-full object-contain rounded-xl shadow-md border border-slate-300"
-                />
-              )}
-            </div>
-
-            <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex justify-between items-center shrink-0">
-              <span className="text-[11px] text-slate-500 font-medium">Documento armazenado com segurança no banco de dados</span>
-              <div className="flex gap-2">
-                <a
-                  href={previewCnhModal.url}
-                  download={previewCnhModal.nome || "cnh_condutor"}
-                  className="px-4 py-2 bg-[#114D38] hover:bg-[#1a664c] text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
-                >
-                  <Download className="w-3.5 h-3.5" /> Baixar Arquivo
-                </a>
-                <button
-                  onClick={() => setPreviewCnhModal(null)}
-                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <CnhViewerModal
+          rawUrl={previewCnhModal.url}
+          nome={previewCnhModal.nome}
+          condutor={previewCnhModal.condutor}
+          placa={previewCnhModal.placa}
+          onClose={() => setPreviewCnhModal(null)}
+        />
       )}
 
       {/* Floating Toast Notification */}

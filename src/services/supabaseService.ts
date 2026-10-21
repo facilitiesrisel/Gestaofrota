@@ -1360,21 +1360,43 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
     const cleanPlaca = String(item.placa || item.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
     if (!cleanPlaca) return false;
 
-    // Se o anexo de CNH for um data URL ou base64 pesado (> 2KB), envia para o endpoint de CNH do servidor
     let cnhAnexoRef = item.cnhAnexoBase64 || "";
     if (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.length > 2000) {
+      cnhAnexoRef = `/api/cnh/${cleanPlaca}`;
+    }
+
+    // Salva o anexo de CNH no disco / Google Drive via servidor
+    if (item.cnhAnexoBase64 && typeof item.cnhAnexoBase64 === "string" && item.cnhAnexoBase64.length > 2000) {
       try {
         await fetch(`/api/cnh/${cleanPlaca}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ base64: cnhAnexoRef, nomeArquivo: item.cnhNomeArquivo })
+          body: JSON.stringify({ 
+            base64: item.cnhAnexoBase64, 
+            nomeArquivo: item.cnhNomeArquivo,
+            driveUrl: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing"
+          })
         });
-        cnhAnexoRef = `/api/cnh/${cleanPlaca}`;
       } catch (_) {}
     }
 
     const resolvedFilial = item.filial || item.base || "Paulínia";
 
+    const sanitizeTextOnlyObs = (rawObs: any): string => {
+      if (!rawObs || typeof rawObs !== 'string') return "";
+      let s = rawObs.trim();
+      if (s.startsWith("{") && s.endsWith("}")) {
+        try {
+          const parsed = JSON.parse(s);
+          return typeof parsed.observacoes === 'string' ? sanitizeTextOnlyObs(parsed.observacoes) : "";
+        } catch (_) { return ""; }
+      }
+      return s;
+    };
+
+    const cleanObs = sanitizeTextOnlyObs(item.observacoes);
+
+    // Dados leves para a nuvem Supabase (sem anexos pesados de CNH)
     const extraData = JSON.stringify({
       modelo: item.modelo || "Veículo Frota",
       condutor: item.condutor || "Disponível",
@@ -1383,7 +1405,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       cpfCondutor: item.cpfCondutor || "",
       cnhValidade: item.cnhValidade || "",
       cnhNumero: item.cnhNumero || "",
-      cnhAnexoBase64: cnhAnexoRef,
+      cnhDriveFolder: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing",
       cnhNomeArquivo: item.cnhNomeArquivo || "",
       funcao: item.funcao || "",
       setor: item.setor || "",
@@ -1399,7 +1421,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       dataInativacao: item.dataInativacao || "",
       motivoInativacao: item.motivoInativacao || "",
       tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (item.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
-      observacoes: item.observacoes || ""
+      observacoes: cleanObs
     });
 
     const dbRecord: any = {
