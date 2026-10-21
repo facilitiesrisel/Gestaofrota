@@ -92,13 +92,6 @@ const UserDailyUseForm: React.FC = () => {
         }
     });
 
-    // Controle de resgate estrito e privativo para condutor que iniciou viagem em outro navegador
-    const [isLocateTripOpen, setIsLocateTripOpen] = useState(false);
-    const [locatePlate, setLocatePlate] = useState('');
-    const [locateDriverName, setLocateDriverName] = useState('');
-    const [locateError, setLocateError] = useState('');
-    const [locateSuccessTrip, setLocateSuccessTrip] = useState<any | null>(null);
-
     const errorRef = useRef<HTMLDivElement>(null);
     
     const [startFormData, setStartFormData] = useState(initialStartFormData);
@@ -147,39 +140,34 @@ const UserDailyUseForm: React.FC = () => {
 
     // Detecção segura e fidedigna de dispositivo Celular / Smartphone (Mobile / Tablet)
     const checkIsMobileDevice = (): boolean => {
-        if (typeof window === 'undefined') return false;
+        if (typeof window === 'undefined') return true;
         const ua = (navigator.userAgent || navigator.vendor || (window as any).opera || '').toLowerCase();
         
-        // 1. Client Hints modernos da Web API: se o navegador do desktop diz mobile: false, é computador
-        const isMobileData = (navigator as any)?.userAgentData?.mobile;
-        if (typeof isMobileData === 'boolean' && !isMobileData) {
-            return false;
-        }
-
-        // 2. Se for sistema operacional desktop característico (Windows, Mac OS X, Linux x86/64, Chrome OS Desktop)
-        const isDesktopOS = /windows nt|macintosh|mac os x|x11|linux x86_64|cros/i.test(ua);
+        // 1. Se for mobile explícito no User Agent (Android, iPhone, iPad, etc.)
         const hasMobileUAWord = /android|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|crios|fennec|windows phone/i.test(ua);
-        
-        // Computadores com touch screen (ex: Dell/Lenovo touch, monitores touch) continuam sendo computadores!
-        if (isDesktopOS && !hasMobileUAWord) {
-            return false;
-        }
-
-        // 3. Se for mobile explícito no User Agent
         if (hasMobileUAWord) {
             return true;
         }
 
-        // 4. Fallback de tela e ponteiro: se tela for larga (> 1024px) e tiver mouse preciso, é computador
-        const hasFinePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: fine)').matches;
-        if (window.innerWidth > 900 && hasFinePointer) {
+        // 2. Se possuir suporte a toque (touch) e tela de celular/tablet (até 1024px)
+        const hasTouch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+        if (hasTouch && window.innerWidth <= 1024) {
+            return true;
+        }
+
+        // 3. Client Hints modernos da Web API
+        const isMobileData = (navigator as any)?.userAgentData?.mobile;
+        if (typeof isMobileData === 'boolean') {
+            return isMobileData;
+        }
+
+        // 4. Se for desktop tradicional com mouse preciso e sem toque
+        const isDesktopOS = /windows nt|macintosh|mac os x|x11|linux x86_64|cros/i.test(ua);
+        if (isDesktopOS && !hasTouch) {
             return false;
         }
 
-        const hasTouch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
-        const isSmallScreen = window.innerWidth <= 768;
-
-        return Boolean(hasTouch && isSmallScreen);
+        return Boolean(hasTouch || window.innerWidth <= 900);
     };
 
     const [isMobile, setIsMobile] = useState<boolean>(() => checkIsMobileDevice());
@@ -222,28 +210,73 @@ const UserDailyUseForm: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
-    // Viagem ativa: busca no banco primeiro; se o banco estiver lento ou desconectado, usa backup local do aparelho
+    // Viagens atualmente em andamento (estritamente 'Em Uso', sem devolução registrada)
+    const ongoingTrips = useMemo(() => {
+        return dailyTrips.filter(t => {
+            const isCompleted = t.status === ReservationStatus.Completed || 
+                                (t.status as string) === 'Concluída' || 
+                                (t.status as string) === 'Concluida' || 
+                                (t.status as string) === 'Cancelada' || 
+                                Boolean(t.actualReturnDateTime) || 
+                                (t.finalKm != null && Number(t.finalKm) > 0);
+            return !isCompleted && (t.status === ReservationStatus.InUse || (t.status as string) === 'Em Uso');
+        });
+    }, [dailyTrips]);
+
+    // Viagem ativa: busca no banco primeiro; se o banco estiver sincronizando, usa backup local recente
     const activeTrip = useMemo(() => {
-        if (!activeTripId) return null;
-        const tripFromDb = dailyTrips.find(trip => trip.id === activeTripId);
-        if (tripFromDb) return tripFromDb;
-        if (localBackupTrip && (localBackupTrip.id === activeTripId || !localBackupTrip.id)) {
+        let currentId = activeTripId;
+
+        // Se o celular recarregou e perdeu o ID no storage, mas há 1 viagem ativa recente (últimas 24h), recupera automaticamente
+        if (!currentId && ongoingTrips.length === 1) {
+            const single = ongoingTrips[0];
+            const depTime = single.departureDateTime ? new Date(single.departureDateTime).getTime() : 0;
+            if (depTime > 0 && (Date.now() - depTime) < 24 * 60 * 60 * 1000) {
+                return single;
+            }
+        }
+
+        // Se houver backup local com o mesmo veículo de uma viagem em andamento, recupera
+        if (!currentId && localBackupTrip?.vehicleId) {
+            const match = ongoingTrips.find(t => t.vehicleId === localBackupTrip.vehicleId);
+            if (match) return match;
+        }
+
+        if (!currentId) return null;
+
+        const tripFromDb = dailyTrips.find(trip => trip.id === currentId);
+        if (tripFromDb) {
+            // Se no banco a viagem já está Concluída, Cancelada ou com retorno, NUNCA exibe como ativa!
+            const isFinished = tripFromDb.status === ReservationStatus.Completed || 
+                               (tripFromDb.status as string) === 'Concluída' || 
+                               (tripFromDb.status as string) === 'Concluida' || 
+                               (tripFromDb.status as string) === 'Cancelada' || 
+                               Boolean(tripFromDb.actualReturnDateTime) || 
+                               (tripFromDb.finalKm != null && Number(tripFromDb.finalKm) > 0);
+            if (isFinished) {
+                return null;
+            }
+            return tripFromDb;
+        }
+
+        // Se o banco ainda não carregou a lista, consulta backup local recente
+        if (localBackupTrip && (localBackupTrip.id === currentId || !localBackupTrip.id)) {
+            const isLocalFinished = localBackupTrip.status === ReservationStatus.Completed || 
+                                    (localBackupTrip.status as string) === 'Concluída' || 
+                                    Boolean(localBackupTrip.actualReturnDateTime) || 
+                                    (localBackupTrip.finalKm != null && Number(localBackupTrip.finalKm) > 0);
+            if (isLocalFinished) {
+                return null;
+            }
+            const depTime = localBackupTrip.departureDateTime ? new Date(localBackupTrip.departureDateTime).getTime() : 0;
+            if (depTime > 0 && (Date.now() - depTime) > 24 * 60 * 60 * 1000) {
+                return null;
+            }
             return localBackupTrip;
         }
-        try {
-            const raw = localStorage.getItem('activeDailyTripData') || sessionStorage.getItem('activeDailyTripData');
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed) return parsed;
-            }
-        } catch (e) {}
-        return null;
-    }, [activeTripId, dailyTrips, localBackupTrip]);
 
-    // Viagens atualmente em andamento (para caso o motorista precise localizar sua devolução pendente)
-    const ongoingTrips = useMemo(() => {
-        return dailyTrips.filter(t => t.status === ReservationStatus.InUse);
-    }, [dailyTrips]);
+        return null;
+    }, [activeTripId, dailyTrips, localBackupTrip, ongoingTrips]);
 
     // Garante que, havendo activeTripId, ele esteja sempre gravado e preservado na URL e no Storage do aparelho
     useEffect(() => {
@@ -261,20 +294,33 @@ const UserDailyUseForm: React.FC = () => {
         }
     }, [activeTripId]);
 
-    // Validação resiliente: NUNCA apaga do storage se o banco ainda estiver sincronizando ou vazio
+    // Validação resiliente: sincroniza estado e limpa automaticamente qualquer viagem já concluída
     useEffect(() => {
-        const storedId = activeTripId || localStorage.getItem('activeDailyTripId') || sessionStorage.getItem('activeDailyTripId') || searchParams.get('tripId');
+        let storedId = activeTripId || localStorage.getItem('activeDailyTripId') || sessionStorage.getItem('activeDailyTripId') || searchParams.get('tripId');
+        
+        // Auto-recuperação transparente se o condutor estiver no celular e houver 1 viagem em andamento hoje
+        if (!storedId && ongoingTrips.length === 1) {
+            const single = ongoingTrips[0];
+            const depTime = single.departureDateTime ? new Date(single.departureDateTime).getTime() : 0;
+            if (depTime > 0 && (Date.now() - depTime) < 24 * 60 * 60 * 1000) {
+                storedId = single.id;
+            }
+        } else if (!storedId && localBackupTrip?.vehicleId) {
+            const match = ongoingTrips.find(t => t.vehicleId === localBackupTrip.vehicleId);
+            if (match) {
+                storedId = match.id;
+            }
+        }
+
         if (!storedId) {
-            setActiveTripId(null);
+            if (activeTripId !== null) setActiveTripId(null);
             return;
         }
 
-        // Mantém ativo no estado
         if (activeTripId !== storedId) {
             setActiveTripId(storedId);
         }
 
-        // Se o contexto ainda estiver carregando OU se a lista de viagens estiver vazia, NÃO APAGA NADA!
         if (isContextLoading || dailyTrips.length === 0) {
             return;
         }
@@ -282,13 +328,37 @@ const UserDailyUseForm: React.FC = () => {
         const tripFromDb = dailyTrips.find(t => t.id === storedId);
 
         if (tripFromDb) {
-            if (tripFromDb.status === ReservationStatus.InUse) {
+            const isFinished = tripFromDb.status === ReservationStatus.Completed || 
+                               (tripFromDb.status as string) === 'Concluída' || 
+                               (tripFromDb.status as string) === 'Concluida' || 
+                               (tripFromDb.status as string) === 'Cancelada' || 
+                               Boolean(tripFromDb.actualReturnDateTime) || 
+                               (tripFromDb.finalKm != null && Number(tripFromDb.finalKm) > 0);
+
+            if (isFinished) {
+                // Viagem já concluída no banco de dados: limpa imediatamente os dados locais para não persistir viagens antigas
+                localStorage.removeItem('activeDailyTripId');
+                localStorage.removeItem('activeDailyTripData');
+                try {
+                    sessionStorage.removeItem('activeDailyTripId');
+                    sessionStorage.removeItem('activeDailyTripData');
+                    const currentUrl = new URL(window.location.href);
+                    currentUrl.searchParams.delete('tripId');
+                    window.history.replaceState(null, '', currentUrl.toString());
+                } catch (e) {}
+                setActiveTripId(null);
+                setLocalBackupTrip(null);
+                window.dispatchEvent(new Event('risel_daily_trip_updated'));
+            } else if (tripFromDb.status === ReservationStatus.InUse || (tripFromDb.status as string) === 'Em Uso') {
                 setEndFormData(prev => ({ 
                     ...prev, 
                     finalFuelLevel: prev.finalFuelLevel || tripFromDb.initialFuelLevel || FuelLevel.Full 
                 }));
-            } else if (tripFromDb.status === ReservationStatus.Completed || tripFromDb.status === ReservationStatus.Cancelled) {
-                // Viagem confirmadamente finalizada/cancelada no banco de dados: limpa os dados locais e URL
+            }
+        } else if (localBackupTrip) {
+            // Se a lista de viagens do banco já carregou e o backup local for muito antigo (> 24h), limpa
+            const depTime = localBackupTrip.departureDateTime ? new Date(localBackupTrip.departureDateTime).getTime() : 0;
+            if (depTime > 0 && (Date.now() - depTime) > 24 * 60 * 60 * 1000) {
                 localStorage.removeItem('activeDailyTripId');
                 localStorage.removeItem('activeDailyTripData');
                 try {
@@ -303,9 +373,9 @@ const UserDailyUseForm: React.FC = () => {
                 window.dispatchEvent(new Event('risel_daily_trip_updated'));
             }
         }
-    }, [dailyTrips, isContextLoading, activeTripId, searchParams]);
+    }, [dailyTrips, isContextLoading, activeTripId, searchParams, ongoingTrips, localBackupTrip]);
 
-    // Permite que o motorista que abriu a tela em outro navegador vincule seu veículo para retorno
+    // Permite que o motorista vincule seu veículo para retorno caso acerte a placa
     const handleSelectOngoingTrip = (trip: any) => {
         if (!trip || !trip.id) return;
         const vehicle = getVehicleById(trip.vehicleId);
@@ -339,51 +409,7 @@ const UserDailyUseForm: React.FC = () => {
             finalKm: '',
             finalFuelLevel: trip.initialFuelLevel || FuelLevel.Full
         });
-        setIsLocateTripOpen(false);
-        setLocateSuccessTrip(null);
-        setLocatePlate('');
-        setLocateDriverName('');
-        setLocateError('');
         window.dispatchEvent(new Event('risel_daily_trip_updated'));
-    };
-
-    // Conferência restrita: permite que o próprio condutor resgate a sua viagem sem listar viagens de colegas
-    const handleSearchMyTrip = (e: React.FormEvent) => {
-        e.preventDefault();
-        setLocateError('');
-        setLocateSuccessTrip(null);
-
-        const cleanPlate = locatePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
-        const cleanDriver = locateDriverName.trim().toLowerCase();
-
-        if (!cleanPlate) {
-            setLocateError('Informe a placa do veículo.');
-            return;
-        }
-        if (!cleanDriver || cleanDriver.length < 3) {
-            setLocateError('Informe o seu nome (mínimo 3 letras) ou CPF cadastrado.');
-            return;
-        }
-
-        const found = ongoingTrips.find(t => {
-            const veh = getVehicleById(t.vehicleId);
-            const rawT = t as any;
-            const tripPlate = (rawT.plate || veh?.plate || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
-            const tripDriver = (t.driverName || '').toLowerCase().trim();
-            const tripCpf = (rawT.driverCpf || '').replace(/\D/g, '');
-            const searchDigits = cleanDriver.replace(/\D/g, '');
-
-            const plateMatches = tripPlate === cleanPlate;
-            const driverMatches = tripDriver.includes(cleanDriver) || cleanDriver.includes(tripDriver) || (searchDigits.length >= 4 && tripCpf.includes(searchDigits));
-
-            return plateMatches && driverMatches;
-        });
-
-        if (found) {
-            setLocateSuccessTrip(found);
-        } else {
-            setLocateError('Nenhuma viagem em andamento localizada com esta placa e condutor. Certifique-se de que a placa e o nome foram digitados como no momento da saída.');
-        }
     };
 
     // Permite desvincular viagem caso o condutor precise trocar ou cancelar a tela de retorno neste aparelho
@@ -405,12 +431,14 @@ const UserDailyUseForm: React.FC = () => {
     };
 
     const availableVehicles = useMemo(() => {
-        // 1. Vehicles currently in "Daily Use"
+        // 1. Veículos com viagens de "Uso Diário" estritamente em andamento (sem retorno registrado)
         const activeDailyTripVehicleIds = new Set(dailyTrips
-            .filter(trip => trip.status === ReservationStatus.InUse)
+            .filter(trip => (trip.status === ReservationStatus.InUse || (trip.status as string) === 'Em Uso') && 
+                            !trip.actualReturnDateTime && 
+                            (trip.finalKm == null || Number(trip.finalKm) === 0))
             .map(trip => trip.vehicleId));
         
-        // 2. Vehicles currently reserved for "Today" (Overlap check)
+        // 2. Veículos reservados para "Hoje" em andamento ou aprovados (sem encerramento prévio)
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
         const todayEnd = new Date();
@@ -418,13 +446,22 @@ const UserDailyUseForm: React.FC = () => {
 
         const reservedTodayVehicleIds = new Set(reservations
             .filter(r => {
-                if (r.status !== ReservationStatus.Approved && r.status !== ReservationStatus.InUse) return false;
+                const isFinished = r.status === ReservationStatus.Completed || 
+                                   (r.status as string) === 'Concluída' || 
+                                   (r.status as string) === 'Concluida' || 
+                                   Boolean(r.actualReturnDateTime) || 
+                                   (r.finalKm != null && Number(r.finalKm) > 0);
+                if (isFinished) return false;
+
+                const isOngoingOrApproved = r.status === ReservationStatus.Approved || 
+                                            r.status === ReservationStatus.InUse ||
+                                            (r.status as string) === 'Em Uso' ||
+                                            (r.status as string) === 'Aprovada';
+                if (!isOngoingOrApproved) return false;
                 
                 const rStart = new Date(r.departureDateTime); rStart.setHours(0, 0, 0, 0);
                 const rEnd = new Date(r.returnDate); rEnd.setHours(23, 59, 59, 999);
                 
-                // Check if Today overlaps with the reservation period
-                // Overlap: StartA <= EndB AND EndA >= StartB
                 return todayStart <= rEnd && todayEnd >= rStart;
             })
             .map(r => r.vehicleId));
@@ -641,13 +678,6 @@ const UserDailyUseForm: React.FC = () => {
     const handleEndSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
-
-        // Validação de dispositivo obrigatório (Celular) para usuários não-administradores
-        if (!isMobile && !isAdmin) {
-            setError("O encerramento do Uso Diário deve ser realizado exclusivamente pelo Celular para garantir a conferência fidedigna do odômetro e nível do tanque no veículo.");
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            return;
-        }
         
         if (!activeTripId || !activeTrip) {
             setError("Viagem ativa não encontrada.");
@@ -782,8 +812,8 @@ const UserDailyUseForm: React.FC = () => {
         );
     }
     
-    // Informativo para computadores / desktops (para não-administradores)
-    if (!isMobile && !isAdmin) {
+    // Informativo para computadores / desktops (apenas para nova solicitação quando não há viagem em andamento)
+    if (!isMobile && !isAdmin && !activeTrip) {
         return (
             <div className="w-full bg-white md:rounded-[24px] shadow-sm border border-slate-200 overflow-hidden text-left font-sans animate-fadeIn">
                 <DailyUseGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
@@ -1240,118 +1270,8 @@ const UserDailyUseForm: React.FC = () => {
                         </div>
                     </section>
                 ) : (
-                    /* TELA DE REGISTRO DE NOVA SAÍDA (Para novos motoristas que utilizarão outras placas) */
+                    /* TELA DE REGISTRO DE NOVA SAÍDA */
                     <div className="space-y-6">
-                        {/* RESGATE PRIVATIVO E SEGURO: Apenas para quem já iniciou a viagem e precisa resgatar no aparelho sem expor dados de colegas */}
-                        <div className="bg-gradient-to-r from-amber-50 via-white to-orange-50/40 border border-amber-300/70 rounded-2xl p-4 sm:p-5 shadow-xs">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                <div className="flex items-start gap-3">
-                                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 font-bold">
-                                        <KeyRound className="w-4 h-4 text-amber-700" />
-                                    </div>
-                                    <div>
-                                        <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide">
-                                            Já iniciou viagem e precisa concluir a devolução?
-                                        </h4>
-                                        <p className="text-[11px] sm:text-xs text-amber-800 mt-0.5 font-medium">
-                                            Se você já registrou a saída em outro navegador ou limpou os dados deste celular, informe sua placa e nome para abrir <strong>exclusivamente o seu retorno</strong>.
-                                        </p>
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setIsLocateTripOpen(prev => !prev);
-                                        setLocateError('');
-                                        setLocateSuccessTrip(null);
-                                    }}
-                                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0 self-start sm:self-center"
-                                >
-                                    <Search className="w-3.5 h-3.5" />
-                                    <span>{isLocateTripOpen ? 'Fechar Resgate' : 'Resgatar Minha Viagem'}</span>
-                                    {isLocateTripOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                                </button>
-                            </div>
-
-                            {isLocateTripOpen && (
-                                <div className="mt-4 pt-3.5 border-t border-amber-200/80 space-y-3 animate-fadeIn">
-                                    <form onSubmit={handleSearchMyTrip} className="space-y-3">
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <div>
-                                                <label className="block text-[11px] font-black text-amber-950 uppercase tracking-wider mb-1">
-                                                    Placa do Veículo *
-                                                </label>
-                                                <input 
-                                                    type="text"
-                                                    value={locatePlate}
-                                                    onChange={(e) => setLocatePlate(e.target.value.toUpperCase())}
-                                                    placeholder="Ex: BRA2E19"
-                                                    maxLength={8}
-                                                    className="w-full px-3.5 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 uppercase font-mono outline-none focus:ring-2 focus:ring-[#114D38]"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-[11px] font-black text-amber-950 uppercase tracking-wider mb-1">
-                                                    Seu Nome ou CPF (Informado na Saída) *
-                                                </label>
-                                                <input 
-                                                    type="text"
-                                                    value={locateDriverName}
-                                                    onChange={(e) => setLocateDriverName(e.target.value)}
-                                                    placeholder="Digite seu nome ou CPF"
-                                                    className="w-full px-3.5 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[#114D38]"
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {locateError && (
-                                            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-semibold flex items-center gap-2">
-                                                <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
-                                                <span>{locateError}</span>
-                                            </div>
-                                        )}
-
-                                        <div className="flex justify-end gap-2">
-                                            <button
-                                                type="submit"
-                                                className="px-4 py-2 bg-[#114D38] hover:bg-[#0d3b2b] text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm"
-                                            >
-                                                <Search className="w-3.5 h-3.5" />
-                                                <span>Localizar e Conferir</span>
-                                            </button>
-                                        </div>
-                                    </form>
-
-                                    {/* Resultado Positivo Privativo (Apenas a viagem do condutor é exibida) */}
-                                    {locateSuccessTrip && (
-                                        <div className="mt-3 p-4 bg-emerald-50 border-2 border-emerald-500 rounded-xl space-y-2 animate-fadeIn">
-                                            <div className="flex items-center justify-between gap-2">
-                                                <div>
-                                                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200">
-                                                        Viagem Confirmada
-                                                    </span>
-                                                    <h5 className="text-sm font-black text-emerald-950 mt-1 font-mono">
-                                                        {locateSuccessTrip.plate || getVehicleById(locateSuccessTrip.vehicleId)?.plate} • {locateSuccessTrip.model || getVehicleById(locateSuccessTrip.vehicleId)?.model}
-                                                    </h5>
-                                                    <p className="text-xs text-emerald-800 font-semibold mt-0.5">
-                                                        Condutor: <strong>{locateSuccessTrip.driverName}</strong> ({locateSuccessTrip.department})
-                                                    </p>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleSelectOngoingTrip(locateSuccessTrip)}
-                                                    className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all flex items-center gap-1.5 shrink-0"
-                                                >
-                                                    <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-                                                    <span>Vincular a Este Celular</span>
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-
                         {/* FORMULÁRIO DE NOVA VIAGEM */}
                         <section className="transition-all duration-300">
                             {availableVehicles.length > 0 ? (

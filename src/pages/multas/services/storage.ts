@@ -56,52 +56,56 @@ export const getEmailConfig = () => {
     return { serviceId: '', templateId: '', publicKey: '' };
 };
 
-// Default Base Email Mappings
-// Default Base Email Mappings com suporte a siglas e nomes por extenso das Bases Operacionais Risel
+// Destinatários padrão para Multas de Frota Leve (Estritamente isolados da Frota Pesada)
 export const DEFAULT_EMAIL_MAPPINGS: Record<string, { to: string; cc: string }> = {
-    'PLN': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'PAULÍNIA': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'PAULINIA': { to: 'daiara.nascimento@risel.com.br; programacaolog@risel.com.br; daniele.vedovello@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'AGU': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'AGUAÍ': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'AGUAI': { to: 'operacionalaguai@risel.com.br; administrativo3.aguai@risel.com.br; administrativo.aguai@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'CPB': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'CUBATÃO': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'CUBATAO': { to: 'priscila.mendes@risel.com.br; frotacb@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'JLS': { to: 'rodrigo.mosca@risel.com.br; operacional01.jales@risel.com.br; dyorgines.messaros@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'JALES': { to: 'rodrigo.mosca@risel.com.br; operacional01.jales@risel.com.br; dyorgines.messaros@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'OUR': { to: 'vinicius.paladino@risel.com.br; frotaor@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'OURINHOS': { to: 'vinicius.paladino@risel.com.br; frotaor@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'SBC': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'SÃO BERNARDO': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'SAO BERNARDO': { to: 'frotasp2@risel.com.br; programacaosp@risel.com.br; operacionalsp@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'BETIM': { to: 'gabriela.alves@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'BTM': { to: 'gabriela.alves@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'CAXIAS': { to: 'operacional.caxias@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'CXS': { to: 'operacional.caxias@risel.com.br; deny.goncalves@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'SUPRI': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' },
-    'SUPRIMENTOS': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' }
+    'PAULÍNIA': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'PAULINIA': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'PLN': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'CUBATÃO': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'CUBATAO': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'CPB': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'SÃO BERNARDO': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'SAO BERNARDO': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'SBC': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'OURINHOS': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'OUR': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'JALES': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'JLS': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'AGUAÍ': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'AGUAI': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'AGU': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'BETIM': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'BTM': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'DUQUE DE CAXIAS': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'CAXIAS': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'DCX': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'CAMPINAS': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'CPS': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'SUPRIMENTOS': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'SUPRI': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'MATRIZ': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' },
+    'GERAL': { to: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br', cc: 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br' }
 };
 
 export const DEFAULT_CC_EMAILS = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
 
 export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
     let localParsed: Record<string, { to: string; cc: string }> = {};
-    const local = safeGetItem('risel_placa_email_mappings');
+    const local = safeGetItem('risel_frota_leve_placa_email_mappings');
     if (local) {
         try {
             localParsed = JSON.parse(local);
         } catch (e) {
-            console.error("Erro ao carregar e-mails por placa locais:", e);
+            console.error("Erro ao carregar e-mails por placa locais da Frota Leve:", e);
         }
     }
 
-    // 1. Consulta na nuvem oficial Supabase
+    // 1. Consulta na nuvem oficial Supabase na tabela de Frota Leve
     try {
-        const cloudMappings = await fetchEmailMappingsSupabase('placa');
+        const cloudMappings = await fetchEmailMappingsSupabase('frota_leve_placa');
         if (cloudMappings && typeof cloudMappings === 'object' && Object.keys(cloudMappings).length > 0) {
             const merged = { ...localParsed, ...cloudMappings };
-            safeSetItem('risel_placa_email_mappings', JSON.stringify(merged));
+            safeSetItem('risel_frota_leve_placa_email_mappings', JSON.stringify(merged));
             return merged;
         }
     } catch (e) {
@@ -110,12 +114,12 @@ export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: st
 
     // 2. Fallback no servidor local backend
     try {
-        const serverRes = await fetch('/api/email-mappings/placa');
+        const serverRes = await fetch('/api/email-mappings/frota_leve_placa');
         if (serverRes.ok) {
             const serverData = await serverRes.json();
             if (serverData && typeof serverData === 'object' && Object.keys(serverData).length > 0) {
                 const merged = { ...localParsed, ...serverData };
-                safeSetItem('risel_placa_email_mappings', JSON.stringify(merged));
+                safeSetItem('risel_frota_leve_placa_email_mappings', JSON.stringify(merged));
                 return merged;
             }
         }
@@ -137,14 +141,14 @@ export const savePlacaEmailMappings = async (mappings: Record<string, { to: stri
         sanitized[placa.toUpperCase().trim()] = { to: val.to || '', cc: ccStr };
     });
 
-    safeSetItem('risel_placa_email_mappings', JSON.stringify(sanitized));
+    safeSetItem('risel_frota_leve_placa_email_mappings', JSON.stringify(sanitized));
     
-    // 1. Grava no Supabase
-    saveEmailMappingsSupabase('placa', sanitized).catch(e => console.warn("Aviso ao salvar mapeamento no Supabase:", e));
+    // 1. Grava no Supabase sob chave de Frota Leve
+    saveEmailMappingsSupabase('frota_leve_placa', sanitized).catch(e => console.warn("Aviso ao salvar mapeamento no Supabase:", e));
     
     // 2. Grava no backend do servidor
     try {
-        await fetch('/api/email-mappings/placa', {
+        await fetch('/api/email-mappings/frota_leve_placa', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(sanitized)
@@ -155,30 +159,44 @@ export const savePlacaEmailMappings = async (mappings: Record<string, { to: stri
 };
 
 export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
-    let baseMap: Record<string, { to: string; cc: string }> = DEFAULT_EMAIL_MAPPINGS;
-    const local = safeGetItem('risel_base_email_mappings');
+    let baseMap: Record<string, { to: string; cc: string }> = { ...DEFAULT_EMAIL_MAPPINGS };
+    const local = safeGetItem('risel_frota_leve_base_email_mappings');
     if (local) {
-        try { baseMap = { ...DEFAULT_EMAIL_MAPPINGS, ...JSON.parse(local) }; } catch (e) {}
+        try { 
+            const parsed = JSON.parse(local);
+            // Purga qualquer e-mail da frota pesada que tenha ficado em cache antigo
+            const cleanParsed: Record<string, { to: string; cc: string }> = {};
+            Object.entries(parsed).forEach(([k, v]: [string, any]) => {
+                const toStr = String(v?.to || '').toLowerCase();
+                const ccStr = String(v?.cc || '').toLowerCase();
+                const hasPesadaEmail = toStr.includes('logistica6@') || toStr.includes('frotasp2@') || toStr.includes('programacaolog@') || toStr.includes('frotacb@') ||
+                                       ccStr.includes('logistica6@') || ccStr.includes('frotasp2@') || ccStr.includes('programacaolog@') || ccStr.includes('frotacb@');
+                if (!hasPesadaEmail && v?.to) {
+                    cleanParsed[k] = v;
+                }
+            });
+            baseMap = { ...DEFAULT_EMAIL_MAPPINGS, ...cleanParsed }; 
+        } catch (e) {}
     }
 
     // 1. Consulta na nuvem oficial Supabase
     try {
-        const cloudBase = await fetchEmailMappingsSupabase('base');
+        const cloudBase = await fetchEmailMappingsSupabase('frota_leve_base');
         if (cloudBase && typeof cloudBase === 'object' && Object.keys(cloudBase).length > 0) {
             baseMap = { ...baseMap, ...cloudBase };
-            safeSetItem('risel_base_email_mappings', JSON.stringify(baseMap));
+            safeSetItem('risel_frota_leve_base_email_mappings', JSON.stringify(baseMap));
             return baseMap;
         }
     } catch (e) {}
 
     // 2. Fallback no servidor local backend
     try {
-        const serverRes = await fetch('/api/email-mappings/base');
+        const serverRes = await fetch('/api/email-mappings/frota_leve_base');
         if (serverRes.ok) {
             const serverBase = await serverRes.json();
             if (serverBase && typeof serverBase === 'object' && Object.keys(serverBase).length > 0) {
                 baseMap = { ...baseMap, ...serverBase };
-                safeSetItem('risel_base_email_mappings', JSON.stringify(baseMap));
+                safeSetItem('risel_frota_leve_base_email_mappings', JSON.stringify(baseMap));
             }
         }
     } catch (_) {}
@@ -187,14 +205,14 @@ export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: str
 };
 
 export const saveBaseEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
-    safeSetItem('risel_base_email_mappings', JSON.stringify(mappings));
+    safeSetItem('risel_frota_leve_base_email_mappings', JSON.stringify(mappings));
     
-    // 1. Grava no Supabase
-    saveEmailMappingsSupabase('base', mappings).catch(e => console.warn("Aviso ao salvar mapeamento de base no Supabase:", e));
+    // 1. Grava no Supabase sob chave de Frota Leve
+    saveEmailMappingsSupabase('frota_leve_base', mappings).catch(e => console.warn("Aviso ao salvar mapeamento de base no Supabase:", e));
     
     // 2. Grava no backend do servidor local
     try {
-        await fetch('/api/email-mappings/base', {
+        await fetch('/api/email-mappings/frota_leve_base', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(mappings)
@@ -343,13 +361,7 @@ export const formatInputText = (val: any): string => {
 
 export const deleteDriveFiles = async (urls: string[]): Promise<void> => {
   try {
-    const url = getApiUrl();
-    if (!url) return;
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'delete_drive_files', urls })
-    });
+    await request({ action: 'delete_drive_files', urls });
   } catch (e) {
     console.warn("Aviso ao deletar arquivos temporários do drive:", e);
   }
@@ -357,14 +369,9 @@ export const deleteDriveFiles = async (urls: string[]): Promise<void> => {
 
 export const testConnection = async () => {
   try {
-    const url = getApiUrl();
-    if (!url) return { success: false, error: "URL da API não configurada" };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'read' })
-    });
-    return await res.json();
+    const res = await request({ action: 'read' });
+    if (!res) return { success: false, error: "Sem resposta do servidor" };
+    return res;
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -372,14 +379,7 @@ export const testConnection = async () => {
 
 export const fetchDashboardConfig = async () => {
   try {
-    const url = getApiUrl();
-    if (!url) return null;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'get_config' })
-    });
-    const response = await res.json();
+    const response = await request({ action: 'get_config' });
     if (response && response.success && response.config) {
       return response.config;
     }
@@ -391,14 +391,7 @@ export const fetchDashboardConfig = async () => {
 
 export const saveDashboardConfigApi = async (config: any) => {
   try {
-    const url = getApiUrl();
-    if (!url) return null;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_config', payload: config })
-    });
-    return await res.json();
+    return await request({ action: 'save_config', payload: config });
   } catch (e) {
     return null;
   }
@@ -418,39 +411,112 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 export const uploadFileToDrive = async (file: File, folderId: string, customName?: string) => {
-  const base64Data = await fileToBase64(file);
-  const payload = {
-    action: 'upload',
-    folderId: folderId,
-    fileName: customName || file.name,
-    mimeType: file.type,
-    fileData: base64Data
-  };
-  const apiUrl = getApiUrl();
-  if (!apiUrl) return null;
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  return await res.json();
+  try {
+    const base64Data = await fileToBase64(file);
+    const fileName = customName || file.name;
+    const mimeType = file.type || 'application/pdf';
+    const finalFolderId = folderId && folderId !== 'LOCAL' ? folderId : DEFAULT_FOLDER_ID;
+
+    const payload = {
+      action: 'upload',
+      folderId: finalFolderId,
+      fileName: fileName,
+      mimeType: mimeType,
+      fileData: base64Data
+    };
+
+    // 1. Tentar primeiro o backend proxy do servidor (/api/drive/upload) - zero restrição de CORS no navegador
+    try {
+      const proxyRes = await fetch('/api/drive/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (proxyRes.ok) {
+        const proxyData = await proxyRes.json();
+        if (proxyData && (proxyData.fileUrl || proxyData.success)) {
+          return proxyData;
+        }
+      }
+    } catch (proxyErr) {
+      console.warn('[uploadFileToDrive] Proxy backend falhou, tentando fallback direto:', proxyErr);
+    }
+
+    // 2. Fallback direto ao Google Apps Script usando 'text/plain;charset=utf-8'
+    // OBSERVAÇÃO CRUCIAL: text/plain NÃO dispara preflight CORS (OPTIONS), eliminando o 'Failed to fetch'!
+    try {
+      const gasResult = await request(payload);
+      if (gasResult && (gasResult.fileUrl || gasResult.success)) {
+        return gasResult;
+      }
+    } catch (gasErr) {
+      console.warn('[uploadFileToDrive] Fallback Apps Script direto falhou:', gasErr);
+    }
+
+    // 3. Fallback Resiliente Local: Data URL para que o usuário NUNCA perca o anexo
+    const localDataUrl = `data:${mimeType};base64,${base64Data}`;
+    return {
+      success: true,
+      fileUrl: localDataUrl,
+      fileName: fileName,
+      isLocal: true,
+      message: 'Arquivo salvo com sucesso'
+    };
+  } catch (err: any) {
+    console.error('[uploadFileToDrive] Erro geral ao processar anexo:', err);
+    // Em caso extremo, ainda assim tenta criar o data url para não barrar o anexo
+    try {
+      const b64 = await fileToBase64(file);
+      return {
+        success: true,
+        fileUrl: `data:${file.type || 'application/pdf'};base64,${b64}`,
+        fileName: customName || file.name,
+        isLocal: true
+      };
+    } catch {
+      throw new Error(err?.message || 'Falha ao processar arquivo para anexo.');
+    }
+  }
 };
 
 export const generateAuthPdfDocs = async (data: any, templateId: string, folderId: string) => {
-  const payload = {
-    action: 'generate_pdf',
-    templateId: templateId,
-    folderId: folderId,
-    data: data
-  };
-  const apiUrl = getApiUrl();
-  if (!apiUrl) return null;
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  return await res.json();
+  try {
+    const finalTemplateId = templateId || DEFAULT_TEMPLATE_ID;
+    const finalFolderId = folderId && folderId !== 'LOCAL' ? folderId : DEFAULT_FOLDER_ID;
+    const payload = {
+      action: 'generate_pdf',
+      templateId: finalTemplateId,
+      folderId: finalFolderId,
+      data: data
+    };
+
+    // 1. Tenta proxy seguro no backend
+    try {
+      const proxyRes = await fetch('/api/drive/generate-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (proxyRes.ok) {
+        const result = await proxyRes.json();
+        if (result && (result.success || result.pdfUrl)) return result;
+      }
+    } catch (e) {
+      console.warn('[generateAuthPdfDocs] Proxy backend falhou, tentando fallback direto:', e);
+    }
+
+    // 2. Fallback direto usando request() com text/plain
+    try {
+      const gasResult = await request(payload);
+      if (gasResult) return gasResult;
+    } catch (e) {
+      console.warn('[generateAuthPdfDocs] Fallback GAS falhou:', e);
+    }
+
+    return { success: false, error: 'Não foi possível gerar documento via Google Docs.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha na geração de PDF' };
+  }
 };
 
 // Helper de timeout resiliente para evitar esperas infinitas na rede

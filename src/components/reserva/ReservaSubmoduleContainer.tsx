@@ -54,13 +54,13 @@ service cloud.firestore {
   }
 }`;
 
-const PublicLayout: React.FC = () => {
+const PublicLayout: React.FC<{ initialSub?: string }> = ({ initialSub }) => {
     const { permissionError } = useReservations();
     const location = useLocation();
     const isFrotaRoute = location.pathname.startsWith("/frota");
     
     const [searchParams, setSearchParams] = useSearchParams();
-    const rawPublicView = searchParams.get("sub") || "request";
+    const rawPublicView = searchParams.get("sub") || initialSub || "request";
     const publicView = rawPublicView === 'logout_reservas' ? 'login' : rawPublicView;
 
     const [preSelectedVehicleId, setPreSelectedVehicleId] = useState<string | null>(null);
@@ -275,7 +275,7 @@ const PublicLayout: React.FC = () => {
     );
 };
 
-const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean }> = ({ forcePublic = false }) => {
+const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean; initialSub?: string }> = ({ forcePublic = false, initialSub }) => {
     const { user: globalUser } = useGlobalAuth();
     const { user: fbUser, signOut: handleFbLogout, loading } = useAuth();
     const [searchParams] = useSearchParams();
@@ -332,22 +332,22 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean }> = ({ forcePubli
 
     // Se estiver em modo público forçado (link público para solicitantes), nunca expõe a área administrativa
     if (forcePublic) {
-        return <PublicLayout />;
+        return <PublicLayout initialSub={initialSub} />;
     }
 
     return isUserAdmin ? (
         <AdminDashboard onLogout={handleLogout} />
     ) : (
-        <PublicLayout />
+        <PublicLayout initialSub={initialSub} />
     );
 };
 
-export const ReservaSubmoduleContainer: React.FC<{ forcePublic?: boolean }> = ({ forcePublic = false }) => {
+export const ReservaSubmoduleContainer: React.FC<{ forcePublic?: boolean; initialSub?: string }> = ({ forcePublic = false, initialSub }) => {
     return (
         <ReservationAuthProvider>
             <ReservationProvider>
                 <div className="relative w-full h-full text-left font-sans text-slate-800 antialiased flex flex-col flex-1 min-h-0 overflow-hidden">
-                    <ReservaSubmoduleInner forcePublic={forcePublic} />
+                    <ReservaSubmoduleInner forcePublic={forcePublic} initialSub={initialSub} />
                 </div>
             </ReservationProvider>
         </ReservationAuthProvider>

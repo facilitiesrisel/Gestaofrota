@@ -4,7 +4,7 @@
     "destinationCity": "São Sebastião",
     "purpose": "REUNIÃO DE SIMULADO EM SÃO SEBASTIÃO  E SIMULADO EM IGUAPE. CLIENTE DAS BALSAS.",
     "destination": "ABASTECIMENTO DAS BALSAS ",
-    "status": "Pendente",
+    "status": "Concluída",
     "department": "Ssma",
     "vehicleId": "XuYyZJW72zSYLi03GvY2",
     "returnDate": "2026-10-19T11:00:00.000Z",
@@ -14,7 +14,9 @@
     "driverName": "RAFAEL GARCIA ORTEGA",
     "id": "res_1791478769791_2wwl8ms",
     "distanceKm": 470,
-    "departureDateTime": "2026-10-13T20:00:00.000Z"
+    "departureDateTime": "2026-10-13T20:00:00.000Z",
+    "actualReturnDateTime": "2026-10-19T21:00:00.000Z",
+    "updatedAt": "2026-10-21T13:37:23.633Z"
   },
   {
     "requesterName": "LEONARDO HENRIQUE RODRIGUES POIATI",

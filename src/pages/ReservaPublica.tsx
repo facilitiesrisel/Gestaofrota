@@ -9,12 +9,18 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
   const [copied, setCopied] = useState(false);
 
   // Monitora viagem em andamento salva no dispositivo do condutor
-  const [pendingTrip, setPendingTrip] = useState<{ id: string; plate?: string; driverName?: string; model?: string } | null>(() => {
+  const [pendingTrip, setPendingTrip] = useState<{ id: string; plate?: string; driverName?: string; model?: string; status?: string; finalKm?: number } | null>(() => {
     try {
       const id = localStorage.getItem('activeDailyTripId');
       const rawData = localStorage.getItem('activeDailyTripData');
       if (id && rawData) {
-        return JSON.parse(rawData);
+        const parsed = JSON.parse(rawData);
+        if (parsed?.status === 'Concluída' || parsed?.status === 'Concluida' || parsed?.finalKm != null) {
+          localStorage.removeItem('activeDailyTripId');
+          localStorage.removeItem('activeDailyTripData');
+          return null;
+        }
+        return parsed;
       }
       if (id) {
         return { id };
@@ -26,10 +32,57 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
   useEffect(() => {
     const checkPending = () => {
       try {
-        const id = localStorage.getItem('activeDailyTripId');
+        const id = localStorage.getItem('activeDailyTripId') || new URLSearchParams(window.location.search).get('tripId');
+        if (!id) {
+          setPendingTrip(null);
+          return;
+        }
+
+        // Verifica na lista de viagens sincronizadas no cache do navegador
+        const cachedTripsRaw = localStorage.getItem('risel_daily_trips');
+        if (cachedTripsRaw) {
+          try {
+            const trips = JSON.parse(cachedTripsRaw);
+            if (Array.isArray(trips)) {
+              const trip = trips.find((t: any) => t.id === id);
+              if (trip) {
+                const isFinished = trip.status === 'Concluída' || 
+                                   trip.status === 'Concluida' || 
+                                   trip.status === 'Completed' || 
+                                   trip.status === 'Cancelada' || 
+                                   trip.status === 'Cancelled' || 
+                                   Boolean(trip.actualReturnDateTime) || 
+                                   (trip.finalKm != null && Number(trip.finalKm) > 0);
+                if (isFinished) {
+                  localStorage.removeItem('activeDailyTripId');
+                  localStorage.removeItem('activeDailyTripData');
+                  setPendingTrip(null);
+                  return;
+                }
+                setPendingTrip(trip);
+                return;
+              }
+            }
+          } catch (e) {}
+        }
+
         const rawData = localStorage.getItem('activeDailyTripData');
-        if (id && rawData) {
-          setPendingTrip(JSON.parse(rawData));
+        if (rawData) {
+          const parsed = JSON.parse(rawData);
+          if (parsed?.status === 'Concluída' || parsed?.status === 'Concluida' || parsed?.finalKm != null) {
+            localStorage.removeItem('activeDailyTripId');
+            localStorage.removeItem('activeDailyTripData');
+            setPendingTrip(null);
+            return;
+          }
+          const depTime = parsed?.departureDateTime ? new Date(parsed.departureDateTime).getTime() : 0;
+          if (depTime > 0 && (Date.now() - depTime) > 48 * 60 * 60 * 1000) {
+            localStorage.removeItem('activeDailyTripId');
+            localStorage.removeItem('activeDailyTripData');
+            setPendingTrip(null);
+            return;
+          }
+          setPendingTrip(parsed);
         } else if (id) {
           setPendingTrip({ id });
         } else {
@@ -40,6 +93,7 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
       }
     };
 
+    checkPending();
     window.addEventListener('storage', checkPending);
     window.addEventListener('risel_daily_trip_updated', checkPending);
     return () => {
@@ -60,6 +114,15 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
   // Se o condutor abrir o link no celular e tiver viagem de uso diário em andamento, abre direto em 'dailyUse'
   const defaultSub = pendingTrip?.id ? "dailyUse" : (initialView || "request");
   const activeSub = (urlSub && urlSub !== 'login' && urlSub !== 'admin') ? urlSub : defaultSub;
+
+  // Garante que, ao abrir no celular com viagem pendente, a URL e as abas sincronizem imediatamente
+  useEffect(() => {
+    if (!urlSub && pendingTrip?.id) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('sub', 'dailyUse');
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [urlSub, pendingTrip, searchParams, setSearchParams]);
 
   const handleCopyLink = () => {
     const fullUrl = `${window.location.origin}/reservas`;
@@ -190,7 +253,7 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
 
       {/* Conteúdo Principal 100% isolado de outros módulos */}
       <main className="flex-1 w-full flex flex-col min-h-0">
-        <ReservaSubmoduleContainer forcePublic={true} />
+        <ReservaSubmoduleContainer forcePublic={true} initialSub={activeSub} />
       </main>
 
       {/* Rodapé Institucional Simples */}

@@ -460,12 +460,22 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   }, []);
   
   const endTrip = useCallback(async (tripId: string, returnDateTime: Date, finalKm: number, finalFuelLevel: FuelLevel) => {
-      const trip = dailyTrips.find(t => t.id === tripId);
-      if (!trip) {
-          console.error("Trip not found for ending:", tripId);
-          throw new Error("Viagem não encontrada. Não foi possível finalizar.");
-      }
+      let trip = dailyTrips.find(t => t.id === tripId);
       
+      // Fallback resiliente: se a lista dailyTrips ainda não carregou do Firestore no celular, busca no storage local
+      let vehicleId = trip?.vehicleId;
+      if (!vehicleId) {
+          try {
+              const raw = localStorage.getItem('activeDailyTripData') || sessionStorage.getItem('activeDailyTripData');
+              if (raw) {
+                  const parsed = JSON.parse(raw);
+                  if (parsed && (parsed.id === tripId || !parsed.id)) {
+                      vehicleId = parsed.vehicleId;
+                  }
+              }
+          } catch (e) {}
+      }
+
       // STEP 1: End the Trip (Update DailyUse Collection)
       try {
         await firebaseApi.endDailyUseTrip(tripId, { actualReturnDateTime: returnDateTime, finalKm, finalFuelLevel });
@@ -478,12 +488,23 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         throw new Error("Falha ao finalizar a viagem. Verifique sua conexão e tente novamente.");
       }
 
+      // Atualiza o estado local imediatamente
+      setDailyTrips(prev => prev.map(t => t.id === tripId ? {
+          ...t,
+          status: ReservationStatus.Completed,
+          actualReturnDateTime: returnDateTime,
+          finalKm,
+          finalFuelLevel
+      } : t));
+
       // STEP 2: Update Vehicle Odometer (Update Vehicles Collection)
-      try {
-        await firebaseApi.updateVehicle(trip.vehicleId, { lastKm: finalKm });
-        checkAndSendMaintenanceAlert(trip.vehicleId, finalKm);
-      } catch (error: any) {
-        console.warn("Warning: Failed to update vehicle mileage after ending trip (likely permission issue):", error);
+      if (vehicleId) {
+        try {
+          await firebaseApi.updateVehicle(vehicleId, { lastKm: finalKm });
+          checkAndSendMaintenanceAlert(vehicleId, finalKm);
+        } catch (error: any) {
+          console.warn("Warning: Failed to update vehicle mileage after ending trip (likely permission issue):", error);
+        }
       }
   }, [dailyTrips, vehicles]);
 

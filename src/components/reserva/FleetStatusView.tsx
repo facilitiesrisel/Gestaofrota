@@ -329,7 +329,10 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation,
         const formatDateTime = (date: Date) => new Date(date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
         const activeDailyTrip = dailyTrips.find(
-            trip => trip.vehicleId === vehicle.id && trip.status === ReservationStatus.InUse
+            trip => trip.vehicleId === vehicle.id && 
+                    (trip.status === ReservationStatus.InUse || (trip.status as string) === 'Em Uso') &&
+                    !trip.actualReturnDateTime &&
+                    (trip.finalKm == null || Number(trip.finalKm) === 0)
         );
 
         if (activeDailyTrip) {
@@ -351,7 +354,12 @@ const FleetStatusView: React.FC<FleetStatusViewProps> = ({ onRequestReservation,
             };
         }
 
-        const activeReservation = reservations.find(r => r.vehicleId === vehicle.id && r.status === ReservationStatus.InUse);
+        const activeReservation = reservations.find(r => 
+            r.vehicleId === vehicle.id && 
+            (r.status === ReservationStatus.InUse || (r.status as string) === 'Em Uso') &&
+            !r.actualReturnDateTime &&
+            (r.finalKm == null || Number(r.finalKm) === 0)
+        );
 
         if (activeReservation) {
              return { 

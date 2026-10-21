@@ -260,7 +260,7 @@ export const fetchVehicleHistory = async (plate: string, startDate: Date, endDat
 
         const json = await response.json();
         
-        if (json && Array.isArray(json.data)) {
+        if (json && Array.isArray(json.data) && json.data.length > 0) {
             return json.data.map((item: any) => ({
                 ...item,
                 gpsTime: parseGeoFrotasDate(item.gpsTime || item.lastUpdate)
@@ -269,28 +269,9 @@ export const fetchVehicleHistory = async (plate: string, startDate: Date, endDat
         
         return [];
     } catch (error) {
-        console.error("Falha ao buscar histórico de trajetos:", error);
-        // Em histórico de trajeto específico, podemos retornar trajetos simulados do veículo
-        const fallbackList: GeoFrotasPosition[] = [];
-        const clean = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        const charCodeSum = clean.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
-        
-        // Gerar 10 pontos de deslocamento em Paulínia
-        for (let i = 0; i < 10; i++) {
-            const fraction = i / 9;
-            const lat = -22.7682 + Math.sin(fraction * Math.PI) * 0.005 + ((charCodeSum % 100) - 50) * 0.0002;
-            const lng = -47.1539 + fraction * 0.015 + ((charCodeSum % 100) - 50) * 0.0002;
-            
-            fallbackList.push({
-                plate,
-                speed: 40 + Math.sin(i) * 20,
-                ignitionStatus: true,
-                gpsTime: new Date(startDate.getTime() + fraction * (endDate.getTime() - startDate.getTime())).toISOString(),
-                geoLocation: `${lat},${lng}`,
-                address: `Rodovia SP-332, Paulínia - SP`
-            } as any);
-        }
-        return fallbackList;
+        console.warn(`[GeoFrotas] Nenhum histórico de telemetria real encontrado para a placa ${plate}:`, error);
+        // Regra estrita: Se o veículo não possui rastreador ou não há telemetria registrada, retorna lista vazia
+        return [];
     }
 };
 

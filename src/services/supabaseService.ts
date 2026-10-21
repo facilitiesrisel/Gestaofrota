@@ -2822,7 +2822,7 @@ export async function saveChecklistSupabase(checklist: any): Promise<boolean> {
 }
 
 // 15. MAPEAMENTOS DE E-MAIL (CONFIGURAÇÕES DE MULTAS & FROTA)
-export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base'): Promise<any | null> {
+export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base' | 'frota_leve_placa' | 'frota_leve_base' | string): Promise<any | null> {
   // 1. Consulta prioritária no backend local oficial
   try {
     const res = await fetch(`/api/email-mappings/${tipo}`);
@@ -2850,7 +2850,7 @@ export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base'): Promis
   }
 }
 
-export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base', mappings: any): Promise<boolean> {
+export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base' | 'frota_leve_placa' | 'frota_leve_base' | string, mappings: any): Promise<boolean> {
   let serverOk = false;
   // 1. Grava no backend local oficial
   try {

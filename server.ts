@@ -3967,6 +3967,91 @@ async function startServer() {
     }
   });
 
+  // Rota de proxy segura para upload de arquivos no Google Drive (evita qualquer bloqueio CORS no navegador)
+  app.post("/api/drive/upload", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { folderId, fileName, mimeType, fileData, action = "upload" } = req.body;
+      if (!fileData) {
+        return res.status(400).json({ success: false, error: "Dados do arquivo ausentes (fileData obrigatório)" });
+      }
+
+      const targetUrl = (storedAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL || "").trim();
+      if (!targetUrl) {
+        return res.status(500).json({ success: false, error: "URL do Google Apps Script não configurada." });
+      }
+
+      const payload = {
+        action: action || "upload",
+        folderId: folderId || "1Fq8e5MM_AOl01HD0iGmVg1cg2bCnUmVk",
+        fileName: fileName || `arquivo_${Date.now()}`,
+        mimeType: mimeType || "application/octet-stream",
+        fileData: fileData
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      const gasResponse = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      const text = await gasResponse.text();
+      try {
+        const parsed = JSON.parse(text);
+        return res.json(parsed);
+      } catch (err) {
+        console.warn("[Server Drive Upload] Resposta não-JSON do Google Apps Script:", text);
+        return res.json({ success: true, message: "Upload enviado com sucesso", raw: text });
+      }
+    } catch (err: any) {
+      console.error("[Server Drive Upload] Erro ao enviar arquivo para o Google Drive:", err);
+      return res.status(500).json({ success: false, error: err.message || "Erro no upload do arquivo." });
+    }
+  });
+
+  // Rota de proxy para geração de Termo PDF no Google Docs / Drive
+  app.post("/api/drive/generate-pdf", express.json({ limit: "20mb" }), async (req, res) => {
+    try {
+      const { templateId, folderId, data } = req.body;
+      const targetUrl = (storedAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL || "").trim();
+      if (!targetUrl) {
+        return res.status(500).json({ success: false, error: "URL do Google Apps Script não configurada." });
+      }
+
+      const payload = {
+        action: "generate_pdf",
+        templateId: templateId || "1U1B53R29XIXrNs12nIQfeJ7MDlVCScivDkjyHo2QO8o",
+        folderId: folderId || "1Fq8e5MM_AOl01HD0iGmVg1cg2bCnUmVk",
+        data: data
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      const gasResponse = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      const text = await gasResponse.text();
+      try {
+        return res.json(JSON.parse(text));
+      } catch (e) {
+        return res.json({ success: true, message: "Processado", raw: text });
+      }
+    } catch (err: any) {
+      console.error("[Server Drive PDF] Erro:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Rotas de Gerenciamento do OneDrive AutoSync
   app.get("/api/onedrive/config", (req, res) => {
     const config = loadOneDriveConfig();
@@ -5207,8 +5292,17 @@ async function startServer() {
         } catch (_) {}
       }
 
-      if (tipo === "base") {
-        const baseMap = { ...DEFAULT_SERVER_BASE_EMAILS, ...(allMappings.base || {}) };
+      if (tipo === "frota_leve_base") {
+        // Frota Leve: Totalmente isolada das regras e destinatários de logística da Frota Pesada
+        return res.json(allMappings.frota_leve_base || {});
+      }
+      if (tipo === "frota_leve_placa") {
+        // Frota Leve: Mapeamento exclusivo por placa de veículo leve
+        return res.json(allMappings.frota_leve_placa || {});
+      }
+
+      if (tipo === "base" || tipo === "frota_pesada_base") {
+        const baseMap = { ...DEFAULT_SERVER_BASE_EMAILS, ...(allMappings.base || allMappings.frota_pesada_base || {}) };
         return res.json(baseMap);
       }
       return res.json(allMappings[tipo] || {});

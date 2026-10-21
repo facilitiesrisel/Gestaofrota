@@ -945,6 +945,13 @@ const docToDailyTrip = (doc: any): DailyTrip | null => {
     
     if (!vehicleId) return null;
 
+    const returnDate = convertOptionalFirestoreDate(data.actualReturnDateTime || data.returnDate || data.dataRetorno);
+    const finalKmNum = data.finalKm != null && !isNaN(Number(data.finalKm)) ? Number(data.finalKm) : undefined;
+    
+    // Se a viagem já possui retorno ou km final preenchidos, ela está garantidamente concluída
+    const isActuallyCompleted = Boolean(returnDate || finalKmNum !== undefined);
+    const resolvedStatus = isActuallyCompleted ? ReservationStatus.Completed : normalizeStatus(data.status || 'Em Uso');
+
     return {
         id: doc.id,
         requesterName: data.requesterName || driverName,
@@ -955,9 +962,9 @@ const docToDailyTrip = (doc: any): DailyTrip | null => {
         destination: data.destination || data.localDestino || '',
         destinationCity: data.destinationCity || data.cidadeDestino || '',
         distanceKm: data.distanceKm || data.kmPercorrido,
-        status: normalizeStatus(data.status || 'Em Uso') as any,
-        actualReturnDateTime: convertOptionalFirestoreDate(data.actualReturnDateTime || data.returnDate || data.dataRetorno),
-        finalKm: data.finalKm != null ? Number(data.finalKm) : undefined,
+        status: resolvedStatus as any,
+        actualReturnDateTime: returnDate,
+        finalKm: finalKmNum,
         purpose: data.purpose || data.motivo || '',
         initialKm: data.initialKm != null ? Number(data.initialKm) : undefined,
         initialFuelLevel: data.initialFuelLevel || data.fuelLevel,

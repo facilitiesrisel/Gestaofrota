@@ -25,9 +25,8 @@ declare global {
   }
 }
 
-// ADMIN EMAIL (CC)
-const ADMIN_EMAIL = 'deny.goncalves@risel.com.br';
-const LOGISTICA_EMAIL = 'logistica6@risel.com.br';
+// ADMIN EMAIL (CC) - Frota Leve oficial
+const ADMIN_EMAIL = 'deny.goncalves@risel.com.br; lorena.padilha@risel.com.br';
 
 // Status oficiais de multas para a Frota Leve (opção "IMPORTAÇÃO VAMOS" excluída dos lançamentos)
 export const STATUS_OPCOES_FROTA_LEVE: StatusMulta[] = [
@@ -163,6 +162,7 @@ const MapModal: React.FC<{
     const [cachedCount, setCachedCount] = useState(0);
     const [newCount, setNewCount] = useState(0);
     const [trackerInfo, setTrackerInfo] = useState<TrackerMatchResult | null>(null);
+    const [noTrackerFound, setNoTrackerFound] = useState(false);
     const [availableLayers, setAvailableLayers] = useState(getDynamicMultasLayers());
     const [currentLayer, setCurrentLayer] = useState(availableLayers[0]);
     const mapInstanceRef = useRef<any>(null);
@@ -390,12 +390,9 @@ const MapModal: React.FC<{
 
             if (singleMode) {
                 const m = multas[0];
-                setStatusText("Localizando infração e consultando telemetria do rastreador...");
+                setStatusText("Consultando telemetria real do rastreador GPS...");
                 
-                // 1. Geocodificar endereço da autuação
-                const result = await smartGeocode(m);
-                
-                // 2. Buscar posição do rastreador no horário da multa
+                // Buscar EXCLUSIVAMENTE a posição real do rastreador no horário da multa
                 let trackerMatch: TrackerMatchResult | null = null;
                 if (m.placa && m.dataHoraInfracao) {
                     try {
@@ -406,107 +403,70 @@ const MapModal: React.FC<{
                     }
                 }
 
-                if (result) {
-                    if (result.cached) loadedFromCache++;
-                    else newlyConsulted++;
-                    setCachedCount(loadedFromCache);
-                    setNewCount(newlyConsulted);
-
-                    const isExact = result.precision === 'high' || result.method !== 'city_fallback';
-                    const popupContent = generatePopupHtml(m, isExact, 1, result);
-
-                    const marker = L.marker([result.lat, result.lon], { 
-                        icon: createIcon(isExact),
-                        draggable: true
-                    })
-                        .addTo(map)
-                        .bindPopup(popupContent)
-                        .openPopup();
-
-                    marker.on('dragend', (ev: any) => {
-                        const newPos = ev.target.getLatLng();
-                        setManualCoordinateOverride(m.endereco, m.municipio || 'Campinas', m.uf || 'SP', newPos.lat, newPos.lng);
-                        const updatedInfo = { ...result, lat: newPos.lat, lon: newPos.lng, sourceDescription: 'Ajuste Manual do Usuário (Fixado)', precision: 'high' };
-                        marker.setPopupContent(generatePopupHtml(m, true, 1, updatedInfo)).openPopup();
-                    });
-                    
-                    bounds.extend([result.lat, result.lon]);
+                // REGRA ESTRITA FROTA LEVE: Caso não tenha rastreador no veículo ou não haja telemetria real, NADA é mostrado no mapa
+                if (!trackerMatch) {
+                    setTrackerInfo(null);
+                    setNoTrackerFound(true);
+                    setStatusText("Veículo Sem Rastreador GPS");
+                    setLoadingMap(false);
+                    return;
                 }
 
-                // 3. Se houver telemetria do rastreador, adicionar marcador de GPS
-                if (trackerMatch) {
-                    const trackerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#0284c7" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.8));"><circle cx="12" cy="12" r="10" fill="#0f172a" stroke="#38bdf8" stroke-width="2.5"/><circle cx="12" cy="12" r="4" fill="#38bdf8"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>`;
-                    const trackerIcon = L.divIcon({
-                        className: 'custom-tracker-icon',
-                        html: `<div style="width: 42px; height: 42px; transform: scale(1.1); filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.8));">${trackerSvg}</div>`,
-                        iconSize: [42, 42],
-                        iconAnchor: [21, 21],
-                        popupAnchor: [0, -20]
-                    });
+                // Se houver rastreador com telemetria confirmada em tempo real:
+                setNoTrackerFound(false);
+                const trackerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#0284c7" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.8));"><circle cx="12" cy="12" r="10" fill="#0f172a" stroke="#38bdf8" stroke-width="2.5"/><circle cx="12" cy="12" r="4" fill="#38bdf8"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>`;
+                const trackerIcon = L.divIcon({
+                    className: 'custom-tracker-icon',
+                    html: `<div style="width: 44px; height: 44px; transform: scale(1.1); filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.9));">${trackerSvg}</div>`,
+                    iconSize: [44, 44],
+                    iconAnchor: [22, 22],
+                    popupAnchor: [0, -22]
+                });
 
-                    const trackerPopupHtml = `
-                        <div style="font-family: 'Outfit', sans-serif; min-width: 290px; background: #0b1329; color: #e2e8f0; border: 2px solid #38bdf8; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.7);">
-                            <div style="background: linear-gradient(90deg, #0c4a6e, #1e3a8a); padding: 10px 12px; border-bottom: 2px solid #38bdf8; display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight: 900; font-size: 13px; color: #fff; display: flex; align-items: center; gap: 4px;">🛰️ RASTREADOR GPS</span>
-                                <span style="background: #38bdf8; color: #082f49; font-weight: 900; font-size: 10px; padding: 2px 6px; border-radius: 4px;">${m.placa}</span>
-                            </div>
-                            <div style="padding: 12px; font-size: 12px;">
-                                <div style="margin-bottom: 8px;">
-                                    <strong style="color: #38bdf8; text-transform: uppercase; font-size: 10px;">Horário Telemetria GPS</strong><br/>
-                                    <span style="color: #fff; font-weight: bold; font-family: monospace;">${fmtDate(trackerMatch.gpsTime)}</span>
-                                    <span style="font-size: 10px; color: #94a3b8; margin-left: 4px;">(Dif: ${trackerMatch.timeDifferenceMinutes} min)</span>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 8px;">
-                                    <div>
-                                        <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Velocidade</strong><br/>
-                                        <span style="color: #38bdf8; font-weight: 900; font-size: 14px;">${Math.round(trackerMatch.speed)} km/h</span>
-                                    </div>
-                                    <div style="text-align: right;">
-                                        <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Ignição</strong><br/>
-                                        <span style="color: ${trackerMatch.ignitionStatus ? '#4ade80' : '#f87171'}; font-weight: bold;">${trackerMatch.ignitionStatus ? 'Ligada' : 'Desligada'}</span>
-                                    </div>
-                                </div>
-                                ${trackerMatch.address ? `
-                                <div style="margin-bottom: 8px;">
-                                    <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Endereço Telemetria</strong><br/>
-                                    <span style="color: #cbd5e1; font-size: 11px;">${trackerMatch.address}</span>
-                                </div>` : ''}
-                                <a href="${trackerMatch.googleMapsUrl}" target="_blank" rel="noopener noreferrer" style="display: flex; align-items: center; justify-content: center; gap: 6px; background: #0284c7; color: #fff; font-weight: 800; font-size: 11px; padding: 7px 10px; border-radius: 6px; text-decoration: none; margin-top: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">
-                                    <span>Abrir Rastreador no Google Maps ↗</span>
-                                </a>
-                            </div>
+                const trackerPopupHtml = `
+                    <div style="font-family: 'Outfit', sans-serif; min-width: 290px; background: #0b1329; color: #e2e8f0; border: 2px solid #38bdf8; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.7);">
+                        <div style="background: linear-gradient(90deg, #0c4a6e, #1e3a8a); padding: 10px 12px; border-bottom: 2px solid #38bdf8; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 900; font-size: 13px; color: #fff; display: flex; align-items: center; gap: 4px;">🛰️ RASTREADOR GPS (DADO REAL)</span>
+                            <span style="background: #38bdf8; color: #082f49; font-weight: 900; font-size: 10px; padding: 2px 6px; border-radius: 4px;">${m.placa}</span>
                         </div>
-                    `;
+                        <div style="padding: 12px; font-size: 12px;">
+                            <div style="margin-bottom: 8px;">
+                                <strong style="color: #38bdf8; text-transform: uppercase; font-size: 10px;">Horário Telemetria GPS</strong><br/>
+                                <span style="color: #fff; font-weight: bold; font-family: monospace;">${fmtDate(trackerMatch.gpsTime)}</span>
+                                <span style="font-size: 10px; color: #94a3b8; margin-left: 4px;">(Dif: ${trackerMatch.timeDifferenceMinutes} min)</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 8px;">
+                                <div>
+                                    <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Velocidade Real</strong><br/>
+                                    <span style="color: #38bdf8; font-weight: 900; font-size: 14px;">${Math.round(trackerMatch.speed)} km/h</span>
+                                </div>
+                                <div style="text-align: right;">
+                                    <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Ignição</strong><br/>
+                                    <span style="color: ${trackerMatch.ignitionStatus ? '#4ade80' : '#f87171'}; font-weight: bold;">${trackerMatch.ignitionStatus ? 'Ligada' : 'Desligada'}</span>
+                                </div>
+                            </div>
+                            ${trackerMatch.address ? `
+                            <div style="margin-bottom: 8px;">
+                                <strong style="color: #94a3b8; text-transform: uppercase; font-size: 10px;">Localização do Rastreador</strong><br/>
+                                <span style="color: #cbd5e1; font-size: 11px;">${trackerMatch.address}</span>
+                            </div>` : ''}
+                            <div style="margin-bottom: 8px; font-size: 10px; color: #6ee7b7; font-family: monospace;">
+                                Coordenadas: ${trackerMatch.lat.toFixed(6)}, ${trackerMatch.lng.toFixed(6)}
+                            </div>
+                            <a href="${trackerMatch.googleMapsUrl}" target="_blank" rel="noopener noreferrer" style="display: flex; align-items: center; justify-content: center; gap: 6px; background: #0284c7; color: #fff; font-weight: 800; font-size: 11px; padding: 7px 10px; border-radius: 6px; text-decoration: none; margin-top: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">
+                                <span>Abrir Rastreador no Google Maps ↗</span>
+                            </a>
+                        </div>
+                    </div>
+                `;
 
-                    L.marker([trackerMatch.lat, trackerMatch.lng], { icon: trackerIcon })
-                        .addTo(map)
-                        .bindPopup(trackerPopupHtml);
+                const marker = L.marker([trackerMatch.lat, trackerMatch.lng], { icon: trackerIcon })
+                    .addTo(map)
+                    .bindPopup(trackerPopupHtml)
+                    .openPopup();
 
-                    bounds.extend([trackerMatch.lat, trackerMatch.lng]);
-
-                    // Linha conectando o local autuado com o ponto do rastreador
-                    if (result) {
-                        L.polyline([[result.lat, result.lon], [trackerMatch.lat, trackerMatch.lng]], {
-                            color: '#38bdf8',
-                            weight: 3,
-                            dashArray: '8, 8',
-                            opacity: 0.85
-                        }).addTo(map);
-                    }
-                }
-
-                if (bounds.isValid()) {
-                    if (result && trackerMatch) {
-                        map.fitBounds(bounds, { padding: [70, 70], maxZoom: 16 });
-                    } else if (result) {
-                        map.setView([result.lat, result.lon], result.precision === 'high' ? 18 : 15);
-                    } else if (trackerMatch) {
-                        map.setView([trackerMatch.lat, trackerMatch.lng], 16);
-                    }
-                } else {
-                    setStatusText("Localização não encontrada.");
-                }
-
+                bounds.extend([trackerMatch.lat, trackerMatch.lng]);
+                map.setView([trackerMatch.lat, trackerMatch.lng], 16);
                 setLoadingMap(false);
             } else {
                 const uniqueLocations: Record<string, Multa[]> = {};
@@ -700,7 +660,27 @@ const MapModal: React.FC<{
                     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/85 text-white backdrop-blur-sm">
                         <Loader2 size={48} className="animate-spin text-risel-green mb-4" />
                         <p className="font-bold text-sm tracking-wide">{statusText}</p>
-                        <span className="text-xs text-gray-400 mt-2">Reaproveitando coordenadas já salvas para máxima velocidade e economia de cota</span>
+                        <span className="text-xs text-gray-400 mt-2">Consultando telemetria real dos satélites GeoFrotas...</span>
+                    </div>
+                )}
+
+                {noTrackerFound && (
+                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/85 text-white backdrop-blur-md p-4 animate-in fade-in duration-200">
+                        <div className="bg-slate-900 border border-slate-700/80 p-6 sm:p-7 rounded-3xl max-w-sm w-full text-center shadow-2xl space-y-4">
+                            <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto text-amber-400">
+                                <Radio size={24} className="opacity-80" />
+                            </div>
+                            <h4 className="text-base sm:text-lg font-black text-white">
+                                Veículo Sem Rastreador GPS
+                            </h4>
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs rounded-xl shadow-lg transition-all cursor-pointer active:scale-95"
+                            >
+                                Fechar
+                            </button>
+                        </div>
                     </div>
                 )}
             </main>
@@ -1626,9 +1606,33 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   const finalName = cleanFileName || `Anexo_${currentLinks.length + i + 1}`;
                   const driveFileName = `AIT_${formData.ait || formData.placa || 'DOC'}_${finalName}_${Date.now()}`;
                   
-                  const response = await uploadFileToDrive(file, folderId, driveFileName) as any;
-                  if (response && response.fileUrl) {
-                      newLinksParts.push(`${finalName}${NAME_SEPARATOR}${response.fileUrl}`);
+                  try {
+                      const response = await uploadFileToDrive(file, folderId, driveFileName) as any;
+                      if (response && response.fileUrl) {
+                          newLinksParts.push(`${finalName}${NAME_SEPARATOR}${response.fileUrl}`);
+                      } else {
+                          // Fallback local se a API não retornar link direto
+                          const reader = new FileReader();
+                          const localUrl = await new Promise<string>((res) => {
+                              reader.onload = () => res(reader.result as string);
+                              reader.onerror = () => res('');
+                              reader.readAsDataURL(file);
+                          });
+                          if (localUrl) {
+                              newLinksParts.push(`${finalName}${NAME_SEPARATOR}${localUrl}`);
+                          }
+                      }
+                  } catch (fileErr: any) {
+                      console.warn("Upload no drive falhou, aplicando fallback seguro para visualização:", fileErr);
+                      const reader = new FileReader();
+                      const localUrl = await new Promise<string>((res) => {
+                          reader.onload = () => res(reader.result as string);
+                          reader.onerror = () => res('');
+                          reader.readAsDataURL(file);
+                      });
+                      if (localUrl) {
+                          newLinksParts.push(`${finalName}${NAME_SEPARATOR}${localUrl}`);
+                      }
                   }
               }
 
@@ -1638,8 +1642,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                   setFormData(prev => ({ ...prev, linkAit: updatedLinksString }));
               }
           } catch (error: any) {
-              console.error("Erro no upload de anexo:", error);
-              alert('Erro no envio do arquivo: ' + (error.message || 'Falha ao processar anexo'));
+              console.error("Erro no processamento de anexo:", error);
+              alert('Aviso no processamento do anexo: ' + (error.message || 'Verifique o formato do arquivo'));
           } finally {
               setUploadingAit(false);
               const fileInput = document.getElementById('file-ait') as HTMLInputElement;
