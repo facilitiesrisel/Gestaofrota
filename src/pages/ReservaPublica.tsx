@@ -8,23 +8,25 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
   const [searchParams, setSearchParams] = useSearchParams();
   const [copied, setCopied] = useState(false);
 
-  // Monitora viagem em andamento salva no dispositivo do condutor
+  // Monitora viagem em andamento salva exclusivamente no dispositivo do condutor
   const [pendingTrip, setPendingTrip] = useState<{ id: string; plate?: string; driverName?: string; model?: string; status?: string; finalKm?: number } | null>(() => {
     try {
-      const id = localStorage.getItem('activeDailyTripId');
+      const myId = localStorage.getItem('myActiveDailyTripId');
+      const urlTripId = new URLSearchParams(window.location.search).get('tripId');
+      const id = urlTripId || myId;
+      if (!id) return null;
       const rawData = localStorage.getItem('activeDailyTripData');
-      if (id && rawData) {
+      if (rawData) {
         const parsed = JSON.parse(rawData);
         if (parsed?.status === 'Concluída' || parsed?.status === 'Concluida' || parsed?.finalKm != null) {
+          localStorage.removeItem('myActiveDailyTripId');
           localStorage.removeItem('activeDailyTripId');
           localStorage.removeItem('activeDailyTripData');
           return null;
         }
         return parsed;
       }
-      if (id) {
-        return { id };
-      }
+      return { id };
     } catch (e) {}
     return null;
   });
@@ -32,7 +34,9 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
   useEffect(() => {
     const checkPending = () => {
       try {
-        const id = localStorage.getItem('activeDailyTripId') || new URLSearchParams(window.location.search).get('tripId');
+        const myId = localStorage.getItem('myActiveDailyTripId');
+        const urlTripId = new URLSearchParams(window.location.search).get('tripId');
+        const id = urlTripId || myId;
         if (!id) {
           setPendingTrip(null);
           return;
@@ -54,6 +58,7 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
                                    Boolean(trip.actualReturnDateTime) || 
                                    (trip.finalKm != null && Number(trip.finalKm) > 0);
                 if (isFinished) {
+                  localStorage.removeItem('myActiveDailyTripId');
                   localStorage.removeItem('activeDailyTripId');
                   localStorage.removeItem('activeDailyTripData');
                   setPendingTrip(null);
@@ -70,6 +75,7 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
         if (rawData) {
           const parsed = JSON.parse(rawData);
           if (parsed?.status === 'Concluída' || parsed?.status === 'Concluida' || parsed?.finalKm != null) {
+            localStorage.removeItem('myActiveDailyTripId');
             localStorage.removeItem('activeDailyTripId');
             localStorage.removeItem('activeDailyTripData');
             setPendingTrip(null);
@@ -77,6 +83,7 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
           }
           const depTime = parsed?.departureDateTime ? new Date(parsed.departureDateTime).getTime() : 0;
           if (depTime > 0 && (Date.now() - depTime) > 48 * 60 * 60 * 1000) {
+            localStorage.removeItem('myActiveDailyTripId');
             localStorage.removeItem('activeDailyTripId');
             localStorage.removeItem('activeDailyTripData');
             setPendingTrip(null);

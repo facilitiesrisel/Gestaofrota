@@ -71,12 +71,14 @@ const UserDailyUseForm: React.FC = () => {
     const { vehicles, dailyTrips, reservations, addDailyTrip, endTrip, getVehicleById, isLoading: isContextLoading } = useReservations();
     const [searchParams, setSearchParams] = useSearchParams();
     
-    // Recupera imediatamente do URL ou storage para não haver perda da tela de retorno no celular
+    // Recupera imediatamente do URL ou storage exclusivamente para a viagem iniciada por este aparelho
     const [activeTripId, setActiveTripId] = useState<string | null>(() => {
         try {
             const fromParam = new URLSearchParams(window.location.search).get('tripId');
             if (fromParam) return fromParam;
-            return localStorage.getItem('activeDailyTripId') || sessionStorage.getItem('activeDailyTripId') || null;
+            const myTripId = localStorage.getItem('myActiveDailyTripId') || sessionStorage.getItem('myActiveDailyTripId');
+            if (myTripId) return myTripId;
+            return null;
         } catch (e) {
             return null;
         }
@@ -85,6 +87,9 @@ const UserDailyUseForm: React.FC = () => {
     // Backup dos dados da viagem ativa para navegação offline ou conexão instável em celulares
     const [localBackupTrip, setLocalBackupTrip] = useState<any>(() => {
         try {
+            const fromParam = new URLSearchParams(window.location.search).get('tripId');
+            const myTripId = localStorage.getItem('myActiveDailyTripId') || sessionStorage.getItem('myActiveDailyTripId');
+            if (!fromParam && !myTripId) return null;
             const raw = localStorage.getItem('activeDailyTripData') || sessionStorage.getItem('activeDailyTripData');
             return raw ? JSON.parse(raw) : null;
         } catch (e) {
@@ -210,41 +215,11 @@ const UserDailyUseForm: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
-    // Viagens atualmente em andamento (estritamente 'Em Uso', sem devolução registrada)
-    const ongoingTrips = useMemo(() => {
-        return dailyTrips.filter(t => {
-            const isCompleted = t.status === ReservationStatus.Completed || 
-                                (t.status as string) === 'Concluída' || 
-                                (t.status as string) === 'Concluida' || 
-                                (t.status as string) === 'Cancelada' || 
-                                Boolean(t.actualReturnDateTime) || 
-                                (t.finalKm != null && Number(t.finalKm) > 0);
-            return !isCompleted && (t.status === ReservationStatus.InUse || (t.status as string) === 'Em Uso');
-        });
-    }, [dailyTrips]);
-
-    // Viagem ativa: busca no banco primeiro; se o banco estiver sincronizando, usa backup local recente
+    // Viagem ativa: busca estritamente pelo ID da viagem iniciada por este aparelho ou pelo URL
     const activeTrip = useMemo(() => {
-        let currentId = activeTripId;
+        if (!activeTripId) return null;
 
-        // Se o celular recarregou e perdeu o ID no storage, mas há 1 viagem ativa recente (últimas 24h), recupera automaticamente
-        if (!currentId && ongoingTrips.length === 1) {
-            const single = ongoingTrips[0];
-            const depTime = single.departureDateTime ? new Date(single.departureDateTime).getTime() : 0;
-            if (depTime > 0 && (Date.now() - depTime) < 24 * 60 * 60 * 1000) {
-                return single;
-            }
-        }
-
-        // Se houver backup local com o mesmo veículo de uma viagem em andamento, recupera
-        if (!currentId && localBackupTrip?.vehicleId) {
-            const match = ongoingTrips.find(t => t.vehicleId === localBackupTrip.vehicleId);
-            if (match) return match;
-        }
-
-        if (!currentId) return null;
-
-        const tripFromDb = dailyTrips.find(trip => trip.id === currentId);
+        const tripFromDb = dailyTrips.find(trip => trip.id === activeTripId);
         if (tripFromDb) {
             // Se no banco a viagem já está Concluída, Cancelada ou com retorno, NUNCA exibe como ativa!
             const isFinished = tripFromDb.status === ReservationStatus.Completed || 
@@ -259,8 +234,8 @@ const UserDailyUseForm: React.FC = () => {
             return tripFromDb;
         }
 
-        // Se o banco ainda não carregou a lista, consulta backup local recente
-        if (localBackupTrip && (localBackupTrip.id === currentId || !localBackupTrip.id)) {
+        // Se o banco ainda não sincronizou a lista, consulta backup local da viagem deste aparelho
+        if (localBackupTrip && (localBackupTrip.id === activeTripId || !localBackupTrip.id)) {
             const isLocalFinished = localBackupTrip.status === ReservationStatus.Completed || 
                                     (localBackupTrip.status as string) === 'Concluída' || 
                                     Boolean(localBackupTrip.actualReturnDateTime) || 
@@ -269,63 +244,42 @@ const UserDailyUseForm: React.FC = () => {
                 return null;
             }
             const depTime = localBackupTrip.departureDateTime ? new Date(localBackupTrip.departureDateTime).getTime() : 0;
-            if (depTime > 0 && (Date.now() - depTime) > 24 * 60 * 60 * 1000) {
+            if (depTime > 0 && (Date.now() - depTime) > 36 * 60 * 60 * 1000) {
                 return null;
             }
             return localBackupTrip;
         }
 
         return null;
-    }, [activeTripId, dailyTrips, localBackupTrip, ongoingTrips]);
+    }, [activeTripId, dailyTrips, localBackupTrip]);
 
-    // Garante que, havendo activeTripId, ele esteja sempre gravado e preservado na URL e no Storage do aparelho
+    // Garante sincronização e integridade da sessão local deste dispositivo
     useEffect(() => {
-        if (activeTripId) {
-            try {
-                localStorage.setItem('activeDailyTripId', activeTripId);
-                sessionStorage.setItem('activeDailyTripId', activeTripId);
-                const currentUrl = new URL(window.location.href);
-                if (currentUrl.searchParams.get('tripId') !== activeTripId) {
-                    currentUrl.searchParams.set('sub', 'dailyUse');
-                    currentUrl.searchParams.set('tripId', activeTripId);
-                    window.history.replaceState(null, '', currentUrl.toString());
-                }
-            } catch (e) {}
-        }
-    }, [activeTripId]);
+        const urlTripId = searchParams.get('tripId');
+        const myTripId = localStorage.getItem('myActiveDailyTripId') || sessionStorage.getItem('myActiveDailyTripId');
+        const validId = urlTripId || myTripId;
 
-    // Validação resiliente: sincroniza estado e limpa automaticamente qualquer viagem já concluída
-    useEffect(() => {
-        let storedId = activeTripId || localStorage.getItem('activeDailyTripId') || sessionStorage.getItem('activeDailyTripId') || searchParams.get('tripId');
-        
-        // Auto-recuperação transparente se o condutor estiver no celular e houver 1 viagem em andamento hoje
-        if (!storedId && ongoingTrips.length === 1) {
-            const single = ongoingTrips[0];
-            const depTime = single.departureDateTime ? new Date(single.departureDateTime).getTime() : 0;
-            if (depTime > 0 && (Date.now() - depTime) < 24 * 60 * 60 * 1000) {
-                storedId = single.id;
-            }
-        } else if (!storedId && localBackupTrip?.vehicleId) {
-            const match = ongoingTrips.find(t => t.vehicleId === localBackupTrip.vehicleId);
-            if (match) {
-                storedId = match.id;
-            }
-        }
-
-        if (!storedId) {
+        // Se este dispositivo NÃO possui uma saída iniciada por ele e não há tripId no URL:
+        if (!validId) {
+            // Limpa resquícios antigos para liberar imediatamente a tela de nova saída
+            localStorage.removeItem('activeDailyTripId');
+            localStorage.removeItem('activeDailyTripData');
+            sessionStorage.removeItem('activeDailyTripId');
+            sessionStorage.removeItem('activeDailyTripData');
             if (activeTripId !== null) setActiveTripId(null);
+            if (localBackupTrip !== null) setLocalBackupTrip(null);
             return;
         }
 
-        if (activeTripId !== storedId) {
-            setActiveTripId(storedId);
+        if (activeTripId !== validId) {
+            setActiveTripId(validId);
         }
 
         if (isContextLoading || dailyTrips.length === 0) {
             return;
         }
 
-        const tripFromDb = dailyTrips.find(t => t.id === storedId);
+        const tripFromDb = dailyTrips.find(t => t.id === validId);
 
         if (tripFromDb) {
             const isFinished = tripFromDb.status === ReservationStatus.Completed || 
@@ -336,10 +290,12 @@ const UserDailyUseForm: React.FC = () => {
                                (tripFromDb.finalKm != null && Number(tripFromDb.finalKm) > 0);
 
             if (isFinished) {
-                // Viagem já concluída no banco de dados: limpa imediatamente os dados locais para não persistir viagens antigas
+                // Viagem já concluída no banco de dados: limpa imediatamente os dados locais
+                localStorage.removeItem('myActiveDailyTripId');
                 localStorage.removeItem('activeDailyTripId');
                 localStorage.removeItem('activeDailyTripData');
                 try {
+                    sessionStorage.removeItem('myActiveDailyTripId');
                     sessionStorage.removeItem('activeDailyTripId');
                     sessionStorage.removeItem('activeDailyTripData');
                     const currentUrl = new URL(window.location.href);
@@ -355,88 +311,47 @@ const UserDailyUseForm: React.FC = () => {
                     finalFuelLevel: prev.finalFuelLevel || tripFromDb.initialFuelLevel || FuelLevel.Full 
                 }));
             }
-        } else if (localBackupTrip) {
-            // Se a lista de viagens do banco já carregou e o backup local for muito antigo (> 24h), limpa
-            const depTime = localBackupTrip.departureDateTime ? new Date(localBackupTrip.departureDateTime).getTime() : 0;
-            if (depTime > 0 && (Date.now() - depTime) > 24 * 60 * 60 * 1000) {
-                localStorage.removeItem('activeDailyTripId');
-                localStorage.removeItem('activeDailyTripData');
-                try {
-                    sessionStorage.removeItem('activeDailyTripId');
-                    sessionStorage.removeItem('activeDailyTripData');
-                    const currentUrl = new URL(window.location.href);
-                    currentUrl.searchParams.delete('tripId');
-                    window.history.replaceState(null, '', currentUrl.toString());
-                } catch (e) {}
-                setActiveTripId(null);
-                setLocalBackupTrip(null);
-                window.dispatchEvent(new Event('risel_daily_trip_updated'));
-            }
         }
-    }, [dailyTrips, isContextLoading, activeTripId, searchParams, ongoingTrips, localBackupTrip]);
+    }, [dailyTrips, isContextLoading, activeTripId, searchParams, localBackupTrip]);
 
-    // Permite que o motorista vincule seu veículo para retorno caso acerte a placa
-    const handleSelectOngoingTrip = (trip: any) => {
-        if (!trip || !trip.id) return;
-        const vehicle = getVehicleById(trip.vehicleId);
-        const tripBackup = {
-            id: trip.id,
-            driverName: trip.driverName,
-            department: trip.department,
-            vehicleId: trip.vehicleId,
-            plate: trip.plate || vehicle?.plate || '',
-            model: trip.model || vehicle?.model || '',
-            departureDateTime: trip.departureDateTime,
-            destinationCity: trip.destinationCity,
-            destination: trip.destination,
-            initialKm: trip.initialKm,
-            initialFuelLevel: trip.initialFuelLevel || FuelLevel.Full,
-            purpose: trip.purpose || "Atendimento Operacional"
-        };
-        localStorage.setItem('activeDailyTripId', trip.id);
-        localStorage.setItem('activeDailyTripData', JSON.stringify(tripBackup));
+    // Permite desvincular viagem imediatamente caso o condutor precise trocar ou registrar uma nova saída
+    const handleUnlinkTrip = () => {
+        localStorage.removeItem('myActiveDailyTripId');
+        localStorage.removeItem('activeDailyTripId');
+        localStorage.removeItem('activeDailyTripData');
         try {
-            sessionStorage.setItem('activeDailyTripId', trip.id);
-            sessionStorage.setItem('activeDailyTripData', JSON.stringify(tripBackup));
+            sessionStorage.removeItem('myActiveDailyTripId');
+            sessionStorage.removeItem('activeDailyTripId');
+            sessionStorage.removeItem('activeDailyTripData');
             const currentUrl = new URL(window.location.href);
-            currentUrl.searchParams.set('sub', 'dailyUse');
-            currentUrl.searchParams.set('tripId', trip.id);
+            currentUrl.searchParams.delete('tripId');
             window.history.replaceState(null, '', currentUrl.toString());
         } catch (e) {}
-        setActiveTripId(trip.id);
-        setLocalBackupTrip(tripBackup);
-        setEndFormData({
-            finalKm: '',
-            finalFuelLevel: trip.initialFuelLevel || FuelLevel.Full
-        });
+        setActiveTripId(null);
+        setLocalBackupTrip(null);
         window.dispatchEvent(new Event('risel_daily_trip_updated'));
     };
 
-    // Permite desvincular viagem caso o condutor precise trocar ou cancelar a tela de retorno neste aparelho
-    const handleUnlinkTrip = () => {
-        if (window.confirm("Deseja desvincular esta viagem deste aparelho? Isso liberará a tela para registrar uma nova saída.")) {
-            localStorage.removeItem('activeDailyTripId');
-            localStorage.removeItem('activeDailyTripData');
-            try {
-                sessionStorage.removeItem('activeDailyTripId');
-                sessionStorage.removeItem('activeDailyTripData');
-                const currentUrl = new URL(window.location.href);
-                currentUrl.searchParams.delete('tripId');
-                window.history.replaceState(null, '', currentUrl.toString());
-            } catch (e) {}
-            setActiveTripId(null);
-            setLocalBackupTrip(null);
-            window.dispatchEvent(new Event('risel_daily_trip_updated'));
-        }
-    };
-
+    // Lista exclusiva de veículos disponíveis (NÃO mostra veículos que já estão em uso ou reservados para hoje)
     const availableVehicles = useMemo(() => {
         // 1. Veículos com viagens de "Uso Diário" estritamente em andamento (sem retorno registrado)
-        const activeDailyTripVehicleIds = new Set(dailyTrips
-            .filter(trip => (trip.status === ReservationStatus.InUse || (trip.status as string) === 'Em Uso') && 
-                            !trip.actualReturnDateTime && 
-                            (trip.finalKm == null || Number(trip.finalKm) === 0))
-            .map(trip => trip.vehicleId));
+        const activeDailyTrips = dailyTrips.filter(t => {
+            const isCompleted = t.status === ReservationStatus.Completed || 
+                                (t.status as string) === 'Concluída' || 
+                                (t.status as string) === 'Concluida' || 
+                                (t.status as string) === 'Cancelada' || 
+                                Boolean(t.actualReturnDateTime) || 
+                                (t.finalKm != null && Number(t.finalKm) > 0);
+            return !isCompleted && (t.status === ReservationStatus.InUse || (t.status as string) === 'Em Uso');
+        });
+
+        const activeDailyTripVehicleIds = new Set(activeDailyTrips.map(t => String(t.vehicleId).trim().toUpperCase()));
+        const activeDailyTripPlates = new Set(
+            activeDailyTrips
+                .map(t => (t as any).plate || getVehicleById(t.vehicleId)?.plate || '')
+                .filter(Boolean)
+                .map(p => String(p).trim().toUpperCase())
+        );
         
         // 2. Veículos reservados para "Hoje" em andamento ou aprovados (sem encerramento prévio)
         const todayStart = new Date();
@@ -444,34 +359,52 @@ const UserDailyUseForm: React.FC = () => {
         const todayEnd = new Date();
         todayEnd.setHours(23, 59, 59, 999);
 
-        const reservedTodayVehicleIds = new Set(reservations
-            .filter(r => {
-                const isFinished = r.status === ReservationStatus.Completed || 
-                                   (r.status as string) === 'Concluída' || 
-                                   (r.status as string) === 'Concluida' || 
-                                   Boolean(r.actualReturnDateTime) || 
-                                   (r.finalKm != null && Number(r.finalKm) > 0);
-                if (isFinished) return false;
+        const activeReservations = reservations.filter(r => {
+            const isFinished = r.status === ReservationStatus.Completed || 
+                               (r.status as string) === 'Concluída' || 
+                               (r.status as string) === 'Concluida' || 
+                               Boolean(r.actualReturnDateTime) || 
+                               (r.finalKm != null && Number(r.finalKm) > 0);
+            if (isFinished) return false;
 
-                const isOngoingOrApproved = r.status === ReservationStatus.Approved || 
-                                            r.status === ReservationStatus.InUse ||
-                                            (r.status as string) === 'Em Uso' ||
-                                            (r.status as string) === 'Aprovada';
-                if (!isOngoingOrApproved) return false;
-                
-                const rStart = new Date(r.departureDateTime); rStart.setHours(0, 0, 0, 0);
-                const rEnd = new Date(r.returnDate); rEnd.setHours(23, 59, 59, 999);
-                
-                return todayStart <= rEnd && todayEnd >= rStart;
-            })
-            .map(r => r.vehicleId));
+            const isOngoingOrApproved = r.status === ReservationStatus.Approved || 
+                                        r.status === ReservationStatus.InUse ||
+                                        (r.status as string) === 'Em Uso' ||
+                                        (r.status as string) === 'Aprovada';
+            if (!isOngoingOrApproved) return false;
+            
+            const rStart = new Date(r.departureDateTime); rStart.setHours(0, 0, 0, 0);
+            const rEnd = new Date(r.returnDate); rEnd.setHours(23, 59, 59, 999);
+            
+            return todayStart <= rEnd && todayEnd >= rStart;
+        });
+
+        const reservedTodayVehicleIds = new Set(activeReservations.map(r => String(r.vehicleId).trim().toUpperCase()));
+        const reservedTodayPlates = new Set(
+            activeReservations
+                .map(r => getVehicleById(r.vehicleId)?.plate || '')
+                .filter(Boolean)
+                .map(p => String(p).trim().toUpperCase())
+        );
 
         return vehicles.filter(v => {
-            return v.isActive !== false && 
-                   !activeDailyTripVehicleIds.has(v.id) && 
-                   !reservedTodayVehicleIds.has(v.id);
+            if (v.isActive === false) return false;
+            const vId = String(v.id).trim().toUpperCase();
+            const vPlate = String(v.plate).trim().toUpperCase();
+
+            // Totalmente bloqueado se o veículo estiver em uso diário
+            if (activeDailyTripVehicleIds.has(vId) || activeDailyTripPlates.has(vPlate)) {
+                return false;
+            }
+
+            // Totalmente bloqueado se o veículo estiver reservado para hoje
+            if (reservedTodayVehicleIds.has(vId) || reservedTodayPlates.has(vPlate)) {
+                return false;
+            }
+
+            return true;
         });
-    }, [vehicles, dailyTrips, reservations]);
+    }, [vehicles, dailyTrips, reservations, getVehicleById]);
 
     const handleStartChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -584,9 +517,11 @@ const UserDailyUseForm: React.FC = () => {
                 purpose: startFormData.purpose || "Atendimento Operacional"
             };
 
+            localStorage.setItem('myActiveDailyTripId', newTripId);
             localStorage.setItem('activeDailyTripId', newTripId);
             localStorage.setItem('activeDailyTripData', JSON.stringify(tripBackup));
             try {
+                sessionStorage.setItem('myActiveDailyTripId', newTripId);
                 sessionStorage.setItem('activeDailyTripId', newTripId);
                 sessionStorage.setItem('activeDailyTripData', JSON.stringify(tripBackup));
                 const currentUrl = new URL(window.location.href);
@@ -735,9 +670,11 @@ const UserDailyUseForm: React.FC = () => {
                 source: "reservas"
             });
 
+            localStorage.removeItem('myActiveDailyTripId');
             localStorage.removeItem('activeDailyTripId');
             localStorage.removeItem('activeDailyTripData');
             try {
+                sessionStorage.removeItem('myActiveDailyTripId');
                 sessionStorage.removeItem('activeDailyTripId');
                 sessionStorage.removeItem('activeDailyTripData');
                 const currentUrl = new URL(window.location.href);
@@ -1091,12 +1028,11 @@ const UserDailyUseForm: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={handleUnlinkTrip}
-                                    title="Desvincular este veículo deste celular"
-                                    className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-emerald-100 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all border border-white/20 active:scale-95 cursor-pointer"
+                                    title="Desvincular e registrar uma nova saída"
+                                    className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-emerald-100 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all border border-white/20 active:scale-95 cursor-pointer shadow-xs"
                                 >
                                     <Unlink className="w-3.5 h-3.5 text-amber-300" />
-                                    <span className="hidden sm:inline">Desvincular Viagem</span>
-                                    <span className="sm:hidden">Trocar</span>
+                                    <span>Trocar / Nova Saída</span>
                                 </button>
                              </div>
                         </div>
@@ -1260,9 +1196,9 @@ const UserDailyUseForm: React.FC = () => {
                                         <button
                                             type="button"
                                             onClick={handleUnlinkTrip}
-                                            className="text-slate-400 hover:text-red-600 font-bold underline transition-colors cursor-pointer"
+                                            className="text-slate-500 hover:text-emerald-700 font-bold underline transition-colors cursor-pointer"
                                         >
-                                            Não é este o seu veículo? Trocar ou desvincular
+                                            Não é este o seu veículo? Liberar tela e registrar nova saída
                                         </button>
                                     </div>
                                 </>
