@@ -3,7 +3,7 @@ import {
   FileText, X, Download, Printer, ExternalLink, Eye, RotateCw, ZoomIn, 
   ZoomOut, ShieldCheck, Building, Calendar, DollarSign, UserCheck, 
   CheckCircle2, CreditCard, ChevronLeft, ChevronRight, Sparkles, RefreshCw,
-  Clock, Tag, User, HelpCircle, FileCheck, Layers
+  Clock, Tag, User, HelpCircle, FileCheck, Layers, Loader2
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import { cn } from "../../lib/utils";
@@ -50,6 +50,7 @@ export interface DocumentoAnexoData {
   arquivoAnexoUrl?: string;
   anexos?: AnexoItem[];
   anexoAtivoIndex?: number;
+  initialAnexoIndex?: number;
 }
 
 interface DocumentoAnexoModalProps {
@@ -95,22 +96,82 @@ function formatValorDisplay(val?: string): string {
   return `R$ ${clean}`;
 }
 
+function inferMimeFromFileName(name: string): string {
+  const lower = String(name || "").toLowerCase().trim();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".msg") || lower.endsWith(".oft")) return "application/vnd.ms-outlook";
+  if (lower.endsWith(".eml")) return "message/rfc822";
+  if (lower.endsWith(".pst")) return "application/vnd.ms-outlook-pst";
+  if (lower.endsWith(".xml")) return "application/xml";
+  if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (lower.endsWith(".csv")) return "text/csv";
+  if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".txt") || lower.endsWith(".log") || lower.endsWith(".ret") || lower.endsWith(".rem")) return "text/plain";
+  if (lower.endsWith(".zip")) return "application/zip";
+  if (lower.endsWith(".rar")) return "application/vnd.rar";
+  if (lower.endsWith(".7z")) return "application/x-7z-compressed";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  return "application/octet-stream";
+}
+
+function extractReadablePreviewFromBytes(bytes: Uint8Array, fileName: string, mime: string): string | null {
+  try {
+    const lower = fileName.toLowerCase();
+    if (lower.endsWith(".eml") || lower.endsWith(".xml") || lower.endsWith(".txt") || lower.endsWith(".csv") || lower.endsWith(".ret") || lower.endsWith(".rem") || mime.startsWith("text/") || mime === "message/rfc822" || mime === "application/xml") {
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      return text.slice(0, 60000);
+    }
+    if (lower.endsWith(".msg") || mime === "application/vnd.ms-outlook") {
+      // Extrai trechos legíveis UTF-16LE e ASCII de arquivos .msg do Outlook (Compound File Binary)
+      const utf16Chunks: string[] = [];
+      let currentUtf16 = "";
+      for (let i = 0; i + 1 < bytes.length; i += 2) {
+        const code = bytes[i] | (bytes[i + 1] << 8);
+        if ((code >= 32 && code <= 126) || (code >= 160 && code <= 255) || code === 10 || code === 13) {
+          currentUtf16 += String.fromCharCode(code);
+        } else {
+          if (currentUtf16.trim().length >= 12) {
+            utf16Chunks.push(currentUtf16.trim());
+          }
+          currentUtf16 = "";
+        }
+      }
+      if (currentUtf16.trim().length >= 12) utf16Chunks.push(currentUtf16.trim());
+      const filtered = utf16Chunks.filter(s =>
+        !/^(__substg1\.0|Root Entry|__properties|__nameid|__recip|__attach)/i.test(s) &&
+        /[a-zA-ZÀ-ÿ]{3,}/.test(s)
+      );
+      if (filtered.length > 0) {
+        return filtered.slice(0, 80).join("\n\n").slice(0, 30000);
+      }
+    }
+  } catch {}
+  return null;
+}
+
 export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
   isOpen,
   onClose,
   documento
 }) => {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"pdf" | "image" | "voucher">("pdf");
-  const [pdfRenderMode, setPdfRenderMode] = useState<"native" | "canvas">("native");
-  const [zoom, setZoom] = useState<number>(1.0);
+  const [viewMode, setViewMode] = useState<"pdf" | "image" | "file" | "voucher">("pdf");
+  const [detectedMime, setDetectedMime] = useState<string>("application/pdf");
+  const [textPreview, setTextPreview] = useState<string | null>(null);
+  const [pdfRenderMode, setPdfRenderMode] = useState<"native" | "canvas">("canvas");
+  const [zoom, setZoom] = useState<number>(1.1);
   const [rotation, setRotation] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [remoteData, setRemoteData] = useState<{ arquivoAnexoBase64?: string; anexos?: AnexoItem[]; nome?: string } | null>(null);
   const [isFetchingRemote, setIsFetchingRemote] = useState<boolean>(false);
 
-  // Busca remota transparente se o anexo não veio pré-carregado no objeto em memória
+  // Busca remota transparente se o anexo não veio em base64 completo em memória (ou se veio apenas link HTTP do Google Drive)
   useEffect(() => {
     if (!isOpen || !documento) {
       setRemoteData(null);
@@ -118,13 +179,14 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
       return;
     }
 
-    const hasImmediateAnexo = Boolean(
-      (documento.arquivoAnexoBase64 && documento.arquivoAnexoBase64.trim().length > 50) ||
-      (documento.arquivoAnexoUrl && documento.arquivoAnexoUrl.trim().length > 5) ||
-      (Array.isArray(documento.anexos) && documento.anexos.some(a => (a?.base64 && a.base64.trim().length > 50) || (a?.arquivoAnexoBase64 && a.arquivoAnexoBase64.trim().length > 50) || a?.url))
+    const isInlineBase64 = (val?: string) => Boolean(val && val.trim().length > 80 && !val.trim().startsWith("http"));
+
+    const hasImmediateBase64 = Boolean(
+      isInlineBase64(documento.arquivoAnexoBase64) ||
+      (Array.isArray(documento.anexos) && documento.anexos.some(a => isInlineBase64(a?.base64) || isInlineBase64(a?.arquivoAnexoBase64)))
     );
 
-    if (!hasImmediateAnexo && documento.id) {
+    if (!hasImmediateBase64 && documento.id) {
       setIsFetchingRemote(true);
       setIsLoading(true);
       fetchLancamentoAnexoOriginal(documento.id).then(res => {
@@ -145,44 +207,50 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
   const anexosList = React.useMemo<AnexoItem[]>(() => {
     if (!documento) return [];
 
-    const fallbackBase64 = (
-      documento.arquivoAnexoBase64 ||
-      remoteData?.arquivoAnexoBase64 ||
-      documento.arquivoAnexoUrl ||
-      ""
-    ).trim();
+    const pickBestContent = (...candidates: (string | undefined)[]) => {
+      // Prioriza base64 inline ("data:...") sobre links HTTP para renderizar no Canvas sem bloqueio
+      for (const c of candidates) {
+        if (c && c.trim().length > 80 && !c.trim().startsWith("http")) return c.trim();
+      }
+      for (const c of candidates) {
+        if (c && c.trim().length > 5) return c.trim();
+      }
+      return "";
+    };
 
-    // 1. Prioriza anexos com conteúdo base64 presentes em documento
-    if (Array.isArray(documento.anexos) && documento.anexos.length > 0 && documento.anexos.some(a => a?.base64 || a?.arquivoAnexoBase64 || a?.url)) {
-      return documento.anexos.slice(0, 4).map((anx, idx) => ({
-        id: anx.id || `anx-${idx + 1}`,
-        nome: anx.nome || (idx === 0 ? (documento.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
-        base64: anx.base64 || anx.arquivoAnexoBase64 || (idx === 0 ? fallbackBase64 : ""),
-        url: anx.url
-      }));
+    const fallbackBase64 = pickBestContent(
+      remoteData?.arquivoAnexoBase64,
+      documento.arquivoAnexoBase64,
+      documento.arquivoAnexoUrl
+    );
+
+    // 1. Se remoteData trouxe anexos resolvidos em base64 do servidor, mescla com documento.anexos
+    const sourceAnexos = (Array.isArray(documento.anexos) && documento.anexos.length > 0)
+      ? documento.anexos
+      : (Array.isArray(remoteData?.anexos) && remoteData.anexos.length > 0 ? remoteData.anexos : []);
+
+    if (sourceAnexos.length > 0) {
+      return sourceAnexos.slice(0, 4).map((anx, idx) => {
+        const remoteMatch = remoteData?.anexos?.[idx];
+        const bestB64 = pickBestContent(
+          remoteMatch?.base64,
+          remoteMatch?.arquivoAnexoBase64,
+          anx?.base64,
+          anx?.arquivoAnexoBase64,
+          idx === 0 ? fallbackBase64 : undefined,
+          anx?.url,
+          remoteMatch?.url
+        );
+        return {
+          id: anx.id || `anx-${idx + 1}`,
+          nome: anx.nome || remoteMatch?.nome || (idx === 0 ? (documento.nome || remoteData?.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
+          base64: bestB64,
+          url: anx.url || remoteMatch?.url
+        };
+      });
     }
 
-    // 2. Anexos vindos da busca remota no servidor
-    if (remoteData?.anexos && Array.isArray(remoteData.anexos) && remoteData.anexos.length > 0) {
-      return remoteData.anexos.slice(0, 4).map((anx, idx) => ({
-        id: anx.id || `anx-${idx + 1}`,
-        nome: anx.nome || (idx === 0 ? (remoteData.nome || documento.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
-        base64: anx.base64 || anx.arquivoAnexoBase64 || (idx === 0 ? fallbackBase64 : ""),
-        url: anx.url
-      }));
-    }
-
-    // 3. Anexos presentes em documento (mesmo que vindos do cache sem base64 interno, recebem o fallback)
-    if (Array.isArray(documento.anexos) && documento.anexos.length > 0) {
-      return documento.anexos.slice(0, 4).map((anx, idx) => ({
-        id: anx.id || `anx-${idx + 1}`,
-        nome: anx.nome || (idx === 0 ? (documento.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
-        base64: anx.base64 || anx.arquivoAnexoBase64 || (idx === 0 ? fallbackBase64 : ""),
-        url: anx.url
-      }));
-    }
-
-    // 4. Arquivo único de fatura
+    // 2. Arquivo único de fatura
     if (fallbackBase64) {
       return [{
         id: "anx-1",
@@ -198,8 +266,9 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
 
   // Reseta ou ajusta o índice quando o documento mudar
   useEffect(() => {
-    if (documento?.anexoAtivoIndex !== undefined && documento.anexoAtivoIndex >= 0) {
-      setActiveAnexoIndex(documento.anexoAtivoIndex);
+    const idx = documento?.anexoAtivoIndex ?? documento?.initialAnexoIndex;
+    if (idx !== undefined && idx >= 0) {
+      setActiveAnexoIndex(idx);
     } else {
       setActiveAnexoIndex(0);
     }
@@ -227,11 +296,12 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Converter Base64/URL e Inicializar visualizador nativo ou PDF.js/Imagem
+  // Converter Base64/URL e Inicializar visualizador nativo, PDF.js, Imagem ou Visualizador Universal de Arquivos (.msg, .eml, .xml, Office, etc.)
   useEffect(() => {
     if (!isOpen || !documento) {
       setBlobUrl(null);
       setPdfDoc(null);
+      setTextPreview(null);
       return;
     }
 
@@ -242,11 +312,13 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
 
     setIsLoading(true);
     setLoadError(null);
-    setZoom(1.0);
+    setZoom(1.1);
     setRotation(0);
     setCurrentPage(1);
     setNumPages(0);
     setPdfDoc(null);
+    setTextPreview(null);
+    setPdfRenderMode("canvas");
 
     const rawData = (
       currentAnexo?.base64 || 
@@ -261,103 +333,150 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
 
     if (!rawData) {
       setBlobUrl(null);
-      // Se não há dados brutos e não está buscando remotamente, libera loading para mostrar opções
       setIsLoading(false);
       return;
     }
 
-    try {
-      let isImg = false;
-      let rawBytes: Uint8Array | null = null;
-      let urlCreated: string | null = null;
-      let mime = "application/pdf";
+    let isCancelled = false;
+    let urlCreated: string | null = null;
 
-      if (rawData.startsWith("http://") || rawData.startsWith("https://") || rawData.startsWith("blob:")) {
-        urlCreated = rawData;
-        setBlobUrl(rawData);
-        const lower = rawData.toLowerCase();
-        isImg = lower.includes(".png") || lower.includes(".jpg") || lower.includes(".jpeg") || lower.includes(".webp");
-      } else {
-        // Data URL ou Base64 puro
-        let base64Part = rawData;
-        if (rawData.startsWith("data:")) {
-          const parts = rawData.split(",");
-          if (parts.length >= 2) {
-            const mimeMatch = parts[0].match(/:(.*?);/);
-            if (mimeMatch) mime = mimeMatch[1].toLowerCase();
-            base64Part = parts[1];
+    const processDataString = async (inputData: string) => {
+      try {
+        let dataToProcess = inputData;
+
+        // Se for um link HTTP (como Google Drive), tenta converter via proxy do servidor para base64 binário
+        // garantindo que o PDF.js Canvas renderize direto na tela sem qualquer bloqueio de iframe do Chrome!
+        if (dataToProcess.startsWith("http://") || dataToProcess.startsWith("https://")) {
+          try {
+            const proxyRes = await fetch(`/api/drive/proxy?url=${encodeURIComponent(dataToProcess)}&fileName=${encodeURIComponent(fileName)}`);
+            if (proxyRes.ok) {
+              const proxyJson = await proxyRes.json();
+              if (proxyJson && proxyJson.success && proxyJson.base64 && proxyJson.base64.startsWith("data:")) {
+                dataToProcess = proxyJson.base64;
+              }
+            }
+          } catch {}
+        }
+
+        if (isCancelled) return;
+
+        let isImg = false;
+        let isPdf = false;
+        let rawBytes: Uint8Array | null = null;
+        let mime = inferMimeFromFileName(fileName);
+
+        if (dataToProcess.startsWith("http://") || dataToProcess.startsWith("https://") || dataToProcess.startsWith("blob:")) {
+          urlCreated = dataToProcess;
+          setBlobUrl(dataToProcess);
+          const lower = (fileName + " " + dataToProcess).toLowerCase();
+          isImg = /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i.test(lower);
+          isPdf = !isImg && (lower.includes(".pdf") || mime === "application/pdf");
+          setDetectedMime(mime);
+        } else {
+          // Data URL ou Base64 puro
+          let base64Part = dataToProcess;
+          if (dataToProcess.startsWith("data:")) {
+            const parts = dataToProcess.split(",");
+            if (parts.length >= 2) {
+              const mimeMatch = parts[0].match(/:(.*?);/);
+              if (mimeMatch && mimeMatch[1] && mimeMatch[1].trim() !== "" && mimeMatch[1] !== "application/octet-stream") {
+                mime = mimeMatch[1].toLowerCase().trim();
+              }
+              base64Part = parts[1];
+            }
           }
-        }
 
-        // Limpa espaços e formatações
-        base64Part = base64Part.replace(/\s/g, "");
+          // Se o nome do arquivo indica claramente .msg, .eml, .xml, .xlsx, .docx, etc., prioriza o MIME da extensão
+          const extMime = inferMimeFromFileName(fileName);
+          if (extMime !== "application/octet-stream" && extMime !== "application/pdf") {
+            mime = extMime;
+          }
 
-        // Decodificar Base64 para binário
-        const binaryStr = atob(base64Part);
-        const len = binaryStr.length;
-        rawBytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          rawBytes[i] = binaryStr.charCodeAt(i);
-        }
+          base64Part = base64Part.replace(/\s/g, "");
 
-        // Detecção de tipo por Magic Bytes se necessário
-        if (mime === "application/octet-stream" || !mime || mime === "application/pdf") {
+          const binaryStr = atob(base64Part);
+          const len = binaryStr.length;
+          rawBytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            rawBytes[i] = binaryStr.charCodeAt(i);
+          }
+
+          // Detecção por Magic Bytes
           if (len >= 4 && rawBytes[0] === 0x89 && rawBytes[1] === 0x50 && rawBytes[2] === 0x4E && rawBytes[3] === 0x47) {
             mime = "image/png";
           } else if (len >= 3 && rawBytes[0] === 0xFF && rawBytes[1] === 0xD8 && rawBytes[2] === 0xFF) {
             mime = "image/jpeg";
           } else if (len >= 4 && rawBytes[0] === 0x25 && rawBytes[1] === 0x50 && rawBytes[2] === 0x44 && rawBytes[3] === 0x46) {
             mime = "application/pdf";
+          } else if (len >= 8 && rawBytes[0] === 0xD0 && rawBytes[1] === 0xCF && rawBytes[2] === 0x11 && rawBytes[3] === 0xE0) {
+            // OLE2 Compound Document (.msg, .doc, .xls)
+            if (fileName.toLowerCase().endsWith(".msg") || fileName.toLowerCase().endsWith(".oft")) {
+              mime = "application/vnd.ms-outlook";
+            } else if (fileName.toLowerCase().endsWith(".xls")) {
+              mime = "application/vnd.ms-excel";
+            } else if (fileName.toLowerCase().endsWith(".doc")) {
+              mime = "application/msword";
+            } else if (mime === "application/pdf") {
+              mime = "application/vnd.ms-outlook";
+            }
+          }
+
+          setDetectedMime(mime);
+          isImg = mime.startsWith("image/") || dataToProcess.startsWith("data:image/");
+          isPdf = mime === "application/pdf";
+
+          const blob = new Blob([rawBytes], { type: mime });
+          urlCreated = URL.createObjectURL(blob);
+          setBlobUrl(urlCreated);
+
+          if (!isImg && !isPdf) {
+            const preview = extractReadablePreviewFromBytes(rawBytes, fileName, mime);
+            setTextPreview(preview);
           }
         }
 
-        if (mime === "application/octet-stream" || !mime) {
-          const fName = (fileName || "").toLowerCase();
-          if (fName.endsWith(".png")) mime = "image/png";
-          else if (fName.endsWith(".jpg") || fName.endsWith(".jpeg")) mime = "image/jpeg";
-          else if (fName.endsWith(".webp")) mime = "image/webp";
-          else mime = "application/pdf";
+        if (isImg) {
+          setViewMode("image");
+          setIsLoading(false);
+        } else if (isPdf) {
+          setViewMode("pdf");
+          if (rawBytes) {
+            // Passa cópia do Uint8Array para o worker do PDF.js renderizar em Canvas sem bloqueio do navegador
+            pdfjsLib.getDocument({ data: rawBytes.slice(0) }).promise.then(doc => {
+              if (isCancelled) return;
+              setPdfDoc(doc);
+              setNumPages(doc.numPages);
+              setCurrentPage(1);
+              setPdfRenderMode("canvas");
+              setIsLoading(false);
+            }).catch(err => {
+              console.warn("[DocumentoAnexoModal] Aviso Canvas PDF:", err);
+              setIsLoading(false);
+            });
+          } else {
+            setIsLoading(false);
+          }
+        } else {
+          setViewMode("file");
+          setIsLoading(false);
         }
-
-        isImg = mime.startsWith("image/") || rawData.startsWith("data:image/");
-        const blob = new Blob([rawBytes], { type: mime });
-        urlCreated = URL.createObjectURL(blob);
-        setBlobUrl(urlCreated);
-      }
-
-      if (isImg) {
-        setViewMode("image");
+      } catch (err: any) {
+        console.warn("Aviso ao processar anexo de documento:", err);
+        setLoadError(err?.message || "Erro ao processar arquivo");
+        setViewMode("voucher");
         setIsLoading(false);
-      } else {
-        // PDF: define visualização como PDF (Prioridade 1: Documento Original)
-        setViewMode("pdf");
-        setIsLoading(false);
-
-        // Se tiver rawBytes e PDF.js estiver disponível, carrega em background para dar suporte a modo Canvas
-        if (rawBytes) {
-          pdfjsLib.getDocument({ data: rawBytes }).promise.then(doc => {
-            setPdfDoc(doc);
-            setNumPages(doc.numPages);
-            setCurrentPage(1);
-          }).catch(err => {
-            console.warn("[DocumentoAnexoModal] Aviso Canvas PDF (modo nativo ativo):", err);
-            setPdfRenderMode("native");
-          });
-        }
       }
+    };
 
-      return () => {
-        if (urlCreated && urlCreated.startsWith("blob:")) {
-          URL.revokeObjectURL(urlCreated);
-        }
-      };
-    } catch (err: any) {
-      console.warn("Aviso ao processar anexo de documento:", err);
-      setLoadError(err?.message || "Erro ao processar arquivo");
-      setViewMode("voucher");
-      setIsLoading(false);
-    }
-  }, [isOpen, documento, activeAnexoIndex, currentAnexo, remoteData, isFetchingRemote]);
+    processDataString(rawData);
+
+    return () => {
+      isCancelled = true;
+      if (urlCreated && urlCreated.startsWith("blob:")) {
+        URL.revokeObjectURL(urlCreated);
+      }
+    };
+  }, [isOpen, documento, activeAnexoIndex, currentAnexo, remoteData, isFetchingRemote, fileName]);
 
   // Renderizar a página atual no Canvas quando mudar a página, zoom ou rotação
   useEffect(() => {
@@ -518,7 +637,11 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
             {/* Alternador de Modo */}
             <div className="bg-black/35 p-1 rounded-xl border border-white/10 flex items-center gap-1 mr-1">
               <button
-                onClick={() => setViewMode(blobUrl && !pdfDoc ? "image" : "pdf")}
+                onClick={() => {
+                  if (detectedMime.startsWith("image/")) setViewMode("image");
+                  else if (detectedMime === "application/pdf") setViewMode("pdf");
+                  else setViewMode("file");
+                }}
                 disabled={!blobUrl && !isFetchingRemote && anexosList.length === 0}
                 className={cn(
                   "px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed",
@@ -526,10 +649,10 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
                     ? "bg-emerald-500 text-slate-950 font-black shadow-md shadow-emerald-500/20" 
                     : "text-emerald-200 hover:text-white hover:bg-white/10"
                 )}
-                title="Visualizar documento / fatura original anexada"
+                title="Visualizar arquivo / documento original anexado"
               >
                 <FileText className="w-3.5 h-3.5" />
-                PDF / Fatura Original
+                Arquivo Original
               </button>
               <button
                 onClick={() => setViewMode("voucher")}
@@ -749,26 +872,60 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
                 </div>
               </div>
 
-              {/* ÁREA DE VISUALIZAÇÃO DO PDF */}
-              {pdfRenderMode === "canvas" && pdfDoc ? (
-                <div className="flex-1 overflow-auto p-4 sm:p-6 flex items-center justify-center bg-slate-950 custom-scrollbar">
+              {/* ÁREA DE VISUALIZAÇÃO DO PDF (CANVAS NATIVO EM ALTA DEFINIÇÃO - SEM BLOQUEIO DO CHROME) */}
+              {pdfDoc && pdfRenderMode === "canvas" ? (
+                <div className="flex-1 overflow-auto p-4 sm:p-6 flex items-start justify-center bg-slate-950 custom-scrollbar">
                   <canvas 
                     ref={canvasRef} 
-                    className="rounded-xl shadow-2xl bg-white transition-all duration-150 border border-slate-800"
+                    className="rounded-xl shadow-2xl bg-white transition-all duration-150 border border-slate-800 my-auto"
                     style={{
                       maxWidth: zoom <= 1.0 ? '100%' : 'none',
-                      maxHeight: zoom <= 1.0 ? '100%' : 'none',
+                      height: 'auto',
                       objectFit: 'contain'
                     }}
                   />
                 </div>
+              ) : !pdfDoc && isLoading ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-950 text-slate-300 gap-3">
+                  <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+                  <p className="text-xs font-semibold">Renderizando documento no visualizador interno...</p>
+                </div>
               ) : (
                 <div className="flex-1 w-full h-full p-2 sm:p-4 bg-slate-950 flex flex-col">
-                  <iframe
-                    src={`${blobUrl}#view=FitH&toolbar=1`}
-                    className="w-full h-full border border-slate-800 rounded-2xl bg-white shadow-2xl"
-                    title={fileName}
-                  />
+                  {(() => {
+                    const driveMatch = String(blobUrl || "").match(/(?:\/file\/d\/|[?&]id=)([a-zA-Z0-9_-]{15,})/);
+                    const previewSrc = driveMatch && driveMatch[1]
+                      ? `https://drive.google.com/file/d/${driveMatch[1]}/preview`
+                      : `${blobUrl}#view=FitH&toolbar=1`;
+                    return (
+                      <object
+                        data={previewSrc}
+                        type="application/pdf"
+                        className="w-full h-full border border-slate-800 rounded-2xl bg-white shadow-2xl"
+                      >
+                        <div className="flex flex-col items-center justify-center h-full p-8 bg-slate-900 text-center space-y-4">
+                          <FileText className="w-12 h-12 text-emerald-400" />
+                          <p className="text-sm font-bold text-white">Visualização pronta para leitura</p>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={handleOpenInNewTab}
+                              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold border border-slate-700 cursor-pointer flex items-center gap-2"
+                            >
+                              <ExternalLink className="w-4 h-4 text-emerald-400" />
+                              Abrir em Nova Aba
+                            </button>
+                            <button
+                              onClick={handleDownload}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer flex items-center gap-2"
+                            >
+                              <Download className="w-4 h-4" />
+                              Baixar Arquivo
+                            </button>
+                          </div>
+                        </div>
+                      </object>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -836,6 +993,83 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
                   }}
                   referrerPolicy="no-referrer"
                 />
+              </div>
+            </div>
+          ) : viewMode === "file" && blobUrl ? (
+            /* VISUALIZADOR UNIVERSAL DE ARQUIVOS (E-MAILS OUTLOOK .MSG/.EML, XML, EXCEL, WORD, TXT, CSV, ZIP, ETC.) */
+            <div className="flex-1 overflow-y-auto p-4 sm:p-8 flex flex-col items-center justify-start bg-slate-950 custom-scrollbar">
+              <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden my-auto">
+                <div className="bg-gradient-to-r from-slate-800 to-slate-850 p-6 border-b border-slate-700/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 shadow-inner">
+                      <FileText className="w-7 h-7" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="inline-block px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[10px] font-black text-emerald-300 uppercase tracking-wider mb-1">
+                        {/\.(msg|eml|oft|pst)$/i.test(fileName)
+                          ? "E-mail do Microsoft Outlook Anexado"
+                          : fileName.toLowerCase().endsWith(".xml")
+                          ? "Arquivo Fiscal XML"
+                          : /\.(xlsx|xls|csv)$/i.test(fileName)
+                          ? "Planilha Microsoft Excel / CSV"
+                          : /\.(docx|doc)$/i.test(fileName)
+                          ? "Documento Microsoft Word"
+                          : "Arquivo Digital Anexado"}
+                      </span>
+                      <h4 className="text-base font-black text-white truncate max-w-md" title={fileName}>
+                        {fileName}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Fornecedor: <strong className="text-slate-200">{documento.fornecedor || "Não informado"}</strong> • Valor: <strong className="text-emerald-400">{valorDisplay}</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleDownload}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-emerald-600/25 shrink-0"
+                  >
+                    <Download className="w-4 h-4" />
+                    Baixar Arquivo Original
+                  </button>
+                </div>
+
+                {textPreview ? (
+                  <div className="p-6 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-400">
+                        Pré-visualização do Conteúdo ({fileName})
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Para abrir no aplicativo nativo (ex: Outlook / Excel), clique em "Baixar Arquivo Original"
+                      </span>
+                    </div>
+                    <pre className="w-full max-h-[420px] overflow-auto p-4 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-200 font-mono whitespace-pre-wrap break-words leading-relaxed custom-scrollbar">
+                      {textPreview}
+                    </pre>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center space-y-4">
+                    <p className="text-sm text-slate-300 max-w-xl mx-auto leading-relaxed">
+                      Este arquivo (<strong className="text-white font-mono">{fileName}</strong>) está armazenado integralmente no lançamento e pronto para abertura no aplicativo correspondente (Microsoft Outlook, Excel, Word, etc.).
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                      <button
+                        onClick={handleDownload}
+                        className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-emerald-600/25"
+                      >
+                        <Download className="w-4 h-4" />
+                        Baixar {fileName}
+                      </button>
+                      <button
+                        onClick={() => setViewMode("voucher")}
+                        className="px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 transition-all flex items-center gap-2 cursor-pointer"
+                      >
+                        <Sparkles className="w-4 h-4 text-emerald-400" />
+                        Ver Espelho Fiscal Digital
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : (

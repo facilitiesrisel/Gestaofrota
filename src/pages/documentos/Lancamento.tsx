@@ -456,87 +456,77 @@ export default function Lancamento() {
   );
 
   useEffect(() => {
-    if (location.state && (location.state as any).editLancamentoId) {
-      const targetId = Number((location.state as any).editLancamentoId);
-      const saved = localStorage.getItem("risel_lancamentos");
-      if (saved) {
-        try {
-          const list = JSON.parse(saved);
-          const found = list.find((x: any) => Number(x.id) === targetId);
-          if (found) {
-            setEditingId(targetId);
-            const numVal = parseCurrencyToNumber(found.valor || "");
-            const valClean = numVal > 0 ? numVal.toFixed(2).replace(".", ",") : "";
-            const docClean = (found.doc || "").trim();
-            let docCode = "";
-            if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N")) {
-              const docParts = docClean.split(" ");
-              docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
-            }
-            const numDocReal = found.codigoLancamento || found.numeroDocumento || docCode || "";
+    const stateData = location.state as any;
+    if (!stateData) return;
 
-            setFormData({
-              ...getInitialFormState(),
-              estabelecimento: found.estabelecimento || "100 - Paulínia",
-              fornecedor: found.fornecedor || "",
-              cnpj: found.cnpj || "",
-              valorNf: valClean,
-              tipoDocumento: found.tipo || "NF-e",
-              codigoLancamento: numDocReal,
-              codLancamentoOc: found.codLancamentoOc || "",
-              dataEmissao: found.dataEmissao || "",
-              dataVencimento: found.dataVencimento || "",
-              status: found.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (found.status || "Aguardando Aprovação"),
-              observacao: found.observacao || "",
-              tipo: found.frequencia || "Esporádico",
-              itemSistema: found.itemSistema || "",
-              formaPagamento: found.formaPagto || "Boleto",
-              descricao: found.descricao || "",
-              lancadoPor: found.lancadoPor || primeiroNome,
-              aprovadores: found.aprovadores || "",
-              dataAprovacao: found.dataAprovacao || "",
-              nomeArquivoAnexo: found.nomeArquivoAnexo || "",
-              arquivoAnexoBase64: found.arquivoAnexoBase64 || "",
-              centroCusto: found.centroCusto || "C.C 101 - Operacional"
-            });
-            setIsFormOpen(true);
+    const editIdFromRoute = stateData.editLancamentoId || (
+      stateData.openForm &&
+      stateData.prefill?.id &&
+      !stateData.prefill?.diaEmissaoHabitual &&
+      stateData.prefill?.status !== "Aguardando Lançamento do Mês"
+        ? stateData.prefill.id
+        : null
+    );
+
+    if (editIdFromRoute) {
+      const targetId = Number(editIdFromRoute);
+      const unifiedList = getLancamentosUnified();
+      const inMemoryFound = unifiedList.find((x: any) => Number(x.id) === targetId);
+      let found = inMemoryFound || stateData.prefill || null;
+
+      if (!found) {
+        try {
+          const saved = localStorage.getItem("risel_lancamentos");
+          if (saved) {
+            const list = JSON.parse(saved);
+            found = list.find((x: any) => Number(x.id) === targetId) || null;
           }
         } catch (e) {
           console.error("Erro ao carregar lançamento para edição via estado da rota:", e);
         }
       }
+
+      if (found) {
+        handleEditLancamento(found);
+      }
       navigate(location.pathname, { replace: true, state: {} });
-    } else if (location.state && (location.state as any).openForm) {
-      const stateData = location.state as any;
+    } else if (stateData.openForm) {
       setEditingId(null);
       if (stateData.prefill) {
         const p = stateData.prefill;
-        const numVal = parseCurrencyToNumber(p.valor || "");
+        const orig = p.lancamentoOriginal || p;
+        const numVal = parseCurrencyToNumber(p.valor || orig.valor || "");
         const valorLimpo = numVal > 0 ? numVal.toFixed(2).replace(".", ",") : "";
-        const dataVenc = p.vencimento || new Date().toISOString().split('T')[0];
-        const docClean = (p.doc || "").trim();
+        const dataVenc = normalizeDateToInput(p.vencimento || p.dataVencimento || orig.dataVencimento) || new Date().toISOString().split('T')[0];
+        const docClean = (p.doc || orig.doc || "").trim();
         let docCode = "";
-        if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N")) {
+        if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N") && !docClean.includes("Pendente")) {
           const docParts = docClean.split(" ");
           docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
         }
-        const numDocReal = p.codigoLancamento || p.numeroDocumento || docCode || "";
+        const numDocReal = p.codigoLancamento || p.numeroDocumento || orig.codigoLancamento || docCode || "";
 
         setFormData({
           ...getInitialFormState(),
-          fornecedor: p.fornecedor || "",
+          estabelecimento: p.estabelecimento || orig.estabelecimento || "100 - Paulínia",
+          fornecedor: p.fornecedor || orig.fornecedor || "",
+          cnpj: p.cnpj || orig.cnpj || "",
           valorNf: valorLimpo,
+          tipoDocumento: p.tipo || orig.tipo || "NF-e",
+          dataEmissao: normalizeDateToInput(p.dataEmissao || orig.dataEmissao) || getLocalTodayISO(),
           dataVencimento: dataVenc,
           codigoLancamento: numDocReal,
-          codLancamentoOc: p.codLancamentoOc || "",
-          tipo: p.frequencia || "Esporádico",
-          observacao: "Preenchido automaticamente a partir do Alerta de Vencimentos."
+          codLancamentoOc: p.codLancamentoOc || orig.codLancamentoOc || "",
+          tipo: p.frequencia || orig.frequencia || (p.diaEmissaoHabitual ? "Mensal" : "Esporádico"),
+          formaPagamento: p.formaPagto || orig.formaPagto || "Boleto",
+          centroCusto: p.centroCusto || orig.centroCusto || "C.C 101 - Operacional",
+          descricao: p.descricao || orig.descricao || "",
+          observacao: p.observacao || orig.observacao || ""
         });
       } else {
         setFormData(getInitialFormState());
       }
       setIsFormOpen(true);
-      // Limpar o estado para não reabrir em recarregamentos
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location, navigate, primeiroNome]);
@@ -921,23 +911,14 @@ export default function Lancamento() {
         setCnpjSuccessMsg(`Receita Federal: ${razao}`);
 
         if (fillForm) {
-          setFormData(prev => {
-            let novaObs = prev.observacao || "";
-            const obsSnippet = `[CNPJ: ${resultado.cnpj || cnpjClean} - ${razao} | Atividade: ${resultado.cnae_fiscal_descricao || ""} | Endereço: ${resultado.logradouro || ""}, ${resultado.numero || ""} - ${resultado.bairro || ""}, ${resultado.municipio || ""}-${resultado.uf || ""}]`;
-            if (!novaObs.includes(razao)) {
-              novaObs = novaObs ? `${novaObs}\n\n${obsSnippet}` : obsSnippet;
-            }
-
-            return {
-              ...prev,
-              fornecedor: razao,
-              cidade: resultado.municipio || prev.cidade,
-              uf: (resultado.uf || prev.uf || "").toUpperCase(),
-              telefone: formatarTelefone(resultado.telefone) || prev.telefone,
-              email: (resultado.email || prev.email || "").toLowerCase(),
-              observacao: novaObs
-            };
-          });
+          setFormData(prev => ({
+            ...prev,
+            fornecedor: razao || prev.fornecedor,
+            cidade: resultado.municipio || prev.cidade,
+            uf: (resultado.uf || prev.uf || "").toUpperCase(),
+            telefone: formatarTelefone(resultado.telefone) || prev.telefone,
+            email: (resultado.email || prev.email || "").toLowerCase()
+          }));
         }
         return razao;
       } else {
@@ -1726,12 +1707,18 @@ export default function Lancamento() {
     } else if (name === "dataVencimento" || name === "fornecedor" || name === "codigoLancamento") {
       setFormData(prev => {
         const nextData = { ...prev, [name]: value };
-        // Se já anexou arquivo e o nome segue o padrão oficial, atualiza dinamicamente
+        // Se já anexou arquivo e o nome segue o padrão oficial, atualiza dinamicamente mantendo a extensão original
         if (prev.nomeArquivoAnexo && /^\d{2}\.\d{2}\.\d{4}/.test(prev.nomeArquivoAnexo)) {
           const novoVenc = name === "dataVencimento" ? value : prev.dataVencimento;
           const novoForn = name === "fornecedor" ? value : prev.fornecedor;
           const novoDoc = name === "codigoLancamento" ? value : prev.codigoLancamento;
-          nextData.nomeArquivoAnexo = gerarNomePadraoAnexoNf(novoVenc, novoForn, prev.nomeArquivoAnexo, novoDoc);
+          const novoNomePadrao = gerarNomePadraoAnexoNf(novoVenc, novoForn, prev.nomeArquivoAnexo, novoDoc);
+          nextData.nomeArquivoAnexo = novoNomePadrao;
+          if (Array.isArray(prev.anexos) && prev.anexos.length > 0) {
+            const updatedAnexos = [...prev.anexos];
+            updatedAnexos[0] = { ...updatedAnexos[0], nome: novoNomePadrao };
+            nextData.anexos = updatedAnexos;
+          }
         }
         return nextData;
       });
@@ -1773,7 +1760,6 @@ export default function Lancamento() {
         let tpDoc = "NFS-e"; // Tipo de documento real NFS-e
         let numDoc = String(Math.floor(Math.random() * 90000) + 10000);
         let razaoExtraida = "";
-        let obsOcr = "";
 
         if (lowerName.includes("posto") || lowerName.includes("abc") || lowerName.includes("locacao")) {
           cnpjReal = "34274233000102"; // VIBRA ENERGIA S.A.
@@ -1814,7 +1800,7 @@ export default function Lancamento() {
         } else {
           // Extrai o nome do arquivo para sugerir como Fornecedor de forma ultra inteligente!
           let cleanName = fileName.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " "); // Remove extensão
-          cleanName = cleanName.replace(/(fatura|nf|nota|fiscal|documento|original|anexo|pdf|jpg|png|xml)/gi, "").trim();
+          cleanName = cleanName.replace(/(fatura|nf|nota|fiscal|documento|original|anexo|pdf|jpg|png|xml|msg|eml)/gi, "").trim();
           cleanName = cleanName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ").trim();
           
           razaoExtraida = cleanName || "Fornecedor Extraído por IA";
@@ -1824,7 +1810,6 @@ export default function Lancamento() {
           // Tenta extrair número do documento do nome do arquivo (ex: "NF1902.pdf" -> "1902")
           const nameMatch = fileName.match(/(?:nf|nfe|doc|fatura|recibo)?[\-_]?(\d{3,8})/i);
           numDoc = nameMatch ? nameMatch[1] : "";
-          obsOcr = `OCR Concluído. Dados extraídos do documento '${fileName}'. Fornecedor sugerido: ${razaoExtraida}. Ajuste as informações se necessário.`;
         }
 
         // Formata CNPJ para visualização
@@ -1844,36 +1829,57 @@ export default function Lancamento() {
 
         setOcrProcessing(false);
 
-        // Preenche o formulário com dados dinâmicos do OCR ou extraídos do arquivo sem sobrescrever número já preenchido!
+        // Preenche o formulário com dados dinâmicos do OCR sem sobrescrever campos já preenchidos pelo usuário!
         setFormData(prev => ({
           ...prev,
-          lancadoPor: primeiroNome, // Usa o lançador logado
-          cnpj: formattedCnpj,
-          estabelecimento: localEstab,
-          tipoDocumento: tpDoc,
-          tipo: "Esporádico",
-          fornecedor: finalFornecedor,
-          descricao: descServico,
-          itemSistema: codSistema, // Sugerindo o item de sistema como solicitado
-          dataEmissao: getLocalTodayISO(), // Data de emissão real local
-          valorNf: valSugerido, // Preenchendo o valor
-          formaPagamento: formaPg, // Iniciado em branco como solicitado
-          dataVencimento: "", // Iniciado em branco para o usuário selecionar e controlar
-          moduloPetroshow: "Não aplicável",
-          status: "Aguardando Aprovação", 
-          aprovadores: "Deny e Gerência",
-          codigoLancamento: prev.codigoLancamento ? prev.codigoLancamento : (numDoc || ""), // Preserva sempre se já digitado
-          dataAprovacao: "",
-          dataEnvio: "",
-          observacao: prev.observacao || "", // Reservado para anotações manuais do usuário sobre o lançamento
-          multaPlaca: "",
-          multaInfracao: "",
-          multaMotorista: "",
-          multaGravidade: "Média",
-          nomeArquivoAnexo: fileName
+          lancadoPor: prev.lancadoPor || primeiroNome,
+          cnpj: prev.cnpj || formattedCnpj,
+          estabelecimento: prev.estabelecimento || localEstab,
+          tipoDocumento: prev.tipoDocumento || tpDoc,
+          tipo: prev.tipo || "Esporádico",
+          fornecedor: prev.fornecedor || finalFornecedor,
+          descricao: prev.descricao || descServico,
+          itemSistema: prev.itemSistema || codSistema,
+          dataEmissao: prev.dataEmissao || getLocalTodayISO(),
+          valorNf: prev.valorNf || valSugerido,
+          formaPagamento: prev.formaPagamento || formaPg,
+          dataVencimento: prev.dataVencimento || "",
+          moduloPetroshow: prev.moduloPetroshow || "Não aplicável",
+          status: prev.status || "Aguardando Aprovação", 
+          aprovadores: prev.aprovadores || "Deny e Gerência",
+          codigoLancamento: prev.codigoLancamento ? prev.codigoLancamento : (numDoc || ""),
+          observacao: prev.observacao || "",
+          nomeArquivoAnexo: prev.nomeArquivoAnexo || fileName
         }));
       }
     }, 400);
+  };
+
+  // Inferência universal de MIME Type para anexos (incluindo e-mails do Outlook .msg, .eml, .oft, .pst, Office, XML, PDF, etc.)
+  const inferAttachmentMimeType = (fileName: string, browserMime?: string): string => {
+    const lower = String(fileName || "").toLowerCase().trim();
+    if (lower.endsWith(".msg") || lower.endsWith(".oft")) return "application/vnd.ms-outlook";
+    if (lower.endsWith(".eml")) return "message/rfc822";
+    if (lower.endsWith(".pst")) return "application/vnd.ms-outlook-pst";
+    if (lower.endsWith(".pdf")) return "application/pdf";
+    if (lower.endsWith(".xml")) return "application/xml";
+    if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+    if (lower.endsWith(".csv")) return "text/csv";
+    if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (lower.endsWith(".doc")) return "application/msword";
+    if (lower.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    if (lower.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
+    if (lower.endsWith(".txt") || lower.endsWith(".log") || lower.endsWith(".ret") || lower.endsWith(".rem")) return "text/plain";
+    if (lower.endsWith(".zip")) return "application/zip";
+    if (lower.endsWith(".rar")) return "application/vnd.rar";
+    if (lower.endsWith(".7z")) return "application/x-7z-compressed";
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+    if (lower.endsWith(".webp")) return "image/webp";
+    if (lower.endsWith(".gif")) return "image/gif";
+    if (browserMime && browserMime.trim() !== "") return browserMime.trim();
+    return "application/octet-stream";
   };
 
   const processFiles = async (files: FileList | File[]) => {
@@ -1898,10 +1904,20 @@ export default function Lancamento() {
     const filesToProcess = fileArray.slice(0, availableSlots);
 
     const readResults = await Promise.all(
-      filesToProcess.map(file => new Promise<{ file: File; base64: string }>((resolve) => {
+      filesToProcess.map(file => new Promise<{ file: File; base64: string; mimeType: string }>((resolve) => {
         const reader = new FileReader();
-        reader.onload = (e) => resolve({ file, base64: (e.target?.result as string) || "" });
-        reader.onerror = () => resolve({ file, base64: "" });
+        const resolvedMime = inferAttachmentMimeType(file.name, file.type);
+        reader.onload = (e) => {
+          let rawDataUrl = (e.target?.result as string) || "";
+          // E-mails do Outlook (.msg/.eml) frequentemente vêm com file.type vazio no navegador ("data:;base64,..." ou "data:application/octet-stream;base64,...")
+          if (rawDataUrl.startsWith("data:;base64,")) {
+            rawDataUrl = `data:${resolvedMime};base64,${rawDataUrl.slice("data:;base64,".length)}`;
+          } else if (rawDataUrl.startsWith("data:application/octet-stream;base64,") && resolvedMime !== "application/octet-stream") {
+            rawDataUrl = `data:${resolvedMime};base64,${rawDataUrl.slice("data:application/octet-stream;base64,".length)}`;
+          }
+          resolve({ file, base64: rawDataUrl, mimeType: resolvedMime });
+        };
+        reader.onerror = () => resolve({ file, base64: "", mimeType: resolvedMime });
         reader.readAsDataURL(file);
       }))
     );
@@ -1922,7 +1938,9 @@ export default function Lancamento() {
       const validResults = readResults.filter(r => r.base64).slice(0, slotsLeft);
       const newItems = validResults.map((r, idx) => {
         const totalIdx = list.length + idx;
-        const isNf = (prev.tipoDocumento === "NF-e" || prev.tipoDocumento === "NFS-e" || !prev.tipoDocumento) && totalIdx === 0;
+        const lowerFileName = r.file.name.toLowerCase();
+        const isEmailOrOfficeAttachment = /\.(msg|eml|oft|pst|xlsx|xls|csv|docx|doc|zip|rar|7z|txt)$/i.test(lowerFileName);
+        const isNf = !isEmailOrOfficeAttachment && (prev.tipoDocumento === "NF-e" || prev.tipoDocumento === "NFS-e" || !prev.tipoDocumento) && totalIdx === 0;
         const nomeSugerido = isNf
           ? gerarNomePadraoAnexoNf(prev.dataVencimento, prev.fornecedor, r.file.name, prev.codigoLancamento)
           : r.file.name;
@@ -1932,7 +1950,7 @@ export default function Lancamento() {
           nome: nomeSugerido,
           base64: r.base64,
           tamanho: r.file.size,
-          tipo: r.file.type
+          tipo: r.mimeType
         };
       });
 
@@ -2105,9 +2123,9 @@ export default function Lancamento() {
     const finalNomeAnexo = currentAnexos[0]?.nome || data.nomeArquivoAnexo || "";
     const finalBase64Anexo = currentAnexos[0]?.base64 || data.arquivoAnexoBase64 || "";
 
-    // Se a intenção do salvamento é disparar e-mail de aprovação, força estritamente "Aguardando Aprovação"
-    const isDispatchingEmail = Boolean(options?.sendEmail);
+    // Preserva rigorosamente o status selecionado pelo usuário no formulário (mesmo ao enviar e-mail!)
     const targetEditingId = options?.targetEditingId !== undefined ? options.targetEditingId : editingId;
+    const nowIso = new Date().toISOString();
 
     if (targetEditingId !== null && targetEditingId !== undefined) {
       // Editar lançamento existente com preservação total de campos e ID
@@ -2115,22 +2133,32 @@ export default function Lancamento() {
         String(item.id) === String(targetEditingId) || 
         Number(item.id) === Number(targetEditingId)
       );
-      const statusCalculado = isDispatchingEmail 
-        ? "Aguardando Aprovação" 
-        : (data.status || existing?.status || "Aguardando Aprovação");
+      const normalizedStatus = data.status === "Aguardando aprovação" ? "Aguardando Aprovação" : data.status;
+      const statusCalculado = normalizedStatus || existing?.status || "Aguardando Aprovação";
 
-      let dataAprovacao = existing?.dataAprovacao || "";
-      if (isDispatchingEmail) {
-        dataAprovacao = "";
-      } else if (statusCalculado === "Aprovado") {
+      let dataAprovacao = data.dataAprovacao || existing?.dataAprovacao || "";
+      if (statusCalculado === "Aprovado") {
         dataAprovacao = dataAprovacao || hojeLocalBr;
-      } else if (data.status && data.status !== "Aprovado" && data.status !== existing?.status) {
+      } else if (statusCalculado !== "Aprovado") {
         dataAprovacao = "";
       }
 
       const parsedId = isNaN(Number(targetEditingId)) ? targetEditingId : Number(targetEditingId);
 
+      // Se o usuário manteve os anexos (currentAnexos > 0) mas algum estava sem base64 em memória, recupera do existing
+      const mergedAnexos = currentAnexos.map((att: any, idx: number) => {
+        if (att.base64) return att;
+        const oldMatch = Array.isArray(existing?.anexos)
+          ? (existing.anexos.find((oa: any) => (oa.id && oa.id === att.id) || (oa.nome && oa.nome === att.nome)) || existing.anexos[idx])
+          : null;
+        return {
+          ...att,
+          base64: oldMatch?.base64 || (idx === 0 ? (existing?.arquivoAnexoBase64 || "") : "")
+        };
+      });
+
       savedItem = {
+        ...(existing || {}),
         id: parsedId,
         status: statusCalculado,
         dataLancamento: existing?.dataLancamento || hojeLocalBr,
@@ -2143,9 +2171,10 @@ export default function Lancamento() {
         descricao: data.descricao || "Lançamento editado",
         cnpj: data.cnpj,
         estabelecimento: finalEstabelecimento,
-        nomeArquivoAnexo: finalNomeAnexo || existing?.nomeArquivoAnexo || "",
-        arquivoAnexoBase64: finalBase64Anexo || existing?.arquivoAnexoBase64 || "",
-        anexos: currentAnexos.length > 0 ? currentAnexos : (existing?.anexos || []),
+        nomeArquivoAnexo: finalNomeAnexo,
+        arquivoAnexoBase64: finalBase64Anexo || (finalNomeAnexo ? (existing?.arquivoAnexoBase64 || "") : ""),
+        anexos: mergedAnexos,
+        temAnexo: Boolean(finalNomeAnexo || mergedAnexos.length > 0),
         itemSistema: data.itemSistema || "",
         dataEmissao: formatEmissao,
         observacao: data.observacao || "",
@@ -2156,24 +2185,32 @@ export default function Lancamento() {
         centroCusto: finalCentroCusto,
         codLancamentoOc: data.codLancamentoOc || "",
         codigoLancamento: data.codigoLancamento || "",
+        numeroDocumento: data.codigoLancamento || "",
         cidade: data.cidade || lastCnpjDataRef.current?.municipio || existing?.cidade || "",
         uf: (data.uf || lastCnpjDataRef.current?.uf || existing?.uf || "").toUpperCase(),
         telefone: data.telefone || lastCnpjDataRef.current?.telefone || existing?.telefone || "",
-        email: (data.email || lastCnpjDataRef.current?.email || existing?.email || "").toLowerCase()
+        email: (data.email || lastCnpjDataRef.current?.email || existing?.email || "").toLowerCase(),
+        multaPlaca: data.multaPlaca ?? existing?.multaPlaca ?? "",
+        multaInfracao: data.multaInfracao ?? existing?.multaInfracao ?? "",
+        multaMotorista: data.multaMotorista ?? existing?.multaMotorista ?? "",
+        multaGravidade: data.multaGravidade ?? existing?.multaGravidade ?? "Média",
+        moduloPetroshow: data.moduloPetroshow ?? existing?.moduloPetroshow ?? "",
+        updatedAt: nowIso,
+        updatedAtMs: Date.now()
       };
 
       await saveLancamentoUnified(savedItem);
     } else {
       // Cadastrar novo lançamento
       const newId = Date.now();
-      const isNowApproved = !isDispatchingEmail && data.status === "Aprovado";
-      const statusCalculado = isDispatchingEmail 
-        ? "Aguardando Aprovação" 
-        : ((data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status);
+      const normalizedStatus = (data.status === "Aguardando aprovação" || !data.status)
+        ? "Aguardando Aprovação"
+        : data.status;
+      const isNowApproved = normalizedStatus === "Aprovado";
 
       savedItem = {
         id: newId,
-        status: statusCalculado,
+        status: normalizedStatus,
         dataLancamento: hojeLocalBr,
         dataVencimento: formatVencimiento,
         fornecedor: data.fornecedor,
@@ -2187,20 +2224,29 @@ export default function Lancamento() {
         nomeArquivoAnexo: finalNomeAnexo,
         arquivoAnexoBase64: finalBase64Anexo,
         anexos: currentAnexos,
+        temAnexo: Boolean(finalNomeAnexo || currentAnexos.length > 0),
         itemSistema: data.itemSistema || "",
         dataEmissao: formatEmissao,
         observacao: data.observacao || "",
         frequencia: data.tipo || "Esporádico",
         lancadoPor: data.lancadoPor || primeiroNome,
-        dataAprovacao: isNowApproved ? hojeLocalBr : "",
+        dataAprovacao: isNowApproved ? (data.dataAprovacao || hojeLocalBr) : "",
         aprovadores: finalAlcada,
         centroCusto: finalCentroCusto,
         codLancamentoOc: data.codLancamentoOc || "",
         codigoLancamento: data.codigoLancamento || "",
+        numeroDocumento: data.codigoLancamento || "",
         cidade: data.cidade || lastCnpjDataRef.current?.municipio || "",
         uf: (data.uf || lastCnpjDataRef.current?.uf || "").toUpperCase(),
         telefone: data.telefone || lastCnpjDataRef.current?.telefone || "",
-        email: (data.email || lastCnpjDataRef.current?.email || "").toLowerCase()
+        email: (data.email || lastCnpjDataRef.current?.email || "").toLowerCase(),
+        multaPlaca: data.multaPlaca || "",
+        multaInfracao: data.multaInfracao || "",
+        multaMotorista: data.multaMotorista || "",
+        multaGravidade: data.multaGravidade || "Média",
+        moduloPetroshow: data.moduloPetroshow || "",
+        updatedAt: nowIso,
+        updatedAtMs: Date.now()
       };
 
       await saveLancamentoUnified(savedItem);
@@ -2220,12 +2266,8 @@ export default function Lancamento() {
       });
     }
 
-    // Disparo oficial com destinatários e cópias escolhidos no modal
+    // Disparo oficial com destinatários e cópias escolhidos no modal (sem reverter o status escolhido pelo usuário!)
     if (options?.sendEmail) {
-      // Garante que o status salvo esteja como Aguardando Aprovação
-      savedItem.status = "Aguardando Aprovação";
-      savedItem.dataAprovacao = "";
-      await saveLancamentoUnified(savedItem);
       const userEmailLogado = (user?.email || "").toLowerCase().trim();
       const defaultUserEmail = userEmailLogado || "deny.goncalves@risel.com.br";
       const paraLista = options.toRecipients && options.toRecipients.length > 0 ? options.toRecipients : [defaultUserEmail];
@@ -2242,8 +2284,8 @@ export default function Lancamento() {
           const saudacaoUsada = getSaudacaoDestinatarios(paraLista);
           const textoCc = ccLista.length > 0 ? ` com cópia para ${ccLista.join(", ")}.` : ".";
           setEmailSentNotice({
-            title: "E-mail de Aprovação Enviado",
-            desc: `E-mail de aprovação (${saudacaoUsada}) encaminhado para ${paraLista.join(", ")}${textoCc}`
+            title: "E-mail de Lançamento Enviado",
+            desc: `E-mail (${saudacaoUsada}) encaminhado para ${paraLista.join(", ")}${textoCc}`
           });
           setTimeout(() => setEmailSentNotice(null), 8000);
         }
@@ -2361,7 +2403,9 @@ export default function Lancamento() {
     const updatedItem = {
       ...existing,
       status: newStatus,
-      dataAprovacao: dataAprovacao
+      dataAprovacao: dataAprovacao,
+      updatedAt: new Date().toISOString(),
+      updatedAtMs: Date.now()
     };
 
     // Atualiza estado local de imediato para resposta visual instantânea na interface
@@ -2372,12 +2416,12 @@ export default function Lancamento() {
     window.dispatchEvent(new Event("risel_lancamentos_updated"));
   };
 
-  // Abrir o formulário de edição de Lançamento
+  // Abrir o formulário de edição de Lançamento com hidratação automática de anexos do servidor
   const handleEditLancamento = (item: any) => {
     // Isolar o número do documento/fatura
     const docClean = (item.doc || "").trim();
     let docCode = "";
-    if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N")) {
+    if (docClean && !docClean.startsWith("DOC-") && !docClean.endsWith("S/N") && cleanDocNotApplicable(docClean)) {
       const docParts = docClean.split(" ");
       docCode = docParts.length > 1 ? docParts.slice(1).join(" ") : docParts[0];
     }
@@ -2399,11 +2443,32 @@ export default function Lancamento() {
       }
     } catch (e) {}
 
+    // Limpa possíveis tags internas legadas na observação
+    const cleanObs = String(item.observacao || "")
+      .replace(/\[Nº DOC:[^\]]*\]/gi, "")
+      .replace(/\[OC\/CÓD:[^\]]*\]/gi, "")
+      .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
+      .replace(/\[ALÇADA:[^\]]*\]/gi, "")
+      .replace(/\[BASE:[^\]]*\]/gi, "")
+      .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
+      .replace(/\[UPDATED_AT:[^\]]*\]/gi, "")
+      .replace(/\[CONTATO_JSON:\s*\{.*?\}\]/gs, "")
+      .replace(/\[ANEXOS_JSON:\s*\[.*?\]\]/gs, "")
+      .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const initialAnexos = Array.isArray(item.anexos) && item.anexos.length > 0
+      ? item.anexos.slice(0, 4)
+      : ((item.arquivoAnexoBase64 || item.nomeArquivoAnexo)
+          ? [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 || "" }]
+          : []);
+
     setEditingId(item.id);
     setFormData({
       ...getInitialFormState(),
       lancadoPor: item.lancadoPor || primeiroNome,
-      cnpj: item.cnpj || "",
+      cnpj: item.cnpj || matchedForn?.cnpj || "",
       estabelecimento: item.estabelecimento || "100 - Paulínia",
       tipoDocumento: item.tipo || "NF-e",
       tipo: item.frequencia || "Esporádico",
@@ -2414,23 +2479,21 @@ export default function Lancamento() {
       valorNf: valClean,
       formaPagamento: item.formaPagto || "Boleto",
       dataVencimento: normalizeDateToInput(item.dataVencimento) || "",
-      moduloPetroshow: "",
+      moduloPetroshow: item.moduloPetroshow || "",
       status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || "Aguardando Aprovação"),
-      aprovadores: item.aprovadores || "",
+      aprovadores: item.aprovadores || calcularAlcadaPorValor(valClean),
       codigoLancamento: numDocReal,
       codLancamentoOc: item.codLancamentoOc || "",
       dataAprovacao: item.dataAprovacao || "",
       dataEnvio: "",
-      observacao: item.observacao || "",
-      multaPlaca: "",
-      multaInfracao: "",
-      multaMotorista: "",
-      multaGravidade: "Média",
-      nomeArquivoAnexo: item.nomeArquivoAnexo || (item.anexos?.[0]?.nome || ""),
-      arquivoAnexoBase64: item.arquivoAnexoBase64 || (item.anexos?.[0]?.base64 || ""),
-      anexos: Array.isArray(item.anexos) && item.anexos.length > 0
-        ? item.anexos.slice(0, 4)
-        : (item.arquivoAnexoBase64 ? [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }] : []),
+      observacao: cleanObs,
+      multaPlaca: item.multaPlaca || "",
+      multaInfracao: item.multaInfracao || "",
+      multaMotorista: item.multaMotorista || "",
+      multaGravidade: item.multaGravidade || "Média",
+      nomeArquivoAnexo: item.nomeArquivoAnexo || (initialAnexos[0]?.nome || ""),
+      arquivoAnexoBase64: item.arquivoAnexoBase64 || (initialAnexos[0]?.base64 || ""),
+      anexos: initialAnexos,
       centroCusto: item.centroCusto || "C.C 101 - Operacional",
       cidade: item.cidade || matchedForn?.cidade || "",
       uf: (item.uf || matchedForn?.uf || "").toUpperCase(),
@@ -2438,7 +2501,36 @@ export default function Lancamento() {
       email: (item.email || matchedForn?.email || "").toLowerCase()
     });
     setIsFormOpen(true);
+
+    // Se o registro possui anexo cadastrado mas o base64 estava ausente no cache local, hidrata em segundo plano
+    const needsBase64Hydration = Boolean(
+      item.id &&
+      (item.temAnexo || item.nomeArquivoAnexo || initialAnexos.length > 0) &&
+      (!item.arquivoAnexoBase64 || initialAnexos.some((a: any) => !a.base64))
+    );
+    if (needsBase64Hydration) {
+      fetchLancamentoAnexoOriginal(item.id).then(res => {
+        if (!res) return;
+        setFormData(prev => {
+          const hydratedAnexos = Array.isArray(res.anexos) && res.anexos.length > 0
+            ? res.anexos.slice(0, 4)
+            : (res.arquivoAnexoBase64
+                ? [{ id: "anx-1", nome: prev.nomeArquivoAnexo || res.nome || "Documento.pdf", base64: res.arquivoAnexoBase64 }]
+                : prev.anexos);
+          return {
+            ...prev,
+            nomeArquivoAnexo: prev.nomeArquivoAnexo || res.nome || (hydratedAnexos[0]?.nome || ""),
+            arquivoAnexoBase64: prev.arquivoAnexoBase64 || res.arquivoAnexoBase64 || (hydratedAnexos[0]?.base64 || ""),
+            anexos: hydratedAnexos
+          };
+        });
+      }).catch(() => {});
+    }
   };
+
+  function cleanDocNotApplicable(docStr: string): boolean {
+    return docStr !== "N/A" && docStr !== "S/N";
+  }
 
   const handleDeleteLancamento = async (id: number | string) => {
     if (confirm("Tem certeza que deseja excluir permanentemente este lançamento? Essa exclusão será sincronizada para todos os usuários.")) {
@@ -3546,7 +3638,6 @@ export default function Lancamento() {
                             multiple
                             ref={fileInputRef} 
                             onChange={handleFileUpload} 
-                            accept=".pdf,.png,.jpg,.jpeg,.xml" 
                             className="hidden" 
                           />
                           <div className="w-5 h-5 rounded bg-emerald-100/70 border border-emerald-200 flex items-center justify-center text-emerald-700 transition-all shrink-0">
@@ -3555,10 +3646,10 @@ export default function Lancamento() {
                           <div className="text-left min-w-0">
                             <h5 className="font-bold text-slate-700 text-[9px] group-hover:text-emerald-800 transition-colors leading-tight">
                               {(formData.anexos || []).length === 0
-                                ? "Anexar Documentos (Até 4)"
-                                : `Adicionar mais um documento (${4 - (formData.anexos || []).length} restante${4 - (formData.anexos || []).length > 1 ? "s" : ""})`}
+                                ? "Anexar Arquivos ou E-mails (Até 4)"
+                                : `Adicionar mais um arquivo (${4 - (formData.anexos || []).length} restante${4 - (formData.anexos || []).length > 1 ? "s" : ""})`}
                             </h5>
-                            <p className="text-[7.5px] text-slate-500 leading-none truncate">Arraste ou clique (PDF, Imagem, XML)</p>
+                            <p className="text-[7.5px] text-slate-500 leading-none truncate">Todos os formatos (PDF, E-mail Outlook .msg/.eml, XML, Excel, Word, Imagem)</p>
                           </div>
                         </div>
                       )}
@@ -4108,28 +4199,28 @@ export default function Lancamento() {
                           const isCanceled = currentStatusLower === "cancelado";
 
                           return (
-                            <td key="status" className={cn(cellPadding, "border-r border-slate-200/50")}>
+                            <td key="status" className={cn(cellPadding, "font-normal border-r border-slate-200/50")}>
                               <select
                                 value={currentStatus}
                                 onChange={(e) => handleInlineStatusChange(item.id, e.target.value)}
                                 className={cn(
-                                  "px-2.5 py-1 rounded-lg text-[10.5px] font-black border whitespace-nowrap inline-block cursor-pointer outline-none shadow-2xs transition-all",
-                                  isApproved ? "bg-blue-100 text-blue-900 border-blue-500 hover:bg-blue-200/90 ring-1 ring-blue-500/40 font-black shadow-xs" :
-                                  isFinalized ? "bg-emerald-50 text-emerald-800 border-emerald-300/80 hover:bg-emerald-100/80 font-black" :
-                                  isContested ? "bg-purple-50 text-purple-800 border-purple-300/80 hover:bg-purple-100/80 font-black" :
-                                  isPending ? "bg-amber-50 text-amber-900 border-amber-300/80 hover:bg-amber-100/80 font-bold" :
-                                  isCanceled ? "bg-rose-50 text-rose-800 border-rose-300/80 hover:bg-rose-100/80 font-bold" :
-                                  "bg-slate-50 text-slate-700 border-slate-300/80 hover:bg-slate-100 font-bold"
+                                  "px-2.5 py-1 rounded-lg text-[10.5px] font-normal border whitespace-nowrap inline-block cursor-pointer outline-none shadow-2xs transition-all",
+                                  isApproved ? "bg-blue-100 text-blue-900 border-blue-500 hover:bg-blue-200/90 ring-1 ring-blue-500/40 font-normal shadow-xs" :
+                                  isFinalized ? "bg-emerald-50 text-emerald-800 border-emerald-300/80 hover:bg-emerald-100/80 font-normal" :
+                                  isContested ? "bg-purple-50 text-purple-800 border-purple-300/80 hover:bg-purple-100/80 font-normal" :
+                                  isPending ? "bg-amber-50 text-amber-900 border-amber-300/80 hover:bg-amber-100/80 font-normal" :
+                                  isCanceled ? "bg-rose-50 text-rose-800 border-rose-300/80 hover:bg-rose-100/80 font-normal" :
+                                  "bg-slate-50 text-slate-700 border-slate-300/80 hover:bg-slate-100 font-normal"
                                 )}
                               >
-                                <option value="Aguardando Aprovação">Aguardando Aprovação</option>
-                                <option value="Aprovado">Aprovado</option>
-                                <option value="Em Contestação">Em Contestação</option>
-                                <option value="Finalizado">Finalizado</option>
-                                <option value="Cancelado">Cancelado</option>
+                                <option value="Aguardando Aprovação" className="font-normal">Aguardando Aprovação</option>
+                                <option value="Aprovado" className="font-normal">Aprovado</option>
+                                <option value="Em Contestação" className="font-normal">Em Contestação</option>
+                                <option value="Finalizado" className="font-normal">Finalizado</option>
+                                <option value="Cancelado" className="font-normal">Cancelado</option>
                               </select>
                               {item.dataAprovacao && (
-                                <div className={cn("text-[9.5px] font-bold mt-1 block whitespace-nowrap", isApproved ? "text-blue-700 font-extrabold" : "text-emerald-700")}>
+                                <div className={cn("text-[9.5px] font-normal mt-1 block whitespace-nowrap", isApproved ? "text-blue-700 font-normal" : "text-emerald-700 font-normal")}>
                                   Aprovado em: {item.dataAprovacao}
                                 </div>
                               )}
@@ -4278,16 +4369,28 @@ export default function Lancamento() {
                                         dataVencimento: item.dataVencimento || item.vencimento,
                                         observacao: item.observacao,
                                         arquivoAnexoBase64: item.arquivoAnexoBase64 || anxList[0]?.base64,
+                                        arquivoAnexoUrl: item.driveUrl || item.arquivoAnexoUrl || anxList[0]?.url,
                                         anexos: anxList
                                       });
                                     }}
                                     className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[9.5px] font-black cursor-pointer hover:bg-rose-100 transition-colors shrink-0"
-                                    title={Array.isArray(item.anexos) && item.anexos.length > 1 ? `Ver ${item.anexos.length} documentos anexos` : `Ver anexo: ${item.nomeArquivoAnexo || "Documento.pdf"}`}
+                                    title={Array.isArray(item.anexos) && item.anexos.length > 1 ? `Ver ${item.anexos.length} documentos anexos` : `Ver anexo: ${item.nomeArquivoAnexo || item.anexos?.[0]?.nome || "Documento"}`}
                                   >
                                     <FileText className="w-3 h-3 text-rose-600" />
-                                    {Array.isArray(item.anexos) && item.anexos.length > 1
-                                      ? `${item.anexos.length} Anexos`
-                                      : "PDF"}
+                                    {(() => {
+                                      if (Array.isArray(item.anexos) && item.anexos.length > 1) {
+                                        return `${item.anexos.length} Anexos`;
+                                      }
+                                      const fName = String(item.nomeArquivoAnexo || item.anexos?.[0]?.nome || "").toLowerCase();
+                                      if (/\.(msg|eml|oft|pst)$/.test(fName)) return "E-MAIL";
+                                      if (fName.endsWith(".xml")) return "XML";
+                                      if (/\.(xlsx|xls|csv)$/.test(fName)) return "EXCEL";
+                                      if (/\.(docx|doc)$/.test(fName)) return "WORD";
+                                      if (/\.(png|jpe?g|webp|gif|bmp)$/.test(fName)) return "IMG";
+                                      if (/\.(zip|rar|7z)$/.test(fName)) return "ZIP";
+                                      if (/\.(txt|ret|rem)$/.test(fName)) return "TXT";
+                                      return "PDF";
+                                    })()}
                                   </button>
                                 )}
                               </div>
@@ -5510,24 +5613,12 @@ export default function Lancamento() {
                           visibleCols
                         });
                         if (sent) {
-                          const docId = emailDispatchModal.docData?.id;
-                          if (docId && !isApproved) {
-                            const existingDoc = lancamentos.find(item => String(item.id) === String(docId)) || emailDispatchModal.docData;
-                            const updatedDoc = {
-                              ...existingDoc,
-                              status: "Aguardando Aprovação",
-                              dataAprovacao: ""
-                            };
-                            await saveLancamentoUnified(updatedDoc);
-                            setLancamentos(prev => prev.map(l => String(l.id) === String(docId) ? { ...l, status: "Aguardando Aprovação", dataAprovacao: "" } : l));
-                            window.dispatchEvent(new Event("risel_lancamentos_updated"));
-                          }
                           const saudacao = getSaudacaoDestinatarios(para);
                           setEmailSentNotice({
                             title: isApproved ? "E-mail de Lançamento Aprovado Enviado" : "E-mail de Aprovação Enviado",
                             desc: isApproved
                               ? `E-mail (${saudacao}) com identidade visual oficial de documento APROVADO encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}.`
-                              : `E-mail (${saudacao}) encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}. Status atualizado para "Aguardando Aprovação".`
+                              : `E-mail (${saudacao}) encaminhado com sucesso para ${para.join(", ")} com cópia para ${cc.join(", ")}.`
                           });
                           setTimeout(() => setEmailSentNotice(null), 8000);
                         } else {

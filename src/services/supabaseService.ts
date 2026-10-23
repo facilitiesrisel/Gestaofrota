@@ -172,16 +172,57 @@ export async function pingSupabaseKeepAlive(): Promise<{ success: boolean; times
   }
 }
 
+// Inferência universal de MIME Type por extensão de arquivo
+export function getMimeTypeFromFileName(fileName: string): string {
+  const lower = String(fileName || "").toLowerCase().trim();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".msg")) return "application/vnd.ms-outlook";
+  if (lower.endsWith(".eml")) return "message/rfc822";
+  if (lower.endsWith(".oft")) return "application/vnd.ms-outlook";
+  if (lower.endsWith(".pst")) return "application/vnd.ms-outlook-pst";
+  if (lower.endsWith(".xml")) return "application/xml";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (lower.endsWith(".csv")) return "text/csv";
+  if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (lower.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
+  if (lower.endsWith(".txt") || lower.endsWith(".log") || lower.endsWith(".ret") || lower.endsWith(".rem")) return "text/plain";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+  if (lower.endsWith(".zip")) return "application/zip";
+  if (lower.endsWith(".rar")) return "application/vnd.rar";
+  if (lower.endsWith(".7z")) return "application/x-7z-compressed";
+  return "application/octet-stream";
+}
+
 // Converte registro bruto do Supabase para o modelo completo do sistema
 export function mapSupabaseRowToLancamento(row: any): any {
   if (!row) return row;
   // Extrai metadados seguros caso estejam embutidos na observação (prioriza a tag mais recente)
-  let rawObs = row.observacao || "";
+  const rawObs = String(row.observacao || "");
   let parsedNumDoc = row.codigo_lancamento || row.numero_documento || "";
   let parsedOc = row.cod_lancamento_oc || row.cod_oc || "";
   let parsedCc = row.centro_custo || "";
   let parsedAlcada = row.aprovadores || "";
   let parsedBase = row.estabelecimento || "";
+  let parsedUpdatedAt = row.updated_at || row.updatedAt || "";
+  let parsedDriveUrl = row.drive_url || row.driveUrl || "";
+  let parsedCidade = row.cidade || "";
+  let parsedUf = row.uf || "";
+  let parsedTelefone = row.telefone || "";
+  let parsedEmail = row.email || "";
+  let parsedMultaPlaca = row.multa_placa || "";
+  let parsedMultaInfracao = row.multa_infracao || "";
+  let parsedMultaMotorista = row.multa_motorista || "";
+  let parsedMultaGravidade = row.multa_gravidade || "";
+  let parsedModuloPetroshow = row.modulo_petroshow || "";
 
   const getLatestTag = (regex: RegExp) => {
     const matches = Array.from(rawObs.matchAll(regex));
@@ -207,10 +248,36 @@ export function mapSupabaseRowToLancamento(row: any): any {
   const tagBase = getLatestTag(/\[BASE:\s*([^\]]+)\]/gi);
   if (tagBase) parsedBase = tagBase;
 
+  const tagUpdatedAt = getLatestTag(/\[UPDATED_AT:\s*([^\]]+)\]/gi);
+  if (tagUpdatedAt) parsedUpdatedAt = tagUpdatedAt;
+
+  const tagDrive = getLatestTag(/\[GOOGLE DRIVE:\s*([^\]]+)\]/gi);
+  if (tagDrive) parsedDriveUrl = tagDrive;
+
+  if (rawObs.includes("[CONTATO_JSON:")) {
+    try {
+      const match = rawObs.match(/\[CONTATO_JSON:\s*(\{.*?\})\]/s);
+      if (match && match[1]) {
+        const c = JSON.parse(match[1]);
+        if (c && typeof c === "object") {
+          if (!parsedCidade && c.cidade) parsedCidade = c.cidade;
+          if (!parsedUf && c.uf) parsedUf = c.uf;
+          if (!parsedTelefone && c.telefone) parsedTelefone = c.telefone;
+          if (!parsedEmail && c.email) parsedEmail = c.email;
+          if (!parsedMultaPlaca && c.multaPlaca) parsedMultaPlaca = c.multaPlaca;
+          if (!parsedMultaInfracao && c.multaInfracao) parsedMultaInfracao = c.multaInfracao;
+          if (!parsedMultaMotorista && c.multaMotorista) parsedMultaMotorista = c.multaMotorista;
+          if (!parsedMultaGravidade && c.multaGravidade) parsedMultaGravidade = c.multaGravidade;
+          if (!parsedModuloPetroshow && c.moduloPetroshow) parsedModuloPetroshow = c.moduloPetroshow;
+        }
+      }
+    } catch (e) {}
+  }
+
   // Se ainda não tem parsedNumDoc mas row.doc tem o número, extrai com segurança
   if (!parsedNumDoc && row.doc && typeof row.doc === "string") {
     const cleanDoc = row.doc.trim();
-    if (!cleanDoc.startsWith("DOC-") && !cleanDoc.endsWith("S/N")) {
+    if (!cleanDoc.startsWith("DOC-") && !cleanDoc.endsWith("S/N") && cleanDoc !== "N/A") {
       const parts = cleanDoc.split(" ");
       if (parts.length > 1) {
         parsedNumDoc = parts.slice(1).join(" ").trim();
@@ -228,9 +295,9 @@ export function mapSupabaseRowToLancamento(row: any): any {
       try { parsedAnexos = JSON.parse(row.anexos); } catch (e) {}
     }
   }
-  if ((!parsedAnexos || parsedAnexos.length === 0) && row.observacao && typeof row.observacao === "string" && row.observacao.includes("[ANEXOS_JSON:")) {
+  if ((!parsedAnexos || parsedAnexos.length === 0) && rawObs.includes("[ANEXOS_JSON:")) {
     try {
-      const match = row.observacao.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
+      const match = rawObs.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
       if (match && match[1]) {
         const p = JSON.parse(match[1]);
         if (Array.isArray(p) && p.length > 0) parsedAnexos = p;
@@ -243,7 +310,27 @@ export function mapSupabaseRowToLancamento(row: any): any {
       nome: row.nome_arquivo_anexo || "Documento.pdf",
       base64: row.arquivo_anexo_base64 || ""
     }];
+  } else if (parsedAnexos.length > 0 && row.arquivo_anexo_base64 && !parsedAnexos[0].base64) {
+    parsedAnexos[0] = {
+      ...parsedAnexos[0],
+      base64: row.arquivo_anexo_base64
+    };
   }
+
+  // Higieniza a observação para que tags internas nunca apareçam no formulário ou dupliquem
+  const cleanObs = rawObs
+    .replace(/\[Nº DOC:[^\]]*\]/gi, "")
+    .replace(/\[OC\/CÓD:[^\]]*\]/gi, "")
+    .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
+    .replace(/\[ALÇADA:[^\]]*\]/gi, "")
+    .replace(/\[BASE:[^\]]*\]/gi, "")
+    .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
+    .replace(/\[UPDATED_AT:[^\]]*\]/gi, "")
+    .replace(/\[CONTATO_JSON:\s*\{.*?\}\]/gs, "")
+    .replace(/\[ANEXOS_JSON:\s*\[.*?\]\]/gs, "")
+    .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
   return {
     id: row.id,
@@ -258,12 +345,14 @@ export function mapSupabaseRowToLancamento(row: any): any {
     descricao: row.descricao,
     cnpj: row.cnpj,
     estabelecimento: parsedBase || "100 - Paulínia",
-    nomeArquivoAnexo: row.nome_arquivo_anexo,
-    arquivoAnexoBase64: row.arquivo_anexo_base64,
+    nomeArquivoAnexo: row.nome_arquivo_anexo || (parsedAnexos[0]?.nome || ""),
+    arquivoAnexoBase64: row.arquivo_anexo_base64 || (parsedAnexos[0]?.base64 || ""),
+    driveUrl: parsedDriveUrl || undefined,
     anexos: parsedAnexos,
+    temAnexo: Boolean(row.arquivo_anexo_base64 || row.nome_arquivo_anexo || parsedAnexos.length > 0),
     itemSistema: row.item_sistema,
     dataEmissao: row.data_emissao,
-    observacao: row.observacao,
+    observacao: cleanObs,
     frequencia: row.frequencia,
     lancadoPor: row.lancado_por,
     dataAprovacao: row.data_aprovacao,
@@ -272,10 +361,17 @@ export function mapSupabaseRowToLancamento(row: any): any {
     codLancamentoOc: parsedOc || "",
     codigoLancamento: parsedNumDoc || "",
     numeroDocumento: parsedNumDoc || "",
-    cidade: row.cidade || "",
-    uf: row.uf || "",
-    telefone: row.telefone || "",
-    email: row.email || ""
+    cidade: parsedCidade,
+    uf: parsedUf,
+    telefone: parsedTelefone,
+    email: parsedEmail,
+    multaPlaca: parsedMultaPlaca || undefined,
+    multaInfracao: parsedMultaInfracao || undefined,
+    multaMotorista: parsedMultaMotorista || undefined,
+    multaGravidade: parsedMultaGravidade || undefined,
+    moduloPetroshow: parsedModuloPetroshow || undefined,
+    updatedAt: parsedUpdatedAt || undefined,
+    updatedAtMs: parsedUpdatedAt ? (Date.parse(parsedUpdatedAt) || 0) : 0
   };
 }
 
@@ -305,7 +401,7 @@ export const SUPABASE_STORAGE_BUCKET_DOCUMENTOS = "documentos-anexos";
 /**
  * Converte base64 para Blob binário de forma segura
  */
-function base64ToBlob(base64Data: string, contentType: string = 'application/pdf'): Blob {
+function base64ToBlob(base64Data: string, contentType: string = 'application/octet-stream'): Blob {
   const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
   const byteCharacters = atob(cleanBase64);
   const byteNumbers = new Array(byteCharacters.length);
@@ -318,7 +414,8 @@ function base64ToBlob(base64Data: string, contentType: string = 'application/pdf
 
 /**
  * Upload de arquivo anexo para o Supabase Storage Bucket ('documentos-anexos').
- * Organiza por subpasta mensal (ex: '2026/09/nome_arquivo.pdf')
+ * Suporta todos os tipos de arquivos (PDF, XML, E-mails Outlook .msg/.eml, Excel, Word, Imagens, ZIP, etc.)
+ * Organiza por subpasta mensal (ex: '2026/09/nome_arquivo.msg')
  * Retorna a URL pública para salvar diretamente na tabela, reduzindo tráfego da API em até 95%.
  */
 export async function uploadDocumentoAnexoSupabaseStorage(
@@ -342,27 +439,30 @@ export async function uploadDocumentoAnexoSupabaseStorage(
       }
     }
 
-    // Higieniza nome do arquivo
-    const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    // Higieniza nome do arquivo preservando a extensão original
+    const cleanFileName = (fileName || "anexo.bin").replace(/[^a-zA-Z0-9._-]/g, '_');
     const storagePath = `${year}/${month}/${Date.now()}_${cleanFileName}`;
 
     let blobToSend: Blob;
-    let contentType = 'application/pdf';
-    const lowerName = cleanFileName.toLowerCase();
-    if (lowerName.endsWith('.png')) contentType = 'image/png';
-    else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) contentType = 'image/jpeg';
-    else if (lowerName.endsWith('.webp')) contentType = 'image/webp';
+    let contentType = getMimeTypeFromFileName(cleanFileName);
 
     if (fileOrBase64 instanceof Blob || fileOrBase64 instanceof File) {
       blobToSend = fileOrBase64;
-      if (fileOrBase64.type) contentType = fileOrBase64.type;
+      if (fileOrBase64.type && fileOrBase64.type.trim() !== "") {
+        contentType = fileOrBase64.type;
+      }
     } else if (typeof fileOrBase64 === 'object' && fileOrBase64.base64) {
-      blobToSend = base64ToBlob(fileOrBase64.base64, contentType);
+      const b64Str = fileOrBase64.base64;
+      const mimeMatch = b64Str.match(/^data:([^;,]+);base64,/i);
+      if (mimeMatch && mimeMatch[1] && mimeMatch[1].trim() !== "" && mimeMatch[1] !== "application/octet-stream") {
+        contentType = mimeMatch[1].trim();
+      }
+      blobToSend = base64ToBlob(b64Str, contentType);
     } else {
       return null;
     }
 
-    const { data, error } = await client.storage
+    const { error } = await client.storage
       .from(SUPABASE_STORAGE_BUCKET_DOCUMENTOS)
       .upload(storagePath, blobToSend, {
         cacheControl: '3600',
@@ -409,6 +509,7 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     const centCusto = item.centroCusto || "C.C 101 - Operacional";
     const alcada = item.aprovadores || "Deny e Gerência";
     const filialBase = item.estabelecimento || "100 - Paulínia";
+    const updatedAtIso = item.updatedAt || new Date().toISOString();
 
     // Higieniza observação removendo tags pré-existentes para garantir que novas alterações substituam as antigas
     let cleanObs = String(item.observacao || "")
@@ -417,8 +518,11 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
       .replace(/\[ALÇADA:[^\]]*\]/gi, "")
       .replace(/\[BASE:[^\]]*\]/gi, "")
-      .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
       .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
+      .replace(/\[UPDATED_AT:[^\]]*\]/gi, "")
+      .replace(/\[CONTATO_JSON:\s*\{.*?\}\]/gs, "")
+      .replace(/\[ANEXOS_JSON:\s*\[.*?\]\]/gs, "")
+      .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
       .replace(/\s+/g, " ")
       .trim();
 
@@ -429,34 +533,121 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     if (alcada) tags.push(`[ALÇADA: ${alcada}]`);
     if (filialBase) tags.push(`[BASE: ${filialBase}]`);
     if (item.driveUrl) tags.push(`[GOOGLE DRIVE: ${item.driveUrl}]`);
-    if (Array.isArray(item.anexos) && item.anexos.length > 0) {
-      tags.push(`[ANEXOS_JSON: ${JSON.stringify(item.anexos.slice(0, 4))}]`);
+    tags.push(`[UPDATED_AT: ${updatedAtIso}]`);
+
+    const contatoMeta: Record<string, string> = {};
+    if (item.cidade) contatoMeta.cidade = String(item.cidade);
+    if (item.uf) contatoMeta.uf = String(item.uf);
+    if (item.telefone) contatoMeta.telefone = String(item.telefone);
+    if (item.email) contatoMeta.email = String(item.email);
+    if (item.multaPlaca) contatoMeta.multaPlaca = String(item.multaPlaca);
+    if (item.multaInfracao) contatoMeta.multaInfracao = String(item.multaInfracao);
+    if (item.multaMotorista) contatoMeta.multaMotorista = String(item.multaMotorista);
+    if (item.multaGravidade) contatoMeta.multaGravidade = String(item.multaGravidade);
+    if (item.moduloPetroshow) contatoMeta.moduloPetroshow = String(item.moduloPetroshow);
+    if (Object.keys(contatoMeta).length > 0) {
+      tags.push(`[CONTATO_JSON: ${JSON.stringify(contatoMeta)}]`);
+    }
+
+    const anexosArr = Array.isArray(item.anexos) ? item.anexos : [];
+    const GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID = "1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz";
+    const GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL = `https://drive.google.com/drive/folders/${GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID}?hl=pt-br`;
+
+    const fornSlug = String(item.fornecedor || "Fornecedor").trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
+    const docSlug = String(numDoc || item.doc || targetId).trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 20);
+
+    // Helper para enviar base64 direto para a pasta do Google Drive (1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz) via servidor/AppsScript
+    const uploadToDriveFolder = async (b64Data: string, fName: string): Promise<string | null> => {
+      try {
+        const cleanName = `${fornSlug}_${docSlug}_${fName || "Documento.pdf"}`.replace(/_+/g, "_");
+        const res = await fetch("/api/drive/upload-lancamento", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: cleanName,
+            fileData: b64Data,
+            mimeType: getMimeTypeFromFileName(fName || "Documento.pdf"),
+            folderId: GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success && (data.downloadUrl || data.fileUrl)) {
+            return data.downloadUrl || data.fileUrl;
+          }
+        }
+      } catch (e) {
+        console.warn("[Google Drive Upload] Aviso ao enviar anexo para a pasta do Drive:", e);
+      }
+      return null;
+    };
+
+    // Economia de tráfego e banco de dados: envia anexo para a pasta oficial do Google Drive e salva apenas a URL no Supabase
+    let finalAnexo = item.arquivoAnexoUrl || item.driveUrl || item.arquivoAnexoBase64 || (anexosArr[0]?.url || anexosArr[0]?.base64 || "");
+    const primaryFileName = item.nomeArquivoAnexo || (anexosArr[0]?.nome || "documento.pdf");
+
+    if (finalAnexo && !finalAnexo.startsWith("http")) {
+      const driveLink = await uploadToDriveFolder(finalAnexo, primaryFileName);
+      if (driveLink) {
+        finalAnexo = driveLink;
+        item.driveUrl = driveLink;
+        item.arquivoAnexoUrl = driveLink;
+      } else {
+        try {
+          const storageResult = await uploadDocumentoAnexoSupabaseStorage(
+            { base64: finalAnexo, name: primaryFileName },
+            primaryFileName,
+            item.dataVencimento || item.dataLancamento
+          );
+          if (storageResult && storageResult.publicUrl) {
+            finalAnexo = storageResult.publicUrl;
+          } else if (finalAnexo.length > 15000) {
+            // Nunca sobrecarrega o Supabase com base64 pesado; aponta para a pasta do Drive mientras mantém binário no servidor
+            finalAnexo = GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL;
+          }
+        } catch {
+          if (finalAnexo.length > 15000) {
+            finalAnexo = GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL;
+          }
+        }
+      }
+    }
+
+    if (item.driveUrl && !tags.some(t => t.startsWith("[GOOGLE DRIVE:"))) {
+      tags.push(`[GOOGLE DRIVE: ${item.driveUrl}]`);
+    } else if (finalAnexo && finalAnexo.startsWith("http") && !tags.some(t => t.startsWith("[GOOGLE DRIVE:"))) {
+      tags.push(`[GOOGLE DRIVE: ${finalAnexo}]`);
+    }
+
+    // Prepara os anexos para ANEXOS_JSON enviando cada arquivo para a pasta do Google Drive (sem gravar base64 pesado no Supabase)
+    if (anexosArr.length > 0) {
+      const processedAnexos = [];
+      for (let i = 0; i < Math.min(anexosArr.length, 6); i++) {
+        const a = anexosArr[i];
+        let aUrlOrData = a.url || a.driveUrl || a.base64 || "";
+        if (i === 0 && finalAnexo && finalAnexo.startsWith("http")) {
+          aUrlOrData = finalAnexo;
+        } else if (aUrlOrData && !aUrlOrData.startsWith("http")) {
+          const uploadedLink = await uploadToDriveFolder(aUrlOrData, a.nome || `anexo_${i + 1}.pdf`);
+          if (uploadedLink) {
+            aUrlOrData = uploadedLink;
+          } else if (aUrlOrData.length > 15000) {
+            aUrlOrData = GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL;
+          }
+        }
+        processedAnexos.push({
+          id: a.id || `anx-${i + 1}`,
+          nome: a.nome || `Anexo_${i + 1}`,
+          url: aUrlOrData && aUrlOrData.startsWith("http") ? aUrlOrData : undefined,
+          base64: aUrlOrData && aUrlOrData.startsWith("http") ? aUrlOrData : ""
+        });
+      }
+      tags.push(`[ANEXOS_JSON: ${JSON.stringify(processedAnexos)}]`);
     }
 
     const finalObs = [cleanObs, ...tags].filter(Boolean).join(" ").trim();
 
-    // Economia de tráfego e banco de dados: se tiver URL do Supabase Storage ou Google Drive, prioriza URL
-    let finalAnexo = item.arquivoAnexoUrl || item.driveUrl || item.arquivoAnexoBase64 || "";
-
-    // Se o anexo for um base64 volumoso (> 80KB) e não tiver URL direta, tenta salvar no Supabase Storage
-    if (finalAnexo && finalAnexo.length > 80000 && !finalAnexo.startsWith("http")) {
-      try {
-        const storageResult = await uploadDocumentoAnexoSupabaseStorage(
-          { base64: finalAnexo, name: item.nomeArquivoAnexo || "documento.pdf" },
-          item.nomeArquivoAnexo || "documento.pdf",
-          item.dataVencimento || item.dataLancamento
-        );
-        if (storageResult && storageResult.publicUrl) {
-          finalAnexo = storageResult.publicUrl;
-        }
-      } catch (stErr) {
-        console.warn("[Supabase Storage] Fallback para base64:", stErr);
-      }
-    }
-
     // Monta o objeto oficial com estritamente as colunas existentes no PostgreSQL do Supabase
-    // Metadados adicionais (Centro de Custo, Alçada, Nº Doc, OC, Anexos múltiplos) residem com segurança dentro de observacao
-    const anexosArr = Array.isArray(item.anexos) ? item.anexos : [];
     const cleanRecord: any = {
       id: targetId,
       status: item.status || "Aguardando Aprovação",
@@ -471,14 +662,18 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       cnpj: item.cnpj || "",
       estabelecimento: filialBase,
       nome_arquivo_anexo: item.nomeArquivoAnexo || (anexosArr[0]?.nome || ""),
-      arquivo_anexo_base64: finalAnexo,
       item_sistema: item.itemSistema || item.item_sistema || "",
       data_emissao: item.dataEmissao || item.data_emissao || "",
       observacao: finalObs,
       frequencia: item.frequencia || "Esporádico",
       lancado_por: item.lancadoPor || item.lancado_por || "Sistema",
-      data_aprovacao: item.dataAprovacao || item.data_aprovacao || ""
+      data_aprovacao: item.dataAprovacao !== undefined ? item.dataAprovacao : (item.data_aprovacao || "")
     };
+
+    // Só sobrescreve arquivo_anexo_base64 com a referência leve (URL do Drive) ou vazio se o usuário limpou intencionalmente os anexos
+    if (finalAnexo || (!cleanRecord.nome_arquivo_anexo && anexosArr.length === 0)) {
+      cleanRecord.arquivo_anexo_base64 = finalAnexo || "";
+    }
 
     const { error: upsertErr } = await client
       .from('lancamentos')

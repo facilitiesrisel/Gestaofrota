@@ -1960,6 +1960,22 @@ async function startServer() {
     });
   });
 
+  function stripServerInternalObsTags(rawObs: string): string {
+    return String(rawObs || "")
+      .replace(/\[Nº DOC:[^\]]*\]/gi, "")
+      .replace(/\[OC\/CÓD:[^\]]*\]/gi, "")
+      .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
+      .replace(/\[ALÇADA:[^\]]*\]/gi, "")
+      .replace(/\[BASE:[^\]]*\]/gi, "")
+      .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
+      .replace(/\[UPDATED_AT:[^\]]*\]/gi, "")
+      .replace(/\[CONTATO_JSON:\s*\{.*?\}\]/gs, "")
+      .replace(/\[ANEXOS_JSON:\s*\[.*?\]\]/gs, "")
+      .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function parseMetadataFromObservacao(rawObs: string) {
     const obs = String(rawObs || "");
     const getLatest = (regex: RegExp) => {
@@ -1980,18 +1996,207 @@ async function startServer() {
       } catch (_) {}
     }
 
+    let contato: Record<string, any> = {};
+    const contatoMatch = obs.match(/\[CONTATO_JSON:\s*(\{.*?\})\]/s);
+    if (contatoMatch && contatoMatch[1]) {
+      try {
+        const parsed = JSON.parse(contatoMatch[1]);
+        if (parsed && typeof parsed === "object") contato = parsed;
+      } catch (_) {}
+    }
+
     return {
       numDoc: getLatest(/\[Nº DOC:\s*([^\]]+)\]/gi),
       codOc: getLatest(/\[OC\/CÓD:\s*([^\]]+)\]/gi),
       centroCusto: getLatest(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/gi),
       aprovadores: getLatest(/\[ALÇADA:\s*([^\]]+)\]/gi),
       estabelecimento: getLatest(/\[BASE:\s*([^\]]+)\]/gi),
-      anexos
+      driveUrl: getLatest(/\[GOOGLE DRIVE:\s*([^\]]+)\]/gi),
+      updatedAt: getLatest(/\[UPDATED_AT:\s*([^\]]+)\]/gi),
+      contato,
+      anexos,
+      cleanObservacao: stripServerInternalObsTags(obs)
     };
+  }
+
+  const GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID = "1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz";
+  const GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL = `https://drive.google.com/drive/folders/${GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID}?hl=pt-br`;
+  const DRIVE_ANEXOS_CACHE_DIR = path.join(DATA_DIR, "drive_anexos_cache");
+  if (!fs.existsSync(DRIVE_ANEXOS_CACHE_DIR)) {
+    try { fs.mkdirSync(DRIVE_ANEXOS_CACHE_DIR, { recursive: true }); } catch {}
+  }
+
+  function extractGoogleDriveFileId(urlOrId: string): string | null {
+    if (!urlOrId || typeof urlOrId !== "string") return null;
+    const trimmed = urlOrId.trim();
+    const matchFileD = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]{15,})/);
+    if (matchFileD && matchFileD[1]) return matchFileD[1];
+    const matchIdParam = trimmed.match(/[?&]id=([a-zA-Z0-9_-]{15,})/);
+    if (matchIdParam && matchIdParam[1]) return matchIdParam[1];
+    return null;
+  }
+
+  function inferServerMimeFromNameAndBase64(fileName: string, base64Data: string): string {
+    if (base64Data && base64Data.startsWith("data:")) {
+      const m = base64Data.match(/^data:([^;,]+);base64,/i);
+      if (m && m[1] && m[1] !== "application/octet-stream") {
+        return m[1].trim().toLowerCase();
+      }
+    }
+    const lower = String(fileName || "").toLowerCase().trim();
+    if (lower.endsWith(".pdf")) return "application/pdf";
+    if (lower.endsWith(".msg") || lower.endsWith(".oft")) return "application/vnd.ms-outlook";
+    if (lower.endsWith(".eml")) return "message/rfc822";
+    if (lower.endsWith(".pst")) return "application/vnd.ms-outlook-pst";
+    if (lower.endsWith(".xml")) return "application/xml";
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+    if (lower.endsWith(".webp")) return "image/webp";
+    if (lower.endsWith(".gif")) return "image/gif";
+    if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+    if (lower.endsWith(".csv")) return "text/csv";
+    if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (lower.endsWith(".doc")) return "application/msword";
+    if (lower.endsWith(".txt") || lower.endsWith(".ret") || lower.endsWith(".rem")) return "text/plain";
+    if (lower.endsWith(".zip")) return "application/zip";
+    return "application/pdf";
+  }
+
+  async function uploadLancamentoAttachmentToDriveServer(options: {
+    fileName: string;
+    fileData: string;
+    mimeType?: string;
+    folderId?: string;
+  }): Promise<{
+    success: boolean;
+    fileId?: string;
+    fileName?: string;
+    fileUrl?: string;
+    embedUrl?: string;
+    downloadUrl?: string;
+    error?: string;
+  }> {
+    const targetUrl = (storedAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL || "").trim();
+    if (!targetUrl || !options.fileData) {
+      return { success: false, error: "URL do Apps Script ou conteúdo do arquivo ausente" };
+    }
+
+    const folderId = options.folderId || GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID;
+    const cleanFileName = (options.fileName || `Documento_${Date.now()}.pdf`).replace(/[\\/:*?"<>|]/g, "_");
+    const detectedMime = options.mimeType || inferServerMimeFromNameAndBase64(cleanFileName, options.fileData);
+
+    try {
+      const res = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "upload",
+          folderId,
+          fileName: cleanFileName,
+          fileData: options.fileData,
+          mimeType: detectedMime
+        })
+      });
+
+      const text = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch { data = {}; }
+
+      if (res.ok && data && data.success && data.fileId) {
+        const normalizedDataUrl = options.fileData.startsWith("data:")
+          ? options.fileData
+          : `data:${detectedMime};base64,${options.fileData}`;
+
+        // Salva no cache de disco local pelo fileId para leitura instantânea sem bloqueio do navegador
+        try {
+          const cachePath = path.join(DRIVE_ANEXOS_CACHE_DIR, `${data.fileId}.json`);
+          fs.writeFileSync(cachePath, JSON.stringify({
+            fileId: data.fileId,
+            fileName: cleanFileName,
+            mimeType: detectedMime,
+            base64: normalizedDataUrl,
+            fileUrl: data.fileUrl,
+            embedUrl: data.embedUrl,
+            downloadUrl: data.downloadUrl,
+            updatedAt: new Date().toISOString()
+          }), "utf-8");
+        } catch {}
+
+        console.log(`[Google Drive Lancamentos] Anexo '${cleanFileName}' salvo na pasta ${folderId} -> ID: ${data.fileId}`);
+        return {
+          success: true,
+          fileId: data.fileId,
+          fileName: data.fileName || cleanFileName,
+          fileUrl: data.fileUrl || `https://drive.google.com/file/d/${data.fileId}/view`,
+          embedUrl: data.embedUrl || `https://drive.google.com/file/d/${data.fileId}/preview`,
+          downloadUrl: data.downloadUrl || `https://drive.google.com/uc?export=download&id=${data.fileId}`
+        };
+      }
+
+      return {
+        success: false,
+        error: data?.error || data?.message || "Resposta inválida do Apps Script no upload para o Google Drive"
+      };
+    } catch (err: any) {
+      console.warn("[Google Drive Lancamentos] Aviso ao enviar anexo ao Drive:", err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  async function resolveDriveUrlToDataUrl(urlOrData: string, fileNameHint: string = "Documento.pdf"): Promise<string> {
+    if (!urlOrData) return "";
+    const trimmed = urlOrData.trim();
+    if (trimmed.startsWith("data:")) return trimmed;
+
+    const fileId = extractGoogleDriveFileId(trimmed);
+    if (fileId) {
+      // 1. Verifica cache local de arquivos do Drive
+      const cachePath = path.join(DRIVE_ANEXOS_CACHE_DIR, `${fileId}.json`);
+      if (fs.existsSync(cachePath)) {
+        try {
+          const cached = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+          if (cached && cached.base64 && cached.base64.startsWith("data:")) {
+            return cached.base64;
+          }
+        } catch {}
+      }
+
+      // 2. Baixa diretamente do Google Drive pelo servidor (sem bloqueio CORS/Chrome)
+      try {
+        const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+        const res = await fetch(downloadUrl, { redirect: "follow" });
+        if (res.ok) {
+          const arrayBuf = await res.arrayBuffer();
+          const buf = Buffer.from(arrayBuf);
+          // Verifica se não retornou página HTML de login
+          const firstBytes = buf.subarray(0, 15).toString("utf-8").trim().toLowerCase();
+          if (!firstBytes.startsWith("<!doctype html") && !firstBytes.startsWith("<html")) {
+            const mime = inferServerMimeFromNameAndBase64(fileNameHint, "");
+            const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+            try {
+              fs.writeFileSync(cachePath, JSON.stringify({
+                fileId,
+                fileName: fileNameHint,
+                mimeType: mime,
+                base64: dataUrl,
+                updatedAt: new Date().toISOString()
+              }), "utf-8");
+            } catch {}
+            return dataUrl;
+          }
+        }
+      } catch (e: any) {
+        console.warn("[Drive Proxy] Aviso ao baixar arquivo do Google Drive:", e.message);
+      }
+    }
+
+    return trimmed;
   }
 
   // Helper para converter registro do frontend/JSON para o formato da tabela 'lancamentos' no Supabase
   // Envia EXCLUSIVAMENTE as colunas existentes no PostgreSQL do Supabase, codificando metadados em observacao
+  // IMPORTANTE: Nunca grava strings base64 pesadas no Supabase para não sobrecarregar o banco; grava apenas a URL do Google Drive!
   function mapToSupabaseLancamento(item: any) {
     const numId = Number(item.id);
     const cleanId = !isNaN(numId) && numId > 0 ? numId : item.id;
@@ -2001,19 +2206,20 @@ async function startServer() {
     const alcada = item.aprovadores || "";
     const filialBase = item.estabelecimento || "";
     const anexoNome = item.nomeArquivoAnexo || item.nome_arquivo_anexo || item.anexos?.[0]?.nome || "";
-    const anexoBase64 = item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || item.anexos?.[0]?.base64 || "";
+    const rawAnexo = item.driveUrl || item.arquivoAnexoUrl || item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || item.anexos?.[0]?.url || item.anexos?.[0]?.base64 || "";
+    // Para não sobrecarregar o Supabase, se o anexo ainda for um base64 grande (> 15KB), armazena apenas a referência leve da pasta do Drive ou endpoint local
+    const lightweightAnexoRef = (rawAnexo && rawAnexo.startsWith("http"))
+      ? rawAnexo
+      : (item.driveUrl && item.driveUrl.startsWith("http"))
+      ? item.driveUrl
+      : (rawAnexo && rawAnexo.length > 15000)
+      ? GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL
+      : rawAnexo;
+
+    const updatedAtIso = item.updatedAt || new Date().toISOString();
 
     // Higieniza observação removendo tags pré-existentes para evitar duplicações
-    let cleanObs = String(item.observacao || "")
-      .replace(/\[Nº DOC:[^\]]*\]/gi, "")
-      .replace(/\[OC\/CÓD:[^\]]*\]/gi, "")
-      .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
-      .replace(/\[ALÇADA:[^\]]*\]/gi, "")
-      .replace(/\[BASE:[^\]]*\]/gi, "")
-      .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
-      .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const cleanObs = stripServerInternalObsTags(item.observacao || "");
 
     const tags: string[] = [];
     if (numDoc) tags.push(`[Nº DOC: ${numDoc}]`);
@@ -2021,19 +2227,48 @@ async function startServer() {
     if (centCusto) tags.push(`[CENTRO DE CUSTO: ${centCusto}]`);
     if (alcada) tags.push(`[ALÇADA: ${alcada}]`);
     if (filialBase) tags.push(`[BASE: ${filialBase}]`);
+    if (item.driveUrl || (lightweightAnexoRef && lightweightAnexoRef.startsWith("http"))) {
+      tags.push(`[GOOGLE DRIVE: ${item.driveUrl || lightweightAnexoRef}]`);
+    }
+    tags.push(`[UPDATED_AT: ${updatedAtIso}]`);
+
+    const contatoMeta: Record<string, string> = {};
+    if (item.cidade) contatoMeta.cidade = String(item.cidade);
+    if (item.uf) contatoMeta.uf = String(item.uf);
+    if (item.telefone) contatoMeta.telefone = String(item.telefone);
+    if (item.email) contatoMeta.email = String(item.email);
+    if (item.multaPlaca) contatoMeta.multaPlaca = String(item.multaPlaca);
+    if (item.multaInfracao) contatoMeta.multaInfracao = String(item.multaInfracao);
+    if (item.multaMotorista) contatoMeta.multaMotorista = String(item.multaMotorista);
+    if (item.multaGravidade) contatoMeta.multaGravidade = String(item.multaGravidade);
+    if (item.moduloPetroshow) contatoMeta.moduloPetroshow = String(item.moduloPetroshow);
+    if (Object.keys(contatoMeta).length > 0) {
+      tags.push(`[CONTATO_JSON: ${JSON.stringify(contatoMeta)}]`);
+    }
+
     if (Array.isArray(item.anexos) && item.anexos.length > 0) {
-      tags.push(`[ANEXOS_JSON: ${JSON.stringify(item.anexos.slice(0, 4))}]`);
+      const compactAnexos = item.anexos.slice(0, 6).map((a: any, idx: number) => {
+        const candidateUrl = a.url || a.driveUrl || (a.base64 && a.base64.startsWith("http") ? a.base64 : "") || (idx === 0 ? lightweightAnexoRef : "");
+        return {
+          id: a.id || `anx-${idx + 1}`,
+          nome: a.nome || `Anexo_${idx + 1}`,
+          url: candidateUrl && candidateUrl.startsWith("http") ? candidateUrl : undefined,
+          // Nunca salva base64 pesado dentro da coluna observacao do Supabase
+          base64: candidateUrl && candidateUrl.startsWith("http") ? candidateUrl : ""
+        };
+      });
+      tags.push(`[ANEXOS_JSON: ${JSON.stringify(compactAnexos)}]`);
     }
 
     const finalObs = [cleanObs, ...tags].filter(Boolean).join(" ").trim();
 
-    return {
+    const record: any = {
       id: cleanId,
       status: item.status || "Aguardando Aprovação",
       data_lancamento: item.dataLancamento || item.data_lancamento || new Date().toISOString().split("T")[0],
       data_vencimento: item.dataVencimento || item.data_vencimento || item.dataLancamento || new Date().toISOString().split("T")[0],
       data_emissao: item.dataEmissao || item.data_emissao || "",
-      data_aprovacao: item.dataAprovacao || item.data_aprovacao || "",
+      data_aprovacao: item.dataAprovacao !== undefined ? item.dataAprovacao : (item.data_aprovacao || ""),
       fornecedor: item.fornecedor || "",
       cnpj: item.cnpj || "",
       doc: item.doc || (numDoc ? `${item.tipo || 'NF-e'} ${numDoc}` : "N/A"),
@@ -2044,11 +2279,16 @@ async function startServer() {
       estabelecimento: filialBase || "100 - Paulínia",
       observacao: finalObs,
       nome_arquivo_anexo: anexoNome,
-      arquivo_anexo_base64: anexoBase64,
       item_sistema: item.itemSistema || item.item_sistema || "",
       frequencia: item.frequencia || "Esporádico",
       lancado_por: item.lancadoPor || item.lancado_por || "Sistema"
     };
+
+    if (lightweightAnexoRef || (!anexoNome && (!Array.isArray(item.anexos) || item.anexos.length === 0))) {
+      record.arquivo_anexo_base64 = lightweightAnexoRef || "";
+    }
+
+    return record;
   }
 
   let isSyncingLancamentosFromSupabase = false;
@@ -2073,6 +2313,22 @@ async function startServer() {
         const deletedIds = getStoredDeletedLancamentoIds();
         const deletedSet = new Set(deletedIds);
 
+        // Lê os itens locais existentes para não perder alterações mais recentes nem base64 em disco
+        let localItems: any[] = [];
+        try {
+          if (fs.existsSync(LANCAMENTOS_FILE)) {
+            localItems = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
+          }
+        } catch {}
+        const localMap = new Map<string, any>();
+        if (Array.isArray(localItems)) {
+          localItems.forEach((li: any) => {
+            if (li && li.id !== undefined && !deletedSet.has(String(li.id))) {
+              localMap.set(String(li.id), li);
+            }
+          });
+        }
+
         const mapped = data
           .filter((row: any) => !deletedSet.has(String(row.id)))
           .map((row: any) => {
@@ -2085,6 +2341,8 @@ async function startServer() {
                 nome: row.nome_arquivo_anexo || "Documento.pdf",
                 base64: row.arquivo_anexo_base64 || ""
               }];
+            } else if (anexosList.length > 0 && row.arquivo_anexo_base64 && !anexosList[0].base64) {
+              anexosList[0] = { ...anexosList[0], base64: row.arquivo_anexo_base64 };
             }
 
             const numDoc = meta.numDoc || row.codigo_lancamento || row.numero_documento || "";
@@ -2092,8 +2350,9 @@ async function startServer() {
             const centroCusto = meta.centroCusto || row.centro_custo || "C.C 101 - Operacional";
             const aprovadores = meta.aprovadores || row.aprovadores || "Deny e Gerência";
             const estabelecimento = meta.estabelecimento || row.estabelecimento || "100 - Paulínia";
+            const updatedAt = meta.updatedAt || row.updated_at || "";
 
-            return {
+            const remoteMapped: any = {
               id: Number(row.id) || row.id,
               status: row.status,
               dataLancamento: row.data_lancamento,
@@ -2116,18 +2375,59 @@ async function startServer() {
               centro_custo: centroCusto,
               aprovadores: aprovadores,
               estabelecimento: estabelecimento,
-              observacao: row.observacao,
+              observacao: meta.cleanObservacao,
               codigoLancamento: numDoc,
               numeroDocumento: numDoc,
               codLancamentoOc: codOc,
-              nomeArquivoAnexo: row.nome_arquivo_anexo,
-              arquivoAnexoBase64: row.arquivo_anexo_base64,
+              nomeArquivoAnexo: row.nome_arquivo_anexo || (anexosList[0]?.nome || ""),
+              arquivoAnexoBase64: row.arquivo_anexo_base64 || (anexosList[0]?.base64 || ""),
+              driveUrl: meta.driveUrl || undefined,
               anexos: anexosList,
+              itemSistema: row.item_sistema || "",
+              frequencia: row.frequencia || "Esporádico",
               lancadoPor: row.lancado_por,
+              cidade: meta.contato.cidade || row.cidade || "",
+              uf: meta.contato.uf || row.uf || "",
+              telefone: meta.contato.telefone || row.telefone || "",
+              email: meta.contato.email || row.email || "",
+              multaPlaca: meta.contato.multaPlaca || undefined,
+              multaInfracao: meta.contato.multaInfracao || undefined,
+              multaMotorista: meta.contato.multaMotorista || undefined,
+              multaGravidade: meta.contato.multaGravidade || undefined,
+              moduloPetroshow: meta.contato.moduloPetroshow || undefined,
               createdAt: row.created_at,
-              updatedAt: row.updated_at
+              updatedAt: updatedAt
             };
+
+            const existingLocal = localMap.get(String(remoteMapped.id));
+            if (existingLocal) {
+              localMap.delete(String(remoteMapped.id));
+              const localTs = existingLocal.updatedAt ? (Date.parse(existingLocal.updatedAt) || 0) : (existingLocal.updatedAtMs || 0);
+              const remoteTs = remoteMapped.updatedAt ? (Date.parse(remoteMapped.updatedAt) || 0) : 0;
+              if (localTs > remoteTs) {
+                return existingLocal;
+              }
+              // Preserva base64 local se o remoto vier sem base64
+              if (!remoteMapped.arquivoAnexoBase64 && existingLocal.arquivoAnexoBase64 && remoteMapped.nomeArquivoAnexo) {
+                remoteMapped.arquivoAnexoBase64 = existingLocal.arquivoAnexoBase64;
+              }
+              if (Array.isArray(remoteMapped.anexos) && Array.isArray(existingLocal.anexos)) {
+                remoteMapped.anexos = remoteMapped.anexos.map((ra: any, idx: number) => {
+                  if (ra.base64) return ra;
+                  const matchLocal = existingLocal.anexos.find((la: any) => (la.id && la.id === ra.id) || (la.nome && la.nome === ra.nome)) || existingLocal.anexos[idx];
+                  if (matchLocal?.base64) return { ...ra, base64: matchLocal.base64 };
+                  return ra;
+                });
+              }
+            }
+            return remoteMapped;
           });
+
+        // Inclui itens locais recém-criados que ainda não subiram ao Supabase
+        for (const leftoverLocal of localMap.values()) {
+          mapped.push(leftoverLocal);
+        }
+        mapped.sort((a: any, b: any) => (Number(b.id) || 0) - (Number(a.id) || 0));
 
         saveStoredLancamentos(mapped);
         fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(mapped, null, 2), "utf-8");
@@ -2164,7 +2464,11 @@ async function startServer() {
           localList.forEach(item => {
             const idStr = String(item.id);
             if (!deletedSet.has(idStr)) {
-              itemMap.set(idStr, item);
+              const cleaned = {
+                ...item,
+                observacao: stripServerInternalObsTags(item.observacao || "")
+              };
+              itemMap.set(idStr, cleaned);
             }
           });
         }
@@ -2242,8 +2546,115 @@ async function startServer() {
 
       const cleanItem = { ...item };
       Object.keys(cleanItem).forEach(k => cleanItem[k] === undefined && delete cleanItem[k]);
+      cleanItem.observacao = stripServerInternalObsTags(cleanItem.observacao || "");
+      if (!cleanItem.updatedAt) {
+        cleanItem.updatedAt = new Date().toISOString();
+      }
+      cleanItem.updatedAtMs = Date.parse(cleanItem.updatedAt) || Date.now();
 
-      // 1. Grava no Supabase PostgreSQL oficial
+      // Carrega lista atual do disco para preservar base64 de anexos caso a edição tenha vindo sem o binário em memória
+      let list: any[] = [];
+      if (fs.existsSync(LANCAMENTOS_FILE)) {
+        try { list = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8")); } catch (e) {}
+      }
+      const existingIdx = list.findIndex((l: any) => String(l.id) === docId);
+      if (existingIdx >= 0) {
+        const existingRecord = list[existingIdx];
+        const userStillHasAttachment = Boolean(
+          cleanItem.nomeArquivoAnexo ||
+          (Array.isArray(cleanItem.anexos) && cleanItem.anexos.length > 0) ||
+          cleanItem.temAnexo
+        );
+
+        if (userStillHasAttachment) {
+          if (!cleanItem.arquivoAnexoBase64 && existingRecord.arquivoAnexoBase64) {
+            cleanItem.arquivoAnexoBase64 = existingRecord.arquivoAnexoBase64;
+          }
+          if (Array.isArray(cleanItem.anexos) && cleanItem.anexos.length > 0 && Array.isArray(existingRecord.anexos)) {
+            cleanItem.anexos = cleanItem.anexos.map((att: any, idx: number) => {
+              if (att.base64) return att;
+              const matchOld = existingRecord.anexos.find(
+                (oa: any) => (oa.id && oa.id === att.id) || (oa.nome && oa.nome === att.nome)
+              ) || existingRecord.anexos[idx];
+              if (matchOld?.base64) {
+                return { ...att, base64: matchOld.base64 };
+              }
+              if (idx === 0 && cleanItem.arquivoAnexoBase64) {
+                return { ...att, base64: cleanItem.arquivoAnexoBase64 };
+              }
+              return att;
+            });
+          } else if ((!cleanItem.anexos || cleanItem.anexos.length === 0) && Array.isArray(existingRecord.anexos) && existingRecord.anexos.length > 0) {
+            cleanItem.anexos = existingRecord.anexos;
+          }
+        }
+      }
+
+      // 1. Envia automaticamente os anexos em base64 para a pasta oficial do Google Drive (1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz)
+      // para centralizar no Google Drive corporativo e NÃO sobrecarregar o Supabase!
+      try {
+        const fornSlug = String(cleanItem.fornecedor || "Fornecedor").trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
+        const docSlug = String(cleanItem.codigoLancamento || cleanItem.doc || docId).trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 20);
+
+        if (Array.isArray(cleanItem.anexos) && cleanItem.anexos.length > 0) {
+          for (let i = 0; i < cleanItem.anexos.length; i++) {
+            const att = cleanItem.anexos[i];
+            const rawB64 = att?.base64 || (i === 0 ? cleanItem.arquivoAnexoBase64 : "");
+            const alreadyDrive = (att?.url && att.url.includes("drive.google.com")) || (typeof rawB64 === "string" && rawB64.includes("drive.google.com"));
+            if (rawB64 && !rawB64.startsWith("http") && !alreadyDrive) {
+              const origName = att?.nome || cleanItem.nomeArquivoAnexo || `Anexo_${i + 1}.pdf`;
+              const driveFileName = `${fornSlug}_${docSlug}_${origName}`.replace(/_+/g, "_");
+              const upRes = await uploadLancamentoAttachmentToDriveServer({
+                fileName: driveFileName,
+                fileData: rawB64,
+                folderId: GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID
+              });
+              if (upRes.success && upRes.fileUrl) {
+                cleanItem.anexos[i] = {
+                  ...att,
+                  url: upRes.downloadUrl || upRes.fileUrl,
+                  driveUrl: upRes.fileUrl,
+                  embedUrl: upRes.embedUrl,
+                  fileId: upRes.fileId
+                };
+                if (i === 0) {
+                  cleanItem.driveUrl = upRes.fileUrl;
+                  cleanItem.arquivoAnexoUrl = upRes.downloadUrl || upRes.fileUrl;
+                }
+              }
+            } else if (i === 0 && alreadyDrive && !cleanItem.driveUrl) {
+              cleanItem.driveUrl = att?.url || rawB64;
+            }
+          }
+        } else if (cleanItem.arquivoAnexoBase64 && !cleanItem.arquivoAnexoBase64.startsWith("http") && !cleanItem.driveUrl) {
+          const origName = cleanItem.nomeArquivoAnexo || "Documento.pdf";
+          const driveFileName = `${fornSlug}_${docSlug}_${origName}`.replace(/_+/g, "_");
+          const upRes = await uploadLancamentoAttachmentToDriveServer({
+            fileName: driveFileName,
+            fileData: cleanItem.arquivoAnexoBase64,
+            folderId: GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID
+          });
+          if (upRes.success && upRes.fileUrl) {
+            cleanItem.driveUrl = upRes.fileUrl;
+            cleanItem.arquivoAnexoUrl = upRes.downloadUrl || upRes.fileUrl;
+          }
+        }
+      } catch (driveErr: any) {
+        console.warn("[Server Lancamentos] Aviso no upload automático para Google Drive:", driveErr.message);
+      }
+
+      // 2. Grava no arquivo principal e no backup de contingência (preservando o base64 local em disco para visualização 0ms)
+      try {
+        if (existingIdx >= 0) {
+          list[existingIdx] = { ...list[existingIdx], ...cleanItem };
+        } else {
+          list.unshift(cleanItem);
+        }
+        fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(list, null, 2), "utf-8");
+        fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(list, null, 2), "utf-8");
+      } catch (fsErr) {}
+
+      // 3. Grava no Supabase PostgreSQL oficial (enviando apenas o link leve do Google Drive sem base64 pesado!)
       try {
         const sbRow = mapToSupabaseLancamento(cleanItem);
         const { error: sbErr } = await serverSupabase
@@ -2252,37 +2663,38 @@ async function startServer() {
         if (sbErr) {
           console.warn("[Server Lancamentos] Aviso ao salvar no Supabase:", sbErr.message);
         } else {
-          console.log(`[Server Lancamentos] Lançamento ${docId} gravado com sucesso no Supabase PostgreSQL.`);
+          console.log(`[Server Lancamentos] Lançamento ${docId} gravado com sucesso no Supabase PostgreSQL (Drive URL: ${cleanItem.driveUrl || "N/A"}).`);
         }
       } catch (sbEx: any) {
         console.warn("[Server Lancamentos] Exceção ao gravar no Supabase:", sbEx.message);
       }
 
-      // 2. Grava no arquivo principal e no backup de contingência
-      try {
-        let list: any[] = [];
-        if (fs.existsSync(LANCAMENTOS_FILE)) {
-          try { list = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8")); } catch (e) {}
-        }
-        const existingIdx = list.findIndex((l: any) => String(l.id) === docId);
-        if (existingIdx >= 0) {
-          list[existingIdx] = { ...list[existingIdx], ...cleanItem };
-        } else {
-          list.unshift(cleanItem);
-        }
-        fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(list, null, 2), "utf-8");
-        // Backup atômico
-        fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(list, null, 2), "utf-8");
-      } catch (fsErr) {}
-
-      // 3. Grava no Firestore em background (se disponível, não bloqueante)
+      // 4. Grava no Firestore em background (versão enxuta com link do Drive para não estourar limite de 1MB do Firestore)
       getServerFirestore().then(db => {
-        db.collection("lancamentos").doc(docId).set(cleanItem, { merge: true }).catch(() => {});
+        const firestoreItem = {
+          ...cleanItem,
+          arquivoAnexoBase64: cleanItem.driveUrl || cleanItem.arquivoAnexoUrl || (cleanItem.arquivoAnexoBase64 && cleanItem.arquivoAnexoBase64.length < 150000 ? cleanItem.arquivoAnexoBase64 : ""),
+          anexos: Array.isArray(cleanItem.anexos)
+            ? cleanItem.anexos.map((a: any) => ({
+                id: a.id,
+                nome: a.nome,
+                url: a.url || a.driveUrl || "",
+                base64: a.url || a.driveUrl || (a.base64 && a.base64.length < 100000 ? a.base64 : "")
+              }))
+            : []
+        };
+        db.collection("lancamentos").doc(docId).set(firestoreItem, { merge: true }).catch(() => {});
       }).catch(() => {});
 
       serverLancamentosVersion = Date.now();
       console.log(`[Server Lancamentos] Lançamento ${docId} sincronizado com sucesso. Versão: ${serverLancamentosVersion}`);
-      return res.json({ success: true, id: item.id, version: serverLancamentosVersion });
+      return res.json({
+        success: true,
+        id: item.id,
+        driveUrl: cleanItem.driveUrl,
+        arquivoAnexoUrl: cleanItem.arquivoAnexoUrl,
+        version: serverLancamentosVersion
+      });
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao salvar lançamento:", err);
       return res.status(500).json({ success: false, error: err.message });
@@ -2312,7 +2724,27 @@ async function startServer() {
         const idStr = String(newItem.id);
         if (!deletedSet.has(idStr)) {
           const existing = map.get(idStr);
-          map.set(idStr, { ...(existing || {}), ...newItem });
+          if (existing) {
+            const existingTs = existing.updatedAt ? (Date.parse(existing.updatedAt) || 0) : (existing.updatedAtMs || 0);
+            const incomingTs = newItem.updatedAt ? (Date.parse(newItem.updatedAt) || 0) : (newItem.updatedAtMs || 0);
+            if (existingTs > incomingTs) {
+              return;
+            }
+            const mergedItem = {
+              ...existing,
+              ...newItem,
+              observacao: stripServerInternalObsTags(newItem.observacao ?? existing.observacao ?? "")
+            };
+            if (!mergedItem.arquivoAnexoBase64 && existing.arquivoAnexoBase64 && (mergedItem.nomeArquivoAnexo || mergedItem.temAnexo)) {
+              mergedItem.arquivoAnexoBase64 = existing.arquivoAnexoBase64;
+            }
+            map.set(idStr, mergedItem);
+          } else {
+            map.set(idStr, {
+              ...newItem,
+              observacao: stripServerInternalObsTags(newItem.observacao || "")
+            });
+          }
         }
       });
 
@@ -2365,7 +2797,47 @@ async function startServer() {
     }
   });
 
-  // Rota para recuperar o anexo PDF/imagem original completo de um lançamento
+  // Rota dedicada para upload direto de anexos de Lançamento de Documentos para a pasta do Google Drive (1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz)
+  app.post("/api/drive/upload-lancamento", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { fileName, fileData, mimeType, folderId } = req.body || {};
+      if (!fileData) {
+        return res.status(400).json({ success: false, error: "Conteúdo do arquivo (fileData) ausente" });
+      }
+      const result = await uploadLancamentoAttachmentToDriveServer({
+        fileName: fileName || `Documento_${Date.now()}.pdf`,
+        fileData,
+        mimeType,
+        folderId: folderId || GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID
+      });
+      if (result.success) {
+        return res.json(result);
+      }
+      return res.status(500).json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Rota de proxy para converter links do Google Drive em Data URL base64 para renderização Canvas interna sem bloqueio do navegador
+  app.get("/api/drive/proxy", async (req, res) => {
+    try {
+      const targetUrl = String(req.query.url || req.query.fileId || "").trim();
+      const fileName = String(req.query.fileName || "Documento.pdf").trim();
+      if (!targetUrl) {
+        return res.status(400).json({ success: false, error: "URL ou fileId ausente" });
+      }
+      const dataUrl = await resolveDriveUrlToDataUrl(targetUrl, fileName);
+      if (dataUrl && dataUrl.startsWith("data:")) {
+        return res.json({ success: true, base64: dataUrl });
+      }
+      return res.status(404).json({ success: false, error: "Não foi possível obter os bytes do arquivo no Google Drive" });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Rota para recuperar o anexo PDF/imagem/arquivo original completo de um lançamento
   app.get("/api/lancamentos/:id/anexo", async (req, res) => {
     try {
       const targetId = String(req.params.id || "").trim();
@@ -2397,14 +2869,35 @@ async function startServer() {
       }
 
       const nome = foundItem.nomeArquivoAnexo || foundItem.anexos?.[0]?.nome || "Documento.pdf";
-      const base64 = foundItem.arquivoAnexoBase64 || foundItem.anexos?.[0]?.base64 || "";
+      let base64 = foundItem.arquivoAnexoBase64 || foundItem.anexos?.[0]?.base64 || foundItem.driveUrl || foundItem.arquivoAnexoUrl || "";
+
+      // Se o anexo salvo for um link do Google Drive, resolve para Data URL (base64) para o visualizador interno Canvas funcionar sem bloqueio
+      if (base64 && base64.startsWith("http")) {
+        base64 = await resolveDriveUrlToDataUrl(base64, nome);
+      }
+
+      const resolvedAnexos = Array.isArray(foundItem.anexos)
+        ? await Promise.all(
+            foundItem.anexos.map(async (anx: any, idx: number) => {
+              let anxB64 = anx.base64 || anx.url || (idx === 0 ? base64 : "");
+              if (anxB64 && anxB64.startsWith("http")) {
+                anxB64 = await resolveDriveUrlToDataUrl(anxB64, anx.nome || nome);
+              }
+              return {
+                ...anx,
+                base64: anxB64
+              };
+            })
+          )
+        : [];
 
       return res.json({
         success: true,
         id: foundItem.id,
         nome,
+        driveUrl: foundItem.driveUrl,
         arquivoAnexoBase64: base64,
-        anexos: foundItem.anexos || []
+        anexos: resolvedAnexos
       });
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao recuperar anexo:", err);
@@ -2711,9 +3204,37 @@ async function startServer() {
       // Processar Anexos com decodificação limpa e segura (PDF, Imagens, Data URLs, Base64 e Arquivos de Drive)
       const mailAttachments: Array<{ filename: string; content?: Buffer; path?: string; contentType?: string }> = [];
 
+      const inferMimeFromFilename = (fname: string, fallback = 'application/octet-stream'): string => {
+        const lower = String(fname || '').toLowerCase().trim();
+        if (lower.endsWith('.pdf')) return 'application/pdf';
+        if (lower.endsWith('.msg')) return 'application/vnd.ms-outlook';
+        if (lower.endsWith('.eml')) return 'message/rfc822';
+        if (lower.endsWith('.oft')) return 'application/vnd.ms-outlook';
+        if (lower.endsWith('.pst')) return 'application/vnd.ms-outlook-pst';
+        if (lower.endsWith('.xml')) return 'application/xml';
+        if (lower.endsWith('.png')) return 'image/png';
+        if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+        if (lower.endsWith('.webp')) return 'image/webp';
+        if (lower.endsWith('.gif')) return 'image/gif';
+        if (lower.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        if (lower.endsWith('.xls')) return 'application/vnd.ms-excel';
+        if (lower.endsWith('.csv')) return 'text/csv';
+        if (lower.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        if (lower.endsWith('.doc')) return 'application/msword';
+        if (lower.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+        if (lower.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
+        if (lower.endsWith('.txt') || lower.endsWith('.log') || lower.endsWith('.ret') || lower.endsWith('.rem')) return 'text/plain';
+        if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'text/html';
+        if (lower.endsWith('.zip')) return 'application/zip';
+        if (lower.endsWith('.rar')) return 'application/vnd.rar';
+        if (lower.endsWith('.7z')) return 'application/x-7z-compressed';
+        return fallback;
+      };
+
       const parseBase64Attachment = (rawInput: string, originalName?: string, defaultType?: string) => {
         let cleanBase64 = rawInput;
-        let detectedType = defaultType || 'application/octet-stream';
+        let filename = (originalName || 'anexo').trim();
+        let detectedType = defaultType || inferMimeFromFilename(filename, 'application/octet-stream');
 
         // Detecta e extrai MIME type e base64 limpo se for Data URL
         if (rawInput.includes('base64,')) {
@@ -2721,24 +3242,36 @@ async function startServer() {
           const prefix = parts[0];
           cleanBase64 = parts[1] || '';
           const matchMime = prefix.match(/data:([^;]+);/);
-          if (matchMime && matchMime[1]) {
-            detectedType = matchMime[1];
+          if (matchMime && matchMime[1] && matchMime[1].trim() !== '' && matchMime[1] !== 'application/octet-stream') {
+            detectedType = matchMime[1].trim();
           }
+        }
+
+        // Se o nome do arquivo possui uma extensão conhecida (ex: .msg, .eml, .xml, .xlsx), garante o MIME type correto
+        const mimeByExt = inferMimeFromFilename(filename, '');
+        if (mimeByExt && (detectedType === 'application/octet-stream' || (detectedType === 'application/pdf' && !filename.toLowerCase().endsWith('.pdf')))) {
+          detectedType = mimeByExt;
         }
 
         cleanBase64 = cleanBase64.replace(/\s+/g, '').trim();
         if (!cleanBase64) return null;
 
         const buffer = Buffer.from(cleanBase64, 'base64');
-        let filename = originalName || 'anexo.pdf';
+        const hasExtension = /\.[a-z0-9]{2,5}$/i.test(filename);
 
-        // Se o tipo for PDF e o nome não tiver extensão .pdf, adiciona
-        if (detectedType.includes('pdf') && !filename.toLowerCase().endsWith('.pdf')) {
-          filename += '.pdf';
-        } else if (detectedType.includes('jpeg') && !/\.(jpe?g)$/i.test(filename)) {
-          filename += '.jpg';
-        } else if (detectedType.includes('png') && !filename.toLowerCase().endsWith('.png')) {
-          filename += '.png';
+        // Só adiciona extensão se o arquivo ainda não tiver extensão alguma
+        if (!hasExtension) {
+          if (detectedType.includes('pdf')) filename += '.pdf';
+          else if (detectedType.includes('ms-outlook')) filename += '.msg';
+          else if (detectedType.includes('rfc822')) filename += '.eml';
+          else if (detectedType.includes('xml')) filename += '.xml';
+          else if (detectedType.includes('jpeg')) filename += '.jpg';
+          else if (detectedType.includes('png')) filename += '.png';
+          else if (detectedType.includes('sheet')) filename += '.xlsx';
+          else if (detectedType.includes('excel')) filename += '.xls';
+          else if (detectedType.includes('wordprocessingml')) filename += '.docx';
+          else if (detectedType.includes('msword')) filename += '.doc';
+          else if (detectedType.includes('zip')) filename += '.zip';
         }
 
         return {
@@ -2753,7 +3286,7 @@ async function startServer() {
         for (let i = 0; i < rawAttachments.length; i++) {
           const att = rawAttachments[i];
           if (!att) continue;
-          const fname = att.name || att.filename || `anexo_${i + 1}.pdf`;
+          const fname = att.name || att.filename || `anexo_${i + 1}`;
           
           if (att.dataUrl && typeof att.dataUrl === 'string') {
             const parsed = parseBase64Attachment(att.dataUrl, fname, att.type || att.contentType);
@@ -2792,7 +3325,7 @@ async function startServer() {
           // Se a URL já for um Data URL direto (base64)
           if (rawUrlStr.startsWith("data:")) {
             flatDriveItems.push({
-              name: baseName || `Documento_${flatDriveItems.length + 1}.pdf`,
+              name: baseName || `Documento_${flatDriveItems.length + 1}`,
               url: rawUrlStr
             });
             continue;
@@ -2822,7 +3355,7 @@ async function startServer() {
           }
 
           flatDriveItems.push({
-            name: baseName || `Documento_${flatDriveItems.length + 1}.pdf`,
+            name: baseName || `Documento_${flatDriveItems.length + 1}`,
             url: rawUrlStr
           });
         }
@@ -2833,10 +3366,10 @@ async function startServer() {
         for (let i = 0; i < flatDriveItems.length; i++) {
           const item = flatDriveItems[i];
           let rawUrl = String(item.url || "").trim();
-          let fname = item.name || `Documento_${i + 1}.pdf`;
+          let fname = item.name || `Documento_${i + 1}`;
 
           if (rawUrl.startsWith('data:')) {
-            const parsed = parseBase64Attachment(rawUrl, fname, 'application/pdf');
+            const parsed = parseBase64Attachment(rawUrl, fname);
             if (parsed) mailAttachments.push(parsed);
             continue;
           }

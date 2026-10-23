@@ -30,6 +30,7 @@ export default function Vencimentos() {
       .map(item => {
         const vencCalc = calcularDiasAteVencimento(item.dataVencimento, item.status);
         return {
+          ...item,
           id: item.id,
           idSys: `#${item.id}`,
           fornecedor: item.fornecedor || "Fornecedor",
@@ -210,7 +211,7 @@ export default function Vencimentos() {
                             <div className="flex items-center gap-3">
                               <Link 
                                 to="/documentos/lancamento" 
-                                state={{ openForm: true, prefill: item }} 
+                                state={{ editLancamentoId: item.id, prefill: item }} 
                                 className="text-emerald-700 hover:text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-[8px] font-bold text-[11px] uppercase tracking-wider flex items-center gap-1 shrink-0 transition-all cursor-pointer shadow-sm hover:shadow"
                                 title="Ver / Editar lançamento"
                               >
@@ -219,9 +220,9 @@ export default function Vencimentos() {
                               </Link>
                             </div>
                           </td>
-                          <td className="px-6 py-3">
+                          <td className="px-6 py-3 font-normal">
                             <span className={cn(
-                              "px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider border rounded shadow-sm",
+                              "px-2.5 py-1 text-[10px] font-normal uppercase tracking-wider border rounded shadow-sm",
                               isRed
                                 ? "bg-rose-50 border-rose-200 text-rose-700"
                                 : "bg-orange-50 border-orange-200 text-orange-700"
@@ -315,8 +316,8 @@ export default function Vencimentos() {
                             <span>Lançar Este Mês</span>
                           </Link>
                         </td>
-                        <td className="px-6 py-3">
-                          <span className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider border rounded shadow-sm bg-amber-50 border-amber-200 text-amber-800">
+                        <td className="px-6 py-3 font-normal">
+                          <span className="px-2.5 py-1 text-[10px] font-normal uppercase tracking-wider border rounded shadow-sm bg-amber-50 border-amber-200 text-amber-800">
                             {item.status}
                           </span>
                         </td>

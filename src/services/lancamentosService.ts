@@ -118,6 +118,156 @@ export function isFictitiousLancamento(item: any): boolean {
   return false;
 }
 
+// Mapa em memória de gravações locais recentes para impedir que sincronizações assíncronas atrasadas revertam status ou campos recém-salvos
+const recentlySavedMap = new Map<string, { item: any; savedAtMs: number }>();
+const RECENTLY_SAVED_SESSION_KEY = "risel_lancamentos_recent_saves_v1";
+
+function recordRecentSave(item: any) {
+  if (!item || !item.id) return;
+  const idStr = String(item.id);
+  const now = Date.now();
+  recentlySavedMap.set(idStr, { item: { ...item }, savedAtMs: now });
+  try {
+    const slim = prepareItemsForLocalStorage([item])[0];
+    const raw = sessionStorage.getItem(RECENTLY_SAVED_SESSION_KEY);
+    const mapObj = raw ? JSON.parse(raw) : {};
+    mapObj[idStr] = { item: slim, savedAtMs: now };
+    // Limpa entradas com mais de 10 minutos
+    Object.keys(mapObj).forEach(k => {
+      if (now - (mapObj[k]?.savedAtMs || 0) > 10 * 60 * 1000) {
+        delete mapObj[k];
+      }
+    });
+    sessionStorage.setItem(RECENTLY_SAVED_SESSION_KEY, JSON.stringify(mapObj));
+  } catch (e) {}
+}
+
+function getRecentSave(idStr: string): { item: any; savedAtMs: number } | null {
+  const mem = recentlySavedMap.get(idStr);
+  if (mem && Date.now() - mem.savedAtMs <= 10 * 60 * 1000) {
+    return mem;
+  }
+  try {
+    const raw = sessionStorage.getItem(RECENTLY_SAVED_SESSION_KEY);
+    if (raw) {
+      const mapObj = JSON.parse(raw);
+      const entry = mapObj[idStr];
+      if (entry && Date.now() - (entry.savedAtMs || 0) <= 10 * 60 * 1000) {
+        return entry;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+export function getItemTimestampMs(item: any): number {
+  if (!item) return 0;
+  if (typeof item.updatedAtMs === "number" && item.updatedAtMs > 0) return item.updatedAtMs;
+  if (item.updatedAt) {
+    const t = new Date(item.updatedAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (item.updated_at) {
+    const t = new Date(item.updated_at).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (item.createdAt) {
+    const t = new Date(item.createdAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (item.created_at) {
+    const t = new Date(item.created_at).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  return 0;
+}
+
+export function stripInternalMetadataTags(rawObs: string): string {
+  if (!rawObs || typeof rawObs !== "string") return "";
+  return rawObs
+    .replace(/\[Nº DOC:[^\]]*\]/gi, "")
+    .replace(/\[OC\/CÓD:[^\]]*\]/gi, "")
+    .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
+    .replace(/\[ALÇADA:[^\]]*\]/gi, "")
+    .replace(/\[BASE:[^\]]*\]/gi, "")
+    .replace(/\[UPDATED_AT:[^\]]*\]/gi, "")
+    .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
+    .replace(/\[CONTATO_JSON:\s*\{.*?\}\]/gis, "")
+    .replace(/\[ANEXOS_META_JSON:\s*\[.*?\]\]/gis, "")
+    .replace(/\[ANEXOS_JSON:\s*\[.*?\]\]/gis, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+// Mescla duas versões do mesmo lançamento priorizando estritamente a versão mais recente (por updatedAt) e preservando binários de anexos
+function mergeTwoLancamentoVersions(primaryOrOlder: any, secondaryOrNewer: any): any {
+  if (!primaryOrOlder) return normalizeLancamento(secondaryOrNewer);
+  if (!secondaryOrNewer) return normalizeLancamento(primaryOrOlder);
+
+  const normA = normalizeLancamento(primaryOrOlder);
+  const normB = normalizeLancamento(secondaryOrNewer);
+
+  const timeA = getItemTimestampMs(normA);
+  const timeB = getItemTimestampMs(normB);
+
+  let winner = normB;
+  let loser = normA;
+
+  if (timeA > 0 && timeB > 0) {
+    if (timeA >= timeB) {
+      winner = normA;
+      loser = normB;
+    } else {
+      winner = normB;
+      loser = normA;
+    }
+  } else if (timeA > 0 && timeB === 0) {
+    winner = normA;
+    loser = normB;
+  } else if (timeB > 0 && timeA === 0) {
+    winner = normB;
+    loser = normA;
+  } else {
+    // Se nenhum tem timestamp explícito, prioriza normA (geralmente Servidor / Cache Local ativo)
+    winner = normA;
+    loser = normB;
+  }
+
+  // Hidrata base64 dos anexos caso o vencedor tenha vindo do localStorage slim (sem base64)
+  const loserAnexos: any[] = Array.isArray(loser.anexos) ? loser.anexos : [];
+  let mergedAnexos: any[] = Array.isArray(winner.anexos) ? [...winner.anexos] : [];
+
+  if (mergedAnexos.length > 0) {
+    mergedAnexos = mergedAnexos.map((anx: any, idx: number) => {
+      if (anx && anx.base64 && anx.base64.length > 50) return anx;
+      const matchInLoser = loserAnexos.find((la: any) => (la?.id && la.id === anx?.id) || (la?.nome && la.nome === anx?.nome)) || loserAnexos[idx];
+      if (matchInLoser && matchInLoser.base64) {
+        return { ...anx, base64: matchInLoser.base64 };
+      }
+      if (idx === 0 && loser.arquivoAnexoBase64 && loser.arquivoAnexoBase64.length > 50) {
+        return { ...anx, base64: loser.arquivoAnexoBase64 };
+      }
+      return anx;
+    });
+  } else if (winner.temAnexo && loserAnexos.length > 0) {
+    mergedAnexos = loserAnexos;
+  }
+
+  const bestBase64 =
+    winner.arquivoAnexoBase64 ||
+    mergedAnexos[0]?.base64 ||
+    ((winner.temAnexo || winner.nomeArquivoAnexo) ? (loser.arquivoAnexoBase64 || loserAnexos[0]?.base64 || "") : "");
+
+  return normalizeLancamento({
+    ...loser,
+    ...winner,
+    anexos: mergedAnexos,
+    arquivoAnexoBase64: bestBase64,
+    updatedAt: winner.updatedAt || loser.updatedAt || "",
+    updatedAtMs: Math.max(timeA, timeB) || undefined
+  });
+}
+
 // Normaliza um registro de lançamento para manter consistência total e integridade absoluta dos campos
 export function normalizeLancamento(item: any): any {
   if (!item) return item;
@@ -129,36 +279,54 @@ export function normalizeLancamento(item: any): any {
   let numDoc = item.codigoLancamento || item.numeroDocumento || item.codigo_lancamento || item.NUMERO_DOC || "";
   
   // 2. Cód. Lançamento / Nº OC - Campo independente e opcional
-  let codOc = item.codLancamentoOc || item.codigo_lancamento_oc || item.cod_lancamento_oc || item.COD_OC || "";
+  let codOc = item.codLancamentoOc !== undefined ? item.codLancamentoOc : (item.codigo_lancamento_oc || item.cod_lancamento_oc || item.COD_OC || "");
 
-  let centCusto = item.centroCusto || item.centro_custo || item.CENTRO_CUSTO || "C.C 101 - Operacional";
+  let centCusto = item.centroCusto || item.centro_custo || item.CENTRO_CUSTO || "";
   let alcada = item.aprovadores || item.APROVADORES || "";
   let baseFilial = item.estabelecimento || item.ESTABELECIMENTO || "";
+  let extractedUpdatedAt = item.updatedAt || item.updated_at || "";
+  let extraContato: any = {};
 
-  // Extração inteligente de tags de segurança na observação
-  const rawObs = item.observacao || item.OBSERVACAO || "";
+  // Extração inteligente de tags de segurança na observação (usadas apenas como fallback se o campo principal não estiver definido)
+  const rawObs = String(item.observacao || item.OBSERVACAO || "");
   if (rawObs) {
-    const docMatch = String(rawObs).match(/\[Nº DOC:\s*([^\]]+)\]/i);
-    if (docMatch && docMatch[1] && !numDoc) {
-      numDoc = docMatch[1].trim();
-    }
-    const ocMatch = String(rawObs).match(/\[OC\/CÓD:\s*([^\]]+)\]/i);
-    if (ocMatch && ocMatch[1] && !codOc) {
-      codOc = ocMatch[1].trim();
-    }
-    const ccMatch = String(rawObs).match(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/i);
-    if (ccMatch && ccMatch[1] && (!item.centroCusto || item.centroCusto === "C.C 101 - Operacional")) {
-      centCusto = ccMatch[1].trim();
-    }
-    const alcadaMatch = String(rawObs).match(/\[ALÇADA:\s*([^\]]+)\]/i);
-    if (alcadaMatch && alcadaMatch[1] && !alcada) {
-      alcada = alcadaMatch[1].trim();
-    }
-    const baseMatch = String(rawObs).match(/\[BASE:\s*([^\]]+)\]/i);
-    if (baseMatch && baseMatch[1] && !baseFilial) {
-      baseFilial = baseMatch[1].trim();
+    const getLatestTag = (regex: RegExp) => {
+      const matches = Array.from(rawObs.matchAll(regex));
+      if (matches.length > 0) {
+        const last = matches[matches.length - 1];
+        return last && last[1] ? last[1].trim() : "";
+      }
+      return "";
+    };
+
+    const docTag = getLatestTag(/\[Nº DOC:\s*([^\]]+)\]/gi);
+    if (docTag && !numDoc) numDoc = docTag;
+
+    const ocTag = getLatestTag(/\[OC\/CÓD:\s*([^\]]+)\]/gi);
+    if (ocTag && !codOc && item.codLancamentoOc === undefined) codOc = ocTag;
+
+    const ccTag = getLatestTag(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/gi);
+    if (ccTag && !centCusto) centCusto = ccTag;
+
+    const alcadaTag = getLatestTag(/\[ALÇADA:\s*([^\]]+)\]/gi);
+    if (alcadaTag && !alcada) alcada = alcadaTag;
+
+    const baseTag = getLatestTag(/\[BASE:\s*([^\]]+)\]/gi);
+    if (baseTag && !baseFilial) baseFilial = baseTag;
+
+    const updTag = getLatestTag(/\[UPDATED_AT:\s*([^\]]+)\]/gi);
+    if (updTag && !extractedUpdatedAt) extractedUpdatedAt = updTag;
+
+    const contatoMatch = rawObs.match(/\[CONTATO_JSON:\s*(\{.*?\})\]/s);
+    if (contatoMatch && contatoMatch[1]) {
+      try {
+        extraContato = JSON.parse(contatoMatch[1]);
+      } catch (e) {}
     }
   }
+
+  if (!centCusto) centCusto = "C.C 101 - Operacional";
+  if (!baseFilial) baseFilial = "100 - Paulínia";
 
   // Se ainda não tem numDoc mas tem o campo doc, tenta extrair o número do documento (ex: "NF-e 1902" -> "1902")
   const rawDocStr = item.doc || item.DOC || "";
@@ -188,9 +356,9 @@ export function normalizeLancamento(item: any): any {
   }
 
   let finalAnexos = Array.isArray(item.anexos) && item.anexos.length > 0 ? item.anexos.slice(0, 4) : [];
-  if (finalAnexos.length === 0 && rawObs && typeof rawObs === "string" && rawObs.includes("[ANEXOS_JSON:")) {
+  if (finalAnexos.length === 0 && rawObs && (rawObs.includes("[ANEXOS_JSON:") || rawObs.includes("[ANEXOS_META_JSON:"))) {
     try {
-      const match = rawObs.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
+      const match = rawObs.match(/\[ANEXOS_(?:META_)?JSON:\s*(\[.*?\])\]/s);
       if (match && match[1]) {
         const parsed = JSON.parse(match[1]);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -199,13 +367,27 @@ export function normalizeLancamento(item: any): any {
       }
     } catch (e) {}
   }
-  if (finalAnexos.length === 0 && (item.arquivoAnexoBase64 || item.arquivo_anexo_base64)) {
+  const fallbackBase64 = item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || "";
+  const fallbackNomeAnexo = item.nomeArquivoAnexo || item.nome_arquivo_anexo || "";
+  if (finalAnexos.length === 0 && (fallbackBase64 || fallbackNomeAnexo)) {
     finalAnexos = [{
       id: "anx-1",
-      nome: item.nomeArquivoAnexo || item.nome_arquivo_anexo || "Documento.pdf",
-      base64: item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || ""
+      nome: fallbackNomeAnexo || "Documento.pdf",
+      base64: fallbackBase64
     }];
+  } else if (finalAnexos.length > 0 && fallbackBase64 && !finalAnexos[0]?.base64) {
+    finalAnexos = [
+      { ...finalAnexos[0], base64: fallbackBase64 },
+      ...finalAnexos.slice(1)
+    ];
   }
+
+  const cleanUserObservacao = stripInternalMetadataTags(rawObs);
+
+  const normalizedStatusRaw = String(item.status || item.STATUS || "Aguardando Aprovação").trim();
+  const normalizedStatus = normalizedStatusRaw.toLowerCase() === "aguardando aprovação" || normalizedStatusRaw.toLowerCase() === "aguardando aprovacao"
+    ? "Aguardando Aprovação"
+    : normalizedStatusRaw;
 
   return {
     ...item,
@@ -214,31 +396,60 @@ export function normalizeLancamento(item: any): any {
     doc: finalDoc,
     codigoLancamento: numDoc,
     numeroDocumento: numDoc,
-    codLancamentoOc: codOc,
+    codLancamentoOc: codOc || "",
     centroCusto: centCusto,
     aprovadores: alcada || item.aprovadores || "Deny e Gerência",
-    estabelecimento: baseFilial || item.estabelecimento || "100 - Paulínia",
-    status: item.status === "Aguardando aprovação" ? "Aguardando Aprovação" : (item.status || item.STATUS || "Aguardando Aprovação"),
+    estabelecimento: baseFilial,
+    status: normalizedStatus,
     fornecedor: item.fornecedor || item.FORNECEDOR || "Fornecedor Não Informado",
     cnpj: item.cnpj || item.CNPJ || "",
     valor: item.valor || item.VALOR || "R$ 0,00",
+    formaPagto: item.formaPagto || item.formaPagamento || item.forma_pagto || "Boleto",
+    descricao: item.descricao !== undefined ? item.descricao : (item.DESCRICAO || ""),
+    itemSistema: item.itemSistema !== undefined ? item.itemSistema : (item.item_sistema || ""),
+    frequencia: item.frequencia || item.FREQUENCIA || "Esporádico",
+    lancadoPor: item.lancadoPor || item.lancado_por || "Sistema",
+    dataAprovacao: item.dataAprovacao !== undefined ? item.dataAprovacao : (item.data_aprovacao || ""),
     dataLancamento: item.dataLancamento || item.data_lancamento || item.DATA_LANCAMENTO || new Date().toISOString().split("T")[0],
     dataVencimento: item.dataVencimento || item.data_vencimento || item.VENCIMENTO || "",
-    dataEmissao: item.dataEmissao || item.data_emissao || item.DATA_EMISSAO || "",
-    observacao: rawObs,
+    dataEmissao: item.dataEmissao !== undefined ? item.dataEmissao : (item.data_emissao || item.DATA_EMISSAO || ""),
+    observacao: cleanUserObservacao,
+    cidade: item.cidade || extraContato.cidade || "",
+    uf: (item.uf || extraContato.uf || "").toUpperCase(),
+    telefone: item.telefone || extraContato.telefone || "",
+    email: (item.email || extraContato.email || "").toLowerCase(),
+    multaPlaca: item.multaPlaca || extraContato.multaPlaca || "",
+    multaInfracao: item.multaInfracao || extraContato.multaInfracao || "",
+    multaMotorista: item.multaMotorista || extraContato.multaMotorista || "",
+    multaGravidade: item.multaGravidade || extraContato.multaGravidade || "Média",
+    moduloPetroshow: item.moduloPetroshow || extraContato.moduloPetroshow || "",
     anexos: finalAnexos,
-    nomeArquivoAnexo: finalAnexos[0]?.nome || item.nomeArquivoAnexo || item.nome_arquivo_anexo || "",
-    arquivoAnexoBase64: finalAnexos[0]?.base64 || item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || ""
+    nomeArquivoAnexo: finalAnexos[0]?.nome || fallbackNomeAnexo || "",
+    arquivoAnexoBase64: finalAnexos[0]?.base64 || fallbackBase64 || "",
+    temAnexo: Boolean(finalAnexos.length > 0 || fallbackBase64 || fallbackNomeAnexo || item.temAnexo),
+    updatedAt: extractedUpdatedAt || item.updatedAt || ""
   };
-  }
+}
 
 // Função utilitária para atualizar cache local com dados recebidos via BroadcastChannel
 function updateLocalCacheFromBroadcast(items: any[]) {
   if (!Array.isArray(items) || items.length === 0) return;
   const deletedIds = getDeletedIds();
+  const currentMap = new Map<string, any>();
+  cachedLancamentos.forEach(i => currentMap.set(String(i.id), i));
+
   const valid = items
     .filter(i => !deletedIds.has(String(i.id)) && !isFictitiousLancamento(i))
-    .map(normalizeLancamento);
+    .map(incoming => {
+      const idStr = String(incoming.id);
+      const existing = currentMap.get(idStr);
+      const recent = getRecentSave(idStr);
+      let merged = existing ? mergeTwoLancamentoVersions(existing, incoming) : normalizeLancamento(incoming);
+      if (recent) {
+        merged = mergeTwoLancamentoVersions(merged, recent.item);
+      }
+      return merged;
+    });
   
   if (valid.length === 0) return;
   
@@ -248,8 +459,9 @@ function updateLocalCacheFromBroadcast(items: any[]) {
 
   cachedLancamentos = valid;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
-    localStorage.setItem(SNAPSHOT_BACKUP_KEY, JSON.stringify(valid));
+    const slim = prepareItemsForLocalStorage(valid);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+    localStorage.setItem(SNAPSHOT_BACKUP_KEY, JSON.stringify(slim));
     localStorage.setItem(SNAPSHOT_TIMESTAMP_KEY, new Date().toISOString());
   } catch (e) {}
 
@@ -292,22 +504,29 @@ function setupSupabaseRealtimeChannel() {
 
               const current = getLancamentosUnified();
               const existingIdx = current.findIndex(i => String(i.id) === targetId);
+              const recent = getRecentSave(targetId);
+
               let nextList: any[];
               if (existingIdx >= 0) {
-                // Preserva anexos locais se a linha de realtime vier sem base64 pesado
                 const existing = current[existingIdx];
-                const bestAnexoBase64 = normalized.arquivoAnexoBase64 || existing.arquivoAnexoBase64 || "";
-                const bestAnexos = (normalized.anexos && normalized.anexos.length > 0) ? normalized.anexos : (existing.anexos || []);
-                
+                // Se houve gravação local nos últimos 45s e o evento Realtime não tem timestamp superior, protege a versão local
+                if (recent && Date.now() - recent.savedAtMs < 45000) {
+                  const recentTime = getItemTimestampMs(recent.item);
+                  const incomingTime = getItemTimestampMs(normalized);
+                  if (!incomingTime || recentTime >= incomingTime) {
+                    const protectedItem = mergeTwoLancamentoVersions(normalized, recent.item);
+                    nextList = [...current];
+                    nextList[existingIdx] = protectedItem;
+                    notifyListeners(nextList);
+                    return;
+                  }
+                }
+
+                const mergedItem = mergeTwoLancamentoVersions(existing, normalized);
                 nextList = [...current];
-                nextList[existingIdx] = {
-                  ...existing,
-                  ...normalized,
-                  arquivoAnexoBase64: bestAnexoBase64,
-                  anexos: bestAnexos
-                };
+                nextList[existingIdx] = mergedItem;
               } else {
-                nextList = [normalized, ...current];
+                nextList = [recent ? mergeTwoLancamentoVersions(normalized, recent.item) : normalized, ...current];
               }
               notifyListeners(nextList);
             }
@@ -478,9 +697,21 @@ export function initLancamentosSync(): () => void {
         const updated = JSON.parse(e.newValue);
         const deletedIds = getDeletedIds();
         if (Array.isArray(updated) && updated.length > 0) {
+          const currentMap = new Map<string, any>();
+          cachedLancamentos.forEach(i => currentMap.set(String(i.id), i));
+
           const valid = updated
             .filter((item: any) => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
-            .map(normalizeLancamento);
+            .map((item: any) => {
+              const idStr = String(item.id);
+              const existing = currentMap.get(idStr);
+              const recent = getRecentSave(idStr);
+              let merged = existing ? mergeTwoLancamentoVersions(existing, item) : normalizeLancamento(item);
+              if (recent) {
+                merged = mergeTwoLancamentoVersions(merged, recent.item);
+              }
+              return merged;
+            });
           if (valid.length > 0) {
             cachedLancamentos = valid;
             activeListeners.forEach(cb => { try { cb(valid); } catch (err) {} });
@@ -523,7 +754,7 @@ export function initLancamentosSync(): () => void {
 
 let isPulling = false;
 
-// B. Busca no Banco de Dados do Servidor, Firestore e Supabase com proteção absoluta contra perda de dados
+// B. Busca no Banco de Dados do Servidor, Firestore e Supabase com proteção absoluta contra perda de dados ou reversão de status
 export async function pullFromCloudAndServer(force: boolean = false): Promise<any[]> {
   if (isPulling) return cachedLancamentos;
   isPulling = true;
@@ -569,7 +800,7 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
       console.warn("[LancamentosSync] Falha ao consultar backend /api/lancamentos:", e);
     }
 
-    // 2. Busca no Supabase (com proteção de quota)
+    // 2. Busca no Supabase (com proteção de quota e mesclagem estrita por timestamp updatedAt)
     const now = Date.now();
     if (now > supabaseQuotaExceededUntil) {
       try {
@@ -581,44 +812,7 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
             if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
               const existing = idMap.get(idStr);
               if (existing) {
-                const existingHasBase64 = Boolean(existing.arquivoAnexoBase64 || (Array.isArray(existing.anexos) && existing.anexos.some((a: any) => a?.base64)));
-                const itemHasBase64 = Boolean(item.arquivoAnexoBase64 || (Array.isArray(item.anexos) && item.anexos.some((a: any) => a?.base64)));
-                const bestAnexoBase64 = item.arquivoAnexoBase64 || existing.arquivoAnexoBase64 || "";
-                const bestAnexos = itemHasBase64 ? item.anexos : (existingHasBase64 ? existing.anexos : (item.anexos || existing.anexos || []));
-
-                // Preserva status e aprovação caso já aprovado/definido
-                const bestStatus = (item.status && item.status !== "Aguardando Aprovação")
-                  ? item.status
-                  : (existing.status || item.status || "Aguardando Aprovação");
-                const bestDataAprovacao = item.dataAprovacao || existing.dataAprovacao || "";
-
-                // Preserva centros de custo e alçadas customizados
-                const bestCc = (item.centroCusto && item.centroCusto !== "C.C 101 - Operacional")
-                  ? item.centroCusto
-                  : (existing.centroCusto || item.centroCusto || "C.C 101 - Operacional");
-                const bestAlcada = (item.aprovadores && item.aprovadores !== "Deny e Gerência")
-                  ? item.aprovadores
-                  : (existing.aprovadores || item.aprovadores || "Deny e Gerência");
-                const bestEstabelecimento = (item.estabelecimento && item.estabelecimento !== "100 - Paulínia")
-                  ? item.estabelecimento
-                  : (existing.estabelecimento || item.estabelecimento || "100 - Paulínia");
-
-                idMap.set(idStr, normalizeLancamento({
-                  ...existing,
-                  ...item,
-                  status: bestStatus,
-                  dataAprovacao: bestDataAprovacao,
-                  centroCusto: bestCc,
-                  aprovadores: bestAlcada,
-                  estabelecimento: bestEstabelecimento,
-                  codigoLancamento: item.codigoLancamento || existing.codigoLancamento || "",
-                  numeroDocumento: item.numeroDocumento || existing.numeroDocumento || "",
-                  codLancamentoOc: item.codLancamentoOc || existing.codLancamentoOc || "",
-                  doc: (item.doc && !item.doc.startsWith("DOC-") && !item.doc.endsWith("S/N")) ? item.doc : existing.doc,
-                  nomeArquivoAnexo: item.nomeArquivoAnexo || existing.nomeArquivoAnexo || "",
-                  arquivoAnexoBase64: bestAnexoBase64,
-                  anexos: bestAnexos
-                }));
+                idMap.set(idStr, mergeTwoLancamentoVersions(existing, item));
               } else {
                 idMap.set(idStr, normalizeLancamento(item));
               }
@@ -634,7 +828,7 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
       }
     }
 
-    // Mescla itens do cache local para garantir que criações ou edições instantâneas não sejam revertidas
+    // 3. Mescla itens do cache local e da trava de gravações recentes para garantir que criações ou edições nunca sejam revertidas
     if (cachedLancamentos && cachedLancamentos.length > 0) {
       cachedLancamentos.forEach(localItem => {
         const idStr = String(localItem.id);
@@ -643,31 +837,21 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
           if (!remoteItem) {
             idMap.set(idStr, normalizeLancamento(localItem));
           } else {
-            // Compara timestamps para priorizar a versão mais atualizada e não reverter
-            const localTime = new Date(localItem.updatedAt || localItem.createdAt || 0).getTime();
-            const remoteTime = new Date(remoteItem.updatedAt || remoteItem.createdAt || 0).getTime();
-            
-            if (localTime >= remoteTime) {
-              idMap.set(idStr, normalizeLancamento({
-                ...remoteItem,
-                ...localItem,
-                anexos: (localItem.anexos && localItem.anexos.length > 0) ? localItem.anexos : (remoteItem.anexos || []),
-                arquivoAnexoBase64: localItem.arquivoAnexoBase64 || remoteItem.arquivoAnexoBase64 || ""
-              }));
-            } else {
-              idMap.set(idStr, normalizeLancamento({
-                ...localItem,
-                ...remoteItem,
-                anexos: (remoteItem.anexos && remoteItem.anexos.length > 0) ? remoteItem.anexos : (localItem.anexos || []),
-                arquivoAnexoBase64: remoteItem.arquivoAnexoBase64 || localItem.arquivoAnexoBase64 || ""
-              }));
-            }
+            idMap.set(idStr, mergeTwoLancamentoVersions(remoteItem, localItem));
           }
         }
       });
     }
 
-    // 3. Monta a lista oficial autoritativa estritamente com dados reais
+    // 4. Garante prioridade absoluta para itens recém-salvos nesta sessão
+    idMap.forEach((currentVal, idStr) => {
+      const recent = getRecentSave(idStr);
+      if (recent) {
+        idMap.set(idStr, mergeTwoLancamentoVersions(currentVal, recent.item));
+      }
+    });
+
+    // 5. Monta a lista oficial autoritativa estritamente com dados reais
     const freshItems = Array.from(idMap.values())
       .filter(item => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
       .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
@@ -720,24 +904,51 @@ export function subscribeToLancamentosUnified(callback: (items: any[]) => void):
 
 // 4. Gravação / Criação / Edição de Lançamento com reflexo imediato e persistência direta no Banco
 export async function saveLancamentoUnified(item: any): Promise<boolean> {
-  const normalized = normalizeLancamento(item);
-  normalized.updatedAt = new Date().toISOString();
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const normalized = normalizeLancamento({
+    ...item,
+    updatedAt: nowIso,
+    updatedAtMs: nowMs
+  });
+  normalized.updatedAt = nowIso;
+  normalized.updatedAtMs = nowMs;
   const targetId = String(normalized.id);
 
   // Remove dos IDs deletados caso estivesse marcado
   removeDeletedId(targetId);
 
-  // 1. Atualização Otimista Imediata Local com Snapshot Vault
+  // 1. Atualização Otimista Imediata Local com Preservação de Anexos em Memória
   const current = getLancamentosUnified();
   const existingIdx = current.findIndex(i => String(i.id) === targetId);
+  let finalSavedItem = normalized;
   let updatedList: any[];
 
   if (existingIdx >= 0) {
+    const existing = current[existingIdx];
+    // Se o item editado mantinha anexos cujos base64 estavam em memória no existing, preserva-os
+    if (Array.isArray(finalSavedItem.anexos) && finalSavedItem.anexos.length > 0 && Array.isArray(existing.anexos)) {
+      finalSavedItem.anexos = finalSavedItem.anexos.map((anx: any, idx: number) => {
+        if (anx && anx.base64 && anx.base64.length > 50) return anx;
+        const matchOld = existing.anexos.find((ea: any) => (ea?.id && ea.id === anx?.id) || (ea?.nome && ea.nome === anx?.nome)) || existing.anexos[idx];
+        if (matchOld && matchOld.base64) {
+          return { ...anx, base64: matchOld.base64 };
+        }
+        return anx;
+      });
+    }
+    if (!finalSavedItem.arquivoAnexoBase64 && finalSavedItem.nomeArquivoAnexo && existing.arquivoAnexoBase64) {
+      finalSavedItem.arquivoAnexoBase64 = finalSavedItem.anexos?.[0]?.base64 || existing.arquivoAnexoBase64;
+    }
+    finalSavedItem = { ...existing, ...finalSavedItem, updatedAt: nowIso, updatedAtMs: nowMs };
     updatedList = [...current];
-    updatedList[existingIdx] = { ...updatedList[existingIdx], ...normalized };
+    updatedList[existingIdx] = finalSavedItem;
   } else {
-    updatedList = [normalized, ...current];
+    updatedList = [finalSavedItem, ...current];
   }
+
+  // Registra na trava de proteção contra reversão assíncrona
+  recordRecentSave(finalSavedItem);
 
   notifyListeners(updatedList);
 
@@ -748,18 +959,7 @@ export async function saveLancamentoUnified(item: any): Promise<boolean> {
     } catch (e) {}
   }
 
-  // 2. Persistência direta no Banco Supabase PostgreSQL
-  if (Date.now() > supabaseQuotaExceededUntil) {
-    try {
-      await saveLancamentoSupabase(normalized);
-    } catch (sbErr: any) {
-      if (String(sbErr?.message || "").includes("exceed_egress_quota")) {
-        supabaseQuotaExceededUntil = Date.now() + 15 * 60 * 1000;
-      }
-    }
-  }
-
-  // 3. Persistência no Servidor Express (Disco local + Backup atômico)
+  // 2. Persistência no Servidor Express (Disco local + Backup atômico + Supabase server-side)
   try {
     const res = await fetch("/api/lancamentos", {
       method: "POST",
@@ -767,7 +967,7 @@ export async function saveLancamentoUnified(item: any): Promise<boolean> {
         "Content-Type": "application/json",
         "Cache-Control": "no-cache"
       },
-      body: JSON.stringify(normalized)
+      body: JSON.stringify(finalSavedItem)
     });
     if (res.ok) {
       const data = await res.json();
@@ -779,9 +979,20 @@ export async function saveLancamentoUnified(item: any): Promise<boolean> {
     console.warn("[LancamentosSync] Erro ao salvar no Servidor:", sErr);
   }
 
+  // 3. Persistência direta no Banco Supabase PostgreSQL
+  if (Date.now() > supabaseQuotaExceededUntil) {
+    try {
+      await saveLancamentoSupabase(finalSavedItem);
+    } catch (sbErr: any) {
+      if (String(sbErr?.message || "").includes("exceed_egress_quota")) {
+        supabaseQuotaExceededUntil = Date.now() + 15 * 60 * 1000;
+      }
+    }
+  }
+
   // 4. Persistência no Firestore (contingência)
   try {
-    const cleanForFirestore = { ...normalized };
+    const cleanForFirestore = { ...finalSavedItem };
     Object.keys(cleanForFirestore).forEach(k => cleanForFirestore[k] === undefined && delete cleanForFirestore[k]);
     await db.collection("lancamentos").doc(targetId).set(cleanForFirestore, { merge: true });
   } catch (fErr) {}
