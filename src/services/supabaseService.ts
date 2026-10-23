@@ -172,6 +172,113 @@ export async function pingSupabaseKeepAlive(): Promise<{ success: boolean; times
   }
 }
 
+// Converte registro bruto do Supabase para o modelo completo do sistema
+export function mapSupabaseRowToLancamento(row: any): any {
+  if (!row) return row;
+  // Extrai metadados seguros caso estejam embutidos na observação (prioriza a tag mais recente)
+  let rawObs = row.observacao || "";
+  let parsedNumDoc = row.codigo_lancamento || row.numero_documento || "";
+  let parsedOc = row.cod_lancamento_oc || row.cod_oc || "";
+  let parsedCc = row.centro_custo || "";
+  let parsedAlcada = row.aprovadores || "";
+  let parsedBase = row.estabelecimento || "";
+
+  const getLatestTag = (regex: RegExp) => {
+    const matches = Array.from(rawObs.matchAll(regex));
+    if (matches.length > 0) {
+      const last = matches[matches.length - 1];
+      return last && last[1] ? last[1].trim() : "";
+    }
+    return "";
+  };
+
+  const tagDoc = getLatestTag(/\[Nº DOC:\s*([^\]]+)\]/gi);
+  if (tagDoc) parsedNumDoc = tagDoc;
+
+  const tagOc = getLatestTag(/\[OC\/CÓD:\s*([^\]]+)\]/gi);
+  if (tagOc) parsedOc = tagOc;
+
+  const tagCc = getLatestTag(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/gi);
+  if (tagCc) parsedCc = tagCc;
+
+  const tagAlcada = getLatestTag(/\[ALÇADA:\s*([^\]]+)\]/gi);
+  if (tagAlcada) parsedAlcada = tagAlcada;
+
+  const tagBase = getLatestTag(/\[BASE:\s*([^\]]+)\]/gi);
+  if (tagBase) parsedBase = tagBase;
+
+  // Se ainda não tem parsedNumDoc mas row.doc tem o número, extrai com segurança
+  if (!parsedNumDoc && row.doc && typeof row.doc === "string") {
+    const cleanDoc = row.doc.trim();
+    if (!cleanDoc.startsWith("DOC-") && !cleanDoc.endsWith("S/N")) {
+      const parts = cleanDoc.split(" ");
+      if (parts.length > 1) {
+        parsedNumDoc = parts.slice(1).join(" ").trim();
+      } else {
+        parsedNumDoc = cleanDoc;
+      }
+    }
+  }
+
+  let parsedAnexos: any[] = [];
+  if (row.anexos) {
+    if (Array.isArray(row.anexos)) {
+      parsedAnexos = row.anexos;
+    } else if (typeof row.anexos === "string") {
+      try { parsedAnexos = JSON.parse(row.anexos); } catch (e) {}
+    }
+  }
+  if ((!parsedAnexos || parsedAnexos.length === 0) && row.observacao && typeof row.observacao === "string" && row.observacao.includes("[ANEXOS_JSON:")) {
+    try {
+      const match = row.observacao.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
+      if (match && match[1]) {
+        const p = JSON.parse(match[1]);
+        if (Array.isArray(p) && p.length > 0) parsedAnexos = p;
+      }
+    } catch (e) {}
+  }
+  if ((!parsedAnexos || parsedAnexos.length === 0) && (row.arquivo_anexo_base64 || row.nome_arquivo_anexo)) {
+    parsedAnexos = [{
+      id: "anx-1",
+      nome: row.nome_arquivo_anexo || "Documento.pdf",
+      base64: row.arquivo_anexo_base64 || ""
+    }];
+  }
+
+  return {
+    id: row.id,
+    status: row.status,
+    dataLancamento: row.data_lancamento,
+    dataVencimento: row.data_vencimento,
+    fornecedor: row.fornecedor,
+    doc: row.doc,
+    valor: row.valor,
+    formaPagto: row.forma_pagto,
+    tipo: row.tipo,
+    descricao: row.descricao,
+    cnpj: row.cnpj,
+    estabelecimento: parsedBase || "100 - Paulínia",
+    nomeArquivoAnexo: row.nome_arquivo_anexo,
+    arquivoAnexoBase64: row.arquivo_anexo_base64,
+    anexos: parsedAnexos,
+    itemSistema: row.item_sistema,
+    dataEmissao: row.data_emissao,
+    observacao: row.observacao,
+    frequencia: row.frequencia,
+    lancadoPor: row.lancado_por,
+    dataAprovacao: row.data_aprovacao,
+    aprovadores: parsedAlcada || "Deny e Gerência",
+    centroCusto: parsedCc || "C.C 101 - Operacional",
+    codLancamentoOc: parsedOc || "",
+    codigoLancamento: parsedNumDoc || "",
+    numeroDocumento: parsedNumDoc || "",
+    cidade: row.cidade || "",
+    uf: row.uf || "",
+    telefone: row.telefone || "",
+    email: row.email || ""
+  };
+}
+
 // 3. Buscar Lançamentos no Supabase
 export async function fetchLancamentosSupabase(): Promise<any[]> {
   try {
@@ -186,111 +293,7 @@ export async function fetchLancamentosSupabase(): Promise<any[]> {
       return [];
     }
 
-    return (data || []).map(row => {
-      // Extrai metadados seguros caso estejam embutidos na observação
-      let rawObs = row.observacao || "";
-      let parsedNumDoc = row.codigo_lancamento || row.numero_documento || "";
-      let parsedOc = row.cod_lancamento_oc || row.cod_oc || "";
-      let parsedCc = row.centro_custo || "";
-      let parsedAlcada = row.aprovadores || "";
-      let parsedBase = row.estabelecimento || "";
-
-      const docMatch = rawObs.match(/\[Nº DOC:\s*([^\]]+)\]/i);
-      if (docMatch && docMatch[1]) {
-        if (!parsedNumDoc) parsedNumDoc = docMatch[1].trim();
-      }
-
-      const ocMatch = rawObs.match(/\[OC\/CÓD:\s*([^\]]+)\]/i);
-      if (ocMatch && ocMatch[1]) {
-        if (!parsedOc) parsedOc = ocMatch[1].trim();
-      }
-
-      const ccMatch = rawObs.match(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/i);
-      if (ccMatch && ccMatch[1]) {
-        if (!parsedCc) parsedCc = ccMatch[1].trim();
-      }
-
-      const alcadaMatch = rawObs.match(/\[ALÇADA:\s*([^\]]+)\]/i);
-      if (alcadaMatch && alcadaMatch[1]) {
-        if (!parsedAlcada) parsedAlcada = alcadaMatch[1].trim();
-      }
-
-      const baseMatch = rawObs.match(/\[BASE:\s*([^\]]+)\]/i);
-      if (baseMatch && baseMatch[1]) {
-        if (!parsedBase) parsedBase = baseMatch[1].trim();
-      }
-
-      // Se ainda não tem parsedNumDoc mas row.doc tem o número, extrai com segurança
-      if (!parsedNumDoc && row.doc && typeof row.doc === "string") {
-        const cleanDoc = row.doc.trim();
-        if (!cleanDoc.startsWith("DOC-") && !cleanDoc.endsWith("S/N")) {
-          const parts = cleanDoc.split(" ");
-          if (parts.length > 1) {
-            parsedNumDoc = parts.slice(1).join(" ").trim();
-          } else {
-            parsedNumDoc = cleanDoc;
-          }
-        }
-      }
-
-      let parsedAnexos: any[] = [];
-      if (row.anexos) {
-        if (Array.isArray(row.anexos)) {
-          parsedAnexos = row.anexos;
-        } else if (typeof row.anexos === "string") {
-          try { parsedAnexos = JSON.parse(row.anexos); } catch (e) {}
-        }
-      }
-      if ((!parsedAnexos || parsedAnexos.length === 0) && row.observacao && typeof row.observacao === "string" && row.observacao.includes("[ANEXOS_JSON:")) {
-        try {
-          const match = row.observacao.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
-          if (match && match[1]) {
-            const p = JSON.parse(match[1]);
-            if (Array.isArray(p) && p.length > 0) parsedAnexos = p;
-          }
-        } catch (e) {}
-      }
-      if ((!parsedAnexos || parsedAnexos.length === 0) && (row.arquivo_anexo_base64 || row.nome_arquivo_anexo)) {
-        parsedAnexos = [{
-          id: "anx-1",
-          nome: row.nome_arquivo_anexo || "Documento.pdf",
-          base64: row.arquivo_anexo_base64 || ""
-        }];
-      }
-
-      return {
-        id: row.id,
-        status: row.status,
-        dataLancamento: row.data_lancamento,
-        dataVencimento: row.data_vencimento,
-        fornecedor: row.fornecedor,
-        doc: row.doc,
-        valor: row.valor,
-        formaPagto: row.forma_pagto,
-        tipo: row.tipo,
-        descricao: row.descricao,
-        cnpj: row.cnpj,
-        estabelecimento: parsedBase || "100 - Paulínia",
-        nomeArquivoAnexo: row.nome_arquivo_anexo,
-        arquivoAnexoBase64: row.arquivo_anexo_base64,
-        anexos: parsedAnexos,
-        itemSistema: row.item_sistema,
-        dataEmissao: row.data_emissao,
-        observacao: row.observacao,
-        frequencia: row.frequencia,
-        lancadoPor: row.lancado_por,
-        dataAprovacao: row.data_aprovacao,
-        aprovadores: parsedAlcada || "Deny e Gerência",
-        centroCusto: parsedCc || "C.C 101 - Operacional",
-        codLancamentoOc: parsedOc || "",
-        codigoLancamento: parsedNumDoc || "",
-        numeroDocumento: parsedNumDoc || "",
-        cidade: row.cidade || "",
-        uf: row.uf || "",
-        telefone: row.telefone || "",
-        email: row.email || ""
-      };
-    });
+    return (data || []).map(mapSupabaseRowToLancamento);
   } catch (err) {
     console.error("Erro no fetchLancamentosSupabase:", err);
     return [];
@@ -407,32 +410,30 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     const alcada = item.aprovadores || "Deny e Gerência";
     const filialBase = item.estabelecimento || "100 - Paulínia";
 
-    // Preserva embutido na observação para garantir persistência 100% à prova de falhas de schema
-    let finalObs = item.observacao || "";
-    if (numDoc && !finalObs.includes(`[Nº DOC: ${numDoc}]`)) {
-      finalObs = finalObs ? `${finalObs} [Nº DOC: ${numDoc}]` : `[Nº DOC: ${numDoc}]`;
-    }
-    if (codOc && !finalObs.includes(`[OC/CÓD: ${codOc}]`)) {
-      finalObs = finalObs ? `${finalObs} [OC/CÓD: ${codOc}]` : `[OC/CÓD: ${codOc}]`;
-    }
-    if (centCusto && !finalObs.includes(`[CENTRO DE CUSTO: ${centCusto}]`)) {
-      finalObs = finalObs ? `${finalObs} [CENTRO DE CUSTO: ${centCusto}]` : `[CENTRO DE CUSTO: ${centCusto}]`;
-    }
-    if (alcada && !finalObs.includes(`[ALÇADA: ${alcada}]`)) {
-      finalObs = finalObs ? `${finalObs} [ALÇADA: ${alcada}]` : `[ALÇADA: ${alcada}]`;
-    }
-    if (filialBase && !finalObs.includes(`[BASE: ${filialBase}]`)) {
-      finalObs = finalObs ? `${finalObs} [BASE: ${filialBase}]` : `[BASE: ${filialBase}]`;
-    }
-    if (item.driveUrl && !finalObs.includes(item.driveUrl)) {
-      finalObs = finalObs ? `${finalObs} [GOOGLE DRIVE: ${item.driveUrl}]` : `[GOOGLE DRIVE: ${item.driveUrl}]`;
-    }
+    // Higieniza observação removendo tags pré-existentes para garantir que novas alterações substituam as antigas
+    let cleanObs = String(item.observacao || "")
+      .replace(/\[Nº DOC:[^\]]*\]/gi, "")
+      .replace(/\[OC\/CÓD:[^\]]*\]/gi, "")
+      .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
+      .replace(/\[ALÇADA:[^\]]*\]/gi, "")
+      .replace(/\[BASE:[^\]]*\]/gi, "")
+      .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
+      .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const tags: string[] = [];
+    if (numDoc) tags.push(`[Nº DOC: ${numDoc}]`);
+    if (codOc) tags.push(`[OC/CÓD: ${codOc}]`);
+    if (centCusto) tags.push(`[CENTRO DE CUSTO: ${centCusto}]`);
+    if (alcada) tags.push(`[ALÇADA: ${alcada}]`);
+    if (filialBase) tags.push(`[BASE: ${filialBase}]`);
+    if (item.driveUrl) tags.push(`[GOOGLE DRIVE: ${item.driveUrl}]`);
     if (Array.isArray(item.anexos) && item.anexos.length > 0) {
-      const anexosJson = JSON.stringify(item.anexos.slice(0, 4));
-      if (!finalObs.includes("[ANEXOS_JSON:")) {
-        finalObs = finalObs ? `${finalObs} [ANEXOS_JSON: ${anexosJson}]` : `[ANEXOS_JSON: ${anexosJson}]`;
-      }
+      tags.push(`[ANEXOS_JSON: ${JSON.stringify(item.anexos.slice(0, 4))}]`);
     }
+
+    const finalObs = [cleanObs, ...tags].filter(Boolean).join(" ").trim();
 
     // Economia de tráfego e banco de dados: se tiver URL do Supabase Storage ou Google Drive, prioriza URL
     let finalAnexo = item.arquivoAnexoUrl || item.driveUrl || item.arquivoAnexoBase64 || "";
@@ -453,65 +454,42 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       }
     }
 
-    const anexosPayload = Array.isArray(item.anexos) && item.anexos.length > 0 ? item.anexos.slice(0, 4) : [];
-
-    // Monta o objeto base
-    const baseRecord: any = {
+    // Monta o objeto oficial com estritamente as colunas existentes no PostgreSQL do Supabase
+    // Metadados adicionais (Centro de Custo, Alçada, Nº Doc, OC, Anexos múltiplos) residem com segurança dentro de observacao
+    const anexosArr = Array.isArray(item.anexos) ? item.anexos : [];
+    const cleanRecord: any = {
       id: targetId,
-      status: item.status || "Aguardando aprovação",
-      data_lancamento: item.dataLancamento || new Date().toISOString().split("T")[0],
-      data_vencimento: item.dataVencimento || item.dataLancamento,
+      status: item.status || "Aguardando Aprovação",
+      data_lancamento: item.dataLancamento || item.data_lancamento || new Date().toISOString().split("T")[0],
+      data_vencimento: item.dataVencimento || item.data_vencimento || item.dataLancamento || new Date().toISOString().split("T")[0],
       fornecedor: item.fornecedor || "Fornecedor Não Informado",
       doc: item.doc || (numDoc ? `${item.tipo || 'NF-e'} ${numDoc}` : "N/A"),
       valor: item.valor || "R$ 0,00",
-      forma_pagto: item.formaPagto || "Boleto",
+      forma_pagto: item.formaPagto || item.forma_pagto || "Boleto",
       tipo: item.tipo || "NF-e",
       descricao: item.descricao || "",
       cnpj: item.cnpj || "",
       estabelecimento: filialBase,
-      nome_arquivo_anexo: item.nomeArquivoAnexo || (anexosPayload[0]?.nome || ""),
+      nome_arquivo_anexo: item.nomeArquivoAnexo || (anexosArr[0]?.nome || ""),
       arquivo_anexo_base64: finalAnexo,
-      anexos: anexosPayload,
-      item_sistema: item.itemSistema || "",
-      data_emissao: item.dataEmissao || "",
+      item_sistema: item.itemSistema || item.item_sistema || "",
+      data_emissao: item.dataEmissao || item.data_emissao || "",
       observacao: finalObs,
       frequencia: item.frequencia || "Esporádico",
-      lancado_por: item.lancadoPor || "Deny",
-      data_aprovacao: item.dataAprovacao || ""
+      lancado_por: item.lancadoPor || item.lancado_por || "Sistema",
+      data_aprovacao: item.dataAprovacao || item.data_aprovacao || ""
     };
 
-    // Tenta primeiro com as colunas completas caso já existam na tabela do Supabase
-    const completeRecord = {
-      ...baseRecord,
-      centro_custo: centCusto,
-      codigo_lancamento: numDoc,
-      cod_lancamento_oc: codOc,
-      aprovadores: alcada,
-      anexos: anexosPayload
-    };
-
-    const firstTry = await client
+    const { error: upsertErr } = await client
       .from('lancamentos')
-      .upsert(completeRecord, { onConflict: 'id' });
+      .upsert(cleanRecord, { onConflict: 'id' });
 
-    if (!firstTry.error) {
+    if (!upsertErr) {
+      console.log(`[Supabase Service] Lançamento ${targetId} salvo com sucesso no PostgreSQL.`);
       return true;
     }
 
-    // Se o erro for de coluna inexistente (PGRST204), tenta sem essas colunas (pois já embutimos na observação)
-    if (firstTry.error && firstTry.error.code === 'PGRST204') {
-      const retry = await client
-        .from('lancamentos')
-        .upsert(baseRecord, { onConflict: 'id' });
-
-      if (!retry.error) {
-        return true;
-      }
-      console.error("Erro no retry ao gravar lançamento no Supabase:", retry.error.message || retry.error);
-      return false;
-    }
-
-    console.error("Erro ao gravar lançamento no Supabase:", firstTry.error.message || firstTry.error);
+    console.error("Erro ao gravar lançamento no Supabase:", upsertErr.message || upsertErr);
     return false;
   } catch (err) {
     console.error("Erro no saveLancamentoSupabase:", err);
@@ -2465,65 +2443,8 @@ export async function fetchManutencoesSupabase(): Promise<SupabaseManutencao[]> 
     // Tabela dedicada pode não existir no schema cache do Supabase
   }
 
-  // 2. Persistência cruzada com a tabela 'lancamentos' do Supabase (onde tipo = 'Manutenção' ou item_sistema inicia com 'MANUT-')
-  try {
-    const { data: lancData, error: lancErr } = await client
-      .from('lancamentos')
-      .select('*')
-      .or('tipo.eq.Manutenção,item_sistema.ilike.MANUT%')
-      .order('data_lancamento', { ascending: false });
-
-    if (!lancErr && lancData && lancData.length > 0) {
-      manutencoes = lancData.map((row: any) => {
-        let obsObj: any = {};
-        if (row.observacao) {
-          try {
-            obsObj = typeof row.observacao === 'object' ? row.observacao : JSON.parse(row.observacao);
-          } catch (e) {
-            obsObj = {};
-          }
-        }
-
-        const placa = (obsObj.placa || (row.item_sistema ? row.item_sistema.replace(/^MANUT-/i, '') : '') || row.doc || '').toUpperCase().trim();
-        const tipo = (obsObj.tipo === 'Corretiva' || (row.descricao && row.descricao.toLowerCase().includes('corretiva'))) ? 'Corretiva' : 'Preventiva';
-        const custo = Number(obsObj.custo) || Number(row.valor) || 0;
-        const odometro = Number(obsObj.odometro) || 0;
-        const data = obsObj.data || row.data_lancamento || row.data_vencimento || new Date().toISOString().split('T')[0];
-        const dataEntrada = obsObj.dataEntrada || obsObj.data_entrada || data;
-        const dataSaida = obsObj.dataSaida || obsObj.data_saida || data;
-
-        return {
-          id: String(row.id),
-          placa: placa || 'SEM-PLACA',
-          tipo: tipo as "Preventiva" | "Corretiva",
-          descricao: obsObj.descricao || row.descricao || 'Manutenção veicular',
-          data,
-          dataEntrada,
-          dataSaida,
-          odometro,
-          custo,
-          oficina: obsObj.oficina || row.fornecedor || '',
-          condutor: obsObj.condutor,
-          base: obsObj.base,
-          modelo: obsObj.modelo,
-          nf_os: obsObj.nf_os || row.doc,
-          status: (obsObj.status || (row.status === 'Aprovado' ? 'Concluída' : 'Em Andamento')) as any,
-          observacoes: obsObj.observacoes || row.observacao,
-          created_at: row.created_at,
-          servicos: obsObj.servicos || undefined,
-          anexos: obsObj.anexos || undefined,
-          autorizacaoAvaria: obsObj.autorizacaoAvaria || undefined
-        };
-      });
-
-      if (manutencoes.length > 0) {
-        localStorage.setItem("risel_frota_manutencoes", JSON.stringify(manutencoes));
-        return manutencoes;
-      }
-    }
-  } catch (err) {
-    console.warn("Aviso ao buscar manutenções via lancamentos no Supabase:", err);
-  }
+  // 2. Não consulta a tabela 'lancamentos' para evitar poluição entre módulos
+  // 3. Fallback para dados salvos localmente (removendo mocks legados)
 
   // 3. Fallback para dados salvos localmente (removendo mocks legados)
   const saved = localStorage.getItem("risel_frota_manutencoes");
@@ -2633,43 +2554,6 @@ export async function saveManutencaoSupabase(item: any): Promise<boolean> {
     // Continua para o salvamento via lancamentos
   }
 
-  // 2. Persiste na tabela 'lancamentos' do Supabase garantindo persistência no PostgreSQL oficial
-  try {
-    // Converte ID para número seguro de BIGINT se necessário
-    const rawNum = parseInt(idStr.replace(/\D/g, ''), 10);
-    const numericId = !isNaN(rawNum) && rawNum > 0 && rawNum < 9000000000 
-      ? rawNum 
-      : Math.abs(idStr.split('').reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 2147483647, 0));
-
-    const lancRecord = {
-      id: numericId,
-      status: item.status === 'Em Andamento' ? 'Aguardando aprovação' : 'Aprovado',
-      data_lancamento: data,
-      data_vencimento: data,
-      fornecedor: item.oficina || 'Oficina / Fornecedor',
-      doc: item.nf_os || `OS-${placa}-${Date.now().toString().slice(-4)}`,
-      valor: custo.toFixed(2),
-      forma_pagto: 'Boleto',
-      tipo: 'Manutenção',
-      descricao: `[${tipo}] ${placa} - ${item.descricao || 'Ordem de Serviço de Manutenção'}`,
-      estabelecimento: item.base || '100 - Paulínia',
-      item_sistema: `MANUT-${placa}`,
-      observacao: JSON.stringify(manutencaoObj),
-      frequencia: 'Eventual',
-      lancado_por: 'Controle de Frota Leve'
-    };
-
-    const { error: lancErr } = await client
-      .from('lancamentos')
-      .upsert(lancRecord, { onConflict: 'id' });
-
-    if (!lancErr) {
-      savedInSupabase = true;
-    }
-  } catch (err) {
-    console.warn("Aviso ao salvar manutenção no Supabase:", err);
-  }
-
   return savedInSupabase || true;
 }
 
@@ -2687,17 +2571,9 @@ export async function deleteManutencaoSupabase(id: string): Promise<boolean> {
     }
   } catch (e) {}
 
-  // 1. Tenta deletar da tabela 'manutencoes'
+  // Remove da tabela exclusiva de manutenções
   try {
     await client.from('manutencoes').delete().eq('id', idStr);
-  } catch (e) {}
-
-  // 2. Tenta deletar da tabela 'lancamentos'
-  try {
-    const rawNum = parseInt(idStr.replace(/\D/g, ''), 10);
-    if (!isNaN(rawNum) && rawNum > 0) {
-      await client.from('lancamentos').delete().eq('id', rawNum);
-    }
   } catch (e) {}
 
   return true;

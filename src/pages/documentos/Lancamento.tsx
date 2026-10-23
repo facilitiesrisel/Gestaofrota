@@ -2115,19 +2115,18 @@ export default function Lancamento() {
         String(item.id) === String(targetEditingId) || 
         Number(item.id) === Number(targetEditingId)
       );
-      const isNowApproved = !isDispatchingEmail && data.status === "Aprovado";
-      const wasApproved = existing?.status === "Aprovado";
-      let dataAprovacao = existing?.dataAprovacao || "";
-      
-      if (isNowApproved && !wasApproved) {
-        dataAprovacao = hojeLocalBr;
-      } else if (!isNowApproved || isDispatchingEmail) {
-        dataAprovacao = "";
-      }
-
       const statusCalculado = isDispatchingEmail 
         ? "Aguardando Aprovação" 
-        : ((data.status === "Aguardando aprovação" || !data.status) ? "Aguardando Aprovação" : data.status);
+        : (data.status || existing?.status || "Aguardando Aprovação");
+
+      let dataAprovacao = existing?.dataAprovacao || "";
+      if (isDispatchingEmail) {
+        dataAprovacao = "";
+      } else if (statusCalculado === "Aprovado") {
+        dataAprovacao = dataAprovacao || hojeLocalBr;
+      } else if (data.status && data.status !== "Aprovado" && data.status !== existing?.status) {
+        dataAprovacao = "";
+      }
 
       const parsedId = isNaN(Number(targetEditingId)) ? targetEditingId : Number(targetEditingId);
 

@@ -1957,6 +1957,189 @@ async function startServer() {
     });
   });
 
+  function parseMetadataFromObservacao(rawObs: string) {
+    const obs = String(rawObs || "");
+    const getLatest = (regex: RegExp) => {
+      const matches = Array.from(obs.matchAll(regex));
+      if (matches.length > 0) {
+        const last = matches[matches.length - 1];
+        return last && last[1] ? last[1].trim() : "";
+      }
+      return "";
+    };
+
+    let anexos: any[] = [];
+    const anexosMatch = obs.match(/\[ANEXOS_JSON:\s*(\[.*?\])\]/s);
+    if (anexosMatch && anexosMatch[1]) {
+      try {
+        const parsed = JSON.parse(anexosMatch[1]);
+        if (Array.isArray(parsed)) anexos = parsed;
+      } catch (_) {}
+    }
+
+    return {
+      numDoc: getLatest(/\[Nº DOC:\s*([^\]]+)\]/gi),
+      codOc: getLatest(/\[OC\/CÓD:\s*([^\]]+)\]/gi),
+      centroCusto: getLatest(/\[CENTRO DE CUSTO:\s*([^\]]+)\]/gi),
+      aprovadores: getLatest(/\[ALÇADA:\s*([^\]]+)\]/gi),
+      estabelecimento: getLatest(/\[BASE:\s*([^\]]+)\]/gi),
+      anexos
+    };
+  }
+
+  // Helper para converter registro do frontend/JSON para o formato da tabela 'lancamentos' no Supabase
+  // Envia EXCLUSIVAMENTE as colunas existentes no PostgreSQL do Supabase, codificando metadados em observacao
+  function mapToSupabaseLancamento(item: any) {
+    const numId = Number(item.id);
+    const cleanId = !isNaN(numId) && numId > 0 ? numId : item.id;
+    const numDoc = item.codigoLancamento || item.numeroDocumento || item.codigo_lancamento || "";
+    const codOc = item.codLancamentoOc || item.codigo_lancamento_oc || item.cod_lancamento_oc || "";
+    const centCusto = item.centroCusto || item.centro_custo || "";
+    const alcada = item.aprovadores || "";
+    const filialBase = item.estabelecimento || "";
+    const anexoNome = item.nomeArquivoAnexo || item.nome_arquivo_anexo || item.anexos?.[0]?.nome || "";
+    const anexoBase64 = item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || item.anexos?.[0]?.base64 || "";
+
+    // Higieniza observação removendo tags pré-existentes para evitar duplicações
+    let cleanObs = String(item.observacao || "")
+      .replace(/\[Nº DOC:[^\]]*\]/gi, "")
+      .replace(/\[OC\/CÓD:[^\]]*\]/gi, "")
+      .replace(/\[CENTRO DE CUSTO:[^\]]*\]/gi, "")
+      .replace(/\[ALÇADA:[^\]]*\]/gi, "")
+      .replace(/\[BASE:[^\]]*\]/gi, "")
+      .replace(/\[ANEXOS_JSON:[^\]]*\]/gi, "")
+      .replace(/\[GOOGLE DRIVE:[^\]]*\]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const tags: string[] = [];
+    if (numDoc) tags.push(`[Nº DOC: ${numDoc}]`);
+    if (codOc) tags.push(`[OC/CÓD: ${codOc}]`);
+    if (centCusto) tags.push(`[CENTRO DE CUSTO: ${centCusto}]`);
+    if (alcada) tags.push(`[ALÇADA: ${alcada}]`);
+    if (filialBase) tags.push(`[BASE: ${filialBase}]`);
+    if (Array.isArray(item.anexos) && item.anexos.length > 0) {
+      tags.push(`[ANEXOS_JSON: ${JSON.stringify(item.anexos.slice(0, 4))}]`);
+    }
+
+    const finalObs = [cleanObs, ...tags].filter(Boolean).join(" ").trim();
+
+    return {
+      id: cleanId,
+      status: item.status || "Aguardando Aprovação",
+      data_lancamento: item.dataLancamento || item.data_lancamento || new Date().toISOString().split("T")[0],
+      data_vencimento: item.dataVencimento || item.data_vencimento || item.dataLancamento || new Date().toISOString().split("T")[0],
+      data_emissao: item.dataEmissao || item.data_emissao || "",
+      data_aprovacao: item.dataAprovacao || item.data_aprovacao || "",
+      fornecedor: item.fornecedor || "",
+      cnpj: item.cnpj || "",
+      doc: item.doc || (numDoc ? `${item.tipo || 'NF-e'} ${numDoc}` : "N/A"),
+      valor: String(item.valor || "0.00"),
+      forma_pagto: item.formaPagto || item.forma_pagto || "Boleto",
+      tipo: item.tipo || "NF-e",
+      descricao: item.descricao || "",
+      estabelecimento: filialBase || "100 - Paulínia",
+      observacao: finalObs,
+      nome_arquivo_anexo: anexoNome,
+      arquivo_anexo_base64: anexoBase64,
+      item_sistema: item.itemSistema || item.item_sistema || "",
+      frequencia: item.frequencia || "Esporádico",
+      lancado_por: item.lancadoPor || item.lancado_por || "Sistema"
+    };
+  }
+
+  let isSyncingLancamentosFromSupabase = false;
+  let lastLancamentosSyncTime = 0;
+
+  async function syncLancamentosFromSupabase(force: boolean = false): Promise<any[]> {
+    const now = Date.now();
+    if (!force && (now - lastLancamentosSyncTime < 8000)) {
+      return [];
+    }
+    if (isSyncingLancamentosFromSupabase) return [];
+    isSyncingLancamentosFromSupabase = true;
+    lastLancamentosSyncTime = now;
+
+    try {
+      const { data, error } = await serverSupabase
+        .from("lancamentos")
+        .select("*")
+        .order("id", { ascending: false });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        const deletedIds = getStoredDeletedLancamentoIds();
+        const deletedSet = new Set(deletedIds);
+
+        const mapped = data
+          .filter((row: any) => !deletedSet.has(String(row.id)))
+          .map((row: any) => {
+            const meta = parseMetadataFromObservacao(row.observacao);
+
+            let anexosList: any[] = meta.anexos;
+            if ((!anexosList || anexosList.length === 0) && (row.arquivo_anexo_base64 || row.nome_arquivo_anexo)) {
+              anexosList = [{
+                id: "anx-1",
+                nome: row.nome_arquivo_anexo || "Documento.pdf",
+                base64: row.arquivo_anexo_base64 || ""
+              }];
+            }
+
+            const numDoc = meta.numDoc || row.codigo_lancamento || row.numero_documento || "";
+            const codOc = meta.codOc || row.cod_lancamento_oc || "";
+            const centroCusto = meta.centroCusto || row.centro_custo || "C.C 101 - Operacional";
+            const aprovadores = meta.aprovadores || row.aprovadores || "Deny e Gerência";
+            const estabelecimento = meta.estabelecimento || row.estabelecimento || "100 - Paulínia";
+
+            return {
+              id: Number(row.id) || row.id,
+              status: row.status,
+              dataLancamento: row.data_lancamento,
+              data_lancamento: row.data_lancamento,
+              dataVencimento: row.data_vencimento,
+              data_vencimento: row.data_vencimento,
+              dataEmissao: row.data_emissao,
+              data_emissao: row.data_emissao,
+              dataAprovacao: row.data_aprovacao,
+              data_aprovacao: row.data_aprovacao,
+              fornecedor: row.fornecedor,
+              cnpj: row.cnpj,
+              doc: row.doc,
+              valor: row.valor,
+              formaPagto: row.forma_pagto,
+              forma_pagto: row.forma_pagto,
+              tipo: row.tipo,
+              descricao: row.descricao,
+              centroCusto: centroCusto,
+              centro_custo: centroCusto,
+              aprovadores: aprovadores,
+              estabelecimento: estabelecimento,
+              observacao: row.observacao,
+              codigoLancamento: numDoc,
+              numeroDocumento: numDoc,
+              codLancamentoOc: codOc,
+              nomeArquivoAnexo: row.nome_arquivo_anexo,
+              arquivoAnexoBase64: row.arquivo_anexo_base64,
+              anexos: anexosList,
+              lancadoPor: row.lancado_por,
+              createdAt: row.created_at,
+              updatedAt: row.updated_at
+            };
+          });
+
+        saveStoredLancamentos(mapped);
+        fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(mapped, null, 2), "utf-8");
+        serverLancamentosVersion = Date.now();
+        console.log(`[Server Lancamentos] Sincronizados com sucesso ${mapped.length} registros do Supabase PostgreSQL oficial.`);
+        return mapped;
+      }
+    } catch (err: any) {
+      console.warn("[Server Lancamentos] Falha ao sincronizar com Supabase:", err.message);
+    } finally {
+      isSyncingLancamentosFromSupabase = false;
+    }
+    return [];
+  }
+
   app.get("/api/lancamentos", async (req, res) => {
     try {
       const deletedIds = getStoredDeletedLancamentoIds();
@@ -1970,10 +2153,8 @@ async function startServer() {
           const raw = fs.readFileSync(LANCAMENTOS_FILE, "utf-8");
           localList = JSON.parse(raw);
         } else if (fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
-          // Fallback para arquivo de contingência se o principal não existir
           const raw = fs.readFileSync(LANCAMENTOS_BACKUP_FILE, "utf-8");
           localList = JSON.parse(raw);
-          console.info("[Server Lancamentos] Recuperado do arquivo de backup de contingência!");
         }
 
         if (Array.isArray(localList)) {
@@ -1986,30 +2167,9 @@ async function startServer() {
         }
       } catch (e) {}
 
-      // Se já temos os itens salvos localmente, responde imediatamente (< 5ms) para não travar o carregamento do Dashboard
       if (itemMap.size > 0) {
         const items = Array.from(itemMap.values());
         items.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
-
-        // Sincronização assíncrona em segundo plano com Firestore sem bloquear resposta
-        getServerFirestore().then(db => {
-          db.collection("lancamentos").get().then(snapshot => {
-            let changed = false;
-            snapshot.forEach((doc: any) => {
-              const d = doc.data();
-              const docId = String(doc.id || d.id);
-              if (!deletedSet.has(docId) && !itemMap.has(docId)) {
-                itemMap.set(docId, { id: Number(doc.id) || Number(d.id) || doc.id, ...d });
-                changed = true;
-              }
-            });
-            if (changed) {
-              const merged = Array.from(itemMap.values());
-              saveStoredLancamentos(merged);
-              serverLancamentosVersion = Date.now();
-            }
-          }).catch(() => {});
-        }).catch(() => {});
 
         return res.json({ 
           success: true, 
@@ -2021,34 +2181,12 @@ async function startServer() {
         });
       }
 
-      // 2. Se o arquivo local estiver vazio, busca no Firestore
-      try {
-        const db = await getServerFirestore();
-        const snapshot = await db.collection("lancamentos").get();
-        snapshot.forEach((doc: any) => {
-          const d = doc.data();
-          const docId = String(doc.id || d.id);
-          if (!deletedSet.has(docId)) {
-            itemMap.set(docId, {
-              id: Number(doc.id) || Number(d.id) || doc.id,
-              ...d
-            });
-          }
-        });
-        if (itemMap.size > 0) {
-          saveStoredLancamentos(Array.from(itemMap.values()));
-        }
-      } catch (err: any) {
-        // Firestore pode não ter permissão, segue normalmente
-      }
-
-      const items = Array.from(itemMap.values());
-      items.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
-
-      return res.json({ 
-        success: true, 
-        count: items.length, 
-        items,
+      // Se o disco local estiver vazio, busca diretamente do Supabase
+      const fetched = await syncLancamentosFromSupabase(true);
+      return res.json({
+        success: true,
+        count: fetched.length,
+        items: fetched,
         deletedIds,
         version: serverLancamentosVersion,
         updatedAt: Date.now()
@@ -2102,11 +2240,20 @@ async function startServer() {
       const cleanItem = { ...item };
       Object.keys(cleanItem).forEach(k => cleanItem[k] === undefined && delete cleanItem[k]);
 
-      // 1. Grava no Firestore do Servidor (se disponível)
+      // 1. Grava no Supabase PostgreSQL oficial
       try {
-        const db = await getServerFirestore();
-        await db.collection("lancamentos").doc(docId).set(cleanItem, { merge: true });
-      } catch (fErr: any) {}
+        const sbRow = mapToSupabaseLancamento(cleanItem);
+        const { error: sbErr } = await serverSupabase
+          .from("lancamentos")
+          .upsert(sbRow, { onConflict: "id" });
+        if (sbErr) {
+          console.warn("[Server Lancamentos] Aviso ao salvar no Supabase:", sbErr.message);
+        } else {
+          console.log(`[Server Lancamentos] Lançamento ${docId} gravado com sucesso no Supabase PostgreSQL.`);
+        }
+      } catch (sbEx: any) {
+        console.warn("[Server Lancamentos] Exceção ao gravar no Supabase:", sbEx.message);
+      }
 
       // 2. Grava no arquivo principal e no backup de contingência
       try {
@@ -2124,6 +2271,11 @@ async function startServer() {
         // Backup atômico
         fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(list, null, 2), "utf-8");
       } catch (fsErr) {}
+
+      // 3. Grava no Firestore em background (se disponível, não bloqueante)
+      getServerFirestore().then(db => {
+        db.collection("lancamentos").doc(docId).set(cleanItem, { merge: true }).catch(() => {});
+      }).catch(() => {});
 
       serverLancamentosVersion = Date.now();
       console.log(`[Server Lancamentos] Lançamento ${docId} sincronizado com sucesso. Versão: ${serverLancamentosVersion}`);
@@ -2165,6 +2317,18 @@ async function startServer() {
 
       fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(merged, null, 2), "utf-8");
       fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(merged, null, 2), "utf-8");
+
+      // Grava no Supabase em lotes
+      try {
+        const sbRows = items.map(mapToSupabaseLancamento);
+        const chunkSize = 50;
+        for (let i = 0; i < sbRows.length; i += chunkSize) {
+          const chunk = sbRows.slice(i, i + chunkSize);
+          await serverSupabase.from("lancamentos").upsert(chunk, { onConflict: "id" });
+        }
+      } catch (sbErr: any) {
+        console.warn("[Server Lancamentos Batch] Aviso ao gravar no Supabase:", sbErr.message);
+      }
 
       serverLancamentosVersion = Date.now();
       console.info(`[Server Lancamentos] Batch salvo com sucesso: ${merged.length} itens no total. Versão: ${serverLancamentosVersion}`);
@@ -2255,13 +2419,26 @@ async function startServer() {
       const idStr = String(targetId);
       addStoredDeletedLancamentoId(idStr);
 
-      // 1. Remove do Firestore
+      // 1. Remove do Supabase PostgreSQL oficial
+      try {
+        const numId = Number(idStr);
+        if (!isNaN(numId) && numId > 0) {
+          await serverSupabase.from("lancamentos").delete().eq("id", numId);
+        } else {
+          await serverSupabase.from("lancamentos").delete().eq("id", idStr);
+        }
+        console.log(`[Server Lancamentos] Lançamento ${idStr} removido do Supabase PostgreSQL.`);
+      } catch (sbErr: any) {
+        console.warn("[Server Lancamentos] Falha ao deletar do Supabase:", sbErr.message);
+      }
+
+      // 2. Remove do Firestore
       try {
         const db = await getServerFirestore();
         await db.collection("lancamentos").doc(idStr).delete();
       } catch (fErr: any) {}
 
-      // 2. Remove do arquivo em disco e do backup
+      // 3. Remove do arquivo em disco e do backup
       try {
         if (fs.existsSync(LANCAMENTOS_FILE)) {
           let list: any[] = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
@@ -6132,6 +6309,11 @@ Responda sempre em Português do Brasil com clareza, objetividade, sofisticaçã
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+
+    // Inicialização da sincronização oficial de lançamentos com o Supabase
+    syncLancamentosFromSupabase(true).catch(e => {
+      console.warn("[Server Lancamentos] Falha na sincronização inicial do Supabase:", e.message);
+    });
 
     // Rotina Keep-Alive para Render e plataformas em nuvem:
     // Pede periodicamente o endpoint /api/health para manter o serviço acordado durante o horário de operação

@@ -3,7 +3,8 @@ import {
   fetchLancamentosSupabase, 
   saveLancamentoSupabase, 
   deleteLancamentoSupabase,
-  getSupabaseClient 
+  getSupabaseClient,
+  mapSupabaseRowToLancamento
 } from "./supabaseService";
 
 // Evento customizado para notificar todos os componentes do sistema na mesma janela/abas
@@ -22,8 +23,6 @@ try {
       if (event.data?.type === "SYNC_LANCAMENTOS" && Array.isArray(event.data.items)) {
         console.info("[LancamentosSync] Recebido via BroadcastChannel de outra aba.");
         updateLocalCacheFromBroadcast(event.data.items);
-      } else if (event.data?.type === "REQUEST_PULL") {
-        pullFromCloudAndServer(true);
       }
     };
   }
@@ -109,30 +108,13 @@ let isInitialized = false;
 let unsubscribeFirestore: (() => void) | null = null;
 let pollIntervalTimer: any = null;
 
-// Função para identificar e filtrar registros fictícios/demonstrativos antigos
+// Função para identificar apenas registros explicitamente de teste de desenvolvimento
 export function isFictitiousLancamento(item: any): boolean {
   if (!item) return false;
-  const numId = Number(item.id);
-  // IDs pequenos de 1 a 100 gerados nos mocks de desenvolvimento antigos
-  if (!isNaN(numId) && numId > 0 && numId <= 100) return true;
-
   const fornecedorUpper = String(item.fornecedor || "").toUpperCase().trim();
-  const ficticiosFornecedores = [
-    "AUTO PEÇAS SÃO JOSÉ",
-    "POSTO IPIRANGA PAULÍNIA",
-    "LOCADORA UNIDAS S.A.",
-    "DISTRIBUIDORA SHELL BRASIL",
-    "OFICINA MECÂNICA CENTRAL",
-    "TRANSPORTADORA RÁPIDO SOL",
-    "FORNECEDOR EXEMPLO",
-    "FORNECEDOR TESTE"
-  ];
-  if (ficticiosFornecedores.some(f => fornecedorUpper.includes(f))) return true;
-
-  const docUpper = String(item.doc || item.codigoLancamento || "").toUpperCase().trim();
-  const ficticiosDocs = ["NF-E 8831", "NF-E 1902", "FATURA 4520", "NF-E 7634", "CT-E 11980", "BOLETO 9941"];
-  if (ficticiosDocs.includes(docUpper)) return true;
-
+  if (fornecedorUpper === "FORNECEDOR TESTE" || fornecedorUpper === "FORNECEDOR FICTÍCIO" || fornecedorUpper === "TESTE MOCK") {
+    return true;
+  }
   return false;
 }
 
@@ -281,7 +263,7 @@ function updateLocalCacheFromBroadcast(items: any[]) {
   }
 }
 
-// Configura o canal Realtime do Supabase via WebSocket para refletir alterações instantâneas entre computadores
+// Configura o canal Realtime do Supabase via WebSocket para refletir alterações pontuais e instantâneas entre computadores
 function setupSupabaseRealtimeChannel() {
   try {
     const client = getSupabaseClient();
@@ -297,9 +279,48 @@ function setupSupabaseRealtimeChannel() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "lancamentos" },
-        (payload) => {
-          console.info("[Supabase Realtime] Mudança detectada na tabela 'lancamentos':", payload.eventType);
-          pullFromCloudAndServer(true);
+        (payload: any) => {
+          console.info("[Supabase Realtime] Evento na tabela 'lancamentos':", payload.eventType);
+          
+          if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+            if (payload.new && payload.new.id) {
+              const mapped = mapSupabaseRowToLancamento(payload.new);
+              const normalized = normalizeLancamento(mapped);
+              const targetId = String(normalized.id);
+              const deletedIds = getDeletedIds();
+              if (deletedIds.has(targetId)) return;
+
+              const current = getLancamentosUnified();
+              const existingIdx = current.findIndex(i => String(i.id) === targetId);
+              let nextList: any[];
+              if (existingIdx >= 0) {
+                // Preserva anexos locais se a linha de realtime vier sem base64 pesado
+                const existing = current[existingIdx];
+                const bestAnexoBase64 = normalized.arquivoAnexoBase64 || existing.arquivoAnexoBase64 || "";
+                const bestAnexos = (normalized.anexos && normalized.anexos.length > 0) ? normalized.anexos : (existing.anexos || []);
+                
+                nextList = [...current];
+                nextList[existingIdx] = {
+                  ...existing,
+                  ...normalized,
+                  arquivoAnexoBase64: bestAnexoBase64,
+                  anexos: bestAnexos
+                };
+              } else {
+                nextList = [normalized, ...current];
+              }
+              notifyListeners(nextList);
+            }
+          } else if (payload.eventType === "DELETE") {
+            const oldId = payload.old?.id;
+            if (oldId) {
+              const idStr = String(oldId);
+              addDeletedId(idStr);
+              const current = getLancamentosUnified();
+              const nextList = current.filter(i => String(i.id) !== idStr);
+              notifyListeners(nextList, true);
+            }
+          }
         }
       )
       .subscribe((status) => {
@@ -310,28 +331,6 @@ function setupSupabaseRealtimeChannel() {
   } catch (err) {
     console.warn("[Supabase Realtime] Aviso ao configurar canal:", err);
   }
-}
-
-let versionPollTimer: any = null;
-
-// Verificador de versão de altíssima frequência e baixíssimo consumo no Render
-async function checkServerVersionFast() {
-  try {
-    const res = await fetch(`/api/lancamentos/version?_t=${Date.now()}`, {
-      cache: "no-store",
-      headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.version && data.version > lastKnownServerVersion) {
-        if (lastKnownServerVersion > 0) {
-          console.info(`[LancamentosSync] Nova versão detectada no Servidor/Render (${data.version} > ${lastKnownServerVersion}). Sincronizando...`);
-          pullFromCloudAndServer(true);
-        }
-        lastKnownServerVersion = data.version;
-      }
-    }
-  } catch (e) {}
 }
 
 // Função utilitária para higienizar itens salvos no localStorage (evita estouro de cota de 5MB com base64)
@@ -455,7 +454,7 @@ export function getLancamentosUnified(): any[] {
   return [];
 }
 
-// 2. Iniciar sincronização em tempo real com Banco de Dados (Supabase Realtime, Render Backend e Firestore)
+// 2. Iniciar sincronização com Banco de Dados (Supabase Realtime, Render Backend e Firestore)
 export function initLancamentosSync(): () => void {
   if (isInitialized) {
     return () => {};
@@ -466,73 +465,13 @@ export function initLancamentosSync(): () => void {
   // Carrega estado inicial do cache local
   getLancamentosUnified();
 
-  // A. Conexão em tempo real via WebSocket no Supabase
+  // A. Conexão em tempo real pontual via WebSocket no Supabase PostgreSQL
   setupSupabaseRealtimeChannel();
 
-  // B. Listener em Tempo Real no Firestore (se disponível)
-  try {
-    const collectionRef = db.collection("lancamentos");
-    unsubscribeFirestore = collectionRef.onSnapshot(
-      snapshot => {
-        const deletedIds = getDeletedIds();
-        const firestoreItems: any[] = [];
-        
-        snapshot.docs.forEach(doc => {
-          const data = doc.data();
-          const docId = String(doc.id || data.id);
-          if (deletedIds.has(docId)) {
-            return;
-          }
-          firestoreItems.push(normalizeLancamento({
-            id: Number(doc.id) || Number(data.id) || doc.id,
-            ...data
-          }));
-        });
-
-        if (firestoreItems.length > 0) {
-          firestoreItems.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
-          notifyListeners(firestoreItems);
-        } else {
-          pullFromCloudAndServer();
-        }
-      },
-      err => {
-        pullFromCloudAndServer();
-      }
-    );
-  } catch (e) {
-    pullFromCloudAndServer();
-  }
-
-  // C. Polling contínuo de contingência a cada 20 segundos
+  // B. Carga inicial dos dados oficiais ao abrir a aplicação
   pullFromCloudAndServer();
-  pollIntervalTimer = setInterval(() => {
-    pullFromCloudAndServer();
-  }, 20000);
 
-  // D. Monitoramento ultra rápido de versões no Servidor Express / Render
-  // Checa versão a cada 4 segundos se a janela estiver ativa, ou a cada 15s em segundo plano
-  versionPollTimer = setInterval(() => {
-    const isFocused = typeof document !== "undefined" && document.hasFocus && document.hasFocus();
-    if (isFocused || Math.random() < 0.25) {
-      checkServerVersionFast();
-    }
-  }, 4000);
-
-  // E. Dispara atualização imediata ao retomar o foco na janela ou aba
-  const handleVisibilityChange = () => {
-    if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      checkServerVersionFast();
-      pullFromCloudAndServer(true);
-    }
-  };
-
-  const handleWindowFocus = () => {
-    checkServerVersionFast();
-    pullFromCloudAndServer();
-  };
-
-  // F. Listener para sincronização entre abas do mesmo navegador via localStorage
+  // C. Listener para sincronização entre abas do mesmo navegador via localStorage
   const handleStorageChange = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
@@ -560,22 +499,12 @@ export function initLancamentosSync(): () => void {
   if (typeof window !== "undefined") {
     window.addEventListener("storage", handleStorageChange);
     window.addEventListener(SYNC_EVENT, handleCustomSync);
-    window.addEventListener("focus", handleWindowFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
   }
 
   return () => {
     if (unsubscribeFirestore) {
       unsubscribeFirestore();
       unsubscribeFirestore = null;
-    }
-    if (pollIntervalTimer) {
-      clearInterval(pollIntervalTimer);
-      pollIntervalTimer = null;
-    }
-    if (versionPollTimer) {
-      clearInterval(versionPollTimer);
-      versionPollTimer = null;
     }
     if (supabaseRealtimeChannel) {
       try {
@@ -587,8 +516,6 @@ export function initLancamentosSync(): () => void {
     if (typeof window !== "undefined") {
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener(SYNC_EVENT, handleCustomSync);
-      window.removeEventListener("focus", handleWindowFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
     }
     isInitialized = false;
   };
@@ -659,9 +586,31 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
                 const bestAnexoBase64 = item.arquivoAnexoBase64 || existing.arquivoAnexoBase64 || "";
                 const bestAnexos = itemHasBase64 ? item.anexos : (existingHasBase64 ? existing.anexos : (item.anexos || existing.anexos || []));
 
+                // Preserva status e aprovação caso já aprovado/definido
+                const bestStatus = (item.status && item.status !== "Aguardando Aprovação")
+                  ? item.status
+                  : (existing.status || item.status || "Aguardando Aprovação");
+                const bestDataAprovacao = item.dataAprovacao || existing.dataAprovacao || "";
+
+                // Preserva centros de custo e alçadas customizados
+                const bestCc = (item.centroCusto && item.centroCusto !== "C.C 101 - Operacional")
+                  ? item.centroCusto
+                  : (existing.centroCusto || item.centroCusto || "C.C 101 - Operacional");
+                const bestAlcada = (item.aprovadores && item.aprovadores !== "Deny e Gerência")
+                  ? item.aprovadores
+                  : (existing.aprovadores || item.aprovadores || "Deny e Gerência");
+                const bestEstabelecimento = (item.estabelecimento && item.estabelecimento !== "100 - Paulínia")
+                  ? item.estabelecimento
+                  : (existing.estabelecimento || item.estabelecimento || "100 - Paulínia");
+
                 idMap.set(idStr, normalizeLancamento({
                   ...existing,
                   ...item,
+                  status: bestStatus,
+                  dataAprovacao: bestDataAprovacao,
+                  centroCusto: bestCc,
+                  aprovadores: bestAlcada,
+                  estabelecimento: bestEstabelecimento,
                   codigoLancamento: item.codigoLancamento || existing.codigoLancamento || "",
                   numeroDocumento: item.numeroDocumento || existing.numeroDocumento || "",
                   codLancamentoOc: item.codLancamentoOc || existing.codLancamentoOc || "",
@@ -685,12 +634,35 @@ export async function pullFromCloudAndServer(force: boolean = false): Promise<an
       }
     }
 
-    // Se nenhuma fonte remota respondeu, mantém itens locais legítimos
-    if (!databaseFetched && cachedLancamentos && cachedLancamentos.length > 0) {
-      cachedLancamentos.forEach(item => {
-        const idStr = String(item.id);
-        if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
-          idMap.set(idStr, normalizeLancamento(item));
+    // Mescla itens do cache local para garantir que criações ou edições instantâneas não sejam revertidas
+    if (cachedLancamentos && cachedLancamentos.length > 0) {
+      cachedLancamentos.forEach(localItem => {
+        const idStr = String(localItem.id);
+        if (!deletedIds.has(idStr) && !isFictitiousLancamento(localItem)) {
+          const remoteItem = idMap.get(idStr);
+          if (!remoteItem) {
+            idMap.set(idStr, normalizeLancamento(localItem));
+          } else {
+            // Compara timestamps para priorizar a versão mais atualizada e não reverter
+            const localTime = new Date(localItem.updatedAt || localItem.createdAt || 0).getTime();
+            const remoteTime = new Date(remoteItem.updatedAt || remoteItem.createdAt || 0).getTime();
+            
+            if (localTime >= remoteTime) {
+              idMap.set(idStr, normalizeLancamento({
+                ...remoteItem,
+                ...localItem,
+                anexos: (localItem.anexos && localItem.anexos.length > 0) ? localItem.anexos : (remoteItem.anexos || []),
+                arquivoAnexoBase64: localItem.arquivoAnexoBase64 || remoteItem.arquivoAnexoBase64 || ""
+              }));
+            } else {
+              idMap.set(idStr, normalizeLancamento({
+                ...localItem,
+                ...remoteItem,
+                anexos: (remoteItem.anexos && remoteItem.anexos.length > 0) ? remoteItem.anexos : (localItem.anexos || []),
+                arquivoAnexoBase64: remoteItem.arquivoAnexoBase64 || localItem.arquivoAnexoBase64 || ""
+              }));
+            }
+          }
         }
       });
     }
@@ -746,7 +718,7 @@ export function subscribeToLancamentosUnified(callback: (items: any[]) => void):
   };
 }
 
-// 4. Gravação / Criação / Edição de Lançamento com reflexo imediato e persistência redundante
+// 4. Gravação / Criação / Edição de Lançamento com reflexo imediato e persistência direta no Banco
 export async function saveLancamentoUnified(item: any): Promise<boolean> {
   const normalized = normalizeLancamento(item);
   normalized.updatedAt = new Date().toISOString();
@@ -776,7 +748,18 @@ export async function saveLancamentoUnified(item: any): Promise<boolean> {
     } catch (e) {}
   }
 
-  // 2. Persistência no Servidor Express (Render)
+  // 2. Persistência direta no Banco Supabase PostgreSQL
+  if (Date.now() > supabaseQuotaExceededUntil) {
+    try {
+      await saveLancamentoSupabase(normalized);
+    } catch (sbErr: any) {
+      if (String(sbErr?.message || "").includes("exceed_egress_quota")) {
+        supabaseQuotaExceededUntil = Date.now() + 15 * 60 * 1000;
+      }
+    }
+  }
+
+  // 3. Persistência no Servidor Express (Disco local + Backup atômico)
   try {
     const res = await fetch("/api/lancamentos", {
       method: "POST",
@@ -796,30 +779,12 @@ export async function saveLancamentoUnified(item: any): Promise<boolean> {
     console.warn("[LancamentosSync] Erro ao salvar no Servidor:", sErr);
   }
 
-  // 3. Persistência no Supabase (se a quota estiver normal)
-  if (Date.now() > supabaseQuotaExceededUntil) {
-    try {
-      await saveLancamentoSupabase(normalized);
-    } catch (sbErr: any) {
-      if (String(sbErr?.message || "").includes("exceed_egress_quota")) {
-        supabaseQuotaExceededUntil = Date.now() + 15 * 60 * 1000;
-      }
-    }
-  }
-
-  // 4. Persistência no Firestore (com proteção contra erros)
+  // 4. Persistência no Firestore (contingência)
   try {
     const cleanForFirestore = { ...normalized };
     Object.keys(cleanForFirestore).forEach(k => cleanForFirestore[k] === undefined && delete cleanForFirestore[k]);
     await db.collection("lancamentos").doc(targetId).set(cleanForFirestore, { merge: true });
   } catch (fErr) {}
-
-  // Dispara aviso em Broadcast para instâncias locais puxarem se necessário
-  if (broadcastChannel) {
-    try {
-      broadcastChannel.postMessage({ type: "REQUEST_PULL" });
-    } catch (e) {}
-  }
 
   return true;
 }
