@@ -49,10 +49,10 @@ const EMAIL_MAPPINGS: Record<string, string> = {
     'SUPRI': 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br'
 };
 
-// Chave para armazenar a ordem de colunas individualizada por usuário
+// Chave para armazenar a ordem de colunas individualizada por usuário para Frota Pesada
 const getUserColumnsStorageKey = () => {
     const user = (typeof localStorage !== 'undefined' && localStorage.getItem('risel_user')) || 'default_user';
-    return `risel_multas_user_cols_order_${user}`;
+    return `risel_frota_pesada_multas_user_cols_order_${user}`;
 };
 
 const initialMulta: Partial<Multa> = {
@@ -103,7 +103,7 @@ const MAP_LAYERS = [
 const GEO_CACHE_KEY = 'risel_geo_cache_v1';
 const LINK_SEPARATOR = ' | ';
 const NAME_SEPARATOR = '::';
-const COLUMNS_STORAGE_KEY = 'risel_multas_visible_cols_v1';
+const COLUMNS_STORAGE_KEY = 'risel_frota_pesada_multas_visible_cols_v1';
 
 export interface ColumnConfig {
   id: string;
@@ -160,19 +160,22 @@ const ALL_COLUMNS: ColumnConfig[] = [
 
   // Documentos & Observações
   { id: 'linkAit', label: 'Anexo(s) AIT', category: 'Documentos & Obs', align: 'center', minWidth: 'min-w-[110px]' },
-  { id: 'linkAuth', label: 'Aut. Desconto (PDF)', category: 'Documentos & Obs', align: 'center', minWidth: 'min-w-[130px]' },
+  { id: 'linkAuth', label: 'Docs', category: 'Documentos & Obs', align: 'center', minWidth: 'min-w-[130px]' },
   { id: 'obs', label: 'Observações', category: 'Documentos & Obs', sortKey: 'obs', align: 'left', minWidth: 'min-w-[180px]' },
 ];
 
 const DEFAULT_VISIBLE_COLUMNS: string[] = [
   'status',
   'dataHoraInfracao',
+  'dataRecebimento',
   'prazoIndicacao',
-  'base',
   'placa',
   'ait',
+  'descricaoInfracao',
   'responsavelNome',
-  'valor'
+  'obs',
+  'linkAuth',
+  'valorComDesconto'
 ];
 
 const COLUMN_CATEGORIES = [
@@ -701,7 +704,9 @@ const MultasPage: React.FC = () => {
           const matchSearch = !searchTerm || 
               (m.ait && m.ait.toLowerCase().includes(lowerSearch)) || 
               (m.placa && m.placa.toLowerCase().includes(lowerSearch)) || 
-              (m.frota && m.frota.toLowerCase().includes(lowerSearch));
+              (m.frota && m.frota.toLowerCase().includes(lowerSearch)) ||
+              (m.responsavelNome && m.responsavelNome.toLowerCase().includes(lowerSearch)) ||
+              (m.descricaoInfracao && m.descricaoInfracao.toLowerCase().includes(lowerSearch));
 
           if (!matchSearch) return false;
           if (filters.status && m.status !== filters.status) return false;
@@ -739,6 +744,48 @@ const MultasPage: React.FC = () => {
           return true;
       });
   }, [multas, searchTerm, filters]);
+
+  // Indicadores Executivos calculados da Frota Pesada
+  const metrics = useMemo(() => {
+      const totalCount = multas.length;
+      const totalValor = multas.reduce((acc, m) => acc + (Number(m.valorComDesconto || m.valor) || 0), 0);
+      const condutorCount = multas.filter(m => m.empresaOuCondutor === 'CONDUTOR').length;
+      const empresaCount = multas.filter(m => m.empresaOuCondutor === 'EMPRESA').length;
+      const descontosAutorizados = multas.filter(m => m.descontarMotorista === 'SIM').length;
+      const termosGerados = multas.filter(m => !!m.linkAuth).length;
+
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      const prazosCriticos = multas.filter(m => {
+          if (!m.prazoIndicacao) return false;
+          if (m.status === StatusMulta.FINALIZADA || m.status === StatusMulta.INDICACAO_ENVIADA) return false;
+          try {
+              let dPrazo: Date;
+              if (m.prazoIndicacao.length === 10 && m.prazoIndicacao.includes('-')) {
+                  const parts = m.prazoIndicacao.split('-');
+                  dPrazo = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+              } else {
+                  dPrazo = new Date(m.prazoIndicacao);
+              }
+              dPrazo.setHours(0, 0, 0, 0);
+              if (isNaN(dPrazo.getTime())) return false;
+              const diffDays = Math.ceil((dPrazo.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+              return diffDays >= 0 && diffDays <= 7;
+          } catch (e) {
+              return false;
+          }
+      }).length;
+
+      return {
+          totalCount,
+          totalValor,
+          condutorCount,
+          empresaCount,
+          descontosAutorizados,
+          termosGerados,
+          prazosCriticos
+      };
+  }, [multas]);
 
   const formatDateString = (val?: string) => {
       if (!val) return '-';
@@ -1573,14 +1620,25 @@ const MultasPage: React.FC = () => {
             return <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold whitespace-nowrap ${multa.rodoviaOuUrbano === 'RODOVIA' ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-blue-50 text-blue-800 border border-blue-200'}`}>{multa.rodoviaOuUrbano || '-'}</span>;
         case 'dataHoraInfracao':
             return <span className="font-mono text-[9px] text-gray-600 whitespace-nowrap">{formatDateString(multa.dataHoraInfracao)}</span>;
-        case 'prazoIndicacao':
-            return <span className="font-mono text-[9px] text-gray-600 whitespace-nowrap">{formatDateString(multa.prazoIndicacao)}</span>;
+        case 'prazoIndicacao': {
+            const info = getPrazoInfo(multa.status, multa.prazoIndicacao);
+            return (
+                <div className="flex flex-col items-center gap-0.5 whitespace-nowrap">
+                    <span className="font-mono text-[9px] text-gray-700 font-semibold">{formatDateString(multa.prazoIndicacao)}</span>
+                    {info && info.text !== '-' && <span className={`inline-block px-1.5 py-0.2 rounded text-[8px] font-bold border ${info.class}`}>{info.text}</span>}
+                </div>
+            );
+        }
         case 'diasRestantes': {
             const info = getPrazoInfo(multa.status, multa.prazoIndicacao);
             return <span className={`inline-block px-1.5 py-0.5 rounded text-[8.5px] font-bold border whitespace-nowrap ${info.class}`}>{info.text}</span>;
         }
         case 'dataRecebimento':
-            return <span className="font-mono text-[9px] text-gray-600 whitespace-nowrap">{formatDateString(multa.dataRecebimento)}</span>;
+            return (
+                <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 whitespace-nowrap">
+                    {formatDateString(multa.dataRecebimento)}
+                </span>
+            );
         case 'recebidaComPrazo':
             return <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold whitespace-nowrap ${multa.recebidaComPrazo === 'SIM' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>{multa.recebidaComPrazo || '-'}</span>;
         case 'retornouComPrazo':
@@ -1594,7 +1652,7 @@ const MultasPage: React.FC = () => {
         case 'desconto':
             return <span className="text-gray-500 whitespace-nowrap text-right block text-[10px]">{multa.desconto ? multa.desconto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}</span>;
         case 'valorComDesconto':
-            return <span className="font-bold text-emerald-700 whitespace-nowrap text-right block text-[10px]">{multa.valorComDesconto ? multa.valorComDesconto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00'}</span>;
+            return <span className="font-bold text-emerald-700 whitespace-nowrap text-right block text-[10px]">{(multa.valorComDesconto || multa.valor) ? (multa.valorComDesconto || multa.valor)!.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00'}</span>;
         case 'pagoComDesconto':
             return <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold whitespace-nowrap ${multa.pagoComDesconto === 'SIM' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>{multa.pagoComDesconto || '-'}</span>;
         case 'linkAit': {
@@ -1610,14 +1668,46 @@ const MultasPage: React.FC = () => {
                 </div>
             );
         }
-        case 'linkAuth':
-            return multa.linkAuth ? (
-                <a href={multa.linkAuth} target="_blank" rel="noopener noreferrer" className="text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 px-1.5 py-0.5 rounded border border-purple-200 text-[8.5px] font-bold inline-flex items-center gap-1">
-                    <FileCheck size={10} /> PDF
-                </a>
-            ) : <span className="text-gray-300 text-[9px]">-</span>;
+        case 'linkAuth': {
+            const aitLinks = parseLinks(multa.linkAit);
+            return (
+                <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                    {multa.linkAuth ? (
+                        <a 
+                            href={multa.linkAuth} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="inline-flex items-center gap-1 text-[9.5px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded transition-colors shadow-2xs"
+                            title="Visualizar Termo de Autorização de Desconto"
+                        >
+                            <Eye size={12} className="text-purple-600" />
+                            <span>Ver Termo</span>
+                        </a>
+                    ) : null}
+                    {aitLinks.map((att, i) => (
+                        <a 
+                            key={i} 
+                            href={att.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-1 rounded border border-emerald-200 transition-colors"
+                            title={att.name || 'Auto de Infração'}
+                        >
+                            <Paperclip size={11} />
+                        </a>
+                    ))}
+                    {!multa.linkAuth && aitLinks.length === 0 && (
+                        <span className="text-gray-300 text-[9px]">-</span>
+                    )}
+                </div>
+            );
+        }
         case 'obs':
-            return <span className="text-gray-500 text-[9px] truncate max-w-[160px] block" title={multa.obs}>{multa.obs || '-'}</span>;
+            return multa.obs ? (
+                <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-200 max-w-[140px] truncate" title={multa.obs}>
+                    {multa.obs}
+                </span>
+            ) : <span className="text-gray-300 text-[9px]">-</span>;
         default:
             return <span className="text-[9px]">-</span>;
     }
@@ -1652,6 +1742,105 @@ const MultasPage: React.FC = () => {
                 <button onClick={() => { setFormData(initialMulta); setErrors({}); setView('FORM'); }} className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg flex items-center shadow-2xs transition-all active:scale-95 whitespace-nowrap font-bold text-[11px] uppercase"><Plus size={13} className="mr-1" /> Nova Multa</button>
             </div>
             </div>
+
+            {/* Painel Executivo de Indicadores com Layout Assimétrico (Bento Grid) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5 shrink-0">
+                {/* Card 1 (Span 4): Resumo Geral & Montante Financeiro */}
+                <div className="sm:col-span-2 lg:col-span-4 bg-gradient-to-br from-[#032b21] via-[#043d2f] to-[#02221a] text-white p-3.5 rounded-2xl shadow-sm border border-emerald-800/40 relative overflow-hidden flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400/90 flex items-center">
+                                <FileText size={12} className="mr-1 text-emerald-400"/> Total de Lançamentos
+                            </span>
+                            <div className="text-2xl font-black tracking-tight mt-0.5 text-white flex items-baseline gap-2">
+                                {metrics.totalCount} <span className="text-xs font-normal text-emerald-300/80">notificações</span>
+                            </div>
+                        </div>
+                        <div className="bg-emerald-500/20 p-2 rounded-xl border border-emerald-400/30">
+                            <DollarSign size={18} className="text-emerald-300"/>
+                        </div>
+                    </div>
+                    <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs">
+                        <span className="text-[11px] text-emerald-200/90 font-medium">Impacto Financeiro:</span>
+                        <span className="font-black text-sm text-emerald-300 font-mono">
+                            {(metrics.totalValor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Card 2 (Span 3): Prazos de Indicação em Alerta */}
+                <div className="sm:col-span-1 lg:col-span-3 bg-white/80 backdrop-blur-md p-3.5 rounded-2xl shadow-sm border border-amber-200/80 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 flex items-center">
+                                <AlertTriangle size={12} className="mr-1 text-amber-600"/> Prazos Críticos (≤ 7 dias)
+                            </span>
+                            <div className="text-2xl font-black text-slate-800 tracking-tight mt-0.5">
+                                {metrics.prazosCriticos}
+                            </div>
+                        </div>
+                        <div className={`p-2 rounded-xl border ${metrics.prazosCriticos > 0 ? 'bg-amber-100/80 border-amber-300 text-amber-700' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>
+                            <Clock size={18}/>
+                        </div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-medium mt-1">
+                        {metrics.prazosCriticos > 0 ? 'Exigem indicação urgente de condutor' : 'Prazos operacionais regularizados'}
+                    </p>
+                </div>
+
+                {/* Card 3 (Span 3): Responsabilidade Condutor vs Empresa */}
+                <div className="sm:col-span-1 lg:col-span-3 bg-white/80 backdrop-blur-md p-3.5 rounded-2xl shadow-sm border border-blue-200/80 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 flex items-center">
+                                <User size={12} className="mr-1 text-blue-600"/> Responsabilidade
+                            </span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-lg font-black text-slate-800">{metrics.condutorCount}</span>
+                                <span className="text-[11px] font-bold text-slate-500">Condutor</span>
+                                <span className="text-slate-300">|</span>
+                                <span className="text-lg font-black text-slate-800">{metrics.empresaCount}</span>
+                                <span className="text-[11px] font-bold text-slate-500">Empresa</span>
+                            </div>
+                        </div>
+                        <div className="bg-blue-50 p-2 rounded-xl border border-blue-200 text-blue-700">
+                            <Car size={18}/>
+                        </div>
+                    </div>
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden flex mt-2">
+                        <div 
+                            className="bg-blue-600 h-full" 
+                            style={{ width: `${metrics.totalCount > 0 ? (metrics.condutorCount / metrics.totalCount) * 100 : 0}%` }}
+                            title={`Condutor: ${metrics.condutorCount}`}
+                        />
+                        <div 
+                            className="bg-slate-400 h-full" 
+                            style={{ width: `${metrics.totalCount > 0 ? (metrics.empresaCount / metrics.totalCount) * 100 : 0}%` }}
+                            title={`Empresa: ${metrics.empresaCount}`}
+                        />
+                    </div>
+                </div>
+
+                {/* Card 4 (Span 2): Descontos em Folha & Termos */}
+                <div className="sm:col-span-2 lg:col-span-2 bg-white/80 backdrop-blur-md p-3.5 rounded-2xl shadow-sm border border-purple-200/80 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 flex items-center">
+                                <FileCheck size={12} className="mr-1 text-purple-600"/> Termos & Folha
+                            </span>
+                            <div className="text-xl font-black text-slate-800 tracking-tight mt-0.5">
+                                {metrics.descontosAutorizados} <span className="text-[10px] font-bold text-slate-400">aut.</span>
+                            </div>
+                        </div>
+                        <div className="bg-purple-50 p-2 rounded-xl border border-purple-200 text-purple-700">
+                            <FileText size={16}/>
+                        </div>
+                    </div>
+                    <div className="text-[10px] text-purple-800 font-bold bg-purple-50 px-2 py-0.5 rounded-md self-start mt-1">
+                        {metrics.termosGerados} PDF(s) Timbrados
+                    </div>
+                </div>
+            </div>
             
             {/* Filter & Toolbar Bar */}
             <div className="flex flex-col gap-2">
@@ -1683,6 +1872,33 @@ const MultasPage: React.FC = () => {
                             <Filter size={14} className="mr-1"/> Filtros {showFilters ? <ChevronUp size={14} className="ml-1"/> : <ChevronDown size={14} className="ml-1"/>}
                         </button>
                     </div>
+                </div>
+
+                {/* Pills de Filtro Rápido por Status */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar text-xs">
+                    <button
+                        type="button"
+                        onClick={() => setFilters(prev => ({ ...prev, status: '' }))}
+                        className={`px-2.5 py-1 rounded-lg font-bold transition-all whitespace-nowrap text-[11px] flex items-center gap-1.5 shadow-2xs ${!filters.status ? 'bg-slate-800 text-white shadow-sm' : 'bg-white/80 hover:bg-white text-slate-600 border border-slate-200'}`}
+                    >
+                        <span>Todos</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[9px] ${!filters.status ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>{multas.length}</span>
+                    </button>
+                    {(Object.values(StatusMulta) as string[]).map(st => {
+                        const count = multas.filter(m => m.status === st).length;
+                        const isSelected = filters.status === st;
+                        return (
+                            <button
+                                key={st}
+                                type="button"
+                                onClick={() => setFilters(prev => ({ ...prev, status: isSelected ? '' : st }))}
+                                className={`px-2.5 py-1 rounded-lg font-bold transition-all whitespace-nowrap text-[11px] flex items-center gap-1.5 shadow-2xs ${isSelected ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-500/40' : 'bg-white/80 hover:bg-white text-slate-600 border border-slate-200'}`}
+                            >
+                                <span>{st}</span>
+                                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-black ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>{count}</span>
+                            </button>
+                        );
+                    })}
                 </div>
 
                 <div className={`transition-all duration-300 ease-in-out overflow-hidden ${showFilters ? 'max-h-60 opacity-100' : 'max-h-0 opacity-0'}`}>

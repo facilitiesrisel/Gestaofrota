@@ -157,7 +157,10 @@ export function hasModuleAccess(
   if (!permissions) return false;
   if (permissions.admin) return true;
 
-  const isMaster = currentUserEmail && currentUserEmail.toLowerCase() === "deny.goncalves@risel.com.br";
+  const isMaster = currentUserEmail && (
+    currentUserEmail.toLowerCase() === "deny.goncalves@risel.com.br" || 
+    currentUserEmail.toLowerCase() === "deny.risel@gmail.com"
+  );
   if (isMaster) return true;
 
   if (module === "documentos") {
@@ -283,6 +286,14 @@ const DEFAULT_USERS: UserSession[] = [
     permissions: MASTER_PERMISSIONS
   },
   {
+    email: "deny.risel@gmail.com",
+    name: "Deny Gonçalves",
+    role: "admin",
+    password: "@Cap150957",
+    mustChangePassword: false,
+    permissions: MASTER_PERMISSIONS
+  },
+  {
     email: "lorena.padilha@risel.com.br",
     name: "Lorena Padilha",
     role: "user",
@@ -335,11 +346,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try { 
         const parsed = JSON.parse(sessionSaved);
         if (parsed && parsed.email) {
-          if (parsed.email.toLowerCase() === "deny.risel@gmail.com") {
-            sessionStorage.removeItem("risel_session");
-            return null;
-          }
-          if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
+          if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com") {
             parsed.role = "admin";
             parsed.permissions = MASTER_PERMISSIONS;
           }
@@ -356,11 +363,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try { 
         const parsed = JSON.parse(localSaved);
         if (parsed && parsed.email) {
-          if (parsed.email.toLowerCase() === "deny.risel@gmail.com") {
-            localStorage.removeItem("risel_active_session");
-            return null;
-          }
-          if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br") {
+          if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com") {
             parsed.role = "admin";
             parsed.permissions = MASTER_PERMISSIONS;
           }
@@ -381,7 +384,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((u: any) => u.email?.toLowerCase() !== "deny.risel@gmail.com");
+          return parsed;
         }
       } catch (e) {}
     }
@@ -495,9 +498,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Fallback defensivo: se a lista ainda não terminou de carregar do Supabase
     if (!found) {
       if (cleanEmail === "lorena.padilha@risel.com.br") {
-        found = DEFAULT_USERS[1];
-      } else if (cleanEmail === "deny.goncalves@risel.com.br") {
-        found = DEFAULT_USERS[0];
+        found = DEFAULT_USERS.find(u => u.email === "lorena.padilha@risel.com.br");
+      } else if (cleanEmail === "deny.goncalves@risel.com.br" || cleanEmail === "deny.risel@gmail.com") {
+        found = DEFAULT_USERS.find(u => u.email === cleanEmail) || DEFAULT_USERS[0];
       }
     }
 
@@ -506,7 +509,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
-    const isMasterDeny = cleanEmail === "deny.goncalves@risel.com.br";
+    const isMasterDeny = cleanEmail === "deny.goncalves@risel.com.br" || cleanEmail === "deny.risel@gmail.com";
     const isLorena = cleanEmail === "lorena.padilha@risel.com.br";
 
     // Validação de senha de Deny Gonçalves

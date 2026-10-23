@@ -700,6 +700,9 @@ async function startServer() {
     helmet({
       contentSecurityPolicy: false, // Desabilitado para compatibilidade com Vite SPA e Google Maps/Leaflet
       crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: false, // Permite comunicação no iframe do AI Studio
+      crossOriginResourcePolicy: false, // Permite carregamento dentro do iframe do AI Studio
+      originAgentCluster: false,
       frameguard: false // Permite renderização segura dentro do ambiente de preview
     })
   );
