@@ -1037,8 +1037,8 @@ const VehiclesView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5. Cards para Visualização Mobile */}
-      <div className="md:hidden space-y-3.5 overflow-y-auto flex-grow">
+      {/* 5. Cards para Visualização Mobile (Exibe 100% dos dados) */}
+      <div className="md:hidden space-y-3.5 pb-6">
         {filteredVehicles.length === 0 ? (
             <div className="bg-white p-6 rounded-2xl text-center text-slate-400 font-bold text-sm">
                 Nenhum veículo encontrado.
@@ -1050,51 +1050,112 @@ const VehiclesView: React.FC = () => {
             const washStatus = getWashStatus(vehicle);
             
             const kmL = vehicle.veloeKmL || 0;
+            let kmLClass = "text-slate-600 bg-slate-100 border-slate-200";
+            if (kmL >= 10) kmLClass = "text-emerald-800 bg-emerald-50 border-emerald-200";
+            else if (kmL > 0 && kmL < 7) kmLClass = "text-rose-800 bg-rose-50 border-rose-200";
+            else if (kmL >= 7) kmLClass = "text-amber-800 bg-amber-50 border-amber-200";
+
             const isActive = vehicle.isActive !== false;
 
             return (
               <div 
                 key={vehicle.id} 
-                className={`p-4.5 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3.5 ${
-                  !isActive ? 'opacity-70 bg-slate-50' : ''
+                className={`p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3 ${
+                  !isActive ? 'opacity-75 bg-slate-50' : ''
                 }`}
               >
-                <div className="flex justify-between items-start">
-                   <div className="flex items-center gap-3">
+                <div className="flex justify-between items-start gap-2 pb-2.5 border-b border-slate-100">
+                   <div className="flex items-center gap-2.5 min-w-0">
                        <MercosulPlateBadge plate={vehicle.plate} isInactive={!isActive} />
-                       <div>
-                           <p className="text-sm font-black text-slate-900">
+                       <div className="min-w-0">
+                           <p className="text-sm font-black text-slate-900 leading-tight truncate">
                                {vehicle.model}
                            </p>
-                           <p className="text-xs text-slate-500 font-bold">
-                               Ano {vehicle.year} • {vehicle.type || 'Operações'}
-                           </p>
+                           <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                               <span className="text-xs text-slate-500 font-bold">Ano {vehicle.year}</span>
+                               <span className={`px-2 py-0.2 rounded-md text-[10px] font-black border ${
+                                   vehicle.type === 'Gestão' 
+                                     ? 'bg-blue-50 text-blue-800 border-blue-200' 
+                                     : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                               }`}>
+                                   {vehicle.type || 'Operações'}
+                               </span>
+                           </div>
                        </div>
                    </div>
-                   <div className="flex items-center gap-1">
-                     <button onClick={() => handleToggleActiveStatus(vehicle)} className="p-1.5 rounded-lg border border-slate-200 text-slate-600">
+                   <div className="flex items-center gap-1 shrink-0">
+                     <button onClick={() => handleToggleActiveStatus(vehicle)} className="p-2 rounded-xl border border-slate-200 text-slate-600 bg-slate-50 cursor-pointer" title={isActive ? 'Inativar' : 'Ativar'}>
                          {vehicle.isActive === false ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
                      </button>
-                     <button onClick={() => handleOpenModal(vehicle)} className="p-1.5 text-blue-600 border border-blue-200 rounded-lg">
+                     <button onClick={() => handleOpenModal(vehicle)} className="p-2 text-blue-600 bg-blue-50 border border-blue-200 rounded-xl cursor-pointer" title="Editar">
                          <PencilIcon className="h-4 w-4" />
                      </button>
-                     <button onClick={() => openDeleteConfirm(vehicle)} className="p-1.5 text-rose-600 border border-rose-200 rounded-lg">
+                     <button onClick={() => openDeleteConfirm(vehicle)} className="p-2 text-rose-600 bg-rose-50 border border-rose-200 rounded-xl cursor-pointer" title="Excluir">
                          <TrashIcon className="h-4 w-4" />
                      </button>
                    </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                <div className="grid grid-cols-2 gap-2.5 text-xs bg-slate-50/90 p-3 rounded-xl border border-slate-100">
                     <div>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block">KM Atual</span>
-                        <span className="font-mono font-black text-slate-800">{vehicle.lastKm ? `${vehicle.lastKm.toLocaleString('pt-BR')} km` : '0 km'}</span>
+                        <span className="text-[9px] text-slate-400 font-black uppercase block">Hodômetro Atual</span>
+                        <span className="font-mono font-black text-slate-800 text-sm">{vehicle.lastKm ? `${vehicle.lastKm.toLocaleString('pt-BR')} km` : '0 km'}</span>
+                        <span className="text-[10px] text-slate-400 block">Último registro</span>
                     </div>
+
                     <div>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block">Revisão</span>
-                        <span className={`text-[11px] font-black ${serviceStatus.needsAttention ? 'text-amber-700' : 'text-emerald-700'}`}>
-                            {serviceStatus.text}
-                        </span>
+                        <span className="text-[9px] text-slate-400 font-black uppercase block">Higienização / Lavagem</span>
+                        <div className={`mt-0.5 px-2 py-0.5 rounded-lg border inline-flex items-center gap-1 ${washStatus.badgeClass}`}>
+                            <span className="text-[10px]">✨</span>
+                            <span className="text-[10px] font-black">{washStatus.text}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">{washStatus.dateStr}</span>
                     </div>
+
+                    <div className="col-span-2 pt-2 border-t border-slate-200/60">
+                        <div className="flex items-center justify-between mb-1">
+                            <span className="text-[9px] text-slate-400 font-black uppercase">Revisão Preventiva (10k)</span>
+                            <span className={`px-2 py-0.5 rounded-lg border text-[10px] font-black ${serviceStatus.badgeClass}`}>
+                                {serviceStatus.text}
+                            </span>
+                        </div>
+                        <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
+                            <div 
+                                className={`h-full rounded-full ${serviceStatus.barClass}`} 
+                                style={{ width: `${serviceStatus.percentDone}%` }}
+                            />
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-semibold block mt-1">{serviceStatus.subText}</span>
+                    </div>
+
+                    {canViewFuelData && (
+                        <div className="col-span-2 pt-2 border-t border-slate-200/60 grid grid-cols-2 gap-2">
+                            <div>
+                                <span className="text-[9px] text-slate-400 font-black uppercase block">Abastecido (L)</span>
+                                <span className="font-black text-slate-800">
+                                    {vehicle.veloeLiters ? vehicle.veloeLiters.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00'} L
+                                </span>
+                            </div>
+                            <div>
+                                <span className="text-[9px] text-slate-400 font-black uppercase block">KM Rodado (Abast.)</span>
+                                <span className="font-black text-slate-800">
+                                    {vehicle.veloeTotalKm ? vehicle.veloeTotalKm.toLocaleString('pt-BR') : '0'} km
+                                </span>
+                            </div>
+                            <div>
+                                <span className="text-[9px] text-slate-400 font-black uppercase block">Eficiência Média</span>
+                                <span className={`inline-block mt-0.5 text-[10px] font-black px-2 py-0.5 rounded-lg border ${kmLClass}`}>
+                                    {kmL > 0 ? `${kmL.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km/l` : '-'}
+                                </span>
+                            </div>
+                            <div>
+                                <span className="text-[9px] text-slate-400 font-black uppercase block">Saldo Posto / Cartão</span>
+                                <span className={`font-black ${(vehicle.veloeBalance || 0) < 300 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                    R$ {vehicle.veloeBalance ? vehicle.veloeBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00'}
+                                </span>
+                            </div>
+                        </div>
+                    )}
                 </div>
               </div>
             );

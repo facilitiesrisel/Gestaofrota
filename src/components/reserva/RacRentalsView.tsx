@@ -2338,8 +2338,8 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 </div>
             </div>
 
-            {/* 6. Layout Mobile em Cards */}
-            <div className="md:hidden space-y-3.5 overflow-y-auto flex-grow">
+            {/* 6. Layout Mobile em Cards (Exibe 100% dos dados) */}
+            <div className="md:hidden space-y-3.5 pb-6">
                 {filteredRentals.length === 0 ? (
                     <div className="bg-white p-6 rounded-2xl text-center text-slate-400 font-bold text-sm">
                         Nenhuma locação encontrada.
@@ -2347,16 +2347,18 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                 ) : (
                     filteredRentals.map(r => {
                         const reqDateTime = formatRequestDateTime(r.reservationDate || (r as any).createdAt);
+                        const hasCnhAttached = !!(r.cnhBase64 || r.hasCnhCopy);
+                        const hasVoucherAttached = !!(r.voucherBase64 || r.hasVoucher);
                         return (
                             <div key={r.id} className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col gap-3">
                                 {/* Cabeçalho com Ações Rápidas no Início */}
-                                <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                                    <div className="flex items-center gap-1">
-                                        {r.status === 'Solicitada' && (
+                                <div className="flex justify-between items-center pb-2.5 border-b border-slate-100">
+                                    <div className="flex items-center gap-1.5">
+                                        {r.status === 'Solicitada' ? (
                                             <>
                                                 <button
                                                     onClick={() => handleOpenApproveModal(r)}
-                                                    className="p-2 text-white bg-[#114D38] hover:bg-[#0d3b2c] rounded-xl shadow-xs active:scale-95 transition-transform"
+                                                    className="p-2 text-white bg-[#114D38] hover:bg-[#0d3b2c] rounded-xl shadow-xs active:scale-95 transition-transform cursor-pointer"
                                                     title="Efetivar Locação RAC"
                                                     aria-label="Efetivar"
                                                 >
@@ -2364,33 +2366,46 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 </button>
                                                 <button
                                                     onClick={() => handleOpenRejectModal(r)}
-                                                    className="p-2 text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl shadow-xs active:scale-95 transition-transform"
+                                                    className="p-2 text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl shadow-xs active:scale-95 transition-transform cursor-pointer"
                                                     title="Recusar Solicitação RAC"
                                                     aria-label="Recusar"
                                                 >
                                                     <XCircleIcon className="h-4 w-4" />
                                                 </button>
                                             </>
-                                        )}
-                                        {r.status === 'Recusada' && (
+                                        ) : r.status === 'Recusada' ? (
                                             <button
                                                 onClick={() => handleOpenApproveModal(r)}
-                                                className="p-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl shadow-xs"
+                                                className="p-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl shadow-xs cursor-pointer"
                                                 title="Reabrir e Aprovar"
                                                 aria-label="Reabrir"
                                             >
                                                 <CheckIcon className="h-4 w-4" />
                                             </button>
+                                        ) : (
+                                            <button 
+                                                onClick={() => handleToggleStatus(r)}
+                                                className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                                                    r.status === 'Aguardando retirada' 
+                                                        ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200' 
+                                                        : r.status === 'Em Uso' 
+                                                            ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200' 
+                                                            : 'text-slate-500 bg-slate-100 hover:bg-slate-200 border-slate-200'
+                                                }`}
+                                                title="Alterar Status da Locação"
+                                            >
+                                                <CheckIcon className="h-4 w-4" />
+                                            </button>
                                         )}
-                                        <button onClick={() => handleOpenEditModal(r)} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl" title="Editar">
+                                        <button onClick={() => handleOpenEditModal(r)} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl cursor-pointer" title="Editar">
                                             <PencilIcon className="h-4 w-4" />
                                         </button>
-                                        <button onClick={() => handleOpenDeleteModal(r)} className="p-2 text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl" title="Excluir">
+                                        <button onClick={() => handleOpenDeleteModal(r)} className="p-2 text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl cursor-pointer" title="Excluir">
                                             <TrashIcon className="h-4 w-4" />
                                         </button>
                                     </div>
 
-                                    <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${
+                                    <span className={`text-[10px] font-black px-2.5 py-1 rounded-xl ${
                                         r.status === 'Solicitada' ? 'text-amber-800 bg-amber-100 border border-amber-300' :
                                         r.status === 'Recusada' ? 'text-rose-800 bg-rose-100 border border-rose-200' :
                                         r.status === 'Em Uso' ? 'text-blue-700 bg-blue-50 border border-blue-200' : 
@@ -2402,11 +2417,11 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                 </div>
 
                                 {/* Identificação do Solicitante & Placa */}
-                                <div className="flex justify-between items-start">
-                                    <div className="flex items-center gap-2.5">
+                                <div className="flex justify-between items-start gap-2">
+                                    <div className="flex items-center gap-2.5 min-w-0">
                                         <MercosulPlateBadge plate={r.plate} />
-                                        <div>
-                                            <p className="text-sm font-black text-slate-900 leading-tight">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-black text-slate-900 leading-tight truncate">
                                                 {toTitleCase(r.requesterName)}
                                             </p>
                                             <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
@@ -2417,34 +2432,93 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                 )}
                                                 <span className="text-xs text-slate-500 font-bold">
                                                     {r.rentalCompany || 'Locadora a definir'} • {toTitleCase(r.requesterSector || 'Geral')}
+                                                    {r.requesterRole ? ` • ${toTitleCase(r.requesterRole)}` : ''}
                                                 </span>
                                             </div>
+                                            {r.requesterPhone && (
+                                                <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+                                                    📞 {r.requesterPhone}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
-                                    <span className="text-xs font-black text-amber-700 font-mono">
-                                        {r.value ? formatCurrencyBRL(r.value) : 'R$ 0,00'}
-                                    </span>
+                                    <div className="text-right shrink-0">
+                                        <span className="text-sm font-black text-amber-700 font-mono block">
+                                            {r.value ? formatCurrencyBRL(r.value) : 'A cotar'}
+                                        </span>
+                                        {r.reservationNumber && (
+                                            <span className="text-[10px] font-mono font-bold text-slate-400 block">
+                                                #{r.reservationNumber}
+                                            </span>
+                                        )}
+                                        {r.protocol && (
+                                            <span className="text-[9px] font-mono text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200/60 inline-block">
+                                                Prot: {r.protocol}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
 
-                                <div className="text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1.5">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Data Solicitação</span>
-                                        <span className="font-bold text-slate-700 flex items-center gap-1.5">
-                                            <CalendarIcon className="w-3.5 h-3.5 text-emerald-700" />
+                                <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50/90 p-3 rounded-xl border border-slate-100">
+                                    <div>
+                                        <span className="text-[9px] text-slate-400 font-black uppercase block">Data Solicitação</span>
+                                        <span className="font-bold text-slate-700 flex items-center gap-1 mt-0.5">
+                                            <CalendarIcon className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
                                             <span>{reqDateTime.date}</span>
                                             {reqDateTime.time && <span className="text-slate-400 font-normal">({reqDateTime.time})</span>}
                                         </span>
                                     </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Itinerário</span>
-                                        <span className="font-bold text-slate-700">
-                                            {toTitleCase(r.pickupCity ? normalizeCidade(r.pickupCity) : 'A definir')} ➔ {toTitleCase(r.returnCity ? normalizeCidade(r.returnCity) : 'A definir')}
+
+                                    <div>
+                                        <span className="text-[9px] text-slate-400 font-black uppercase block">Condutor & CNH</span>
+                                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                            <span className="font-bold text-slate-800">{toTitleCase(r.driverName || 'Não inf.')}</span>
+                                            {hasCnhAttached ? (
+                                                <a
+                                                    href={r.cnhDriveUrl || GOOGLE_DRIVE_RAC_CNH_FOLDER_URL}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-0.5 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.2 rounded"
+                                                >
+                                                    🪪 CNH ↗
+                                                </a>
+                                            ) : (
+                                                <span className="text-[10px] text-slate-400">
+                                                    {r.cnhAlreadyOnRecord ? '✅ CNH OK' : ''}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="col-span-2 pt-1.5 border-t border-slate-200/60">
+                                        <span className="text-[9px] text-slate-400 font-black uppercase block">Itinerário (Retirada ➔ Devolução)</span>
+                                        <span className="font-bold text-slate-800 block">
+                                            {toTitleCase(r.pickupCity ? normalizeCidade(r.pickupCity) : (r.pickupStore || 'A definir'))} ➔ {toTitleCase(r.returnCity ? normalizeCidade(r.returnCity) : (r.returnStore || 'A definir'))}
+                                        </span>
+                                        {(r.category || r.purpose) && (
+                                            <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
+                                                {r.category ? `Cat: ${toTitleCase(r.category)}` : ''}{r.category && r.purpose ? ' • ' : ''}{r.purpose ? `${r.purpose}` : ''}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div>
+                                        <span className="text-[9px] text-emerald-700 font-black uppercase block">Retirada (RET)</span>
+                                        <span className="font-bold text-slate-800">
+                                            {new Date(r.pickupDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                                         </span>
                                     </div>
 
-                                    <div className="flex justify-between items-center pt-1 border-t border-slate-100">
-                                        <span className="text-[10px] text-slate-400 font-bold uppercase">Confirmação RAC</span>
-                                        {r.hasVoucher || r.voucherBase64 ? (
+                                    <div>
+                                        <span className="text-[9px] text-slate-500 font-black uppercase block">Devolução (DEV)</span>
+                                        <span className="font-bold text-slate-800">
+                                            {new Date(r.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                    </div>
+
+                                    <div className="col-span-2 flex justify-between items-center pt-1.5 border-t border-slate-200/60">
+                                        <span className="text-[9px] text-slate-400 font-black uppercase">Confirmação RAC</span>
+                                        {hasVoucherAttached ? (
                                             <button
                                                 onClick={() => {
                                                     if (r.voucherBase64) {
@@ -2458,7 +2532,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                         showToast("Documento de confirmação registrado.", "success");
                                                     }
                                                 }}
-                                                className="text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                                                className="text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1 rounded-lg cursor-pointer transition-colors"
                                             >
                                                 🎫 Ver Confirmação
                                             </button>
@@ -2468,7 +2542,7 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                                                     setQuickAttachRental(r);
                                                     setQuickVoucherFile(null);
                                                 }}
-                                                className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                                                className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2.5 py-1 rounded-lg cursor-pointer transition-colors"
                                             >
                                                 📎 Anexar Confirmação
                                             </button>

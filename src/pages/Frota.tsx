@@ -421,13 +421,13 @@ function SubSystemLayout({
 }) {
   if (hideSidebar) {
     return (
-      <div className="flex-1 min-h-0 w-full text-slate-800 text-left flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 w-full text-slate-800 text-left flex flex-col md:overflow-hidden">
         {children}
       </div>
     );
   }
   return (
-    <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-6 w-full text-slate-800 text-left items-start overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-6 w-full text-slate-800 text-left items-start md:overflow-hidden">
       {/* Menu Lateral de Navegação do Submódulo */}
       <div className="w-full lg:w-64 shrink-0 lg:sticky lg:top-36 z-20">
         <div className="bg-white p-4 rounded-3xl border border-slate-150 shadow-sm space-y-4">
@@ -461,7 +461,7 @@ function SubSystemLayout({
       </div>
 
       {/* Conteúdo à Direita */}
-      <div className="flex-1 min-w-0 w-full h-full flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 w-full h-full flex flex-col md:overflow-hidden">
         {children}
       </div>
     </div>
@@ -2998,7 +2998,7 @@ export default function Frota() {
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden space-y-3 w-full text-slate-800 relative">
+    <div className="min-h-full md:h-full flex flex-col md:overflow-hidden space-y-3 w-full text-slate-800 relative pb-6 md:pb-0">
       {/* Excel-like Static Top Section (Header, Navigation Tabs, 5 Indicators) */}
       <div 
         className="shrink-0 bg-slate-50 -mx-2 px-2 pt-0.5 pb-2 border-b border-slate-200/80 shadow-2xs space-y-2.5"
@@ -3009,25 +3009,25 @@ export default function Frota() {
         }}
       >
         {/* Top Header Card: Identidade à Esquerda e Usuário Logado no Topo Superior Direito */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-2xs relative">
+        <div className="flex items-center justify-between gap-2 bg-white px-3 sm:px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-2xs relative">
           {/* Lado Esquerdo: Identidade Visual e Breadcrumbs */}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-sm shadow-orange-500/20 shrink-0">
-              <Car className="w-5 h-5" />
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-sm shadow-orange-500/20 shrink-0">
+              <Car className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5 leading-none">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 leading-none flex-wrap">
                 <Link to="/" className="text-[10px] font-bold text-slate-400 hover:text-orange-600 transition-colors flex items-center gap-1">
                   <ArrowLeft className="w-2.5 h-2.5" /> Início
                 </Link>
                 <span className="text-[10px] text-slate-300">/</span>
                 <button onClick={() => setActiveTab("portal")} className="text-[10px] font-bold text-slate-400 hover:text-orange-600 transition-colors cursor-pointer bg-transparent border-none p-0 outline-none">
-                  Portal de Frota Leve
+                  Portal Frota
                 </button>
                 <span className="text-[10px] text-slate-300">/</span>
-                <span className="text-[10px] font-semibold text-slate-500 uppercase">{activeTab}</span>
+                <span className="text-[10px] font-semibold text-slate-500 uppercase truncate">{activeTab}</span>
               </div>
-              <h1 className="text-lg font-display font-black text-slate-800 tracking-tight leading-tight mt-0.5">
+              <h1 className="text-sm sm:text-lg font-display font-black text-slate-800 tracking-tight leading-tight mt-0.5 truncate">
                 {activeTab === "frota" && "Controle de Frota Leve"}
                 {activeTab === "checklist" && "Checklist Digital"}
                 {activeTab === "reservas" && "Gestão de Reservas"}
@@ -3106,9 +3106,9 @@ export default function Frota() {
             })}
         </div>
 
-        {/* Top Counters Summary Row - 4 Principal Indicators with Rectangular Style & Spring Transitions */}
+        {/* Top Counters Summary Row - 4 Principal Indicators (2x2 compact on mobile, 4 cols on desktop) */}
         {activeTab !== "reservas" && activeTab !== "rastreamento" && activeTab !== "checklist" && activeTab !== "multas" && subSectionFrota !== "custos" && subSectionFrota !== "manutencao" && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3.5">
             {[
               { 
                 label: "Total Frota", 
@@ -3170,20 +3170,20 @@ export default function Frota() {
                   damping: 22, 
                   delay: idx * 0.04 
                 }}
-                className={`p-3 rounded-xl border ${item.borderColor} shadow-2xs flex flex-col justify-between relative overflow-hidden bg-gradient-to-br ${item.gradientBg} ${item.glowColor} transition-all duration-300 min-h-[78px]`}
+                className={`p-2.5 sm:p-3 rounded-xl border ${item.borderColor} shadow-2xs flex flex-col justify-between relative overflow-hidden bg-gradient-to-br ${item.gradientBg} ${item.glowColor} transition-all duration-300 min-h-[68px] sm:min-h-[78px]`}
               >
                 {/* Decorative background glow */}
                 <div className={`absolute -right-8 -bottom-8 w-20 h-20 rounded-full bg-gradient-to-br ${item.gradient} opacity-[0.07] blur-lg pointer-events-none`} />
                 
-                <div className="flex justify-between items-start gap-2 relative z-10">
-                  <span className="text-[9.5px] font-black text-slate-500 uppercase tracking-wider block leading-tight">{item.label}</span>
-                  <div className={`w-6 h-6 rounded-md ${item.bgLight} flex items-center justify-center shrink-0 border border-slate-200/40`}>
+                <div className="flex justify-between items-start gap-1.5 relative z-10">
+                  <span className="text-[9px] sm:text-[9.5px] font-black text-slate-500 uppercase tracking-wider block leading-tight">{item.label}</span>
+                  <div className={`w-5 h-5 sm:w-6 sm:h-6 rounded-md ${item.bgLight} flex items-center justify-center shrink-0 border border-slate-200/40`}>
                     <item.icon className={`w-3 h-3 ${item.textColor}`} />
                   </div>
                 </div>
                 <div className="mt-1 relative z-10 text-left">
-                  <span className={`text-base sm:text-lg font-display font-black bg-gradient-to-r ${item.gradient} bg-clip-text text-transparent block tracking-tight leading-none`}>{item.value}</span>
-                  <span className="text-[9px] font-bold text-slate-400 block mt-0.5">{item.sub}</span>
+                  <span className={`text-sm sm:text-lg font-display font-black bg-gradient-to-r ${item.gradient} bg-clip-text text-transparent block tracking-tight leading-none`}>{item.value}</span>
+                  <span className="text-[8.5px] sm:text-[9px] font-bold text-slate-400 block mt-0.5 truncate">{item.sub}</span>
                 </div>
               </motion.div>
             ))}
@@ -3192,7 +3192,7 @@ export default function Frota() {
       </div>
 
       {/* Main Tab Panels Content */}
-      <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 w-full flex flex-col md:overflow-hidden">
         {/* TAB 1: CONTROLE DE FROTA LEVE (VEHICLES LIST) */}
         {activeTab === "frota" && (
           <SubSystemLayout
@@ -3208,7 +3208,7 @@ export default function Frota() {
             hideSidebar={true}
           >
             {subSectionFrota === "custos" ? (
-              <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 overflow-hidden">
+              <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 md:overflow-hidden">
         {/* Hidden File Input for CSV */}
         <input 
           type="file" 
@@ -3413,7 +3413,7 @@ export default function Frota() {
                 )}
               </div>
             ) : subSectionFrota === "manutencao" ? (
-              <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 overflow-hidden">
+              <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 md:overflow-hidden">
                 {/* Barra de Ações Superior da Manutenção e Filtros */}
                 <div className="shrink-0 bg-slate-50 pt-1 pb-2 shadow-sm border-b border-slate-200/60 flex flex-col gap-2">
                   <div className="bg-white p-3.5 rounded-[22px] border border-slate-150 shadow-sm text-left flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -3592,7 +3592,7 @@ export default function Frota() {
                 )}
               </div>
             ) : (
-              <div className="flex-1 min-h-0 flex flex-col space-y-3 overflow-hidden">
+              <div className="flex-1 min-h-0 flex flex-col space-y-3 md:overflow-hidden">
                 {/* Sub-section Switcher & Filter Bar */}
                 <div 
                   className="shrink-0 pt-1 pb-1 space-y-2.5"
@@ -3663,7 +3663,7 @@ export default function Frota() {
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 self-end md:self-auto shrink-0">
                       <button
                         onClick={() => handleSyncFromCloud(true)}
                         disabled={isSyncingCloud}
@@ -3721,8 +3721,188 @@ export default function Frota() {
                   </div>
                 </div>
 
-                {/* List Table / Grid Cards com Rolagem Interna de Dados */}
-                <div ref={mainFrotaTableScrollRef} className="flex-1 min-h-0 bg-white rounded-3xl border border-slate-150 overflow-x-auto overflow-y-auto shadow-sm">
+                {/* VISUALIZAÇÃO EM CARDS COMPLETOS PARA CELULAR (EXIBE 100% DOS DADOS SEM CORTES) */}
+                <div className="md:hidden space-y-3 pb-4">
+                  {displayedFrotaVeiculos.length === 0 ? (
+                    <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 font-bold text-sm">
+                      Nenhum veículo encontrado com os filtros selecionados.
+                    </div>
+                  ) : (
+                    displayedFrotaVeiculos.map(v => {
+                      const dias = diasParaVencimento(v.vencContrato, v.dataInativacao, v.status);
+                      const isVencido = dias <= 0 && v.status !== "Inativo";
+                      const isAlerta30 = dias > 0 && dias <= 30 && v.status !== "Inativo";
+                      const isAlerta90 = dias > 30 && dias <= 90 && v.status !== "Inativo";
+                      const displayStatus = (v.status === "Inativo" || v.status === "Em Manutenção") ? "Inativo" : "Ativo";
+                      const isAtivo = displayStatus === "Ativo";
+
+                      return (
+                        <div
+                          key={`mob-${v.id}`}
+                          className={`bg-white rounded-2xl border p-3.5 shadow-xs space-y-3 ${
+                            isVencido
+                              ? "border-rose-300 bg-rose-50/20"
+                              : isAlerta30
+                                ? "border-amber-300 bg-amber-50/15"
+                                : "border-slate-200"
+                          }`}
+                        >
+                          {/* Topo: Placa Mercosul + Modelo + Status + Ações */}
+                          <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-slate-100">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <MercosulPlateBadge plate={v.placa} isInactive={v.status === "Inativo"} />
+                              <div className="min-w-0">
+                                <p className="font-black text-slate-900 text-sm leading-tight truncate">{v.modelo}</p>
+                                <p className="text-[11px] font-bold text-slate-500 mt-0.5">
+                                  {toTitleCase(v.combustivel || "Flex")} • {(Number(v.odometro) || 0).toLocaleString("pt-BR")} km
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black border ${
+                                isAtivo 
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200/80" 
+                                  : "bg-rose-50 text-rose-700 border-rose-200/80"
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full mr-1 ${isAtivo ? "bg-emerald-500" : "bg-rose-500"}`} />
+                                {displayStatus}
+                              </span>
+                              <button
+                                onClick={() => setSelectedVeiculo(v)}
+                                className="p-2 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl cursor-pointer"
+                                title="Ver Detalhes Completos"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const loc = v.locadora || "";
+                                  const locUpper = loc.toUpperCase().trim();
+                                  const isStandard = ["LOCALIZA GESTÃO DE FROTAS", "MOVIDA", "SUPER MAIS", "FROTA PRÓPRIA"].includes(locUpper);
+                                  setEditingVeh(v);
+                                  if (isStandard) {
+                                    setModalLocadora(locUpper);
+                                    setCustomLocadora("");
+                                  } else {
+                                    setModalLocadora("Outra");
+                                    setCustomLocadora(loc);
+                                  }
+                                  setModalVencContrato(v.vencContrato || "");
+                                  setModalTipoVinculo(v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"));
+                                  setModalStatus(v.status);
+                                  setModalDataInativacao(v.dataInativacao || "");
+                                  setModalMotivoInativacao(v.motivoInativacao || "");
+                                  setModalCpfCondutor(v.cpfCondutor || "");
+                                  setModalCpfError(null);
+                                  setModalCnhValidade(v.cnhValidade || "");
+                                  setModalCnhNumero(v.cnhNumero || "");
+                                  setModalCnhAnexoBase64(v.cnhAnexoBase64 || "");
+                                  setModalCnhNomeArquivo(v.cnhNomeArquivo || "");
+                                  setIsVehModalOpen(true);
+                                }}
+                                className="p-2 text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl cursor-pointer"
+                                title="Editar Veículo"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Grade Completa de Dados do Veículo e Condutor */}
+                          <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50/90 p-2.5 rounded-xl border border-slate-100">
+                            <div className="col-span-2 flex items-center justify-between border-b border-slate-200/60 pb-1.5">
+                              <div>
+                                <span className="text-[9px] font-black text-slate-400 uppercase block">Condutor / Função</span>
+                                <span className="font-black text-slate-800 text-xs">{v.condutor || "-"}</span>
+                                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                  <span className="text-[10px] font-semibold text-slate-500">{toTitleCase(v.funcao || "-")}</span>
+                                  {v.setor && (
+                                    <span className="text-emerald-700 bg-emerald-50 border border-emerald-200/70 px-1.5 py-0.2 rounded text-[9px] font-bold">
+                                      {toTitleCase(v.setor)}
+                                    </span>
+                                  )}
+                                  {v.cpfCondutor && (
+                                    <span className="font-mono text-slate-600 bg-white border border-slate-200 px-1.5 py-0.2 rounded text-[9.5px]">
+                                      CPF: {v.cpfCondutor}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              {v.contatoMotorista && (
+                                <a
+                                  href={`tel:${v.contatoMotorista}`}
+                                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 text-white text-[10px] font-black flex items-center gap-1 shadow-2xs shrink-0"
+                                >
+                                  <Phone className="w-3 h-3" /> Ligar
+                                </a>
+                              )}
+                            </div>
+
+                            <div>
+                              <span className="text-[9px] font-black text-slate-400 uppercase block">Filial / Base</span>
+                              <span className="font-bold text-slate-800 text-[11px]">{normalizeBaseOperacional(v.filial)}</span>
+                            </div>
+
+                            <div>
+                              <span className="text-[9px] font-black text-slate-400 uppercase block">Contrato / Vínculo</span>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <span className="font-bold text-slate-700 text-[11px]">{v.contrato || "-"}</span>
+                                {v.tipoVinculo === "Provisório" ? (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                                    Provisório
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-white text-slate-600 border border-slate-200">
+                                    {v.tipoVinculo || (v.locadora === "FROTA PRÓPRIA" ? "Própria" : "Contrato")}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div>
+                              <span className="text-[9px] font-black text-slate-400 uppercase block">Locadora</span>
+                              <span className="font-bold text-slate-700 text-[11px] uppercase">{v.locadora || "-"}</span>
+                            </div>
+
+                            <div>
+                              <span className="text-[9px] font-black text-slate-400 uppercase block">Venc. Contrato</span>
+                              <span className={`font-mono font-bold text-[11px] ${isVencido ? "text-rose-700" : isAlerta30 ? "text-amber-700" : "text-slate-800"}`}>
+                                {formatDateSafe(v.vencContrato)}
+                              </span>
+                            </div>
+
+                            <div className="col-span-2 pt-1 border-t border-slate-200/60 flex items-center justify-between">
+                              <span className="text-[9px] font-black text-slate-400 uppercase">Prazo Contratual</span>
+                              {v.status === "Inativo" ? (
+                                <span className="font-extrabold px-2 py-0.5 rounded text-[10px] bg-slate-200 text-slate-700">
+                                  {v.motivoInativacao || "Inativo"} ({dias < 0 ? `${Math.abs(dias)}d venc.` : `${dias}d p/ venc.`})
+                                </span>
+                              ) : (
+                                <span className={`font-black px-2 py-0.5 rounded text-[10px] border ${
+                                  isVencido
+                                    ? "bg-rose-600 text-white border-rose-700"
+                                    : isAlerta30
+                                      ? "bg-amber-100 text-amber-900 border-amber-300"
+                                      : isAlerta90
+                                        ? "bg-amber-50 text-amber-800 border-amber-200"
+                                        : "bg-white text-slate-700 border-slate-200"
+                                }`}>
+                                  {isVencido
+                                    ? (dias < 0 ? `Vencido há ${Math.abs(dias)} dias` : "Vence Hoje!")
+                                    : `${dias} dias restantes`}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* List Table Desktop com Rolagem Interna de Dados */}
+                <div ref={mainFrotaTableScrollRef} className="hidden md:block flex-1 min-h-0 bg-white rounded-3xl border border-slate-150 overflow-x-auto overflow-y-auto shadow-sm">
                   <table className="w-full text-left border-collapse relative">
                     <thead className="sticky top-0 z-20 bg-[#114D38] shadow-sm">
                         <tr className="bg-[#114D38] text-white text-[10px] font-bold uppercase tracking-wider border-b border-[#0d3b2b]">
@@ -4073,7 +4253,7 @@ export default function Frota() {
 
         {/* TAB 3: RESERVAS */}
         {activeTab === "reservas" && (
-          <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 w-full flex flex-col md:overflow-hidden">
             <ReservaSubmoduleContainer />
           </div>
         )}

@@ -2,65 +2,44 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Copy, Check, Car, ClipboardList, MapPin, FileText, ArrowLeft } from "lucide-react";
 import { ReservaSubmoduleContainer } from "../components/reserva/ReservaSubmoduleContainer";
+import {
+  getDeviceActiveDailyTrip,
+  clearDeviceActiveDailyTrip,
+  isDailyTripCompleted,
+} from "../utils/dailyUseSession";
 
 export default function ReservaPublica({ initialView }: { initialView?: string }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [copied, setCopied] = useState(false);
 
-  // Monitora viagem em andamento salva exclusivamente no dispositivo do condutor
+  // Monitora viagem em andamento salva exclusivamente no dispositivo do condutor que abriu o Uso Diário
   const [pendingTrip, setPendingTrip] = useState<{ id: string; plate?: string; driverName?: string; model?: string; status?: string; finalKm?: number } | null>(() => {
-    try {
-      const myId = localStorage.getItem('myActiveDailyTripId');
-      const urlTripId = new URLSearchParams(window.location.search).get('tripId');
-      const id = urlTripId || myId;
-      if (!id) return null;
-      const rawData = localStorage.getItem('activeDailyTripData');
-      if (rawData) {
-        const parsed = JSON.parse(rawData);
-        if (parsed?.status === 'Concluída' || parsed?.status === 'Concluida' || parsed?.finalKm != null) {
-          localStorage.removeItem('myActiveDailyTripId');
-          localStorage.removeItem('activeDailyTripId');
-          localStorage.removeItem('activeDailyTripData');
-          return null;
-        }
-        return parsed;
-      }
-      return { id };
-    } catch (e) {}
-    return null;
+    const session = getDeviceActiveDailyTrip();
+    if (!session?.id) return null;
+    return session.data || { id: session.id };
   });
 
   useEffect(() => {
     const checkPending = () => {
       try {
-        const myId = localStorage.getItem('myActiveDailyTripId');
-        const urlTripId = new URLSearchParams(window.location.search).get('tripId');
-        const id = urlTripId || myId;
-        if (!id) {
+        const session = getDeviceActiveDailyTrip();
+        if (!session?.id) {
           setPendingTrip(null);
           return;
         }
+        const id = session.id;
 
         // Verifica na lista de viagens sincronizadas no cache do navegador
-        const cachedTripsRaw = localStorage.getItem('risel_daily_trips');
+        const cachedTripsRaw = localStorage.getItem('risel_daily_trips') || sessionStorage.getItem('risel_daily_trips');
         if (cachedTripsRaw) {
           try {
             const trips = JSON.parse(cachedTripsRaw);
             if (Array.isArray(trips)) {
               const trip = trips.find((t: any) => t.id === id);
               if (trip) {
-                const isFinished = trip.status === 'Concluída' || 
-                                   trip.status === 'Concluida' || 
-                                   trip.status === 'Completed' || 
-                                   trip.status === 'Cancelada' || 
-                                   trip.status === 'Cancelled' || 
-                                   Boolean(trip.actualReturnDateTime) || 
-                                   (trip.finalKm != null && Number(trip.finalKm) > 0);
-                if (isFinished) {
-                  localStorage.removeItem('myActiveDailyTripId');
-                  localStorage.removeItem('activeDailyTripId');
-                  localStorage.removeItem('activeDailyTripData');
+                if (isDailyTripCompleted(trip)) {
+                  clearDeviceActiveDailyTrip();
                   setPendingTrip(null);
                   return;
                 }
@@ -71,29 +50,15 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
           } catch (e) {}
         }
 
-        const rawData = localStorage.getItem('activeDailyTripData');
-        if (rawData) {
-          const parsed = JSON.parse(rawData);
-          if (parsed?.status === 'Concluída' || parsed?.status === 'Concluida' || parsed?.finalKm != null) {
-            localStorage.removeItem('myActiveDailyTripId');
-            localStorage.removeItem('activeDailyTripId');
-            localStorage.removeItem('activeDailyTripData');
+        if (session.data) {
+          if (isDailyTripCompleted(session.data)) {
+            clearDeviceActiveDailyTrip();
             setPendingTrip(null);
             return;
           }
-          const depTime = parsed?.departureDateTime ? new Date(parsed.departureDateTime).getTime() : 0;
-          if (depTime > 0 && (Date.now() - depTime) > 48 * 60 * 60 * 1000) {
-            localStorage.removeItem('myActiveDailyTripId');
-            localStorage.removeItem('activeDailyTripId');
-            localStorage.removeItem('activeDailyTripData');
-            setPendingTrip(null);
-            return;
-          }
-          setPendingTrip(parsed);
-        } else if (id) {
-          setPendingTrip({ id });
+          setPendingTrip(session.data);
         } else {
-          setPendingTrip(null);
+          setPendingTrip({ id });
         }
       } catch (e) {
         setPendingTrip(null);
@@ -111,22 +76,28 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
 
   const urlSub = searchParams.get("sub");
 
-  // Bloqueio rigoroso: se vier sub=login ou sub=admin na rota pública, redireciona imediatamente para tela pública
+  // Bloqueio rigoroso: se vier sub=login ou sub=admin na rota pública, redireciona imediatamente
   useEffect(() => {
     if (urlSub === 'login' || urlSub === 'admin') {
-      setSearchParams({ sub: 'request' }, { replace: true });
+      const targetSub = pendingTrip?.id ? 'dailyUse' : 'request';
+      const nextParams: Record<string, string> = { sub: targetSub };
+      if (pendingTrip?.id) nextParams.tripId = pendingTrip.id;
+      setSearchParams(nextParams, { replace: true });
     }
-  }, [urlSub, setSearchParams]);
+  }, [urlSub, pendingTrip, setSearchParams]);
 
-  // Se o condutor abrir o link no celular e tiver viagem de uso diário em andamento, abre direto em 'dailyUse'
+  // Se o condutor deste dispositivo tem viagem de Uso Diário em andamento, fica SEMPRE fixo na tela 'dailyUse' até finalizar
   const defaultSub = pendingTrip?.id ? "dailyUse" : (initialView || "request");
-  const activeSub = (urlSub && urlSub !== 'login' && urlSub !== 'admin') ? urlSub : defaultSub;
+  const activeSub = pendingTrip?.id
+    ? "dailyUse"
+    : ((urlSub && urlSub !== 'login' && urlSub !== 'admin') ? urlSub : defaultSub);
 
-  // Garante que, ao abrir no celular com viagem pendente, a URL e as abas sincronizem imediatamente
+  // Garante que, enquanto houver viagem pendente neste celular, a URL mantenha sub=dailyUse e tripId
   useEffect(() => {
-    if (!urlSub && pendingTrip?.id) {
+    if (pendingTrip?.id && (urlSub !== 'dailyUse' || searchParams.get('tripId') !== pendingTrip.id)) {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.set('sub', 'dailyUse');
+      nextParams.set('tripId', pendingTrip.id);
       setSearchParams(nextParams, { replace: true });
     }
   }, [urlSub, pendingTrip, searchParams, setSearchParams]);
@@ -142,6 +113,11 @@ export default function ReservaPublica({ initialView }: { initialView?: string }
   const handleSwitchTab = (viewId: string) => {
     // Proíbe chavear para login/admin no acesso público
     if (viewId === 'login' || viewId === 'admin') {
+      return;
+    }
+    // Se este usuário abriu um Uso Diário ainda não finalizado, mantém fixo na tela de finalizar Uso Diário
+    if (pendingTrip?.id) {
+      setSearchParams({ sub: 'dailyUse', tripId: pendingTrip.id });
       return;
     }
     setSearchParams({ sub: viewId });

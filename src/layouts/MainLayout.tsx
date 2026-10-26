@@ -17,11 +17,16 @@ export function MainLayout({ children }: { children: ReactNode }) {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedDocToView, setSelectedDocToView] = useState<any | null>(null);
   const [vencimentosAlerta, setVencimentosAlerta] = useState<any[]>([]);
 
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -162,84 +167,115 @@ export function MainLayout({ children }: { children: ReactNode }) {
   };
 
   const isCleanView = isFrota && (activeTab === "portal" || !isSubModuleAuthenticated(activeTab));
+  const isReservaAdminLogado = Boolean(user && user.email) || localStorage.getItem("reserva_admin_logado") === "true";
   
   // Filtrar os itens de menu com base nas permissões do usuário logado e módulo ativo
-  let baseMenuItems = [];
+  let baseMenuItems: Array<{ name: string; mobileName?: string; path: string; icon: any; visible: boolean }> = [];
 
   if (isFrota) {
     if (activeTab === "portal") {
       baseMenuItems = [
-        { name: "Início", path: "/", icon: Home, visible: true },
-        { name: "Portal da Frota", path: "/frota?tab=portal", icon: LayoutGrid, visible: true },
+        { name: "Início", mobileName: "Início", path: "/", icon: Home, visible: true },
+        { name: "Portal da Frota", mobileName: "Portal", path: "/frota?tab=portal", icon: LayoutGrid, visible: true },
       ];
     } else {
       // Estamos em um submódulo autenticado da Frota Leve!
       // Mostrar "Início" e as sub-seções específicas do módulo atual no menu lateral
       baseMenuItems = [
-        { name: "Início", path: "/", icon: Home, visible: true },
+        { name: "Início", mobileName: "Início", path: "/", icon: Home, visible: true },
       ];
 
       if (activeTab === "frota") {
         baseMenuItems.push(
-          { name: "Todos os Veículos", path: "/frota?tab=frota&sub=veiculos", icon: Car, visible: true },
-          { name: "Contratos Próximos", path: "/frota?tab=frota&sub=vencidos", icon: Clock, visible: true },
-          { name: "Abastecimento", path: "/frota?tab=frota&sub=custos", icon: DollarSign, visible: true },
-          { name: "Manutenção", path: "/frota?tab=frota&sub=manutencao", icon: Wrench, visible: true }
+          { name: "Todos os Veículos", mobileName: "Veículos", path: "/frota?tab=frota&sub=veiculos", icon: Car, visible: true },
+          { name: "Contratos Próximos", mobileName: "Contratos", path: "/frota?tab=frota&sub=vencidos", icon: Clock, visible: true },
+          { name: "Abastecimento", mobileName: "Abastec.", path: "/frota?tab=frota&sub=custos", icon: DollarSign, visible: true },
+          { name: "Manutenção", mobileName: "Manuten.", path: "/frota?tab=frota&sub=manutencao", icon: Wrench, visible: true }
         );
       } else if (activeTab === "checklist") {
         baseMenuItems.push(
-          { name: "Dashboard", path: "/frota?tab=checklist&sub=dashboard", icon: LayoutDashboard, visible: true },
-          { name: "Checklists Realizados", path: "/frota?tab=checklist&sub=realizados", icon: FileSpreadsheet, visible: true },
-          { name: "Checklists Pendentes", path: "/frota?tab=checklist&sub=alertas", icon: AlertTriangle, visible: true },
-          { name: "Formulário Checklist", path: "/frota?tab=checklist&sub=formulario", icon: CheckSquare, visible: true }
+          { name: "Dashboard", mobileName: "Painel", path: "/frota?tab=checklist&sub=dashboard", icon: LayoutDashboard, visible: true },
+          { name: "Checklists Realizados", mobileName: "Realizados", path: "/frota?tab=checklist&sub=realizados", icon: FileSpreadsheet, visible: true },
+          { name: "Checklists Pendentes", mobileName: "Pendentes", path: "/frota?tab=checklist&sub=alertas", icon: AlertTriangle, visible: true },
+          { name: "Formulário Checklist", mobileName: "Novo", path: "/frota?tab=checklist&sub=formulario", icon: CheckSquare, visible: true }
         );
       } else if (activeTab === "reservas") {
-        const isAdminLogado = Boolean(user && user.email) || localStorage.getItem("reserva_admin_logado") === "true";
-        if (isAdminLogado) {
+        if (isReservaAdminLogado) {
           baseMenuItems.push(
-            { name: "Dashboard Analítico", path: "/frota?tab=reservas&sub=dashboard", icon: BarChart3, visible: true },
-            { name: "Gestão de Reservas", path: "/frota?tab=reservas&sub=reservations", icon: FileText, visible: true },
-            { name: "Diário de Bordo", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
-            { name: "Frota de Veículos", path: "/frota?tab=reservas&sub=vehicles", icon: Car, visible: true },
-            { name: "Status da Frota", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
-            { name: "Locações RAC", path: "/frota?tab=reservas&sub=racRentals", icon: DollarSign, visible: true },
-            { name: "Sair do Admin", path: "/frota?tab=reservas&sub=logout_reservas", icon: LogOut, visible: true }
+            { name: "Dashboard Analítico", mobileName: "Painel", path: "/frota?tab=reservas&sub=dashboard", icon: BarChart3, visible: true },
+            { name: "Gestão de Reservas", mobileName: "Reservas", path: "/frota?tab=reservas&sub=reservations", icon: FileText, visible: true },
+            { name: "Diário de Bordo", mobileName: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
+            { name: "Frota de Veículos", mobileName: "Veículos", path: "/frota?tab=reservas&sub=vehicles", icon: Car, visible: true },
+            { name: "Status da Frota", mobileName: "Status", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
+            { name: "Locações RAC", mobileName: "Loc. RAC", path: "/frota?tab=reservas&sub=racRentals", icon: DollarSign, visible: true },
+            { name: "Sair do Admin", mobileName: "Sair", path: "/frota?tab=reservas&sub=logout_reservas", icon: LogOut, visible: true }
           );
         } else {
           baseMenuItems.push(
-            { name: "Solicitar Reserva", path: "/frota?tab=reservas&sub=request", icon: FileText, visible: true },
-            { name: "Solicitar Veículo Locado", path: "/frota?tab=reservas&sub=racRequest", icon: Car, visible: true },
-            { name: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
-            { name: "Status da Frota", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
-            { name: "Área Administrativa", path: "/frota?tab=reservas&sub=login", icon: Shield, visible: true }
+            { name: "Solicitar Reserva", mobileName: "Reservar", path: "/frota?tab=reservas&sub=request", icon: FileText, visible: true },
+            { name: "Solicitar Veículo Locado", mobileName: "Locado RAC", path: "/frota?tab=reservas&sub=racRequest", icon: Car, visible: true },
+            { name: "Uso Diário", mobileName: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
+            { name: "Status da Frota", mobileName: "Frota", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
+            { name: "Área Administrativa", mobileName: "Admin", path: "/frota?tab=reservas&sub=login", icon: Shield, visible: true }
           );
         }
       } else if (activeTab === "multas") {
         baseMenuItems.push(
-          { name: "Dashboard", path: "/frota?tab=multas&sub=dashboard", icon: LayoutDashboard, visible: true },
-          { name: "Multas", path: "/frota?tab=multas&sub=multas", icon: Siren, visible: true },
-          { name: "Alertas", path: "/frota?tab=multas&sub=alertas", icon: BellRing, visible: true },
-          { name: "Configurações", path: "/frota?tab=multas&sub=config", icon: Settings, visible: true }
+          { name: "Dashboard", mobileName: "Painel", path: "/frota?tab=multas&sub=dashboard", icon: LayoutDashboard, visible: true },
+          { name: "Multas", mobileName: "Multas", path: "/frota?tab=multas&sub=multas", icon: Siren, visible: true },
+          { name: "Alertas", mobileName: "Alertas", path: "/frota?tab=multas&sub=alertas", icon: BellRing, visible: true },
+          { name: "Configurações", mobileName: "Config.", path: "/frota?tab=multas&sub=config", icon: Settings, visible: true }
         );
       } else if (activeTab === "rastreamento") {
         baseMenuItems.push(
-          { name: "Dashboard Telemetria", path: "/frota?tab=rastreamento&sub=dashboard", icon: LayoutDashboard, visible: true },
-          { name: "Mapa e Grid ao Vivo", path: "/frota?tab=rastreamento&sub=mapa", icon: Navigation, visible: true },
-          { name: "Alertas e Sensores", path: "/frota?tab=rastreamento&sub=alertas", icon: Activity, visible: true },
-          { name: "Relatórios e Cercas", path: "/frota?tab=rastreamento&sub=relatorios", icon: FileSpreadsheet, visible: true }
+          { name: "Dashboard Telemetria", mobileName: "Painel", path: "/frota?tab=rastreamento&sub=dashboard", icon: LayoutDashboard, visible: true },
+          { name: "Mapa e Grid ao Vivo", mobileName: "Mapa", path: "/frota?tab=rastreamento&sub=mapa", icon: Navigation, visible: true },
+          { name: "Alertas e Sensores", mobileName: "Alertas", path: "/frota?tab=rastreamento&sub=alertas", icon: Activity, visible: true },
+          { name: "Relatórios e Cercas", mobileName: "Relatórios", path: "/frota?tab=rastreamento&sub=relatorios", icon: FileSpreadsheet, visible: true }
         );
       }
     }
   } else {
     baseMenuItems = [
-      { name: "Início", path: "/", icon: Home, visible: true },
-      { name: "Dashboard", path: "/documentos/dashboard", icon: LayoutDashboard, visible: hasModuleAccess(user?.permissions, "dashboard") },
-      { name: "Lançamento", path: "/documentos/lancamento", icon: FileText, visible: hasModuleAccess(user?.permissions, "lancamentos") },
-      { name: "Fornecedores", path: "/documentos/fornecedores", icon: Users, visible: hasModuleAccess(user?.permissions, "fornecedores") },
+      { name: "Início", mobileName: "Início", path: "/", icon: Home, visible: true },
+      { name: "Dashboard", mobileName: "Painel", path: "/documentos/dashboard", icon: LayoutDashboard, visible: hasModuleAccess(user?.permissions, "dashboard") },
+      { name: "Lançamento", mobileName: "Lançar", path: "/documentos/lancamento", icon: FileText, visible: hasModuleAccess(user?.permissions, "lancamentos") },
+      { name: "Fornecedores", mobileName: "Fornec.", path: "/documentos/fornecedores", icon: Users, visible: hasModuleAccess(user?.permissions, "fornecedores") },
     ];
   }
 
   const menuItems = baseMenuItems.filter(item => item.visible);
+
+  const checkItemActive = (itemPath: string) => {
+    const currentFull = location.pathname + location.search;
+    if (itemPath.includes("?")) {
+      try {
+        const itemUrl = new URL(itemPath, window.location.origin);
+        const currentUrl = new URL(currentFull, window.location.origin);
+        const itemTab = itemUrl.searchParams.get("tab");
+        const currentTab = currentUrl.searchParams.get("tab") || "portal";
+        if (itemTab === currentTab) {
+          const itemSub = itemUrl.searchParams.get("sub");
+          const currentSub = currentUrl.searchParams.get("sub");
+          if (itemSub) {
+            const defaultReservaSub = isReservaAdminLogado ? "dashboard" : "request";
+            return itemSub === currentSub || (!currentSub && (
+              (currentTab === "frota" && itemSub === "veiculos") || 
+              (currentTab === "checklist" && itemSub === "dashboard") || 
+              (currentTab === "reservas" && itemSub === defaultReservaSub) || 
+              (currentTab === "multas" && itemSub === "dashboard") || 
+              (currentTab === "rastreamento" && itemSub === "dashboard")
+            ));
+          }
+          return !currentSub;
+        }
+        return false;
+      } catch (e) {
+        return currentFull === itemPath;
+      }
+    }
+    return location.pathname === itemPath;
+  };
 
   const handleLogout = () => {
     logout();
@@ -255,7 +291,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex overflow-hidden w-full text-left">
+    <div className="min-h-screen bg-slate-50 flex md:overflow-hidden w-full text-left">
       {/* Sidebar - Estilo Premium Matte Escuro, mais estreito para CRM moderno */}
       <aside className={cn(
         "bg-[#07110C] border-r border-slate-800/40 py-8 hidden md:flex flex-col relative z-20 flex-shrink-0 transition-all duration-300 ease-in-out",
@@ -391,21 +427,33 @@ export function MainLayout({ children }: { children: ReactNode }) {
       </aside>
       
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden w-full">
+      <main className="flex-1 flex flex-col min-h-screen md:h-screen md:overflow-hidden w-full">
         {/* Top Header - Apenas para o módulo de Documentos (No módulo de Frota, o cabeçalho integrado no topo da página une título, menu e perfil do usuário para ganho máximo de espaço) */}
         {!isFrota && (
-          <header className="h-16 px-6 flex items-center justify-between gap-5 flex-shrink-0 bg-slate-50/80 backdrop-blur-md z-40 border-b border-slate-200/40">
-            {/* Opção discreta no Header para transição direta para o Controle de Frota quando em Documentos */}
-            {hasModuleAccess(user?.permissions, "frota") ? (
-              <Link
-                to="/frota?tab=portal"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100/90 border border-orange-200/80 text-orange-700 font-bold text-xs transition-all cursor-pointer shadow-2xs hover:shadow-xs"
-                title="Ir para o Módulo de Controle de Frota Leve Direto"
-              >
-                <Car className="w-3.5 h-3.5 text-orange-600" />
-                <span className="hidden sm:inline">Módulo de Frota Leve</span>
-              </Link>
-            ) : <div />}
+          <header className="h-14 sm:h-16 px-3.5 sm:px-6 flex items-center justify-between gap-3 sm:gap-5 flex-shrink-0 bg-slate-50/90 backdrop-blur-md z-40 border-b border-slate-200/40 sticky top-0 md:static">
+            <div className="flex items-center gap-2.5">
+              <div className="md:hidden w-8 h-8 rounded-xl overflow-hidden border border-emerald-600/30 shadow-xs shrink-0">
+                <img 
+                  src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" 
+                  alt="Logo Risel" 
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              {/* Opção discreta no Header para transição direta para o Controle de Frota quando em Documentos */}
+              {hasModuleAccess(user?.permissions, "frota") ? (
+                <Link
+                  to="/frota?tab=portal"
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100/90 border border-orange-200/80 text-orange-700 font-bold text-[11px] sm:text-xs transition-all cursor-pointer shadow-2xs hover:shadow-xs"
+                  title="Ir para o Módulo de Controle de Frota Leve Direto"
+                >
+                  <Car className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                  <span>Frota Leve</span>
+                </Link>
+              ) : (
+                <span className="md:hidden text-xs font-black text-[#114D38] uppercase tracking-wider">Risel Gestão</span>
+              )}
+            </div>
 
             <div className="flex items-center gap-3">
               {/* Ícone de Notificações Funcional */}
@@ -423,7 +471,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 </button>
 
                 {isNotificationsOpen && (
-                  <div className="absolute right-0 mt-2.5 w-80 bg-white rounded-2xl shadow-xl border border-slate-150/80 p-2 z-50 animate-in fade-in slide-in-from-top-3 duration-250 text-left">
+                  <div className="absolute right-0 mt-2.5 w-80 max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-xl border border-slate-150/80 p-2 z-50 animate-in fade-in slide-in-from-top-3 duration-250 text-left">
                     <div className="px-3.5 py-2.5 border-b border-slate-100 flex justify-between items-center">
                       <span className="text-[10px] font-extrabold text-[#114D38] uppercase tracking-wide">Alertas de Vencimento</span>
                       <span className="text-[9px] bg-amber-50 text-amber-800 border border-amber-200 font-bold px-2 py-0.5 rounded-full">{vencimentosAlerta.length} pendentes</span>
@@ -516,12 +564,12 @@ export function MainLayout({ children }: { children: ReactNode }) {
           </header>
         )}
 
-        {/* Content Area - Para rotas da Frota, utiliza container de altura total sem perda vertical */}
+        {/* Content Area - Rolagem natural no celular + Altura total fixa no desktop */}
         <div className={cn(
           "flex-1 w-full max-w-full mx-auto relative",
           isFrota 
-            ? "h-screen overflow-hidden flex flex-col min-h-0 px-3 sm:px-4 md:px-5 pt-2 pb-2" 
-            : "overflow-y-auto px-4 md:px-6 pb-20 pt-4"
+            ? "min-h-screen md:h-screen overflow-y-auto md:overflow-hidden flex flex-col min-h-0 px-2.5 sm:px-4 md:px-5 pt-2 pb-24 md:pb-2" 
+            : "overflow-y-auto px-3 sm:px-4 md:px-6 pb-24 md:pb-20 pt-3 sm:pt-4"
         )}>
           {isFrota && (
             <>
@@ -535,11 +583,207 @@ export function MainLayout({ children }: { children: ReactNode }) {
               <div className="fixed inset-0 z-0 pointer-events-none bg-gradient-to-b from-slate-50/80 via-slate-50/60 to-slate-100/90 backdrop-blur-[0.5px]" />
             </>
           )}
-          <div className={cn("max-w-full w-full mx-auto relative z-10", isFrota && "h-full flex flex-col min-h-0 overflow-hidden")}>
+          <div className={cn("max-w-full w-full mx-auto relative z-10", isFrota && "flex-1 md:h-full flex flex-col min-h-0 md:overflow-hidden")}>
             {children}
           </div>
         </div>
       </main>
+
+      {/* BARRA DE NAVEGAÇÃO INFERIOR MOBILE PREMIUM (ESTILO APP NATIVO) */}
+      {!(isFrota && activeTab === "reservas" && !isReservaAdminLogado) && (
+        <>
+          {/* Gaveta Inferior (Bottom Sheet) com Todos os Menus e Submódulos */}
+          {isMobileMenuOpen && (
+            <div 
+              className="md:hidden fixed inset-0 z-[60] bg-black/65 backdrop-blur-xs flex flex-col justify-end animate-in fade-in duration-200"
+              onClick={() => setIsMobileMenuOpen(false)}
+            >
+              <div 
+                className="bg-[#031A0E] border-t-2 border-[#F47920] rounded-t-3xl p-4 pb-[calc(5.2rem+env(safe-area-inset-bottom))] shadow-[0_-15px_45px_rgba(0,0,0,0.75)] max-h-[82vh] overflow-y-auto animate-in slide-in-from-bottom-6 duration-250"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mb-3.5" />
+                
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl overflow-hidden border border-[#F47920]/40 shadow-md shrink-0">
+                      <img 
+                        src="https://i.ibb.co/My6STcDv/71144827-2525571747712417-6231227587708846080-n.jpg" 
+                        alt="Logo Risel" 
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white leading-tight">Menu Administrativo Risel</h3>
+                      <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Navegação Rápida Mobile</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Seções do Módulo Atual */}
+                <div className="mb-4">
+                  <p className="text-[10px] font-black text-emerald-300/80 uppercase tracking-widest mb-2 px-1">
+                    {isFrota ? `Módulo Atual: ${activeTab.toUpperCase()}` : "Gestão de Documentos"}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {menuItems.map((item) => {
+                      const isActive = checkItemActive(item.path);
+                      return (
+                        <Link
+                          key={item.path}
+                          to={item.path}
+                          onClick={() => setIsMobileMenuOpen(false)}
+                          className={cn(
+                            "flex items-center gap-2.5 p-3 rounded-2xl font-bold text-xs transition-all border",
+                            isActive
+                              ? "bg-gradient-to-r from-[#F47920] to-[#d96512] text-white border-orange-300/40 shadow-md"
+                              : "bg-white/5 text-slate-200 border-white/10 hover:bg-white/10"
+                          )}
+                        >
+                          <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-white" : "text-[#F47920]")} />
+                          <span className="truncate">{item.name}</span>
+                        </Link>
+                      );
+                    })}
+                    {!isFrota && (user?.email?.toLowerCase() === "deny.goncalves@risel.com.br" || user?.email?.toLowerCase() === "deny.risel@gmail.com") && (
+                      <Link
+                        to="/documentos/usuarios"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className={cn(
+                          "flex items-center gap-2.5 p-3 rounded-2xl font-bold text-xs transition-all border",
+                          location.pathname === "/documentos/usuarios"
+                            ? "bg-gradient-to-r from-[#F47920] to-[#d96512] text-white border-orange-300/40 shadow-md"
+                            : "bg-white/5 text-slate-200 border-white/10 hover:bg-white/10"
+                        )}
+                      >
+                        <Users className="w-4 h-4 shrink-0 text-emerald-400" />
+                        <span className="truncate">Usuários</span>
+                      </Link>
+                    )}
+                  </div>
+                </div>
+
+                {/* Atalhos Rápidos Entre Módulos da Frota Leve */}
+                {isFrota && (
+                  <div className="pt-3 border-t border-white/10">
+                    <p className="text-[10px] font-black text-orange-300/90 uppercase tracking-widest mb-2 px-1">
+                      Alternar Submódulo da Frota
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: "Frota Leve", path: "/frota?tab=frota&sub=veiculos", tab: "frota", icon: Car },
+                        { label: "Reservas", path: "/frota?tab=reservas&sub=dashboard", tab: "reservas", icon: CalendarDays },
+                        { label: "Checklist", path: "/frota?tab=checklist&sub=dashboard", tab: "checklist", icon: CheckSquare },
+                        { label: "Multas", path: "/frota?tab=multas&sub=dashboard", tab: "multas", icon: Siren },
+                        { label: "Telemetria", path: "/frota?tab=rastreamento&sub=dashboard", tab: "rastreamento", icon: Navigation },
+                        { label: "Portal Frota", path: "/frota?tab=portal", tab: "portal", icon: LayoutGrid },
+                      ].map((mod) => {
+                        const isCurrentMod = activeTab === mod.tab;
+                        return (
+                          <Link
+                            key={mod.tab}
+                            to={mod.path}
+                            onClick={() => setIsMobileMenuOpen(false)}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-1 p-2.5 rounded-2xl text-center font-bold text-[10px] border transition-all",
+                              isCurrentMod
+                                ? "bg-emerald-700/60 text-white border-emerald-400/50 shadow-xs"
+                                : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
+                            )}
+                          >
+                            <mod.icon className={cn("w-4 h-4", isCurrentMod ? "text-emerald-300" : "text-slate-400")} />
+                            <span className="truncate w-full">{mod.label}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Barra Fixa Inferior Estilo App Premium */}
+          <nav
+            aria-label="Navegação Mobile Principal"
+            className="md:hidden fixed bottom-0 left-0 right-0 z-[70] bg-[#002613]/95 backdrop-blur-xl border-t-2 border-[#F47920] px-1.5 pt-1.5 pb-[calc(0.45rem+env(safe-area-inset-bottom))] shadow-[0_-10px_35px_rgba(0,0,0,0.55)]"
+          >
+            {(() => {
+              // Para Reservas Admin (8 itens), destacamos as 5 abas operacionais principais + botão Menu Completo
+              const nonHomeItems = menuItems.filter(i => i.path !== "/" && !i.path.includes("logout_reservas"));
+              const primaryBarItems = (isFrota && activeTab === "reservas" && isReservaAdminLogado)
+                ? nonHomeItems.filter(i =>
+                    i.path.includes("sub=dashboard") ||
+                    i.path.includes("sub=reservations") ||
+                    i.path.includes("sub=dailyUse") ||
+                    i.path.includes("sub=vehicles") ||
+                    i.path.includes("sub=racRentals")
+                  )
+                : menuItems.slice(0, 5);
+
+              return (
+                <div 
+                  className="grid gap-1 max-w-md mx-auto"
+                  style={{ gridTemplateColumns: `repeat(${primaryBarItems.length + 1}, minmax(0, 1fr))` }}
+                >
+                  {primaryBarItems.map((item) => {
+                    const isActive = checkItemActive(item.path) && !isMobileMenuOpen;
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className={cn(
+                          "flex flex-col items-center justify-center py-1.5 px-0.5 rounded-2xl transition-all duration-200 relative cursor-pointer select-none",
+                          isActive
+                            ? "bg-gradient-to-b from-[#F47920] to-[#d96512] text-white shadow-[0_4px_14px_rgba(244,121,32,0.45)] -translate-y-0.5"
+                            : "text-emerald-100/75 hover:text-white active:scale-95"
+                        )}
+                      >
+                        <item.icon className={cn("w-[18px] h-[18px] mb-0.5 shrink-0", isActive ? "text-white" : "text-emerald-200/85")} />
+                        <span className={cn(
+                          "text-[9.5px] leading-tight tracking-tight truncate max-w-full px-0.5",
+                          isActive ? "font-black text-white" : "font-bold text-emerald-100/80"
+                        )}>
+                          {item.mobileName || item.name}
+                        </span>
+                      </Link>
+                    );
+                  })}
+
+                  {/* Botão Menu / Mais (abre a gaveta de aplicativos com todas as opções e módulos) */}
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileMenuOpen(prev => !prev)}
+                    className={cn(
+                      "flex flex-col items-center justify-center py-1.5 px-0.5 rounded-2xl transition-all duration-200 relative cursor-pointer select-none",
+                      isMobileMenuOpen
+                        ? "bg-gradient-to-b from-[#F47920] to-[#d96512] text-white shadow-[0_4px_14px_rgba(244,121,32,0.45)] -translate-y-0.5"
+                        : "text-emerald-100/75 hover:text-white active:scale-95"
+                    )}
+                  >
+                    <LayoutGrid className={cn("w-[18px] h-[18px] mb-0.5 shrink-0", isMobileMenuOpen ? "text-white" : "text-[#F47920]")} />
+                    <span className={cn(
+                      "text-[9.5px] leading-tight tracking-tight truncate max-w-full px-0.5",
+                      isMobileMenuOpen ? "font-black text-white" : "font-bold text-orange-300"
+                    )}>
+                      Menus
+                    </span>
+                  </button>
+                </div>
+              );
+            })()}
+          </nav>
+        </>
+      )}
 
       {/* Modal Seguro de Visualização de Documento do Alerta */}
       <DocumentoAnexoModal

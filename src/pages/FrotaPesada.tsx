@@ -700,7 +700,7 @@ export default function FrotaPesada() {
   const isSidebarVisible = Boolean(currentSub && currentSub !== 'portal');
 
   return (
-    <div className="flex h-screen overflow-hidden font-sans selection:bg-emerald-200 selection:text-emerald-900 text-slate-800 bg-slate-100">
+    <div className="flex min-h-screen md:h-screen overflow-y-auto md:overflow-hidden font-sans selection:bg-emerald-200 selection:text-emerald-900 text-slate-800 bg-slate-100">
       {/* Sidebar renderizado para os submódulos da Frota Pesada com visual idêntico ao Controle de Frota Leve */}
       {isSidebarVisible && (
         <Sidebar 
@@ -714,7 +714,7 @@ export default function FrotaPesada() {
         />
       )}
       
-      <main className="flex-1 overflow-hidden transition-all duration-300 relative z-10 flex flex-col min-w-0">
+      <main className="flex-1 md:overflow-hidden transition-all duration-300 relative z-10 flex flex-col min-w-0 pb-24 md:pb-0">
         {/* CABEÇALHO SUPERIOR PADRONIZADO COM O MÓDULO DE FROTA LEVE */}
         <div className="shrink-0 bg-slate-50 px-3 sm:px-4 pt-2 pb-2.5 border-b border-slate-200/80 shadow-2xs space-y-2">
           {/* Top Header Card: Identidade à Esquerda e Usuário Logado no Topo Superior Direito */}
@@ -835,7 +835,7 @@ export default function FrotaPesada() {
 
             {/* Sub-abas de acesso direto para Infrações */}
             {currentSub === 'infracoes' && (
-              <div className="ml-auto hidden md:flex items-center gap-1 bg-white/70 px-1.5 py-0.5 rounded-lg border border-slate-200/60">
+              <div className="ml-auto flex items-center gap-1 bg-white/70 px-1.5 py-0.5 rounded-lg border border-slate-200/60 shrink-0">
                 <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Telas:</span>
                 <button
                   onClick={() => handleNavigatePage('DASHBOARD')}
@@ -876,7 +876,7 @@ export default function FrotaPesada() {
 
             {/* Sub-abas de acesso direto para Sinistros */}
             {currentSub === 'sinistros' && (
-              <div className="ml-auto hidden md:flex items-center gap-1 bg-white/70 px-1.5 py-0.5 rounded-lg border border-slate-200/60">
+              <div className="ml-auto flex items-center gap-1 bg-white/70 px-1.5 py-0.5 rounded-lg border border-slate-200/60 shrink-0">
                 <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Telas:</span>
                 <button
                   onClick={() => handleNavigatePage('SINISTROS_DASHBOARD')}
@@ -900,9 +900,106 @@ export default function FrotaPesada() {
         </div>
 
         {/* Conteúdo da Tela */}
-        <div className="p-3 sm:p-4 md:p-5 w-full mx-auto flex-1 overflow-hidden min-h-0 flex flex-col">
+        <div className="p-3 sm:p-4 md:p-5 w-full mx-auto flex-1 md:overflow-hidden min-h-0 flex flex-col">
           {renderContent()}
         </div>
+
+        {/* BARRA DE NAVEGAÇÃO INFERIOR PREMIUM MOBILE (ESTILO APP NATIVO) */}
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-[70] bg-[#002613]/95 backdrop-blur-xl border-t-2 border-[#F47920] shadow-[0_-10px_30px_rgba(0,0,0,0.35)] px-1.5 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          <div className="grid grid-cols-5 gap-1 max-w-md mx-auto">
+            <button
+              onClick={handleBackToPortal}
+              className="flex flex-col items-center justify-center py-1 px-1 rounded-xl text-emerald-100/75 hover:text-white active:scale-95 transition-all cursor-pointer"
+            >
+              <div className="w-8 h-7 rounded-xl flex items-center justify-center">
+                <LayoutGrid className="w-4 h-4" />
+              </div>
+              <span className="text-[9px] font-extrabold tracking-tight leading-none mt-0.5 truncate max-w-full">
+                Portal
+              </span>
+            </button>
+
+            <button
+              onClick={() => handleSelectSubmodule('infracoes', 'DASHBOARD')}
+              className={`flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all cursor-pointer relative ${
+                currentSub === 'infracoes' ? 'text-white' : 'text-emerald-100/70 hover:text-white'
+              }`}
+            >
+              <div className={`w-9 h-7 rounded-xl flex items-center justify-center transition-all ${
+                currentSub === 'infracoes'
+                  ? 'bg-gradient-to-r from-[#F47920] to-amber-500 text-white shadow-md shadow-[#F47920]/40 -translate-y-0.5 scale-105'
+                  : 'bg-transparent'
+              }`}>
+                <Siren className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] tracking-tight leading-none mt-0.5 truncate max-w-full ${
+                currentSub === 'infracoes' ? 'font-black text-[#F47920]' : 'font-bold'
+              }`}>
+                Infrações
+              </span>
+            </button>
+
+            <button
+              onClick={() => handleSelectSubmodule('frotas', 'FROTAS')}
+              className={`flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all cursor-pointer relative ${
+                currentSub === 'frotas' ? 'text-white' : 'text-emerald-100/70 hover:text-white'
+              }`}
+            >
+              <div className={`w-9 h-7 rounded-xl flex items-center justify-center transition-all ${
+                currentSub === 'frotas'
+                  ? 'bg-gradient-to-r from-[#F47920] to-amber-500 text-white shadow-md shadow-[#F47920]/40 -translate-y-0.5 scale-105'
+                  : 'bg-transparent'
+              }`}>
+                <Truck className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] tracking-tight leading-none mt-0.5 truncate max-w-full ${
+                currentSub === 'frotas' ? 'font-black text-[#F47920]' : 'font-bold'
+              }`}>
+                Frotas
+              </span>
+            </button>
+
+            <button
+              onClick={() => handleSelectSubmodule('motoristas', 'MOTORISTAS')}
+              className={`flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all cursor-pointer relative ${
+                currentSub === 'motoristas' ? 'text-white' : 'text-emerald-100/70 hover:text-white'
+              }`}
+            >
+              <div className={`w-9 h-7 rounded-xl flex items-center justify-center transition-all ${
+                currentSub === 'motoristas'
+                  ? 'bg-gradient-to-r from-[#F47920] to-amber-500 text-white shadow-md shadow-[#F47920]/40 -translate-y-0.5 scale-105'
+                  : 'bg-transparent'
+              }`}>
+                <Users className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] tracking-tight leading-none mt-0.5 truncate max-w-full ${
+                currentSub === 'motoristas' ? 'font-black text-[#F47920]' : 'font-bold'
+              }`}>
+                Motoristas
+              </span>
+            </button>
+
+            <button
+              onClick={() => handleSelectSubmodule('sinistros', 'SINISTROS_DASHBOARD')}
+              className={`flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all cursor-pointer relative ${
+                currentSub === 'sinistros' ? 'text-white' : 'text-emerald-100/70 hover:text-white'
+              }`}
+            >
+              <div className={`w-9 h-7 rounded-xl flex items-center justify-center transition-all ${
+                currentSub === 'sinistros'
+                  ? 'bg-gradient-to-r from-[#F47920] to-amber-500 text-white shadow-md shadow-[#F47920]/40 -translate-y-0.5 scale-105'
+                  : 'bg-transparent'
+              }`}>
+                <ShieldAlert className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] tracking-tight leading-none mt-0.5 truncate max-w-full ${
+                currentSub === 'sinistros' ? 'font-black text-[#F47920]' : 'font-bold'
+              }`}>
+                Sinistros
+              </span>
+            </button>
+          </div>
+        </nav>
       </main>
     </div>
   );

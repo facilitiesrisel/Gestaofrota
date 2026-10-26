@@ -148,8 +148,9 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         (data) => {
             setDailyTrips(data);
             try {
-              localStorage.setItem('risel_daily_trips', JSON.stringify(data));
-              localStorage.setItem('risel_frota_daily_trips', JSON.stringify(data));
+              const compactData = JSON.stringify(data.slice(0, 120));
+              localStorage.setItem('risel_daily_trips', compactData);
+              localStorage.setItem('risel_frota_daily_trips', compactData);
               window.dispatchEvent(new Event('risel_daily_trip_updated'));
               window.dispatchEvent(new Event('risel_reserva_data_updated'));
             } catch (e) {}

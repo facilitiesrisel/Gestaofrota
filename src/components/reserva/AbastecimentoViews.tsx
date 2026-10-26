@@ -357,7 +357,7 @@ export const AbastecimentoTableView: React.FC<AbastecimentoViewProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-[24px] border border-slate-150 p-4 space-y-3 shadow-sm text-left animate-in fade-in duration-300 relative flex flex-col h-full overflow-hidden">
+    <div className="bg-white rounded-[24px] border border-slate-150 p-4 space-y-3 shadow-sm text-left animate-in fade-in duration-300 relative flex flex-col min-h-[480px] md:h-full md:overflow-hidden">
       {/* Barra de Título e Período da Tabela */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-2 border-b border-slate-150 shrink-0 bg-white pt-1">
         <div className="flex flex-col gap-2">
@@ -390,7 +390,7 @@ export const AbastecimentoTableView: React.FC<AbastecimentoViewProps> = ({
       </div>
 
       {/* Container da Tabela com Rolagem Exclusiva de Dados */}
-      <div ref={tableScrollRef} className="flex-1 min-h-0 overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl relative shadow-inner bg-white">
+      <div ref={tableScrollRef} className="flex-1 min-h-[380px] md:min-h-0 overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl relative shadow-inner bg-white">
         <table className="w-full text-left text-xs border-collapse min-w-[900px]">
           <thead className="sticky top-0 z-20 font-bold text-white uppercase tracking-wider text-[9px] bg-[#114D38]">
             <tr className="bg-[#114D38]">

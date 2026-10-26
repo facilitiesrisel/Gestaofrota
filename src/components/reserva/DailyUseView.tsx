@@ -483,7 +483,7 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
     }
 
     return (
-        <div className="flex-1 min-h-0 flex flex-col space-y-3 w-full text-left overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col space-y-3 w-full text-left md:overflow-hidden pb-6 md:pb-0">
             {toast && (
                 <div className={`fixed top-20 right-6 text-white py-2 px-5 rounded-lg shadow-lg z-50 ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
                     {toast.message}
@@ -795,36 +795,77 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                         </div>
                     </div>
 
-                    <div className="md:hidden space-y-4 flex-grow overflow-y-auto">
+                    <div className="md:hidden space-y-3.5 pb-6">
                         {filteredActiveTrips.length === 0 ? (
-                            <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-                                <p className="text-gray-500">Nenhum veículo em uso encontrado.</p>
+                            <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-300">
+                                <p className="text-slate-500 text-xs font-bold">Nenhum veículo em uso encontrado.</p>
                             </div>
                         ) : (
-                            filteredActiveTrips.map(trip => (
-                            <div key={trip.id} className="bg-white p-4 rounded-lg shadow border border-gray-200">
-                                <div className="flex justify-between items-start mb-3">
-                                    <div>
-                                        <p className="text-sm font-bold text-gray-900">{getVehicleById(trip.vehicleId)?.model}</p>
-                                        <p className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded inline-block mt-1 font-mono">{getVehicleById(trip.vehicleId)?.plate}</p>
+                            filteredActiveTrips.map(trip => {
+                                const vehicle = getVehicleById(trip.vehicleId);
+                                return (
+                                    <div key={trip.id} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-200 space-y-3">
+                                        <div className="flex justify-between items-start gap-2 pb-2.5 border-b border-slate-100">
+                                            <div>
+                                                <p className="text-sm font-black text-slate-900 leading-tight">{vehicle?.model || 'Veículo'}</p>
+                                                <span className="text-xs font-mono font-black text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg inline-block mt-1">
+                                                    {vehicle?.plate || trip.vehicleId}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                <button onClick={() => handleOpenReturnModal(trip)} className="flex items-center gap-1.5 bg-orange-500 text-white px-3 py-2 rounded-xl hover:bg-orange-600 active:bg-orange-700 text-xs font-black shadow-xs cursor-pointer" title="Registrar Retorno">
+                                                    <CarIcon className="h-4 w-4" /> <span>Finalizar / Retorno</span>
+                                                </button>
+                                                {isAdmin && (
+                                                    <button onClick={() => handleOpenDeleteModal(trip)} className="p-2 text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl cursor-pointer" title="Excluir"><TrashIcon className="h-4 w-4"/></button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2 text-xs text-slate-700 bg-slate-50/90 p-3 rounded-xl border border-slate-100">
+                                            <div className="col-span-2 border-b border-slate-200/60 pb-2">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Motorista / Setor</span>
+                                                <span className="font-black text-slate-800 text-xs">{trip.driverName}</span>
+                                                {trip.department && (
+                                                    <span className="ml-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded">
+                                                        {trip.department}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div>
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Data/Hora Saída</span>
+                                                <span className="font-bold text-slate-800">
+                                                    {new Date(trip.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            </div>
+
+                                            <div>
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Hodômetro Saída</span>
+                                                <span className="font-mono font-black text-slate-800">{formatNum(trip.initialKm)} km</span>
+                                            </div>
+
+                                            <div className="col-span-2 pt-1 border-t border-slate-200/60">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Cidade / Local de Destino</span>
+                                                <span className="font-bold text-slate-800">{normalizeCidade(trip.destinationCity)}</span>
+                                                {trip.destination && <span className="text-slate-500 block text-[11px]">{trip.destination}</span>}
+                                            </div>
+
+                                            {trip.purpose && (
+                                                <div className="col-span-2">
+                                                    <span className="text-[9px] font-black text-slate-400 uppercase block">Motivo / Finalidade</span>
+                                                    <span className="font-medium text-slate-700">{trip.purpose}</span>
+                                                </div>
+                                            )}
+
+                                            <div className="col-span-2 pt-1 border-t border-slate-200/60 flex items-center justify-between">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase">Combustível Inicial</span>
+                                                <FuelLevelDisplay level={trip.initialFuelLevel} compact />
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="flex gap-1">
-                                        <button onClick={() => handleOpenReturnModal(trip)} className="flex items-center space-x-1.5 bg-orange-500 text-white px-3 py-1.5 rounded-lg hover:bg-orange-600 active:bg-orange-700 text-xs font-bold shadow-sm" title="Registrar Retorno">
-                                            <CarIcon className="h-4 w-4" /> <span>Retorno</span>
-                                        </button>
-                                        {isAdmin && (
-                                            <button onClick={() => handleOpenDeleteModal(trip)} className="p-2 text-red-600 hover:bg-red-50 rounded" title="Excluir"><TrashIcon className="h-5 w-5"/></button>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="border-t pt-3 space-y-2 text-sm text-gray-700">
-                                    <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">Motorista:</span> {trip.driverName}</p>
-                                    <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">Saída:</span> {new Date(trip.departureDateTime).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</p>
-                                    <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">KM Inicial:</span> {formatNum(trip.initialKm)} km</p>
-                                    <p><span className="font-semibold text-gray-500 text-xs uppercase w-20 inline-block">Destino:</span> {normalizeCidade(trip.destinationCity)}</p>
-                                </div>
-                            </div>
-                            ))
+                                );
+                            })
                         )}
                     </div>
                 </>
@@ -920,44 +961,106 @@ const DailyUseView: React.FC<DailyUseViewProps> = ({ isAdmin = true }) => {
                         </div>
                     </div>
 
-                    <div className="md:hidden space-y-4 flex-grow overflow-y-auto">
+                    <div className="md:hidden space-y-3.5 pb-6">
                     {filteredCompletedTrips.length === 0 ? (
-                        <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-                            <p className="text-gray-500">Nenhum histórico disponível.</p>
+                        <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-300">
+                            <p className="text-slate-500 text-xs font-bold">Nenhum histórico disponível.</p>
                         </div>
                     ) : (
                         filteredCompletedTrips.map(trip => {
+                            const vehicle = getVehicleById(trip.vehicleId);
                             const realKm = (trip.finalKm && trip.initialKm) ? trip.finalKm - trip.initialKm : 0;
                             const estKm = trip.distanceKm || 0;
                             const isHighKm = estKm > 0 && realKm > (estKm * 1.2);
                             const duration = formatDuration(trip.departureDateTime, trip.actualReturnDateTime);
 
                             return (
-                            <div key={trip.id} className="bg-white p-4 rounded-lg shadow border border-gray-200">
-                                <div className="flex justify-between items-start mb-2">
+                            <div key={trip.id} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-200 space-y-3">
+                                <div className="flex justify-between items-start gap-2 pb-2.5 border-b border-slate-100">
                                     <div>
-                                        <p className="text-sm font-bold text-gray-900">{getVehicleById(trip.vehicleId)?.model}</p>
-                                        <p className="text-xs text-gray-500">{getVehicleById(trip.vehicleId)?.plate}</p>
-                                    </div>
-                                    <div className="text-right">
-                                        <span className={`text-xs font-bold px-2 py-1 rounded ${isHighKm ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
-                                            {formatNum(realKm)} km
+                                        <p className="text-sm font-black text-slate-900 leading-tight">{vehicle?.model || 'Veículo'}</p>
+                                        <span className="text-xs font-mono font-black text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg inline-block mt-1">
+                                            {vehicle?.plate || trip.vehicleId}
                                         </span>
-                                        {duration && <span className="block text-[10px] text-blue-600 font-bold mt-1">{duration}</span>}
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1">
+                                        <span className={`text-xs font-black font-mono px-2.5 py-1 rounded-xl border ${isHighKm ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-emerald-50 text-emerald-800 border-emerald-200'}`}>
+                                            Rodado: {formatNum(realKm)} km
+                                        </span>
+                                        {duration && (
+                                            <span className="inline-flex items-center text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg">
+                                                <ClockIcon className="h-3 w-3 mr-1" /> {duration}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
-                                <div className="space-y-1 text-sm text-gray-600">
-                                    <p><strong>Motorista:</strong> {trip.driverName}</p>
-                                    <p><strong>Data:</strong> {new Date(trip.departureDateTime).toLocaleDateString('pt-BR')}</p>
-                                    <div className="flex items-center gap-2 text-xs mt-2 bg-gray-50 p-2 rounded">
-                                         <span className="font-bold">Tanque:</span>
-                                         {trip.initialFuelLevel || 'N/A'} <span className="text-gray-400">→</span> {trip.finalFuelLevel || 'N/A'}
+
+                                <div className="grid grid-cols-2 gap-2 text-xs text-slate-700 bg-slate-50/90 p-3 rounded-xl border border-slate-100">
+                                    <div className="col-span-2 border-b border-slate-200/60 pb-2">
+                                        <span className="text-[9px] font-black text-slate-400 uppercase block">Motorista / Setor</span>
+                                        <span className="font-black text-slate-800 text-xs">{trip.driverName}</span>
+                                        {trip.department && (
+                                            <span className="ml-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded">
+                                                {trip.department}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div>
+                                        <span className="text-[9px] font-black text-slate-400 uppercase block">Saída</span>
+                                        <span className="font-bold text-slate-800">
+                                            {new Date(trip.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                    </div>
+
+                                    <div>
+                                        <span className="text-[9px] font-black text-slate-400 uppercase block">Volta</span>
+                                        <span className="font-bold text-emerald-700">
+                                            {trip.actualReturnDateTime ? new Date(trip.actualReturnDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                                        </span>
+                                    </div>
+
+                                    <div>
+                                        <span className="text-[9px] font-black text-slate-400 uppercase block">KM Inicial → Final</span>
+                                        <span className="font-mono font-bold text-slate-800">
+                                            {formatNum(trip.initialKm)} → {formatNum(trip.finalKm)}
+                                        </span>
+                                    </div>
+
+                                    <div>
+                                        <span className="text-[9px] font-black text-slate-400 uppercase block">KM Estimado</span>
+                                        <span className="font-mono font-bold text-slate-600">
+                                            {estKm > 0 ? `${formatNum(estKm)} km` : 'N/A'}
+                                        </span>
+                                    </div>
+
+                                    <div className="col-span-2 pt-1 border-t border-slate-200/60">
+                                        <span className="text-[9px] font-black text-slate-400 uppercase block">Cidade / Local de Destino</span>
+                                        <span className="font-bold text-slate-800">{normalizeCidade(trip.destinationCity)}</span>
+                                        {trip.destination && <span className="text-slate-500 block text-[11px]">{trip.destination}</span>}
+                                    </div>
+
+                                    {trip.purpose && (
+                                        <div className="col-span-2">
+                                            <span className="text-[9px] font-black text-slate-400 uppercase block">Motivo / Finalidade</span>
+                                            <span className="font-medium text-slate-700">{trip.purpose}</span>
+                                        </div>
+                                    )}
+
+                                    <div className="col-span-2 pt-1 border-t border-slate-200/60 flex items-center justify-between">
+                                        <span className="text-[9px] font-black text-slate-400 uppercase">Combustível (Saída → Volta)</span>
+                                        <div className="flex items-center gap-2">
+                                            <FuelLevelDisplay level={trip.initialFuelLevel} compact />
+                                            <span className="text-slate-400 font-bold">→</span>
+                                            <FuelLevelDisplay level={trip.finalFuelLevel} compact />
+                                        </div>
                                     </div>
                                 </div>
+
                                 {isAdmin && (
-                                <div className="mt-3 pt-2 border-t flex justify-end gap-2">
-                                    <button onClick={() => handleOpenEditModal(trip)} className="p-2 text-blue-600 hover:bg-blue-50 rounded"><PencilIcon className="h-5 w-5"/></button>
-                                    <button onClick={() => handleOpenDeleteModal(trip)} className="p-2 text-red-600 hover:bg-red-50 rounded"><TrashIcon className="h-5 w-5"/></button>
+                                <div className="pt-2 border-t border-slate-100 flex justify-end gap-2">
+                                    <button onClick={() => handleOpenEditModal(trip)} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl cursor-pointer"><PencilIcon className="h-4 w-4"/></button>
+                                    <button onClick={() => handleOpenDeleteModal(trip)} className="p-2 text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl cursor-pointer"><TrashIcon className="h-4 w-4"/></button>
                                 </div>
                                 )}
                             </div>

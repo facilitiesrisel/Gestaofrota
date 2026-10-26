@@ -609,7 +609,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 overflow-hidden text-left">
+    <div className="flex-1 min-h-0 flex flex-col space-y-3 animate-in fade-in duration-200 md:overflow-hidden text-left pb-6 md:pb-0">
       {/* 1. KPIs Rápidos no Topo */}
       <div className="shrink-0 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
         <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-3">
@@ -739,7 +739,7 @@ export const ManutencaoTableView: React.FC<ManutencaoViewProps> = ({
       {/* 3. Tabela Principal */}
       <div 
         ref={tableScrollRef}
-        className="flex-1 min-h-0 bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-auto custom-scrollbar"
+        className="flex-1 min-h-[420px] md:min-h-0 bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-auto custom-scrollbar"
       >
         {viewMode === "linear" ? (
           /* MODO LISTA LINEAR */

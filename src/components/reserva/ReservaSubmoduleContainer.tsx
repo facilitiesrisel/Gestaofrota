@@ -13,6 +13,11 @@ import { MenuIcon, DocumentTextIcon, ClipboardListIcon, MapPinIcon, LogoutIcon, 
 import { ReservationAuthProvider, useAuth } from '../../context/ReservationAuthContext';
 import { useAuth as useGlobalAuth } from '../../context/AuthContext';
 import { ReservationProvider, useReservations } from '../../context/ReservationContext';
+import {
+    getDeviceActiveDailyTrip,
+    clearDeviceActiveDailyTrip,
+    isDailyTripCompleted,
+} from '../../utils/dailyUseSession';
 
 const firestoreRulesForPublicAccess = `rules_version = '2';
 service cloud.firestore {
@@ -55,29 +60,72 @@ service cloud.firestore {
 }`;
 
 const PublicLayout: React.FC<{ initialSub?: string }> = ({ initialSub }) => {
-    const { permissionError } = useReservations();
+    const { permissionError, dailyTrips } = useReservations();
     const location = useLocation();
     const isFrotaRoute = location.pathname.startsWith("/frota");
     
     const [searchParams, setSearchParams] = useSearchParams();
+
+    // Verifica se este celular possui uma viagem de Uso Diário iniciada e ainda não finalizada
+    const [myActiveTripId, setMyActiveTripId] = useState<string | null>(() => {
+        return getDeviceActiveDailyTrip()?.id || null;
+    });
+
+    useEffect(() => {
+        const syncDeviceTrip = () => {
+            const session = getDeviceActiveDailyTrip();
+            if (!session?.id) {
+                setMyActiveTripId(null);
+                return;
+            }
+            const dbTrip = dailyTrips.find(t => t.id === session.id);
+            if (dbTrip && isDailyTripCompleted(dbTrip)) {
+                clearDeviceActiveDailyTrip();
+                setMyActiveTripId(null);
+                return;
+            }
+            setMyActiveTripId(session.id);
+        };
+
+        syncDeviceTrip();
+        window.addEventListener('storage', syncDeviceTrip);
+        window.addEventListener('risel_daily_trip_updated', syncDeviceTrip);
+        return () => {
+            window.removeEventListener('storage', syncDeviceTrip);
+            window.removeEventListener('risel_daily_trip_updated', syncDeviceTrip);
+        };
+    }, [dailyTrips]);
+
     const rawPublicView = searchParams.get("sub") || initialSub || "request";
-    const publicView = rawPublicView === 'logout_reservas' ? 'login' : rawPublicView;
+    // Se este dispositivo abriu uma viagem de Uso Diário ainda não finalizada, fica SEMPRE fixo em 'dailyUse'
+    const publicView = myActiveTripId
+        ? 'dailyUse'
+        : (rawPublicView === 'logout_reservas' ? 'login' : rawPublicView);
 
     const [preSelectedVehicleId, setPreSelectedVehicleId] = useState<string | null>(null);
     const [isHelpOpen, setIsHelpOpen] = useState(false);
 
     const handleNavigate = (view: string) => {
+        const targetView = myActiveTripId ? 'dailyUse' : view;
         if (isFrotaRoute) {
-            setSearchParams({ tab: 'reservas', sub: view });
+            const nextParams: Record<string, string> = { tab: 'reservas', sub: targetView };
+            if (myActiveTripId) nextParams.tripId = myActiveTripId;
+            setSearchParams(nextParams);
         } else {
-            setSearchParams({ sub: view });
+            const nextParams: Record<string, string> = { sub: targetView };
+            if (myActiveTripId) nextParams.tripId = myActiveTripId;
+            setSearchParams(nextParams);
         }
-        if (view !== 'request') {
+        if (targetView !== 'request') {
             setPreSelectedVehicleId(null);
         }
     };
 
     const handleRequestReservationFromFleet = (vehicleId: string) => {
+        if (myActiveTripId) {
+            handleNavigate('dailyUse');
+            return;
+        }
         setPreSelectedVehicleId(vehicleId);
         if (isFrotaRoute) {
             setSearchParams({ tab: 'reservas', sub: 'request' });
@@ -278,8 +326,37 @@ const PublicLayout: React.FC<{ initialSub?: string }> = ({ initialSub }) => {
 const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean; initialSub?: string }> = ({ forcePublic = false, initialSub }) => {
     const { user: globalUser } = useGlobalAuth();
     const { user: fbUser, signOut: handleFbLogout, loading } = useAuth();
+    const { dailyTrips } = useReservations();
     const [searchParams] = useSearchParams();
     const subParam = searchParams.get("sub");
+
+    const [deviceActiveTripId, setDeviceActiveTripId] = useState<string | null>(() => {
+        return getDeviceActiveDailyTrip()?.id || null;
+    });
+
+    useEffect(() => {
+        const checkDeviceTrip = () => {
+            const session = getDeviceActiveDailyTrip();
+            if (!session?.id) {
+                setDeviceActiveTripId(null);
+                return;
+            }
+            const dbTrip = dailyTrips.find(t => t.id === session.id);
+            if (dbTrip && isDailyTripCompleted(dbTrip)) {
+                clearDeviceActiveDailyTrip();
+                setDeviceActiveTripId(null);
+                return;
+            }
+            setDeviceActiveTripId(session.id);
+        };
+        checkDeviceTrip();
+        window.addEventListener('storage', checkDeviceTrip);
+        window.addEventListener('risel_daily_trip_updated', checkDeviceTrip);
+        return () => {
+            window.removeEventListener('storage', checkDeviceTrip);
+            window.removeEventListener('risel_daily_trip_updated', checkDeviceTrip);
+        };
+    }, [dailyTrips]);
     
     const isUserAdmin = Boolean(
         !forcePublic && 
@@ -319,7 +396,12 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean; initialSub?: stri
         } catch (e) {}
     };
 
-    if (loading) {
+    // Se este celular abriu uma viagem de Uso Diário ainda não finalizada, mantém fixo na tela de finalizar Uso Diário
+    if (deviceActiveTripId) {
+        return <PublicLayout initialSub="dailyUse" />;
+    }
+
+    if (loading && !forcePublic) {
         return (
             <div className="flex flex-1 min-h-0 items-center justify-center bg-slate-50">
                 <div className="flex flex-col items-center animate-pulse">
@@ -346,7 +428,7 @@ export const ReservaSubmoduleContainer: React.FC<{ forcePublic?: boolean; initia
     return (
         <ReservationAuthProvider>
             <ReservationProvider>
-                <div className="relative w-full h-full text-left font-sans text-slate-800 antialiased flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="relative w-full min-h-full md:h-full text-left font-sans text-slate-800 antialiased flex flex-col flex-1 min-h-0 md:overflow-hidden">
                     <ReservaSubmoduleInner forcePublic={forcePublic} initialSub={initialSub} />
                 </div>
             </ReservationProvider>

@@ -611,7 +611,7 @@ const ReservationsView: React.FC = () => {
   const handleExport = () => { /* ... Export Logic ... */ };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-3 w-full text-left overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col space-y-3 w-full text-left md:overflow-hidden pb-6 md:pb-0">
        {toast && (
           <div className={`fixed top-20 right-6 text-white px-5 py-3 rounded-xl shadow-xl z-50 font-medium flex items-center gap-2.5 transition-all text-xs sm:text-sm ${
             toast.type === 'success' ? 'bg-emerald-600' :
@@ -1383,44 +1383,105 @@ const ReservationsView: React.FC = () => {
                     </table>
                 </div>
 
-                {/* Mobile View para Histórico */}
-                <div className="md:hidden flex-1 min-h-0 overflow-y-auto space-y-4 pb-6">
+                {/* Mobile View para Histórico (Exibe 100% dos dados) */}
+                <div className="md:hidden space-y-3.5 pb-6">
                     {filteredReservations.length === 0 ? (
                         <div className="bg-white p-6 rounded-2xl border text-center text-slate-400 font-medium text-xs">
                             Nenhum registro encontrado no histórico.
                         </div>
                     ) : (
-                        filteredReservations.map(res => (
-                            <div key={res.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-3">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <span className="font-bold text-gray-900 text-sm block">{res.requesterName}</span>
-                                        <span className="text-xs text-gray-500">{res.department} {res.role ? `• ${res.role}` : ''}</span>
+                        filteredReservations.map(res => {
+                            const vehicle = getVehicleById(res.vehicleId);
+                            return (
+                                <div key={res.id} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-200 space-y-3">
+                                    <div className="flex justify-between items-start gap-2 pb-2.5 border-b border-slate-100">
+                                        <div>
+                                            <span className="font-black text-slate-900 text-sm block leading-tight">{res.requesterName}</span>
+                                            <span className="text-xs font-semibold text-slate-500 block mt-0.5">
+                                                {normalizeNomeSetor(res.department)} {res.role ? `• ${res.role}` : ''}
+                                            </span>
+                                            {res.requestTimestamp && (
+                                                <span className="text-[10px] font-bold text-slate-400 block mt-0.5">
+                                                    Pedido em: {new Date(res.requestTimestamp).toLocaleDateString('pt-BR')}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1.5 shrink-0">
+                                            {getStatusChip(res.status)}
+                                            <div className="flex items-center gap-1.5">
+                                                <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 p-1.5 rounded-xl border border-blue-200 bg-blue-50 cursor-pointer" title="Ver / Editar"><PencilIcon className="h-4 w-4"/></button>
+                                                <button onClick={() => handleOpenDeleteModal(res)} className="text-rose-600 p-1.5 rounded-xl border border-rose-200 bg-rose-50 cursor-pointer" title="Excluir"><TrashIcon className="h-4 w-4"/></button>
+                                            </div>
+                                        </div>
                                     </div>
-                                    {getStatusChip(res.status)}
+
+                                    <div className="grid grid-cols-2 gap-2 text-xs text-slate-700 bg-slate-50/90 p-3 rounded-xl border border-slate-100">
+                                        <div className="col-span-2 flex items-center justify-between border-b border-slate-200/60 pb-2">
+                                            <div>
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Veículo Designado</span>
+                                                <span className="font-black text-slate-800 text-xs">{vehicle?.model || 'N/A'}</span>
+                                            </div>
+                                            {vehicle?.plate && (
+                                                <span className="text-xs font-mono font-black bg-white border border-slate-300 px-2 py-0.5 rounded-lg text-slate-800 shadow-2xs">
+                                                    {vehicle.plate}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {res.driverName && (
+                                            <div className="col-span-2">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Condutor Autorizado</span>
+                                                <span className="font-bold text-slate-800">{res.driverName}</span>
+                                            </div>
+                                        )}
+
+                                        <div>
+                                            <span className="text-[9px] font-black text-slate-400 uppercase block">Saída</span>
+                                            <span className="font-bold text-slate-800">{formatDateTimeBR(res.departureDateTime)}</span>
+                                        </div>
+
+                                        <div>
+                                            <span className="text-[9px] font-black text-slate-400 uppercase block">
+                                                {res.actualReturnDateTime ? 'Devolvido em' : 'Retorno Previsto'}
+                                            </span>
+                                            <span className={`font-bold ${res.actualReturnDateTime ? 'text-emerald-700' : 'text-slate-800'}`}>
+                                                {formatDateTimeBR(res.actualReturnDateTime || res.returnDate)}
+                                            </span>
+                                        </div>
+
+                                        <div className="col-span-2 pt-1 border-t border-slate-200/60">
+                                            <span className="text-[9px] font-black text-slate-400 uppercase block">Cidade / Local de Destino</span>
+                                            <span className="font-bold text-slate-800">{normalizeCidade(res.destinationCity)}</span>
+                                            {res.destination && <span className="text-slate-500 block text-[11px]">{res.destination}</span>}
+                                        </div>
+
+                                        {res.purpose && (
+                                            <div className="col-span-2">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Finalidade / Motivo</span>
+                                                <span className="font-medium text-slate-700">{res.purpose}</span>
+                                            </div>
+                                        )}
+
+                                        {res.status === ReservationStatus.Completed && (
+                                            <div className="col-span-2 pt-1 border-t border-slate-200/60 flex items-center justify-between">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase">Desfecho / Hodômetro</span>
+                                                <span className="font-mono text-emerald-800 font-black">
+                                                    KM Final: {res.finalKm ? `${res.finalKm.toLocaleString('pt-BR')} km` : 'N/I'}
+                                                    {res.distanceKm && res.distanceKm > 0 ? ` (~${res.distanceKm} km prev.)` : ''}
+                                                </span>
+                                            </div>
+                                        )}
+
+                                        {res.status === ReservationStatus.Rejected && res.rejectReason && (
+                                            <div className="col-span-2 bg-rose-50 text-rose-800 border border-rose-200 p-2 rounded-lg text-[11px]">
+                                                <span className="font-black block uppercase text-[9px]">Motivo da Recusa:</span>
+                                                <span>{res.rejectReason}</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="text-xs text-gray-600 space-y-1.5 bg-slate-50 p-3 rounded-xl">
-                                    <p><strong>Veículo:</strong> {getVehicleById(res.vehicleId)?.model} - <span className="font-mono">{getVehicleById(res.vehicleId)?.plate}</span></p>
-                                    <p><strong>Saída:</strong> {new Date(res.departureDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
-                                    {res.actualReturnDateTime ? (
-                                        <p className="text-emerald-700"><strong>Devolvido:</strong> {new Date(res.actualReturnDateTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
-                                    ) : (
-                                        <p><strong>Retorno Previsto:</strong> {new Date(res.returnDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
-                                    )}
-                                    <p><strong>Destino:</strong> {normalizeCidade(res.destinationCity)} {res.destination ? `(${res.destination})` : ''}</p>
-                                    {res.status === ReservationStatus.Completed && (
-                                        <p><strong>KM Final:</strong> <span className="font-mono text-emerald-800 font-bold">{res.finalKm ? `${res.finalKm.toLocaleString('pt-BR')} km` : 'N/I'}</span></p>
-                                    )}
-                                    {res.status === ReservationStatus.Rejected && res.rejectReason && (
-                                        <p className="text-red-700"><strong>Motivo:</strong> {res.rejectReason}</p>
-                                    )}
-                                </div>
-                                <div className="flex justify-end gap-3 border-t pt-3">
-                                    <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 p-1.5 rounded-lg border border-blue-100 bg-blue-50 cursor-pointer" title="Editar"><PencilIcon className="h-4 w-4"/></button>
-                                    <button onClick={() => handleOpenDeleteModal(res)} className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg border border-slate-200 bg-slate-50 cursor-pointer" title="Excluir"><TrashIcon className="h-4 w-4"/></button>
-                                </div>
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </>
@@ -1490,6 +1551,11 @@ const ReservationsView: React.FC = () => {
                                               </button>
                                           </>
                                       )}
+                                      {res.status === ReservationStatus.InUse && (
+                                          <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 hover:bg-emerald-50 p-1.5 rounded-lg transition-colors border border-emerald-200 cursor-pointer" title="Concluir / Finalizar Viagem">
+                                              <CheckIcon className="h-5 w-5" />
+                                          </button>
+                                      )}
                                       <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-blue-150 cursor-pointer" title="Editar"><PencilIcon className="h-5 w-5"/></button>
                                       <button onClick={() => handleOpenDeleteModal(res)} className="text-gray-400 hover:text-red-600 hover:bg-gray-50 p-1.5 rounded-lg transition-colors border border-transparent hover:border-red-150 cursor-pointer" title="Excluir"><TrashIcon className="h-5 w-5"/></button>
                                   </td>
@@ -1500,47 +1566,115 @@ const ReservationsView: React.FC = () => {
                     </table>
                 </div>
                 
-                {/* Mobile View para Reservas Ativas */}
-                <div className="md:hidden flex-1 min-h-0 overflow-y-auto space-y-4 pb-6">
+                {/* Mobile View para Reservas Ativas (Exibe 100% dos dados e botões de ação) */}
+                <div className="md:hidden space-y-3.5 pb-6">
                     {filteredReservations.length === 0 ? (
                         <div className="bg-white p-6 rounded-2xl border text-center text-slate-400 font-medium text-xs">
                             Nenhuma reserva ativa encontrada.
                         </div>
                     ) : (
-                        filteredReservations.map(res => (
-                            <div key={res.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <span className="font-bold text-gray-900">{res.requesterName}</span>
-                                        <span className="text-xs text-gray-500 block">{res.department}</span>
+                        filteredReservations.map(res => {
+                            const vehicle = getVehicleById(res.vehicleId);
+                            return (
+                                <div key={res.id} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-200 space-y-3">
+                                    <div className="flex justify-between items-start gap-2 pb-2.5 border-b border-slate-100">
+                                        <div>
+                                            <span className="font-black text-slate-900 text-sm block leading-tight">{res.requesterName}</span>
+                                            <span className="text-xs font-semibold text-slate-500 block mt-0.5">
+                                                {normalizeNomeSetor(res.department)} {res.role ? `• ${res.role}` : ''}
+                                            </span>
+                                            {res.requestTimestamp && (
+                                                <span className="text-[10px] font-bold text-slate-400 block mt-0.5">
+                                                    Pedido em: {new Date(res.requestTimestamp).toLocaleDateString('pt-BR')}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {getStatusChip(res.status)}
                                     </div>
-                                    {getStatusChip(res.status)}
+
+                                    <div className="grid grid-cols-2 gap-2 text-xs text-slate-700 bg-slate-50/90 p-3 rounded-xl border border-slate-100">
+                                        <div className="col-span-2 flex items-center justify-between border-b border-slate-200/60 pb-2">
+                                            <div>
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Veículo Designado</span>
+                                                <span className="font-black text-slate-800 text-xs">{vehicle?.model || 'N/A'}</span>
+                                            </div>
+                                            {vehicle?.plate && (
+                                                <span className="text-xs font-mono font-black bg-white border border-slate-300 px-2 py-0.5 rounded-lg text-slate-800 shadow-2xs">
+                                                    {vehicle.plate}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {res.driverName && (
+                                            <div className="col-span-2">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Condutor Autorizado</span>
+                                                <span className="font-bold text-slate-800">{res.driverName}</span>
+                                            </div>
+                                        )}
+
+                                        <div>
+                                            <span className="text-[9px] font-black text-slate-400 uppercase block">Saída</span>
+                                            <span className="font-bold text-slate-800">{formatDateTimeBR(res.departureDateTime)}</span>
+                                        </div>
+
+                                        <div>
+                                            <span className="text-[9px] font-black text-slate-400 uppercase block">Retorno Previsto</span>
+                                            <span className="font-bold text-slate-800">{formatDateTimeBR(res.returnDate)}</span>
+                                        </div>
+
+                                        <div className="col-span-2 pt-1 border-t border-slate-200/60">
+                                            <span className="text-[9px] font-black text-slate-400 uppercase block">Cidade / Local de Destino</span>
+                                            <span className="font-bold text-slate-800">{normalizeCidade(res.destinationCity)}</span>
+                                            {res.destination && <span className="text-slate-500 block text-[11px]">{res.destination}</span>}
+                                        </div>
+
+                                        {res.purpose && (
+                                            <div className="col-span-2">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase block">Finalidade / Motivo</span>
+                                                <span className="font-medium text-slate-700">{res.purpose}</span>
+                                            </div>
+                                        )}
+
+                                        {res.adminNotes && (
+                                            <div className="col-span-2 bg-amber-50/70 border border-amber-200/80 p-2 rounded-lg text-[11px] text-amber-900">
+                                                <span className="font-black uppercase text-[9px] block">Observações:</span>
+                                                <span>{res.adminNotes}</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-2.5">
+                                        {res.status === ReservationStatus.Pending && (
+                                            <>
+                                                <button onClick={() => handleApprove(res)} className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1 cursor-pointer shadow-2xs" title="Aprovar">
+                                                    <CheckIcon className="h-4 w-4"/> Aprovar
+                                                </button>
+                                                <button onClick={() => handleOpenRejectModal(res)} className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-black flex items-center gap-1 cursor-pointer" title="Rejeitar">
+                                                    <XIcon className="h-4 w-4"/> Recusar
+                                                </button>
+                                            </>
+                                        )}
+                                        {res.status === ReservationStatus.Approved && (
+                                            <>
+                                                <button onClick={() => handleStartReservation(res)} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white text-xs font-black flex items-center gap-1 cursor-pointer shadow-2xs" title="Iniciar Viagem">
+                                                    <PlayIcon className="h-4 w-4" /> Iniciar
+                                                </button>
+                                                <button onClick={() => handleCancel(res)} className="px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-600 hover:text-rose-600 text-xs font-bold flex items-center gap-1 cursor-pointer" title="Cancelar">
+                                                    <XCircleIcon className="h-4 w-4" /> Cancelar
+                                                </button>
+                                            </>
+                                        )}
+                                        {res.status === ReservationStatus.InUse && (
+                                            <button onClick={() => handleOpenFinalizeModal(res)} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white text-xs font-black flex items-center gap-1 cursor-pointer shadow-2xs" title="Finalizar Viagem">
+                                                <CheckIcon className="h-4 w-4" /> Finalizar
+                                            </button>
+                                        )}
+                                        <button onClick={() => handleOpenEditModal(res)} className="p-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 cursor-pointer" title="Editar"><PencilIcon className="h-4 w-4"/></button>
+                                        <button onClick={() => handleOpenDeleteModal(res)} className="p-2 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 cursor-pointer" title="Excluir"><TrashIcon className="h-4 w-4"/></button>
+                                    </div>
                                 </div>
-                                <div className="text-sm text-gray-600 mt-2 space-y-1">
-                                    <p><strong>Veículo:</strong> {getVehicleById(res.vehicleId)?.model} - {getVehicleById(res.vehicleId)?.plate}</p>
-                                    <p><strong>Saída:</strong> {formatDateTimeBR(res.departureDateTime)}</p>
-                                    <p><strong>Retorno Previsto:</strong> {formatDateTimeBR(res.returnDate)}</p>
-                                    <p><strong>Destino:</strong> {normalizeCidade(res.destinationCity)}</p>
-                                </div>
-                                <div className="flex justify-end mt-3 gap-3 border-t pt-3">
-                                      {res.status === ReservationStatus.Pending && (
-                                          <>
-                                              <button onClick={() => handleApprove(res)} className="text-green-600 p-1 cursor-pointer" title="Aprovar"><CheckIcon className="h-6 w-6"/></button>
-                                              <button onClick={() => handleOpenRejectModal(res)} className="text-red-600 p-1 cursor-pointer" title="Rejeitar"><XIcon className="h-6 w-6"/></button>
-                                          </>
-                                      )}
-                                      {res.status === ReservationStatus.Approved && (
-                                          <>
-                                              <button onClick={() => handleStartReservation(res)} className="text-green-700 p-1 cursor-pointer" title="Iniciar Viagem"><PlayIcon className="h-6 w-6" /></button>
-                                              <button onClick={() => handleCancel(res)} className="text-gray-500 hover:text-red-600 p-1 cursor-pointer" title="Cancelar"><XCircleIcon className="h-6 w-6" /></button>
-                                          </>
-                                      )}
-                                      
-                                      <button onClick={() => handleOpenEditModal(res)} className="text-blue-600 p-1 cursor-pointer" title="Editar"><PencilIcon className="h-6 w-6"/></button>
-                                      <button onClick={() => handleOpenDeleteModal(res)} className="text-gray-400 hover:text-red-600 p-1 cursor-pointer" title="Excluir"><TrashIcon className="h-6 w-6"/></button>
-                                </div>
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </>

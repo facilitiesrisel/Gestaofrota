@@ -946,11 +946,19 @@ const docToDailyTrip = (doc: any): DailyTrip | null => {
     if (!vehicleId) return null;
 
     const returnDate = convertOptionalFirestoreDate(data.actualReturnDateTime || data.returnDate || data.dataRetorno);
-    const finalKmNum = data.finalKm != null && !isNaN(Number(data.finalKm)) ? Number(data.finalKm) : undefined;
+    const rawFinalKm = data.finalKm;
+    const finalKmNum = rawFinalKm !== undefined && rawFinalKm !== null && String(rawFinalKm).trim() !== '' && !isNaN(Number(rawFinalKm)) && Number(rawFinalKm) > 0
+        ? Number(rawFinalKm)
+        : undefined;
     
-    // Se a viagem já possui retorno ou km final preenchidos, ela está garantidamente concluída
-    const isActuallyCompleted = Boolean(returnDate || finalKmNum !== undefined);
-    const resolvedStatus = isActuallyCompleted ? ReservationStatus.Completed : normalizeStatus(data.status || 'Em Uso');
+    const normalizedRawStatus = normalizeStatus(data.status || 'Em Uso');
+    // Se a viagem já possui retorno ou km final válido (> 0) preenchidos, ela está garantidamente concluída
+    const isActuallyCompleted = Boolean(
+        normalizedRawStatus === ReservationStatus.Completed ||
+        returnDate ||
+        (finalKmNum !== undefined && finalKmNum > 0)
+    );
+    const resolvedStatus = isActuallyCompleted ? ReservationStatus.Completed : normalizedRawStatus;
 
     return {
         id: doc.id,
@@ -1573,46 +1581,194 @@ export const deleteReservation = async (id: string) => {
 
 
 // --- Funções CRUD para Uso Diário ---
+const dailyTripListeners: ((data: DailyTrip[]) => void)[] = [];
+let memoryDailyTripsCache: DailyTrip[] = [];
+
+const getCachedDailyTrips = (): DailyTrip[] => {
+    if (memoryDailyTripsCache.length > 0) return memoryDailyTripsCache;
+    try {
+        const raw = localStorage.getItem('risel_daily_trips') || sessionStorage.getItem('risel_daily_trips');
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                memoryDailyTripsCache = parsed.map((t: any) => ({
+                    ...t,
+                    departureDateTime: t.departureDateTime ? new Date(t.departureDateTime) : new Date(),
+                    actualReturnDateTime: t.actualReturnDateTime ? new Date(t.actualReturnDateTime) : undefined,
+                }));
+                return memoryDailyTripsCache;
+            }
+        }
+    } catch (e) {}
+    return [];
+};
+
+const saveCachedDailyTrips = (trips: DailyTrip[]) => {
+    memoryDailyTripsCache = trips;
+    try {
+        // Armazena os 120 registros mais recentes no localStorage para não saturar a cota de 5MB em celulares
+        const compact = trips.slice(0, 120);
+        const serialized = JSON.stringify(compact);
+        try {
+            localStorage.setItem('risel_daily_trips', serialized);
+        } catch (quotaErr) {
+            try { sessionStorage.setItem('risel_daily_trips', serialized); } catch (_) {}
+        }
+    } catch (e) {}
+};
+
+const notifyDailyTripListeners = (trips: DailyTrip[]) => {
+    dailyTripListeners.forEach(listener => {
+        try { listener(trips); } catch (e) {}
+    });
+};
+
 export const getDailyUseTrips = async (): Promise<DailyTrip[]> => {
-    const snapshot = await dailyUseCollection.orderBy('departureDateTime', 'desc').get();
-    return snapshot.docs
-        .map(docToDailyTrip)
-        .filter((t): t is DailyTrip => t !== null);
+    try {
+        const snapshot = await dailyUseCollection.orderBy('departureDateTime', 'desc').get();
+        const trips = snapshot.docs
+            .map(docToDailyTrip)
+            .filter((t): t is DailyTrip => t !== null);
+        saveCachedDailyTrips(trips);
+        return trips;
+    } catch (e) {
+        return getCachedDailyTrips();
+    }
 };
 
 export const subscribeToDailyUseTrips = (onUpdate: (data: DailyTrip[]) => void, onError: (error: any) => void) => {
-    return dailyUseCollection.orderBy('departureDateTime', 'desc').onSnapshot(snapshot => {
-        const trips = snapshot.docs.map(docToDailyTrip).filter((t): t is DailyTrip => t !== null);
-        onUpdate(trips);
-    }, onError);
+    dailyTripListeners.push(onUpdate);
+    const cached = getCachedDailyTrips();
+    if (cached.length > 0) {
+        try { onUpdate(cached); } catch (e) {}
+    }
+
+    const unsubFirestore = dailyUseCollection.orderBy('departureDateTime', 'desc').onSnapshot(snapshot => {
+        const firestoreTrips = snapshot.docs.map(docToDailyTrip).filter((t): t is DailyTrip => t !== null);
+        // Preserva eventuais viagens locais recém-iniciadas ou recém-finalizadas nos últimos 20s caso o snapshot ainda esteja propagando
+        const currentLocal = getCachedDailyTrips();
+        const firestoreMap = new Map<string, DailyTrip>(firestoreTrips.map((t: DailyTrip) => [t.id, t]));
+        const merged: DailyTrip[] = [...firestoreTrips];
+
+        for (const localTrip of currentLocal) {
+            const remoteTrip = firestoreMap.get(localTrip.id);
+            if (!remoteTrip && localTrip.status === ReservationStatus.InUse) {
+                const ageMs = Date.now() - new Date(localTrip.departureDateTime).getTime();
+                if (ageMs < 120000) {
+                    merged.unshift(localTrip);
+                }
+            } else if (remoteTrip && localTrip.status === ReservationStatus.Completed && remoteTrip.status !== ReservationStatus.Completed) {
+                const idx = merged.findIndex(m => m.id === localTrip.id);
+                if (idx !== -1) {
+                    merged[idx] = localTrip;
+                }
+            }
+        }
+
+        saveCachedDailyTrips(merged);
+        onUpdate(merged);
+    }, (err) => {
+        const fallback = getCachedDailyTrips();
+        if (fallback.length > 0) {
+            onUpdate(fallback);
+        }
+        onError(err);
+    });
+
+    return () => {
+        const idx = dailyTripListeners.indexOf(onUpdate);
+        if (idx !== -1) dailyTripListeners.splice(idx, 1);
+        unsubFirestore();
+    };
 };
 
 export const addDailyUseTrip = async (data: Omit<DailyTrip, 'id' | 'status' | 'actualReturnDateTime' | 'finalKm' | 'finalFuelLevel'>): Promise<string> => {
+    ensureAdminFirebaseAuth().catch(() => {});
+
     const tripWithStatus = {
         ...data,
         department: normalizeNomeSetor(data.department, 'Operações'),
-        status: ReservationStatus.InUse,
+        status: ReservationStatus.InUse as ReservationStatus.InUse,
     };
-    const docRef = await dailyUseCollection.add(removeUndefined(tripWithStatus));
-    return docRef.id;
+
+    let newId = `daily_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    try {
+        const docRefPromise = dailyUseCollection.add(removeUndefined(tripWithStatus));
+        const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore addDailyUseTrip")), 6000));
+        const docRef = await Promise.race([docRefPromise, timeoutPromise]);
+        if (docRef && docRef.id) {
+            newId = docRef.id;
+        }
+    } catch (err) {
+        console.warn("Aviso ao gravar saída de Uso Diário no Firestore (usando contingência e sincronizando em background):", err);
+        dailyUseCollection.doc(newId).set(removeUndefined(tripWithStatus), { merge: true }).catch(() => {});
+    }
+
+    const createdTrip: DailyTrip = {
+        ...tripWithStatus,
+        id: newId,
+        departureDateTime: data.departureDateTime instanceof Date ? data.departureDateTime : new Date(data.departureDateTime),
+    };
+
+    const currentList = getCachedDailyTrips().filter(t => t.id !== newId);
+    const updatedList: DailyTrip[] = [createdTrip, ...currentList];
+    saveCachedDailyTrips(updatedList);
+    notifyDailyTripListeners(updatedList);
+
+    return newId;
 };
 
-export const endDailyUseTrip = (id: string, data: { actualReturnDateTime: Date; finalKm: number; finalFuelLevel: FuelLevel }) => {
+export const endDailyUseTrip = async (id: string, data: { actualReturnDateTime: Date; finalKm: number; finalFuelLevel: FuelLevel }) => {
+    ensureAdminFirebaseAuth().catch(() => {});
+
     const tripWithStatus = {
         ...data,
-        status: ReservationStatus.Completed,
+        status: ReservationStatus.Completed as ReservationStatus.Completed,
     };
-    return dailyUseCollection.doc(id).update(removeUndefined(tripWithStatus));
+
+    // Atualiza imediatamente o cache e ouvintes locais para resposta instantânea no celular
+    const currentList = getCachedDailyTrips();
+    const updatedList: DailyTrip[] = currentList.map(t => t.id === id ? {
+        ...t,
+        ...tripWithStatus,
+    } : t);
+    saveCachedDailyTrips(updatedList);
+    notifyDailyTripListeners(updatedList);
+
+    try {
+        const updatePromise = dailyUseCollection.doc(id).set(removeUndefined(tripWithStatus), { merge: true });
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore endDailyUseTrip")), 5000));
+        await Promise.race([updatePromise, timeoutPromise]);
+    } catch (err) {
+        console.warn("Encerramento de Uso Diário enviado em background para o Firestore:", err);
+        dailyUseCollection.doc(id).set(removeUndefined(tripWithStatus), { merge: true }).catch(() => {});
+    }
 };
 
-export const updateDailyUseTrip = (id: string, data: Partial<Omit<DailyTrip, 'id'>>) => {
+export const updateDailyUseTrip = async (id: string, data: Partial<Omit<DailyTrip, 'id'>>) => {
+    ensureAdminFirebaseAuth().catch(() => {});
     const sanitizedData = { ...data };
     if (sanitizedData.department !== undefined) {
         sanitizedData.department = normalizeNomeSetor(sanitizedData.department, 'Operações');
     }
-    return dailyUseCollection.doc(id).update(removeUndefined(sanitizedData));
+
+    const currentList = getCachedDailyTrips();
+    const updatedList = currentList.map(t => t.id === id ? { ...t, ...sanitizedData } : t);
+    saveCachedDailyTrips(updatedList);
+    notifyDailyTripListeners(updatedList);
+
+    try {
+        await dailyUseCollection.doc(id).set(removeUndefined(sanitizedData), { merge: true });
+    } catch (err) {
+        console.warn("updateDailyUseTrip aviso:", err);
+    }
 };
+
 export const deleteDailyUseTrip = async (id: string) => {
+    const currentList = getCachedDailyTrips().filter(t => t.id !== id);
+    saveCachedDailyTrips(currentList);
+    notifyDailyTripListeners(currentList);
+
     try {
         if (!id || id.startsWith('local_')) return;
         return await dailyUseCollection.doc(id).delete();
