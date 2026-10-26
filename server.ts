@@ -5485,28 +5485,255 @@ async function startServer() {
     }
   });
 
-  // --- ENDPOINTS MULTAS FROTA LEVE (COMPARTILHAMENTO ENTRE TODOS OS USUÁRIOS) ---
-  app.get("/api/multas", (req, res) => {
+  // --- ENDPOINTS MULTAS FROTA LEVE (COMPARTILHAMENTO ENTRE TODOS OS USUÁRIOS E MÁQUINAS) ---
+  const MULTAS_DELETED_FILE = path.join(DATA_DIR, "multas_deleted_ids.json");
+  const MULTA_SERVER_META_PREFIX = "[MULTA_META_JSON:";
+
+  const loadDeletedMultasIds = (): Set<string> => {
+    try {
+      if (fs.existsSync(MULTAS_DELETED_FILE)) {
+        const arr = JSON.parse(fs.readFileSync(MULTAS_DELETED_FILE, "utf-8"));
+        if (Array.isArray(arr)) return new Set(arr.map(x => String(x || "").trim().toUpperCase()).filter(Boolean));
+      }
+    } catch (_) {}
+    return new Set<string>();
+  };
+
+  const saveDeletedMultasIds = (set: Set<string>) => {
+    try {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(MULTAS_DELETED_FILE, JSON.stringify(Array.from(set), null, 2), "utf-8");
+    } catch (_) {}
+  };
+
+  const normalizeServerMultaDateToISO = (val?: string | null): string | null => {
+    if (!val || typeof val !== "string") return null;
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    const brMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (brMatch) return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    return null;
+  };
+
+  const unpackServerMultaObs = (rawObs?: string | null): { cleanObs: string; meta: Record<string, any> } => {
+    const text = String(rawObs || "");
+    const idx = text.indexOf(MULTA_SERVER_META_PREFIX);
+    if (idx === -1) return { cleanObs: text.trim(), meta: {} };
+    const cleanObs = text.slice(0, idx).trim();
+    const metaPart = text.slice(idx + MULTA_SERVER_META_PREFIX.length);
+    const endBracket = metaPart.lastIndexOf("]");
+    const jsonStr = endBracket !== -1 ? metaPart.slice(0, endBracket).trim() : metaPart.trim();
+    try {
+      const meta = JSON.parse(jsonStr);
+      return { cleanObs, meta: meta && typeof meta === "object" ? meta : {} };
+    } catch (_) {
+      return { cleanObs, meta: {} };
+    }
+  };
+
+  const packServerMultaObs = (item: any): string => {
+    const { cleanObs } = unpackServerMultaObs(item.obs);
+    const meta = {
+      dataHoraInfracao: item.dataHoraInfracao || "",
+      dataRecebimento: item.dataRecebimento || "",
+      prazoIndicacao: item.prazoIndicacao || "",
+      taxaLocadora: Number(item.taxaLocadora) || 0,
+      responsavelCodigo: item.responsavelCodigo || "",
+      responsavelCpf: item.responsavelCpf || "",
+      descontoEnviadoRH: Boolean(item.descontoEnviadoRH),
+      updatedAt: item.updatedAt || new Date().toISOString()
+    };
+    const metaTag = `${MULTA_SERVER_META_PREFIX}${JSON.stringify(meta)}]`;
+    return cleanObs ? `${cleanObs}\n${metaTag}` : metaTag;
+  };
+
+  const mapServerMultaToSupabaseRow = (item: any) => {
+    const id = String(item.id || item.ait || `multa-${Date.now()}`).trim();
+    const placa = String(item.placa || "").toUpperCase().trim() || "SEM-PLACA";
+    return {
+      id,
+      placa,
+      frota: item.frota || placa,
+      ait: item.ait || id,
+      tipo: item.tipo || "AUTO",
+      status: item.status || "AGUARDANDO BOLETO",
+      valor: Number(item.valor) || 0,
+      valor_com_desconto: Number(item.valorComDesconto) || (Number(item.valor) || 0),
+      desconto: Number(item.desconto) || 0,
+      data_infracao: normalizeServerMultaDateToISO(item.dataHoraInfracao),
+      data_recebimento: normalizeServerMultaDateToISO(item.dataRecebimento),
+      prazo_indicacao: normalizeServerMultaDateToISO(item.prazoIndicacao),
+      enquadramento: item.enquadramento || "",
+      artigo_ctb: item.artigoCtb || "",
+      descricao_infracao: item.descricaoInfracao || "",
+      pontos_cnh: Number(item.pontosCnh) || 0,
+      base: item.base || "",
+      nome_motorista: item.responsavelNome || "",
+      orgao_autuador: item.orgaoAutuador || "",
+      endereco: item.endereco || "",
+      municipio: item.municipio || "",
+      uf: item.uf || "",
+      rodovia_urbano: item.rodoviaOuUrbano || "URBANO",
+      recebida_com_prazo: item.recebidaComPrazo || "SIM",
+      retornou_com_prazo: item.retornouComPrazo || "SIM",
+      empresa_ou_condutor: item.empresaOuCondutor || "CONDUTOR",
+      descontar_motorista: item.descontarMotorista || "SIM",
+      pago_com_desconto: item.pagoComDesconto || "SIM",
+      enviado_rh: item.enviadoAoRh || "NÃO",
+      link_ait: item.linkAit || "",
+      link_autorizacao: item.linkAuth || "",
+      obs: packServerMultaObs(item)
+    };
+  };
+
+  const mapSupabaseRowToServerMulta = (row: any) => {
+    const { cleanObs, meta } = unpackServerMultaObs(row.obs);
+    return {
+      id: String(row.id || row.ait || ""),
+      status: row.status || "AGUARDANDO BOLETO",
+      frota: row.frota || row.placa || "",
+      placa: String(row.placa || "").toUpperCase().trim(),
+      base: row.base || "",
+      ait: row.ait || row.id || "",
+      tipo: row.tipo || "AUTO",
+      dataHoraInfracao: meta.dataHoraInfracao || row.data_infracao || "",
+      dataRecebimento: meta.dataRecebimento || row.data_recebimento || "",
+      prazoIndicacao: meta.prazoIndicacao || row.prazo_indicacao || "",
+      recebidaComPrazo: row.recebida_com_prazo || "SIM",
+      enquadramento: row.enquadramento || "",
+      artigoCtb: row.artigo_ctb || "",
+      descricaoInfracao: row.descricao_infracao || "",
+      pontosCnh: Number(row.pontos_cnh !== undefined ? row.pontos_cnh : 0),
+      responsavelCodigo: meta.responsavelCodigo || "",
+      responsavelNome: row.nome_motorista || "",
+      responsavelCpf: meta.responsavelCpf || "",
+      orgaoAutuador: row.orgao_autuador || "",
+      endereco: row.endereco || "",
+      municipio: row.municipio || "",
+      uf: row.uf || "",
+      rodoviaOuUrbano: row.rodovia_urbano || "URBANO",
+      retornouComPrazo: row.retornou_com_prazo || "SIM",
+      valor: Number(row.valor || 0),
+      desconto: Number(row.desconto || 0),
+      taxaLocadora: Number(row.taxa_locadora !== undefined ? row.taxa_locadora : (meta.taxaLocadora || 0)),
+      valorComDesconto: Number(row.valor_com_desconto || (row.valor || 0)),
+      empresaOuCondutor: row.empresa_ou_condutor || "CONDUTOR",
+      descontarMotorista: row.descontar_motorista || "SIM",
+      pagoComDesconto: row.pago_com_desconto || "SIM",
+      enviadoAoRh: row.enviado_rh || "NÃO",
+      descontoEnviadoRH: meta.descontoEnviadoRH !== undefined ? Boolean(meta.descontoEnviadoRH) : row.enviado_rh === "SIM",
+      obs: cleanObs,
+      linkAit: row.link_ait || "",
+      linkAuth: row.link_autorizacao || "",
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: meta.updatedAt || row.created_at || ""
+    };
+  };
+
+  app.get("/api/multas", async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     try {
+      const deletedSet = loadDeletedMultasIds();
+      res.setHeader("X-Deleted-Multas-Ids", JSON.stringify(Array.from(deletedSet)));
+
+      let localList: any[] = [];
       if (fs.existsSync(MULTAS_FILE)) {
-        const raw = fs.readFileSync(MULTAS_FILE, "utf-8");
-        const list = JSON.parse(raw);
-        return res.json(Array.isArray(list) ? list : []);
+        try {
+          const raw = fs.readFileSync(MULTAS_FILE, "utf-8");
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) localList = parsed;
+        } catch (_) {}
       }
-      return res.json([]);
+
+      // Buscar também no Supabase pelo backend para consolidar multas lançadas em outras instâncias/máquinas
+      let supaList: any[] = [];
+      try {
+        const supaRes: any = await Promise.race([
+          serverSupabase.from("multas").select("*").order("created_at", { ascending: false }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2500))
+        ]);
+        if (supaRes && !supaRes.error && Array.isArray(supaRes.data)) {
+          supaList = supaRes.data.map(mapSupabaseRowToServerMulta);
+        }
+      } catch (_) {}
+
+      const mergedMap = new Map<string, any>();
+      const getKey = (m: any) => String(m?.id || m?.ait || "").trim().toUpperCase();
+      const isDeleted = (m: any) => {
+        const kId = String(m?.id || "").trim().toUpperCase();
+        const kAit = String(m?.ait || "").trim().toUpperCase();
+        return (kId && deletedSet.has(kId)) || (kAit && deletedSet.has(kAit));
+      };
+
+      // Primeiro carrega do Supabase
+      supaList.forEach(m => {
+        const k = getKey(m);
+        if (k && !isDeleted(m)) mergedMap.set(k, m);
+      });
+
+      // Mescla com o arquivo local (mantendo o mais recente por updatedAt)
+      const localOnlyToPush: any[] = [];
+      localList.forEach(m => {
+        const k = getKey(m);
+        if (!k || isDeleted(m)) return;
+        const existing = mergedMap.get(k);
+        if (!existing) {
+          mergedMap.set(k, m);
+          localOnlyToPush.push(m);
+        } else {
+          const tLocal = m.updatedAt ? new Date(m.updatedAt).getTime() : 0;
+          const tSupa = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+          if (tLocal >= tSupa) {
+            mergedMap.set(k, { ...existing, ...m });
+          } else {
+            mergedMap.set(k, { ...m, ...existing });
+          }
+        }
+      });
+
+      const finalList = Array.from(mergedMap.values());
+      if (finalList.length !== localList.length || supaList.length > 0) {
+        try {
+          if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+          fs.writeFileSync(MULTAS_FILE, JSON.stringify(finalList, null, 2), "utf-8");
+        } catch (_) {}
+      }
+
+      if (localOnlyToPush.length > 0) {
+        const rows = localOnlyToPush.map(mapServerMultaToSupabaseRow);
+        Promise.resolve(serverSupabase.from("multas").upsert(rows, { onConflict: "id" })).catch(() => {});
+      }
+
+      return res.json(finalList);
     } catch (e: any) {
       console.warn("Aviso ao ler multas:", e.message);
       return res.json([]);
     }
   });
 
-  app.post("/api/multas", express.json({ limit: "50mb" }), (req, res) => {
+  app.post("/api/multas", express.json({ limit: "50mb" }), async (req, res) => {
     try {
-      const item = req.body;
-      if (!item || (!item.id && !item.ait)) {
+      const rawItem = req.body;
+      if (!rawItem || (!rawItem.id && !rawItem.ait)) {
         return res.status(400).json({ error: "Multa inválida." });
       }
+      const item = {
+        ...rawItem,
+        id: String(rawItem.id || rawItem.ait).trim(),
+        updatedAt: new Date().toISOString()
+      };
+
+      // Remover da lista de excluídos caso esteja sendo recriada/atualizada
+      const deletedSet = loadDeletedMultasIds();
+      const keyId = String(item.id || "").trim().toUpperCase();
+      const keyAit = String(item.ait || "").trim().toUpperCase();
+      let deletedChanged = false;
+      if (keyId && deletedSet.has(keyId)) { deletedSet.delete(keyId); deletedChanged = true; }
+      if (keyAit && deletedSet.has(keyAit)) { deletedSet.delete(keyAit); deletedChanged = true; }
+      if (deletedChanged) saveDeletedMultasIds(deletedSet);
+
       let current: any[] = [];
       if (fs.existsSync(MULTAS_FILE)) {
         try {
@@ -5523,6 +5750,15 @@ async function startServer() {
       }
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(MULTAS_FILE, JSON.stringify(current, null, 2), "utf-8");
+
+      // Sincronizar imediatamente com o Supabase pelo backend
+      try {
+        const supaRow = mapServerMultaToSupabaseRow(item);
+        await serverSupabase.from("multas").upsert(supaRow, { onConflict: "id" });
+      } catch (supaErr: any) {
+        console.warn("Aviso ao sincronizar multa no Supabase via servidor:", supaErr?.message);
+      }
+
       return res.json({ success: true, item, count: current.length });
     } catch (e: any) {
       console.error("Erro ao salvar multa no servidor:", e);
@@ -5530,12 +5766,15 @@ async function startServer() {
     }
   });
 
-  app.post("/api/multas/batch", express.json({ limit: "50mb" }), (req, res) => {
+  app.post("/api/multas/batch", express.json({ limit: "50mb" }), async (req, res) => {
     try {
       const items = req.body;
       if (!Array.isArray(items)) {
         return res.status(400).json({ error: "Lote de multas inválido." });
       }
+      const deletedSet = loadDeletedMultasIds();
+      let deletedChanged = false;
+
       let current: any[] = [];
       if (fs.existsSync(MULTAS_FILE)) {
         try {
@@ -5546,15 +5785,41 @@ async function startServer() {
       const map = new Map<string, any>();
       current.forEach(m => {
         const k = String(m.id || m.ait || "").trim().toUpperCase();
-        if (k) map.set(k, m);
+        if (k && !deletedSet.has(k)) map.set(k, m);
       });
+      const stampedItems: any[] = [];
       items.forEach(m => {
+        if (!m) return;
         const k = String(m.id || m.ait || "").trim().toUpperCase();
-        if (k) map.set(k, { ...(map.get(k) || {}), ...m });
+        if (!k) return;
+        const kAit = String(m.ait || "").trim().toUpperCase();
+        if (deletedSet.has(k)) { deletedSet.delete(k); deletedChanged = true; }
+        if (kAit && deletedSet.has(kAit)) { deletedSet.delete(kAit); deletedChanged = true; }
+        const merged = {
+          ...(map.get(k) || {}),
+          ...m,
+          id: String(m.id || m.ait).trim(),
+          updatedAt: m.updatedAt || new Date().toISOString()
+        };
+        map.set(k, merged);
+        stampedItems.push(merged);
       });
+      if (deletedChanged) saveDeletedMultasIds(deletedSet);
+
       const updatedList = Array.from(map.values());
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(MULTAS_FILE, JSON.stringify(updatedList, null, 2), "utf-8");
+
+      // Sincronizar lote no Supabase pelo servidor
+      if (stampedItems.length > 0) {
+        try {
+          const supaRows = stampedItems.map(mapServerMultaToSupabaseRow);
+          await serverSupabase.from("multas").upsert(supaRows, { onConflict: "id" });
+        } catch (supaErr: any) {
+          console.warn("Aviso ao sincronizar lote de multas no Supabase via servidor:", supaErr?.message);
+        }
+      }
+
       return res.json({ success: true, count: updatedList.length });
     } catch (e: any) {
       console.error("Erro ao salvar lote de multas no servidor:", e);
@@ -5562,9 +5827,13 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/multas/:id", (req, res) => {
+  app.delete("/api/multas/:id", async (req, res) => {
     try {
       const { id } = req.params;
+      const searchKey = String(id || "").trim().toUpperCase();
+      const deletedSet = loadDeletedMultasIds();
+      if (searchKey) deletedSet.add(searchKey);
+
       let current: any[] = [];
       if (fs.existsSync(MULTAS_FILE)) {
         try {
@@ -5572,10 +5841,31 @@ async function startServer() {
           current = JSON.parse(raw) || [];
         } catch (err) {}
       }
-      const searchKey = String(id || "").trim().toUpperCase();
-      const updated = current.filter(m => String(m.id || m.ait || "").trim().toUpperCase() !== searchKey);
+
+      current.forEach(m => {
+        const mId = String(m.id || "").trim().toUpperCase();
+        const mAit = String(m.ait || "").trim().toUpperCase();
+        if (mId === searchKey || mAit === searchKey) {
+          if (mId) deletedSet.add(mId);
+          if (mAit) deletedSet.add(mAit);
+        }
+      });
+      saveDeletedMultasIds(deletedSet);
+
+      const updated = current.filter(m => {
+        const mId = String(m.id || "").trim().toUpperCase();
+        const mAit = String(m.ait || "").trim().toUpperCase();
+        return mId !== searchKey && mAit !== searchKey;
+      });
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(MULTAS_FILE, JSON.stringify(updated, null, 2), "utf-8");
+
+      try {
+        const cleanId = String(id || "").trim();
+        await serverSupabase.from("multas").delete().eq("id", cleanId);
+        await serverSupabase.from("multas").delete().eq("ait", cleanId);
+      } catch (_) {}
+
       return res.json({ success: true, count: updated.length });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });

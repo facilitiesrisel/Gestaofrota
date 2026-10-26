@@ -28,22 +28,30 @@ const MultasDashboard: React.FC<MultasDashboardProps> = ({ activePage }) => {
   const [selectedMonth, setSelectedMonth] = useState('');
 
   // Carrega dados iniciais e recarrega ao voltar para o Dashboard
+  // Carrega dados iniciais e recarrega ao voltar para o Dashboard ou focar na janela
   useEffect(() => {
-    
-
-    const loadData = async () => {
-      // Se estiver no Dashboard, recarrega para garantir dados frescos (contagem de ativos/inativos)
+    const loadData = async (silent = false) => {
       if (activePage.toUpperCase() === 'DASHBOARD' || activePage === 'infrações' || activePage === 'recursos') {
-          setLoading(true);
-          // fetchAllData(false) usa cache se disponível, mas se você editou algo em outra tela,
-          // o cache foi invalidado lá, garantindo que aqui pegue o dado novo.
-          const data = await fetchAllData(false); 
+          if (!silent) setLoading(true);
+          const data = await fetchAllData(true); 
           setRawMultas(data.multas);
           setRawVeiculos(data.veiculos);
-          setLoading(false);
+          if (!silent) setLoading(false);
       }
     };
-    loadData();
+    loadData(false);
+
+    const timer = setInterval(() => loadData(true), 30000);
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') loadData(true);
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, [activePage]);  // --- EXTRACT AVAILABLE MONTHS ---
   const availableMonths = useMemo(() => {
       const months = new Set<string>();

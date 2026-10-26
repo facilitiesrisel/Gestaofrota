@@ -527,49 +527,61 @@ const withTimeout = <T>(promise: Promise<T>, ms: number = 3000, fallback: T): Pr
   ]);
 };
 
-// --- DATA FETCHING WITH CACHE (ULTRA-RÁPIDO / INSTANT LOCAL-FIRST) ---
-export const fetchAllData = async (forceRefresh: boolean = false) => {
+const DELETED_MULTAS_STORAGE_KEY = 'risel_deleted_multas_ids';
+
+const getLocalDeletedMultasSet = (): Set<string> => {
   try {
-    // 1. CARREGAMENTO INSTANTÂNEO (Local-First): se já tiver em memória ou cache local, entrega de imediato
-    if (!forceRefresh) {
-        if (localStore.multas && localStore.multas.length > 0 && localStore.veiculos && localStore.veiculos.length > 0) {
-            return localStore;
-        }
-
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-            try {
-                const parsed = JSON.parse(cached);
-                if (parsed && parsed.data && parsed.data.multas && parsed.data.multas.length > 0) {
-                    localStore = parsed.data;
-                    return parsed.data;
-                }
-            } catch (e) {}
-        }
-
-        const storedM = localStorage.getItem("risel_frota_multas");
-        if (storedM) {
-            try {
-                const parsedM = JSON.parse(storedM);
-                if (Array.isArray(parsedM) && parsedM.length > 0) {
-                    const fallbackData = {
-                        veiculos: Array.isArray(VEICULOS_REAIS) ? (VEICULOS_REAIS as any) : [],
-                        motoristas: [],
-                        codigos: mockCodigosMulta,
-                        multas: parsedM
-                    };
-                    localStore = fallbackData;
-                    return fallbackData;
-                }
-            } catch (e) {}
-        }
+    const raw = localStorage.getItem(DELETED_MULTAS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.map(x => String(x || '').trim().toUpperCase()).filter(Boolean));
+      }
     }
+  } catch (e) {}
+  return new Set<string>();
+};
 
-    // 2. BUSCA PARALELIZADA COM TIMEOUT (Evita travamentos de rede)
+const saveLocalDeletedMultasSet = (set: Set<string>) => {
+  try {
+    safeSetItem(DELETED_MULTAS_STORAGE_KEY, JSON.stringify(Array.from(set)));
+  } catch (e) {}
+};
+
+// --- DATA FETCHING WITH REAL-TIME MULTI-MACHINE SYNC ---
+export const fetchAllData = async (_forceRefresh: boolean = false) => {
+  try {
+    const deletedSet = getLocalDeletedMultasSet();
+
+    // Busca sempre em paralelo do Servidor Compartilhado (/api/multas) e do Supabase para garantir sincronia entre todos os usuários e máquinas
+    const fetchServerMultas = async (): Promise<Multa[]> => {
+      try {
+        const r = await fetch(`/api/multas?t=${Date.now()}`, { cache: "no-store" });
+        const deletedHeader = r.headers.get("X-Deleted-Multas-Ids");
+        if (deletedHeader) {
+          try {
+            const parsedDel = JSON.parse(deletedHeader);
+            if (Array.isArray(parsedDel)) {
+              parsedDel.forEach(d => {
+                const k = String(d || '').trim().toUpperCase();
+                if (k) deletedSet.add(k);
+              });
+              saveLocalDeletedMultasSet(deletedSet);
+            }
+          } catch (_) {}
+        }
+        if (r.ok) {
+          const data = await r.json();
+          return Array.isArray(data) ? data : [];
+        }
+      } catch (_) {}
+      return [];
+    };
+
     const [vehiclesResult, serverMultasResult, supabaseMultasResult] = await Promise.allSettled([
-      withTimeout(fetchVeiculosSupabase().catch(() => []), 2500, []),
-      withTimeout(fetch("/api/multas", { cache: "no-store" }).then(r => r.ok ? r.json() : []).catch(() => []), 2500, []),
-      withTimeout(fetchMultasSupabase().catch(() => []), 2500, [])
+      withTimeout(fetchVeiculosSupabase().catch(() => []), 3000, []),
+      withTimeout(fetchServerMultas(), 3000, []),
+      withTimeout(fetchMultasSupabase().catch(() => []), 3000, [])
     ]);
 
     let localVeiculos: Veiculo[] = [];
@@ -638,50 +650,6 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
       }));
     }
 
-    // Carregar multas consolidando fontes
-    let localMultas: Multa[] = [];
-    const multasConsolidadasMap = new Map<string, Multa>();
-
-    // 1. Servidor compartilhado
-    if (serverMultasResult.status === 'fulfilled' && Array.isArray(serverMultasResult.value)) {
-        serverMultasResult.value.forEach((m: Multa) => {
-            if (m && (m.id || m.ait)) multasConsolidadasMap.set(String(m.id || m.ait).toUpperCase().trim(), m);
-        });
-    }
-
-    // 2. Supabase
-    if (supabaseMultasResult.status === 'fulfilled' && Array.isArray(supabaseMultasResult.value)) {
-        supabaseMultasResult.value.forEach((m: Multa) => {
-            if (m && (m.id || m.ait)) multasConsolidadasMap.set(String(m.id || m.ait).toUpperCase().trim(), m);
-        });
-    }
-
-    // 3. LocalStorage
-    try {
-      const storedM = localStorage.getItem("risel_frota_multas");
-      if (storedM) {
-        const parsedM = JSON.parse(storedM);
-        if (Array.isArray(parsedM) && parsedM.length > 0) {
-          parsedM.forEach((m: Multa) => {
-            if (m && (m.id || m.ait)) multasConsolidadasMap.set(String(m.id || m.ait).toUpperCase().trim(), m);
-          });
-        }
-      }
-    } catch (e) {}
-
-    localMultas = Array.from(multasConsolidadasMap.values());
-
-    // 4. Mesclar do IndexedDB se disponível
-    try {
-      const idbMultas = await idbGetAll<Multa>('multas');
-      if (idbMultas && idbMultas.length > 0) {
-        const idbMap = new Map<string, Multa>();
-        localMultas.forEach(m => idbMap.set(String(m.id || m.ait).toUpperCase().trim(), m));
-        idbMultas.forEach(m => idbMap.set(String(m.id || m.ait).toUpperCase().trim(), m));
-        localMultas = Array.from(idbMap.values());
-      }
-    } catch (e) {}
-
     // Função de saneamento rigorosa para descartar multas de teste estáticas, resíduos ou abas incorretas
     const isMockOrTestMulta = (m: Multa) => {
       if (!m) return true;
@@ -689,7 +657,6 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
       const ait = String(m.ait || '').toLowerCase().trim();
       const placa = String(m.placa || '').toUpperCase().trim();
       const motorista = String(m.responsavelNome || '').toLowerCase().trim();
-      const enquadramento = String(m.enquadramento || '').toLowerCase().trim();
       const desc = String(m.descricaoInfracao || '').toLowerCase().trim();
       
       // IDs de teste conhecidos
@@ -705,7 +672,113 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
       return false;
     };
 
-    localMultas = localMultas.filter(m => !isMockOrTestMulta(m));
+    const isMultaDeleted = (m: Multa) => {
+      if (!m) return true;
+      const kId = String(m.id || '').trim().toUpperCase();
+      const kAit = String(m.ait || '').trim().toUpperCase();
+      return (kId && deletedSet.has(kId)) || (kAit && deletedSet.has(kAit));
+    };
+
+    const getMultaKey = (m: Multa) => String(m?.id || m?.ait || '').trim().toUpperCase();
+
+    const mergeMultaIntoMap = (map: Map<string, Multa>, incoming: Multa, preferIncomingIfNoTimestamp: boolean) => {
+      if (!incoming || isMockOrTestMulta(incoming) || isMultaDeleted(incoming)) return;
+      const key = getMultaKey(incoming);
+      if (!key) return;
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, incoming);
+        return;
+      }
+      const tIn = (incoming as any).updatedAt ? new Date((incoming as any).updatedAt).getTime() : 0;
+      const tEx = (existing as any).updatedAt ? new Date((existing as any).updatedAt).getTime() : 0;
+      if (tIn > 0 && tEx > 0) {
+        if (tIn >= tEx) {
+          map.set(key, { ...existing, ...incoming });
+        } else {
+          map.set(key, { ...incoming, ...existing });
+        }
+      } else if (preferIncomingIfNoTimestamp) {
+        map.set(key, { ...existing, ...incoming });
+      }
+    };
+
+    const multasConsolidadasMap = new Map<string, Multa>();
+    const serverKeys = new Set<string>();
+    const supabaseKeys = new Set<string>();
+
+    // 1. Supabase (Nuvem Oficial)
+    if (supabaseMultasResult.status === 'fulfilled' && Array.isArray(supabaseMultasResult.value)) {
+      supabaseMultasResult.value.forEach((m: Multa) => {
+        const k = getMultaKey(m);
+        if (k && !isMultaDeleted(m) && !isMockOrTestMulta(m)) {
+          supabaseKeys.add(k);
+          mergeMultaIntoMap(multasConsolidadasMap, m, true);
+        }
+      });
+    }
+
+    // 2. Servidor compartilhado (/api/multas)
+    if (serverMultasResult.status === 'fulfilled' && Array.isArray(serverMultasResult.value)) {
+      serverMultasResult.value.forEach((m: Multa) => {
+        const k = getMultaKey(m);
+        if (k && !isMultaDeleted(m) && !isMockOrTestMulta(m)) {
+          serverKeys.add(k);
+          mergeMultaIntoMap(multasConsolidadasMap, m, true);
+        }
+      });
+    }
+
+    // 3. LocalStorage e 4. IndexedDB (Preserva lançamentos locais ainda não sincronizados e propaga para a nuvem)
+    const localCandidates: Multa[] = [];
+    try {
+      const storedM = localStorage.getItem("risel_frota_multas");
+      if (storedM) {
+        const parsedM = JSON.parse(storedM);
+        if (Array.isArray(parsedM)) localCandidates.push(...parsedM);
+      }
+    } catch (e) {}
+
+    try {
+      const idbMultas = await idbGetAll<Multa>('multas');
+      if (idbMultas && idbMultas.length > 0) {
+        localCandidates.push(...idbMultas);
+      }
+    } catch (e) {}
+
+    const unsyncedToCloud: Multa[] = [];
+    const unsyncedKeys = new Set<string>();
+
+    localCandidates.forEach((m: Multa) => {
+      if (!m) return;
+      if (isMultaDeleted(m) || isMockOrTestMulta(m)) {
+        if (m.id) idbDelete('multas', m.id);
+        if (m.ait) idbDelete('multas', m.ait);
+        return;
+      }
+      const k = getMultaKey(m);
+      if (!k) return;
+      mergeMultaIntoMap(multasConsolidadasMap, m, false);
+
+      // Se esta máquina possui uma multa válida que ainda não está no servidor ou no Supabase, agenda sincronização automática
+      if ((!serverKeys.has(k) || !supabaseKeys.has(k)) && !unsyncedKeys.has(k)) {
+        const finalRecord = multasConsolidadasMap.get(k) || m;
+        unsyncedKeys.add(k);
+        unsyncedToCloud.push(finalRecord);
+      }
+    });
+
+    // Auto-cura (Self-Healing): publica automaticamente na nuvem e no servidor qualquer multa que estava apenas na máquina local
+    if (unsyncedToCloud.length > 0) {
+      fetch("/api/multas/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(unsyncedToCloud)
+      }).catch(() => {});
+      saveBatchMultasSupabase(unsyncedToCloud).catch(() => {});
+    }
+
+    const localMultas = Array.from(multasConsolidadasMap.values());
     idbDelete('multas', 'm1');
     idbDelete('multas', 'm2');
     idbDelete('multas', 'm3');
@@ -713,7 +786,7 @@ export const fetchAllData = async (forceRefresh: boolean = false) => {
     safeSetItem("risel_frota_multas", JSON.stringify(localMultas));
 
     const finalVeiculos = localVeiculos;
-    const finalMultas = localMultas.filter(m => !isMockOrTestMulta(m));
+    const finalMultas = localMultas;
 
     // Carregar motoristas locais do IndexedDB
     let motoristas: Motorista[] = [];
@@ -959,26 +1032,35 @@ export const syncMultasToGoogleSheet = async (
   return { success: true, count: multas.length };
 };
 
-export const saveMulta = async (multa: Multa) => {
+export const saveMulta = async (rawMulta: Multa) => {
+  const multa: Multa = {
+    ...rawMulta,
+    id: String(rawMulta.id || rawMulta.ait || `multa-${Date.now()}`).trim(),
+    updatedAt: new Date().toISOString()
+  } as any;
+
+  // Remover da lista local de excluídos caso esteja sendo recriada
+  try {
+    const delSet = getLocalDeletedMultasSet();
+    const kId = String(multa.id || '').trim().toUpperCase();
+    const kAit = String(multa.ait || '').trim().toUpperCase();
+    let changed = false;
+    if (kId && delSet.has(kId)) { delSet.delete(kId); changed = true; }
+    if (kAit && delSet.has(kAit)) { delSet.delete(kAit); changed = true; }
+    if (changed) saveLocalDeletedMultasSet(delSet);
+  } catch (_) {}
+
   updateCacheOptimistically('multas', multa, undefined, 'save');
   
-  // 1. Persistência em Nuvem (Supabase Oficial)
-  try {
-    saveMultaSupabase(multa).catch(e => console.warn("Aviso ao salvar multa no Supabase:", e));
-  } catch (e) {
-    console.warn("Aviso ao salvar multa no Supabase:", e);
-  }
-
-  // 1.1 Persistência Compartilhada Centralizada (API Express /api/multas para todos os usuários)
-  try {
-    await fetch("/api/multas", {
+  // 1. Persistência simultânea em Nuvem (Supabase Oficial) e Servidor Compartilhado (/api/multas)
+  await Promise.allSettled([
+    saveMultaSupabase(multa).catch(e => console.warn("Aviso ao salvar multa no Supabase:", e)),
+    fetch("/api/multas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(multa)
-    });
-  } catch (apiErr) {
-    console.warn("Aviso ao persistir multa na API compartilhada:", apiErr);
-  }
+    }).catch(apiErr => console.warn("Aviso ao persistir multa na API compartilhada:", apiErr))
+  ]);
 
   // 2. Persistência dupla local segura: IndexedDB + LocalStorage (com timeout para nunca travar)
   try {
@@ -1016,12 +1098,31 @@ export const saveMulta = async (multa: Multa) => {
 };
 
 export const saveBatchMultas = async (
-  multasParaGravar: Multa[],
+  rawMultasParaGravar: Multa[],
   onProgress?: (percent: number, current: number, total: number) => void
 ): Promise<{ success: boolean; count: number; updatedMultas?: Multa[] }> => {
-  if (!multasParaGravar || multasParaGravar.length === 0) {
+  if (!rawMultasParaGravar || rawMultasParaGravar.length === 0) {
     return { success: true, count: 0 };
   }
+
+  const nowIso = new Date().toISOString();
+  const multasParaGravar: Multa[] = rawMultasParaGravar.map(m => ({
+    ...m,
+    id: String(m.id || m.ait || `multa-${Date.now()}`).trim(),
+    updatedAt: (m as any).updatedAt || nowIso
+  } as any));
+
+  try {
+    const delSet = getLocalDeletedMultasSet();
+    let changed = false;
+    multasParaGravar.forEach(m => {
+      const kId = String(m.id || '').trim().toUpperCase();
+      const kAit = String(m.ait || '').trim().toUpperCase();
+      if (kId && delSet.has(kId)) { delSet.delete(kId); changed = true; }
+      if (kAit && delSet.has(kAit)) { delSet.delete(kAit); changed = true; }
+    });
+    if (changed) saveLocalDeletedMultasSet(delSet);
+  } catch (_) {}
 
   const total = multasParaGravar.length;
   onProgress?.(30, 0, total);
@@ -1080,25 +1181,19 @@ export const saveBatchMultas = async (
 
   onProgress?.(95, total, total);
 
-  // 5. Sincronização em Nuvem (Supabase em lote com fallback seguro em segundo plano sem bloquear)
-  try {
+  // 5. Sincronização simultânea em Nuvem (Supabase) e Servidor Compartilhado (/api/multas/batch)
+  await Promise.allSettled([
     saveBatchMultasSupabase(multasParaGravar).catch(e => {
       console.warn("Aviso na sincronização em nuvem das multas:", e);
-    });
-  } catch (err) {
-    console.warn("Aviso ao disparar sincronização Supabase:", err);
-  }
-
-  // 6. Persistência Compartilhada Centralizada em Lote (/api/multas/batch) para todos os usuários
-  try {
-    await fetch("/api/multas/batch", {
+    }),
+    fetch("/api/multas/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(multasParaGravar)
-    });
-  } catch (apiErr) {
-    console.warn("Aviso ao persistir lote na API compartilhada:", apiErr);
-  }
+    }).catch(apiErr => {
+      console.warn("Aviso ao persistir lote na API compartilhada:", apiErr);
+    })
+  ]);
 
   onProgress?.(100, total, total);
 
@@ -1126,23 +1221,27 @@ export const saveCodigo = async (codigo: CodigoMulta) => {
 };
 
 export const deleteMulta = async (id: string) => {
+  try {
+    const delSet = getLocalDeletedMultasSet();
+    const k = String(id || '').trim().toUpperCase();
+    if (k) delSet.add(k);
+    const target = localStore.multas.find(m => m.id === id || m.ait === id);
+    if (target) {
+      if (target.id) delSet.add(String(target.id).trim().toUpperCase());
+      if (target.ait) delSet.add(String(target.ait).trim().toUpperCase());
+    }
+    saveLocalDeletedMultasSet(delSet);
+  } catch (_) {}
+
   updateCacheOptimistically('multas', null, id, 'delete');
   
-  // Excluir do Supabase
-  try {
-    await deleteMultaSupabase(id);
-  } catch (e) {
-    console.warn("Aviso ao deletar multa no Supabase:", e);
-  }
-
-  // Excluir do Servidor Compartilhado Express
-  try {
-    await fetch(`/api/multas/${encodeURIComponent(id)}`, {
+  // Excluir do Supabase e do Servidor Compartilhado Express simultaneamente
+  await Promise.allSettled([
+    deleteMultaSupabase(id).catch(e => console.warn("Aviso ao deletar multa no Supabase:", e)),
+    fetch(`/api/multas/${encodeURIComponent(id)}`, {
       method: "DELETE"
-    });
-  } catch (apiErr) {
-    console.warn("Aviso ao deletar multa no servidor compartilhado:", apiErr);
-  }
+    }).catch(apiErr => console.warn("Aviso ao deletar multa no servidor compartilhado:", apiErr))
+  ]);
 
   await idbDelete('multas', id);
   try {

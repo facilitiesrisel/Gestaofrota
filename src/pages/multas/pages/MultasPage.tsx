@@ -834,16 +834,27 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
   };
 
   useEffect(() => { 
-    // Carregamento inicial ágil
-    loadData(false, false); 
+    // Carregamento inicial sincronizado com o servidor compartilhado e Supabase
+    loadData(true, false); 
 
-    // Sincronização periódica suave em background (a cada 90s, silenciosa, sem travar tela)
+    // Sincronização periódica em background (a cada 25s, silenciosa, sem travar tela) para refletir lançamentos de outros usuários/máquinas
     const syncTimer = setInterval(() => {
-      loadData(false, true);
-    }, 90000);
+      loadData(true, true);
+    }, 25000);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        loadData(true, true);
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
     return () => {
       clearInterval(syncTimer);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
   }, []);
 
@@ -1563,8 +1574,8 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
     setErrors({});
     setLoading(false);
 
-    // Dispara diretamente para o e-mail cadastrado da placa/base
-    await handleSendDirectEmail(savedMulta);
+    // Abre obrigatoriamente o modal de revisão e edição de destinatários antes do envio do e-mail
+    await handleOpenEmailModal(savedMulta);
   };
 
   const handleDelete = async (id: string) => {
@@ -1974,116 +1985,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
       return { toEmail, ccEmail, origin };
   };
 
-  // Envio Direto Automático de Notificação (dispara diretamente para o e-mail cadastrado da placa/base)
+  // Garantia de Segurança: Qualquer acionamento de envio de notificação abre obrigatoriamente o modal de revisão/edição de destinatários
   const handleSendDirectEmail = async (targetMulta: Partial<Multa>) => {
-      const normalizedMulta = {
-          ...targetMulta,
-          id: targetMulta.id || (targetMulta as any).idsistema || (targetMulta as any).codigo || '',
-          ait: String(targetMulta.ait || (targetMulta as any).numeroAit || (targetMulta as any).numDocumento || (targetMulta as any).aitDigitado || '').trim(),
-          placa: cleanString(targetMulta.placa || (targetMulta as any).placaVeiculo || ''),
-          frota: String(targetMulta.frota || (targetMulta as any).veiculo || '').trim(),
-          responsavelNome: String(targetMulta.responsavelNome || (targetMulta as any).motorista || (targetMulta as any).condutor || '').trim(),
-          descricaoInfracao: String(targetMulta.descricaoInfracao || targetMulta.enquadramento || (targetMulta as any).infracao || '').trim(),
-          base: String(targetMulta.base || (targetMulta as any).filial || (targetMulta as any).unidade || '').trim(),
-          valor: typeof targetMulta.valor === 'number' ? targetMulta.valor : parseFloat(String(targetMulta.valor || 0).replace(',', '.')),
-          valorComDesconto: typeof targetMulta.valorComDesconto === 'number' ? targetMulta.valorComDesconto : (targetMulta.valor ? Number(targetMulta.valor) * 0.8 : 0),
-          prazoIndicacao: targetMulta.prazoIndicacao || '',
-          dataHoraInfracao: targetMulta.dataHoraInfracao || '',
-          status: targetMulta.status || StatusMulta.AGUARDANDO_BOLETO,
-          linkAit: targetMulta.linkAit || '',
-          linkAuth: targetMulta.linkAuth || '',
-          pontosCnh: targetMulta.pontosCnh !== undefined ? targetMulta.pontosCnh : 0,
-          obs: targetMulta.obs || ''
-      };
-
-      setSendingEmail(true);
-      const { toEmail, ccEmail } = await resolveEmailRecipients(normalizedMulta);
-
-      const toRecipientsList = toEmail.split(/[;,]+/).map(e => e.trim()).filter(e => e.length > 0 && e.includes('@'));
-      const ccRecipientsList = ccEmail.split(/[;,]+/).map(e => e.trim()).filter(e => e.length > 0 && e.includes('@'));
-
-      // Gerar PDF do Termo se ainda não existir
-      let authLink = normalizedMulta.linkAuth;
-      if (!authLink && normalizedMulta.placa) {
-          try {
-              const pdfRes = await generateAutorizacaoDescontoPdf(normalizedMulta);
-              if (pdfRes) authLink = pdfRes.dataUrl;
-          } catch (e) {}
-      }
-
-      const aitLinks = parseLinks(normalizedMulta.linkAit);
-      const driveUrls: Array<{ name: string; url: string }> = [...aitLinks];
-      if (authLink) {
-          driveUrls.push({
-              name: `Autorizacao_Desconto_${normalizedMulta.placa || 'MULTA'}`,
-              url: authLink
-          });
-      }
-
-      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(normalizedMulta.placa || ''));
-      const baseStr = (normalizedMulta.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
-      const frotaStr = normalizedMulta.frota || (veiculoMatch as any)?.frota || normalizedMulta.placa || 'S/F';
-      const dataFormatada = formatDateBR(normalizedMulta.dataHoraInfracao || normalizedMulta.dataRecebimento);
-      const finalSubject = `NOTIFICAÇÃO DE MULTA: PLACA ${normalizedMulta.placa || 'S/P'} - FROTA: ${frotaStr} - BASE: ${baseStr} - DATA ${dataFormatada}`;
-
-      const smtpHost = localStorage.getItem("risel_smtp_host") || undefined;
-      const smtpPort = localStorage.getItem("risel_smtp_port") || undefined;
-      const smtpEmail = localStorage.getItem("risel_smtp_email") || undefined;
-      const smtpPassword = localStorage.getItem("risel_smtp_password") || undefined;
-      const resendApiKey = localStorage.getItem("risel_resend_api_key") || undefined;
-      const brevoApiKey = localStorage.getItem("risel_brevo_api_key") || undefined;
-
-      try {
-          const response = await fetch('/api/send-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  smtpHost,
-                  smtpPort,
-                  smtpEmail,
-                  smtpPassword,
-                  resendApiKey,
-                  brevoApiKey,
-                  fromName: "Sistema de Multas Risel",
-                  source: "multas",
-                  to: toRecipientsList.join(', ') || ADMIN_EMAIL,
-                  cc: ccRecipientsList.join(', '),
-                  subject: finalSubject,
-                  html: generateEmailHTML({ ...normalizedMulta, linkAuth: authLink }),
-                  driveUrls
-              })
-          });
-
-          const result = await response.json().catch(() => ({}));
-          if (response.ok && result.success) {
-              const driveRemoteUrls = driveUrls.filter(u => u.url.startsWith('http')).map(u => u.url);
-              if (driveRemoteUrls.length > 0) {
-                  deleteDriveFiles(driveRemoteUrls).catch(e => console.warn(e));
-              }
-              const providerInfo = result.provider ? ` (${result.provider})` : '';
-              alert(`✅ Notificação enviada com sucesso para os e-mails cadastrados:\n\nPara: ${toRecipientsList.join(', ')}\nCC: ${ccRecipientsList.join(', ')}${providerInfo}`);
-          } else {
-              const isRenderBlock = result.firewallBlocked || result.renderFree || (result.message && (result.message.includes("Render") || result.message.includes("SMTP")));
-              if (isRenderBlock) {
-                  const goToOutlook = window.confirm(
-                      `⚠️ Bloqueio do Render (Plano Free):\n${result.message}\n\nDeseja abrir a notificação agora no Outlook com destinatários (${toRecipientsList.join(', ')}) e anexos prontos?`
-                  );
-                  if (goToOutlook) {
-                      setEmailModalMulta(normalizedMulta);
-                      setEmailTo(toRecipientsList.join('; '));
-                      setEmailCc(ccRecipientsList.join('; '));
-                      handleOpenOutlookOrWebmail();
-                  }
-              } else {
-                  alert("Erro ao enviar e-mail: " + (result.message || result.error || "Não foi possível completar o envio direto."));
-              }
-          }
-      } catch (err: any) {
-          console.error("Erro no disparo direto de e-mail:", err);
-          alert(`Erro no envio: ${err.message || err}`);
-      } finally {
-          setSendingEmail(false);
-      }
+      await handleOpenEmailModal(targetMulta);
   };
 
   const handleOpenEmailModal = async (targetMulta?: Partial<Multa> | React.MouseEvent) => {
@@ -2942,8 +2846,7 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                                             <td className="px-2 py-2 text-center border-r border-gray-200/50 align-middle">
                                                 <div className="flex justify-center space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
                                                     <button onClick={(e) => { e.stopPropagation(); const sanitized = sanitizeMultaForForm(multa); setFormData(sanitized); setTaxaInput(sanitized.taxaLocadora ? String(sanitized.taxaLocadora) : ''); setTaxaTipo('VALOR'); setView('FORM'); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Editar"><Edit2 size={14} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleSendDirectEmail(multa); }} className="text-gray-400 hover:text-emerald-600 p-1.5 rounded-full transition-all" title="Enviar Notificação Direto (E-mail Cadastrado)"><Send size={14} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleOpenEmailModal(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Confirmar / Editar Destinatários antes do envio"><Mail size={14} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleOpenEmailModal(multa); }} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full transition-all" title="Revisar / Editar Destinatários e Enviar Notificação por E-mail"><Mail size={14} /></button>
                                                     <button onClick={(e) => { e.stopPropagation(); setMapMulta(multa); }} className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-full transition-all relative" title="Localizar no Mapa & Rastreador GPS">
                                                         <MapPin size={14} />
                                                     </button>
@@ -3144,9 +3047,9 @@ const MultasPage: React.FC<MultasPageProps> = ({ defaultMonth, onMonthChange }) 
                     type="button"
                     onClick={handleSaveAndNotify} 
                     className="px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all shadow-2xs flex items-center active:scale-95"
-                    title="Salvar registro e enviar notificação direta"
+                    title="Salvar registro e abrir tela para revisar/editar os destinatários antes de enviar o e-mail"
                 >
-                    <Send size={13} className="mr-1.5 text-emerald-700"/> Salvar e Disparar
+                    <Send size={13} className="mr-1.5 text-emerald-700"/> Salvar e Notificar (Revisar E-mail)
                 </button>
             </div>
         </div>

@@ -2325,6 +2325,63 @@ export interface SupabaseMulta {
   created_at?: string;
 }
 
+const MULTA_META_PREFIX = '[MULTA_META_JSON:';
+
+function normalizeMultaDateToISO(val?: string | null): string | null {
+  if (!val || typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  if (!trimmed) return null;
+
+  // Formato DD/MM/YYYY ou DD/MM/YYYY HH:mm
+  const brMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (brMatch) {
+    const [, day, month, year] = brMatch;
+    return `${year}-${month}-${day}`;
+  }
+
+  // Formato ISO YYYY-MM-DDTHH:mm ou YYYY-MM-DD HH:mm
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  return null;
+}
+
+function unpackMultaObsWithMeta(rawObs?: string | null): { cleanObs: string; meta: Record<string, any> } {
+  const text = String(rawObs || '');
+  const idx = text.indexOf(MULTA_META_PREFIX);
+  if (idx === -1) {
+    return { cleanObs: text.trim(), meta: {} };
+  }
+  const cleanObs = text.slice(0, idx).trim();
+  const metaPart = text.slice(idx + MULTA_META_PREFIX.length);
+  const endBracket = metaPart.lastIndexOf(']');
+  const jsonStr = endBracket !== -1 ? metaPart.slice(0, endBracket).trim() : metaPart.trim();
+  try {
+    const meta = JSON.parse(jsonStr);
+    return { cleanObs, meta: meta && typeof meta === 'object' ? meta : {} };
+  } catch (e) {
+    return { cleanObs, meta: {} };
+  }
+}
+
+function packMultaObsWithMeta(item: any): string {
+  const { cleanObs } = unpackMultaObsWithMeta(item.obs);
+  const meta = {
+    dataHoraInfracao: item.dataHoraInfracao || '',
+    dataRecebimento: item.dataRecebimento || '',
+    prazoIndicacao: item.prazoIndicacao || '',
+    taxaLocadora: Number(item.taxaLocadora) || 0,
+    responsavelCodigo: item.responsavelCodigo || '',
+    responsavelCpf: item.responsavelCpf || '',
+    descontoEnviadoRH: Boolean(item.descontoEnviadoRH),
+    updatedAt: item.updatedAt || new Date().toISOString()
+  };
+  const metaTag = `${MULTA_META_PREFIX}${JSON.stringify(meta)}]`;
+  return cleanObs ? `${cleanObs}\n${metaTag}` : metaTag;
+}
+
 export async function fetchMultasSupabase(): Promise<any[]> {
   try {
     const client = getSupabaseClient();
@@ -2340,100 +2397,102 @@ export async function fetchMultasSupabase(): Promise<any[]> {
 
     if (!data || data.length === 0) return [];
 
-    return data.map((row: any) => ({
-      id: String(row.id || row.ait || ''),
-      status: row.status || 'AGUARDANDO BOLETO',
-      frota: row.frota || row.placa || '',
-      placa: (row.placa || '').toUpperCase().trim(),
-      base: row.base || '',
-      ait: row.ait || row.id || '',
-      tipo: row.tipo || 'AUTO',
-      dataHoraInfracao: row.data_infracao || '',
-      dataRecebimento: row.data_recebimento || '',
-      prazoIndicacao: row.prazo_indicacao || '',
-      recebidaComPrazo: row.recebida_com_prazo || 'SIM',
-      enquadramento: row.enquadramento || '',
-      artigoCtb: row.artigo_ctb || '',
-      descricaoInfracao: row.descricao_infracao || '',
-      pontosCnh: Number(row.pontos_cnh !== undefined ? row.pontos_cnh : 0),
-      responsavelCodigo: '',
-      responsavelNome: row.nome_motorista || '',
-      orgaoAutuador: row.orgao_autuador || '',
-      endereco: row.endereco || '',
-      municipio: row.municipio || '',
-      uf: row.uf || '',
-      rodoviaOuUrbano: row.rodovia_urbano || 'URBANO',
-      retornouComPrazo: row.retornou_com_prazo || 'SIM',
-      valor: Number(row.valor || 0),
-      desconto: Number(row.desconto || 0),
-      taxaLocadora: Number(row.taxa_locadora || 0),
-      valorComDesconto: Number(row.valor_com_desconto || (row.valor || 0)),
-      empresaOuCondutor: row.empresa_ou_condutor || 'CONDUTOR',
-      descontarMotorista: row.descontar_motorista || 'SIM',
-      pagoComDesconto: row.pago_com_desconto || 'SIM',
-      enviadoAoRh: row.enviado_rh || 'NÃO',
-      obs: row.obs || '',
-      linkAit: row.link_ait || '',
-      linkAuth: row.link_autorizacao || '',
-      createdAt: row.created_at || new Date().toISOString()
-    }));
+    return data.map((row: any) => {
+      const { cleanObs, meta } = unpackMultaObsWithMeta(row.obs);
+      return {
+        id: String(row.id || row.ait || ''),
+        status: row.status || 'AGUARDANDO BOLETO',
+        frota: row.frota || row.placa || '',
+        placa: (row.placa || '').toUpperCase().trim(),
+        base: row.base || '',
+        ait: row.ait || row.id || '',
+        tipo: row.tipo || 'AUTO',
+        dataHoraInfracao: meta.dataHoraInfracao || row.data_infracao || '',
+        dataRecebimento: meta.dataRecebimento || row.data_recebimento || '',
+        prazoIndicacao: meta.prazoIndicacao || row.prazo_indicacao || '',
+        recebidaComPrazo: row.recebida_com_prazo || 'SIM',
+        enquadramento: row.enquadramento || '',
+        artigoCtb: row.artigo_ctb || '',
+        descricaoInfracao: row.descricao_infracao || '',
+        pontosCnh: Number(row.pontos_cnh !== undefined ? row.pontos_cnh : 0),
+        responsavelCodigo: meta.responsavelCodigo || '',
+        responsavelNome: row.nome_motorista || '',
+        responsavelCpf: meta.responsavelCpf || '',
+        orgaoAutuador: row.orgao_autuador || '',
+        endereco: row.endereco || '',
+        municipio: row.municipio || '',
+        uf: row.uf || '',
+        rodoviaOuUrbano: row.rodovia_urbano || 'URBANO',
+        retornouComPrazo: row.retornou_com_prazo || 'SIM',
+        valor: Number(row.valor || 0),
+        desconto: Number(row.desconto || 0),
+        taxaLocadora: Number(row.taxa_locadora !== undefined ? row.taxa_locadora : (meta.taxaLocadora || 0)),
+        valorComDesconto: Number(row.valor_com_desconto || (row.valor || 0)),
+        empresaOuCondutor: row.empresa_ou_condutor || 'CONDUTOR',
+        descontarMotorista: row.descontar_motorista || 'SIM',
+        pagoComDesconto: row.pago_com_desconto || 'SIM',
+        enviadoAoRh: row.enviado_rh || 'NÃO',
+        descontoEnviadoRH: meta.descontoEnviadoRH !== undefined ? Boolean(meta.descontoEnviadoRH) : row.enviado_rh === 'SIM',
+        obs: cleanObs,
+        linkAit: row.link_ait || '',
+        linkAuth: row.link_autorizacao || '',
+        createdAt: row.created_at || new Date().toISOString(),
+        updatedAt: meta.updatedAt || row.created_at || ''
+      };
+    });
   } catch (err) {
     console.error("Erro no fetchMultasSupabase:", err);
     return [];
   }
 }
 
+function buildSupabaseMultaRecord(item: any): Record<string, any> {
+  const id = String(item.id || item.ait || `multa-${Date.now()}`).trim();
+  const placa = (item.placa || '').toUpperCase().trim();
+  const dataInfracao = normalizeMultaDateToISO(item.dataHoraInfracao);
+  const dataRecebimento = normalizeMultaDateToISO(item.dataRecebimento);
+  const prazoIndicacao = normalizeMultaDateToISO(item.prazoIndicacao);
+
+  return {
+    id,
+    placa: placa || 'SEM-PLACA',
+    frota: item.frota || placa,
+    ait: item.ait || id,
+    tipo: item.tipo || 'AUTO',
+    status: item.status || 'AGUARDANDO BOLETO',
+    valor: Number(item.valor) || 0,
+    valor_com_desconto: Number(item.valorComDesconto) || (Number(item.valor) || 0),
+    desconto: Number(item.desconto) || 0,
+    data_infracao: dataInfracao,
+    data_recebimento: dataRecebimento,
+    prazo_indicacao: prazoIndicacao,
+    enquadramento: item.enquadramento || '',
+    artigo_ctb: item.artigoCtb || '',
+    descricao_infracao: item.descricaoInfracao || '',
+    pontos_cnh: Number(item.pontosCnh) || 0,
+    base: item.base || '',
+    nome_motorista: item.responsavelNome || '',
+    orgao_autuador: item.orgaoAutuador || '',
+    endereco: item.endereco || '',
+    municipio: item.municipio || '',
+    uf: item.uf || '',
+    rodovia_urbano: item.rodoviaOuUrbano || 'URBANO',
+    recebida_com_prazo: item.recebidaComPrazo || 'SIM',
+    retornou_com_prazo: item.retornouComPrazo || 'SIM',
+    empresa_ou_condutor: item.empresaOuCondutor || 'CONDUTOR',
+    descontar_motorista: item.descontarMotorista || 'SIM',
+    pago_com_desconto: item.pagoComDesconto || 'SIM',
+    enviado_rh: item.enviadoAoRh || 'NÃO',
+    link_ait: item.linkAit || '',
+    link_autorizacao: item.linkAuth || '',
+    obs: packMultaObsWithMeta(item)
+  };
+}
+
 export async function saveMultaSupabase(item: any): Promise<boolean> {
   try {
     const client = getSupabaseClient();
-    const id = String(item.id || item.ait || `multa-${Date.now()}`);
-    const placa = (item.placa || '').toUpperCase().trim();
-    
-    // Normalizar data_infracao para formato YYYY-MM-DD
-    let dataInfracao: string | null = null;
-    if (item.dataHoraInfracao) {
-      if (item.dataHoraInfracao.includes('T')) {
-        dataInfracao = item.dataHoraInfracao.split('T')[0];
-      } else if (item.dataHoraInfracao.length === 10) {
-        dataInfracao = item.dataHoraInfracao;
-      }
-    }
-
-    const dbRecord: SupabaseMulta = {
-      id,
-      placa: placa || 'SEM-PLACA',
-      frota: item.frota || placa,
-      ait: item.ait || id,
-      tipo: item.tipo || 'AUTO',
-      status: item.status || 'AGUARDANDO BOLETO',
-      valor: Number(item.valor) || 0,
-      valor_com_desconto: Number(item.valorComDesconto) || (Number(item.valor) || 0),
-      desconto: Number(item.desconto) || 0,
-      taxa_locadora: Number(item.taxaLocadora) || 0,
-      data_infracao: dataInfracao || undefined,
-      data_recebimento: item.dataRecebimento || undefined,
-      prazo_indicacao: item.prazoIndicacao || undefined,
-      enquadramento: item.enquadramento || '',
-      artigo_ctb: item.artigoCtb || '',
-      descricao_infracao: item.descricaoInfracao || '',
-      pontos_cnh: Number(item.pontosCnh) || 0,
-      base: item.base || '',
-      nome_motorista: item.responsavelNome || '',
-      orgao_autuador: item.orgaoAutuador || '',
-      endereco: item.endereco || '',
-      municipio: item.municipio || '',
-      uf: item.uf || '',
-      rodovia_urbano: item.rodoviaOuUrbano || 'URBANO',
-      recebida_com_prazo: item.recebidaComPrazo || 'SIM',
-      retornou_com_prazo: item.retornouComPrazo || 'SIM',
-      empresa_ou_condutor: item.empresaOuCondutor || 'CONDUTOR',
-      descontar_motorista: item.descontarMotorista || 'SIM',
-      pago_com_desconto: item.pagoComDesconto || 'SIM',
-      enviado_rh: item.enviadoAoRh || 'NÃO',
-      link_ait: item.linkAit || '',
-      link_autorizacao: item.linkAuth || '',
-      obs: item.obs || ''
-    };
+    const dbRecord = buildSupabaseMultaRecord(item);
 
     const res = await client
       .from('multas')
@@ -2454,10 +2513,17 @@ export async function saveMultaSupabase(item: any): Promise<boolean> {
 export async function deleteMultaSupabase(id: string): Promise<boolean> {
   try {
     const client = getSupabaseClient();
+    const cleanId = String(id || '').trim();
     const { error } = await client
       .from('multas')
       .delete()
-      .eq('id', id);
+      .eq('id', cleanId);
+
+    // Garantir remoção também caso o ID passado seja o número do AIT
+    await client
+      .from('multas')
+      .delete()
+      .eq('ait', cleanId);
 
     if (error) {
       console.error("Erro ao deletar multa no Supabase:", error);
@@ -2493,54 +2559,7 @@ export async function saveBatchMultasSupabase(items: any[]): Promise<{ count: nu
   if (!items || items.length === 0) return { count: 0, success: true };
   try {
     const client = getSupabaseClient();
-    const dbRecords = items.map(item => {
-      const id = String(item.id || item.ait || `multa-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`);
-      const placa = (item.placa || '').toUpperCase().trim();
-      let dataInfracao: string | null = null;
-      if (item.dataHoraInfracao) {
-        if (item.dataHoraInfracao.includes('T')) {
-          dataInfracao = item.dataHoraInfracao.split('T')[0];
-        } else if (item.dataHoraInfracao.length === 10) {
-          dataInfracao = item.dataHoraInfracao;
-        } else if (item.dataHoraInfracao.includes(' ')) {
-          dataInfracao = item.dataHoraInfracao.split(' ')[0];
-        }
-      }
-      return {
-        id,
-        placa: placa || 'SEM-PLACA',
-        frota: item.frota || placa,
-        ait: item.ait || id,
-        tipo: item.tipo || 'AUTO',
-        status: item.status || 'AGUARDANDO BOLETO',
-        valor: Number(item.valor) || 0,
-        valor_com_desconto: Number(item.valorComDesconto) || (Number(item.valor) || 0),
-        desconto: Number(item.desconto) || 0,
-        data_infracao: dataInfracao || undefined,
-        data_recebimento: item.dataRecebimento || undefined,
-        prazo_indicacao: item.prazoIndicacao || undefined,
-        enquadramento: item.enquadramento || '',
-        artigo_ctb: item.artigoCtb || '',
-        descricao_infracao: item.descricaoInfracao || '',
-        pontos_cnh: Number(item.pontosCnh) || 0,
-        base: item.base || '',
-        nome_motorista: item.responsavelNome || '',
-        orgao_autuador: item.orgaoAutuador || '',
-        endereco: item.endereco || '',
-        municipio: item.municipio || '',
-        uf: item.uf || '',
-        rodovia_urbano: item.rodoviaOuUrbano || 'URBANO',
-        recebida_com_prazo: item.recebidaComPrazo || 'SIM',
-        retornou_com_prazo: item.retornouComPrazo || 'SIM',
-        empresa_ou_condutor: item.empresaOuCondutor || 'CONDUTOR',
-        descontar_motorista: item.descontarMotorista || 'SIM',
-        pago_com_desconto: item.pagoComDesconto || 'SIM',
-        enviado_rh: item.enviadoAoRh || 'NÃO',
-        link_ait: item.linkAit || '',
-        link_autorizacao: item.linkAuth || '',
-        obs: item.obs || ''
-      };
-    });
+    const dbRecords = items.map(item => buildSupabaseMultaRecord(item));
 
     const CHUNK_SIZE = 50;
     let totalSaved = 0;
@@ -2549,7 +2568,7 @@ export async function saveBatchMultasSupabase(items: any[]): Promise<{ count: nu
       const chunk = dbRecords.slice(i, i + CHUNK_SIZE);
       try {
         const timeoutPromise = new Promise<{ error: any }>((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout ao conectar com Supabase")), 4000)
+          setTimeout(() => reject(new Error("Timeout ao conectar com Supabase")), 5000)
         );
         const upsertPromise = client.from('multas').upsert(chunk, { onConflict: 'id' });
         const res: any = await Promise.race([upsertPromise, timeoutPromise]);

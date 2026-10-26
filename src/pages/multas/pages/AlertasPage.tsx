@@ -14,13 +14,25 @@ const AlertasPage: React.FC<AlertasPageProps> = ({ defaultMonth }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      const data = await fetchAllData(false);
+    const loadData = async (silent = false) => {
+      if (!silent) setLoading(true);
+      const data = await fetchAllData(true);
       setMultas(data.multas);
-      setLoading(false);
+      if (!silent) setLoading(false);
     };
-    loadData();
+    loadData(false);
+
+    const timer = setInterval(() => loadData(true), 30000);
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') loadData(true);
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, []);
 
   const calculateDaysRemaining = (dateStr: string | undefined): number | null => {
