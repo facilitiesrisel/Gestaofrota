@@ -5929,50 +5929,117 @@ async function startServer() {
     }
   };
 
-  // Helper para converter objeto do frontend para formato padrão da tabela veiculos no Supabase
-  const mapToSupabaseVeiculoRecord = (v: any) => {
-    const cleanPlaca = String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
-    const resolvedFilial = v.filial || v.base || "Paulínia";
-    
-    const sanitizeTextOnlyObs = (rawObs: any): string => {
-      if (!rawObs || typeof rawObs !== 'string') return "";
-      let s = rawObs.trim();
-      if (s.startsWith("{") && s.endsWith("}")) {
-        try {
-          const parsed = JSON.parse(s);
-          return typeof parsed.observacoes === 'string' ? sanitizeTextOnlyObs(parsed.observacoes) : "";
-        } catch (_) { return ""; }
-      }
-      return s;
-    };
+  // Helper para desempacotar registro de veículo (mesclando JSON de observacoes com campos de topo sem perda)
+  const unpackVehicleRecord = (raw: any): any => {
+    if (!raw || typeof raw !== "object") return raw;
+    const cleanPlaca = String(raw.placa || raw.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
+    let extra: any = {};
+    let plainObs = "";
 
-    const cleanObsText = sanitizeTextOnlyObs(v.observacoes);
+    if (typeof raw.observacoes === "string") {
+      const trimmed = raw.observacoes.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        try {
+          extra = JSON.parse(trimmed);
+          if (typeof extra.observacoes === "string" && !extra.observacoes.trim().startsWith("{")) {
+            plainObs = extra.observacoes;
+          }
+        } catch (_) {}
+      } else {
+        plainObs = trimmed;
+      }
+    }
+
+    const definedRaw: any = {};
+    for (const [k, val] of Object.entries(raw)) {
+      if (val !== undefined && k !== "observacoes") {
+        definedRaw[k] = val;
+      }
+    }
+
+    const resolvedFilial = definedRaw.filial ?? definedRaw.base ?? extra.filial ?? extra.base ?? "Paulínia";
+    const resolvedLocadora = definedRaw.locadora !== undefined ? definedRaw.locadora : (extra.locadora !== undefined ? extra.locadora : "Frota Própria");
+    const rawStatus = String(definedRaw.status ?? extra.status ?? "Ativo").trim();
+    const normalizedStatus = rawStatus.toLowerCase() === "inativo"
+      ? "Inativo"
+      : rawStatus.toLowerCase() === "em manutenção"
+        ? "Em Manutenção"
+        : rawStatus.toLowerCase() === "reservado"
+          ? "Reservado"
+          : rawStatus.toLowerCase() === "em viagem"
+            ? "Em Viagem"
+            : "Ativo";
+
+    return {
+      ...extra,
+      ...definedRaw,
+      id: definedRaw.id || extra.id || `v-${cleanPlaca.toLowerCase()}`,
+      placa: cleanPlaca,
+      modelo: definedRaw.modelo ?? extra.modelo ?? "Veículo Frota",
+      condutor: definedRaw.condutor ?? extra.condutor ?? "Disponível",
+      status: normalizedStatus,
+      filial: resolvedFilial,
+      base: resolvedFilial,
+      locadora: resolvedLocadora,
+      contrato: definedRaw.contrato !== undefined ? definedRaw.contrato : (extra.contrato ?? ""),
+      vencContrato: definedRaw.vencContrato !== undefined ? definedRaw.vencContrato : (definedRaw.venc_contrato !== undefined ? definedRaw.venc_contrato : (extra.vencContrato ?? "")),
+      cpfCondutor: definedRaw.cpfCondutor !== undefined ? definedRaw.cpfCondutor : (definedRaw.cpf_condutor !== undefined ? definedRaw.cpf_condutor : (extra.cpfCondutor ?? "")),
+      cnhValidade: definedRaw.cnhValidade !== undefined ? definedRaw.cnhValidade : (definedRaw.cnh_validade !== undefined ? definedRaw.cnh_validade : (extra.cnhValidade ?? "")),
+      cnhNumero: definedRaw.cnhNumero !== undefined ? definedRaw.cnhNumero : (definedRaw.cnh_numero !== undefined ? definedRaw.cnh_numero : (extra.cnhNumero ?? "")),
+      cnhNomeArquivo: definedRaw.cnhNomeArquivo !== undefined ? definedRaw.cnhNomeArquivo : (definedRaw.cnh_nome_arquivo !== undefined ? definedRaw.cnh_nome_arquivo : (extra.cnhNomeArquivo ?? "")),
+      cnhAnexoBase64: definedRaw.cnhAnexoBase64 || definedRaw.cnh_anexo_base64 || extra.cnhAnexoBase64 || `/api/cnh/${cleanPlaca}`,
+      funcao: definedRaw.funcao !== undefined ? definedRaw.funcao : (extra.funcao ?? "Motorista"),
+      setor: definedRaw.setor !== undefined ? definedRaw.setor : (extra.setor ?? ""),
+      contatoMotorista: definedRaw.contatoMotorista !== undefined ? definedRaw.contatoMotorista : (definedRaw.contato_motorista !== undefined ? definedRaw.contato_motorista : (extra.contatoMotorista ?? "")),
+      gestorResp: definedRaw.gestorResp !== undefined ? definedRaw.gestorResp : (definedRaw.gestor_resp !== undefined ? definedRaw.gestor_resp : (extra.gestorResp ?? "")),
+      email: definedRaw.email !== undefined ? definedRaw.email : (extra.email ?? ""),
+      odometro: Number(definedRaw.odometro ?? definedRaw.km_atual ?? extra.odometro ?? 0),
+      combustivel: definedRaw.combustivel ?? definedRaw.combustivel_padrao ?? extra.combustivel ?? "Flex",
+      dataTrocaCondutor: definedRaw.dataTrocaCondutor !== undefined ? definedRaw.dataTrocaCondutor : (definedRaw.data_troca_condutor !== undefined ? definedRaw.data_troca_condutor : (extra.dataTrocaCondutor ?? "")),
+      dataInativacao: definedRaw.dataInativacao !== undefined ? definedRaw.dataInativacao : (definedRaw.data_inativacao !== undefined ? definedRaw.data_inativacao : (extra.dataInativacao ?? "")),
+      motivoInativacao: definedRaw.motivoInativacao !== undefined ? definedRaw.motivoInativacao : (definedRaw.motivo_inativacao !== undefined ? definedRaw.motivo_inativacao : (extra.motivoInativacao ?? "")),
+      tipoVinculo: definedRaw.tipoVinculo !== undefined
+        ? definedRaw.tipoVinculo
+        : (extra.tipoVinculo !== undefined ? extra.tipoVinculo : (String(resolvedLocadora).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato")),
+      updatedAt: definedRaw.updatedAt || extra.updatedAt || "",
+      observacoes: plainObs
+    };
+  };
+
+  // Helper para converter objeto do frontend para formato padrão da tabela veiculos no Supabase
+  const mapToSupabaseVeiculoRecord = (rawVeh: any) => {
+    const v = unpackVehicleRecord(rawVeh);
+    const cleanPlaca = v.placa;
+    const resolvedFilial = v.filial || v.base || "Paulínia";
+    const cleanObsText = typeof v.observacoes === "string" && !v.observacoes.trim().startsWith("{") ? v.observacoes.trim() : "";
 
     // Preparação do JSON extra enxuto, sem anexos volumosos ou recursividade
     const extraData = JSON.stringify({
+      id: v.id || `v-${cleanPlaca.toLowerCase()}`,
       modelo: v.modelo || "Veículo Frota",
       condutor: v.condutor || "Disponível",
       status: v.status || "Ativo",
-      vencContrato: v.vencContrato || v.venc_contrato || "",
-      cpfCondutor: v.cpfCondutor || v.cpf_condutor || "",
-      cnhValidade: v.cnhValidade || v.cnh_validade || "",
-      cnhNumero: v.cnhNumero || v.cnh_numero || "",
+      vencContrato: v.vencContrato ?? "",
+      cpfCondutor: v.cpfCondutor ?? "",
+      cnhValidade: v.cnhValidade ?? "",
+      cnhNumero: v.cnhNumero ?? "",
       cnhDriveFolder: CNH_DRIVE_FOLDER_URL,
-      cnhNomeArquivo: v.cnhNomeArquivo || "",
-      funcao: v.funcao || "Motorista",
-      setor: v.setor || "",
-      contatoMotorista: v.contatoMotorista || v.contato_motorista || "",
-      gestorResp: v.gestorResp || v.gestor_resp || "",
-      email: v.email || "",
+      cnhNomeArquivo: v.cnhNomeArquivo ?? "",
+      funcao: v.funcao ?? "Motorista",
+      setor: v.setor ?? "",
+      contatoMotorista: v.contatoMotorista ?? "",
+      gestorResp: v.gestorResp ?? "",
+      email: v.email ?? "",
       filial: resolvedFilial,
-      locadora: v.locadora || "Frota Própria",
-      contrato: v.contrato || "",
-      odometro: Number(v.odometro || v.km_atual || 0),
-      combustivel: v.combustivel || v.combustivel_padrao || "Flex",
-      dataTrocaCondutor: v.dataTrocaCondutor || v.data_troca_condutor || "",
-      dataInativacao: v.dataInativacao || "",
-      motivoInativacao: v.motivoInativacao || "",
-      tipoVinculo: v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
+      locadora: v.locadora ?? "Frota Própria",
+      contrato: v.contrato ?? "",
+      odometro: Number(v.odometro || 0),
+      combustivel: v.combustivel || "Flex",
+      dataTrocaCondutor: v.dataTrocaCondutor ?? "",
+      dataInativacao: v.dataInativacao ?? "",
+      motivoInativacao: v.motivoInativacao ?? "",
+      tipoVinculo: v.tipoVinculo !== undefined ? v.tipoVinculo : (String(v.locadora).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato"),
+      updatedAt: v.updatedAt || new Date().toISOString(),
       observacoes: cleanObsText
     });
 
@@ -5985,19 +6052,19 @@ async function startServer() {
       base: resolvedFilial,
       condutor: v.condutor || "Disponível",
       status: v.status || "Ativo",
-      km_atual: Number(v.odometro || v.km_atual || 0),
-      combustivel_padrao: v.combustivel || v.combustivel_padrao || "Flex",
-      venc_contrato: v.vencContrato || v.venc_contrato || "",
-      funcao: v.funcao || "Motorista",
-      contato_motorista: v.contatoMotorista || v.contato_motorista || "",
-      gestor_resp: v.gestorResp || v.gestor_resp || "",
-      email: v.email || "",
+      km_atual: Number(v.odometro || 0),
+      combustivel_padrao: v.combustivel || "Flex",
+      venc_contrato: v.vencContrato ?? "",
+      funcao: v.funcao ?? "Motorista",
+      contato_motorista: v.contatoMotorista ?? "",
+      gestor_resp: v.gestorResp ?? "",
+      email: v.email ?? "",
       filial: resolvedFilial,
-      locadora: v.locadora || "Frota Própria",
-      contrato: v.contrato || "",
-      odometro: Number(v.odometro || v.km_atual || 0),
-      combustivel: v.combustivel || v.combustivel_padrao || "Flex",
-      data_troca_condutor: v.dataTrocaCondutor || v.data_troca_condutor || "",
+      locadora: v.locadora ?? "Frota Própria",
+      contrato: v.contrato ?? "",
+      odometro: Number(v.odometro || 0),
+      combustivel: v.combustivel || "Flex",
+      data_troca_condutor: v.dataTrocaCondutor ?? "",
       observacoes: extraData
     };
   };
@@ -6009,20 +6076,23 @@ async function startServer() {
       if (fs.existsSync(VEICULOS_FILE)) {
         try {
           const raw = fs.readFileSync(VEICULOS_FILE, "utf-8");
-          current = JSON.parse(raw) || [];
+          const parsed = JSON.parse(raw) || [];
+          current = Array.isArray(parsed) ? parsed.map(unpackVehicleRecord) : [];
         } catch (e) {}
       }
 
-      const sanitizeVehicleItem = (v: any) => {
+      const sanitizeVehicleItem = (v: any, isSingleSave: boolean) => {
         if (!v || typeof v !== "object") return v;
-        const cleanPlaca = String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
-        const copy = { ...v, placa: cleanPlaca };
-        // Se contiver anexo de CNH volumoso em base64, salva em disco e mantém URL leve
-        if (copy.cnhAnexoBase64 && typeof copy.cnhAnexoBase64 === "string" && copy.cnhAnexoBase64.length > 2000) {
-          saveCnhFileToDisk(cleanPlaca, copy.cnhAnexoBase64, copy.cnhNomeArquivo);
-          copy.cnhAnexoBase64 = `/api/cnh/${cleanPlaca}`;
+        const unpacked = unpackVehicleRecord(v);
+        const cleanPlaca = unpacked.placa;
+        if (unpacked.cnhAnexoBase64 && typeof unpacked.cnhAnexoBase64 === "string" && unpacked.cnhAnexoBase64.length > 2000) {
+          saveCnhFileToDisk(cleanPlaca, unpacked.cnhAnexoBase64, unpacked.cnhNomeArquivo);
+          unpacked.cnhAnexoBase64 = `/api/cnh/${cleanPlaca}`;
         }
-        return copy;
+        if (isSingleSave) {
+          unpacked.updatedAt = unpacked.updatedAt || new Date().toISOString();
+        }
+        return unpacked;
       };
 
       let itemsToUpsertSupabase: any[] = [];
@@ -6034,17 +6104,27 @@ async function startServer() {
           if (cleanPlaca) map.set(cleanPlaca, v);
         });
         payload.forEach(v => {
-          const sanitized = sanitizeVehicleItem(v);
-          const cleanPlaca = sanitized.placa;
+          const sanitized = sanitizeVehicleItem(v, false);
+          const cleanPlaca = sanitized?.placa;
           if (cleanPlaca) {
-            const merged = { ...(map.get(cleanPlaca) || {}), ...sanitized };
-            map.set(cleanPlaca, merged);
-            itemsToUpsertSupabase.push(mapToSupabaseVeiculoRecord(merged));
+            const existing = map.get(cleanPlaca);
+            if (existing && existing.updatedAt && (!sanitized.updatedAt || existing.updatedAt > sanitized.updatedAt)) {
+              // Preserva a edição mais recente já salva no servidor, atualizando apenas odômetro se maior
+              const merged = {
+                ...existing,
+                odometro: Math.max(Number(existing.odometro || 0), Number(sanitized.odometro || 0))
+              };
+              map.set(cleanPlaca, merged);
+            } else {
+              const merged = { ...(existing || {}), ...sanitized };
+              map.set(cleanPlaca, merged);
+              itemsToUpsertSupabase.push(mapToSupabaseVeiculoRecord(merged));
+            }
           }
         });
         current = Array.from(map.values());
       } else if (payload && (payload.placa || payload.id)) {
-        const sanitized = sanitizeVehicleItem(payload);
+        const sanitized = sanitizeVehicleItem(payload, true);
         const cleanPlaca = sanitized.placa;
         const idx = current.findIndex(v => String(v.placa || v.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanPlaca);
         if (idx >= 0) {
@@ -6059,10 +6139,9 @@ async function startServer() {
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(VEICULOS_FILE, JSON.stringify(current, null, 2), "utf-8");
 
-      // Sincronização direta e transparente com o Supabase oficial diretamente do servidor
+      // Sincronização direta e transparente com o Supabase oficial diretamente do servidor (com fallback automático para colunas padrão)
       if (itemsToUpsertSupabase.length > 0) {
         try {
-          // Gravação atômica em lotes de até 50 registros
           const chunkSize = 50;
           for (let i = 0; i < itemsToUpsertSupabase.length; i += chunkSize) {
             const chunk = itemsToUpsertSupabase.slice(i, i + chunkSize);
@@ -6070,7 +6149,21 @@ async function startServer() {
               .from('veiculos')
               .upsert(chunk, { onConflict: 'placa' });
             if (sbErr) {
-              console.warn("[Server Supabase Sync] Aviso ao sincronizar lote de veículos:", sbErr.message);
+              const standardChunk = chunk.map((r: any) => ({
+                placa: r.placa,
+                modelo: r.modelo,
+                base: r.base,
+                condutor: r.condutor,
+                status: r.status,
+                km_atual: r.km_atual,
+                observacoes: r.observacoes
+              }));
+              const { error: sbErr2 } = await serverSupabase
+                .from('veiculos')
+                .upsert(standardChunk, { onConflict: 'placa' });
+              if (sbErr2) {
+                console.warn("[Server Supabase Sync] Aviso ao sincronizar lote de veículos (standard):", sbErr2.message);
+              }
             }
           }
           console.log(`[Server Supabase Sync] Sincronizados com sucesso ${itemsToUpsertSupabase.length} veículos no Supabase.`);
@@ -6086,13 +6179,63 @@ async function startServer() {
     }
   });
 
-  app.get(["/api/veiculos", "/api/veiculos/local"], (req, res) => {
+  app.get(["/api/veiculos", "/api/veiculos/local"], async (req, res) => {
     try {
+      let localList: any[] = [];
       if (fs.existsSync(VEICULOS_FILE)) {
-        const raw = fs.readFileSync(VEICULOS_FILE, "utf-8");
-        return res.json(JSON.parse(raw));
+        try {
+          const raw = fs.readFileSync(VEICULOS_FILE, "utf-8");
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            localList = parsed.map(unpackVehicleRecord);
+          }
+        } catch (_) {}
       }
-      return res.json([]);
+
+      // Consulta também o Supabase no servidor para garantir que edições de qualquer máquina estejam consolidadas
+      let cloudList: any[] = [];
+      try {
+        const { data, error } = await serverSupabase
+          .from('veiculos')
+          .select('*')
+          .order('placa', { ascending: true });
+        if (!error && Array.isArray(data) && data.length > 0) {
+          cloudList = data.map(unpackVehicleRecord);
+        }
+      } catch (_) {}
+
+      if (cloudList.length === 0) {
+        return res.json(localList);
+      }
+
+      const mergedMap = new Map<string, any>();
+      cloudList.forEach(c => {
+        if (c && c.placa) mergedMap.set(c.placa, c);
+      });
+
+      let needsDiskUpdate = false;
+      localList.forEach(l => {
+        if (!l || !l.placa) return;
+        const c = mergedMap.get(l.placa);
+        if (!c) {
+          mergedMap.set(l.placa, l);
+        } else if (l.updatedAt && (!c.updatedAt || l.updatedAt > c.updatedAt)) {
+          mergedMap.set(l.placa, { ...c, ...l });
+        } else {
+          mergedMap.set(l.placa, { ...l, ...c });
+          needsDiskUpdate = true;
+        }
+      });
+
+      const finalResult = Array.from(mergedMap.values());
+      if (needsDiskUpdate || finalResult.length !== localList.length) {
+        try {
+          if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+          fs.writeFileSync(VEICULOS_FILE, JSON.stringify(finalResult, null, 2), "utf-8");
+        } catch (_) {}
+      }
+
+      return res.json(finalResult);
     } catch (e: any) {
       return res.json([]);
     }

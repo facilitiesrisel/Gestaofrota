@@ -149,6 +149,8 @@ export interface Veiculo {
   dataInativacao?: string;
   motivoInativacao?: string;
   tipoVinculo?: "Contrato" | "Provisório" | "";
+  updatedAt?: string;
+  observacoes?: string;
 }
 
 // Pasta Oficial de Armazenamento e Consulta das CNHs da Frota Leve no Google Drive
@@ -2566,11 +2568,13 @@ export default function Frota() {
 
     setModalCpfError(null);
 
+    const nowIso = new Date().toISOString();
+
     const data: Veiculo = {
       id,
       placa: placaFinal,
       modelo: cleanUpper(formData.get("modelo")),
-      vencContrato: isFrotaPropria ? "" : (formData.get("vencContrato") as string || modalVencContrato || ""),
+      vencContrato: isFrotaPropria ? "" : (formData.get("vencContrato") as string ?? modalVencContrato ?? ""),
       condutor: cleanUpper(formData.get("condutor")),
       cpfCondutor: cleanCpfDigits ? formatCPF(cleanCpfDigits) : "",
       cnhValidade: modalCnhValidade || (formData.get("cnhValidade") as string) || "",
@@ -2583,17 +2587,19 @@ export default function Frota() {
       gestorResp: cleanUpper(formData.get("gestorResp")),
       email: cleanEmail(formData.get("email")),
       filial: normalizeBaseOperacional((formData.get("filial") as string) || ""),
-      locadora: locadoraFinal,
+      locadora: locadoraFinal || "FROTA PRÓPRIA",
       contrato: cleanUpper(formData.get("contrato")),
       odometro: odometroFinal,
-      combustivel: cleanUpper(formData.get("combustivel")),
+      combustivel: cleanUpper(formData.get("combustivel")) || "FLEX",
       status: selectedStatus,
       dataTrocaCondutor: (formData.get("dataTrocaCondutor") as string) || editingVeh?.dataTrocaCondutor || HOJE_REF,
-      dataInativacao: selectedStatus === "Inativo" ? (inputDataInativacao || HOJE_REF) : (editingVeh?.dataInativacao || ""),
-      motivoInativacao: selectedStatus === "Inativo" ? inputMotivoInativacao : (editingVeh?.motivoInativacao || ""),
+      dataInativacao: selectedStatus === "Inativo" ? (inputDataInativacao || HOJE_REF) : "",
+      motivoInativacao: selectedStatus === "Inativo" ? (inputMotivoInativacao || "") : "",
       tipoVinculo: isFrotaPropria
         ? ((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() as "Contrato" | "Provisório" | "")
         : (((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() || "Contrato") as "Contrato" | "Provisório"),
+      updatedAt: nowIso,
+      observacoes: editingVeh?.observacoes || ""
     };
 
     setIsSavingVeh(true);
@@ -2601,15 +2607,19 @@ export default function Frota() {
       // 1. Gravação prioritária na nuvem oficial Supabase e sincronização no backend do servidor
       await saveVeiculoSupabase(data);
 
-      try {
-        await fetch("/api/veiculos/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data)
-        });
-      } catch (_) {}
+      if (data.vencContrato) {
+        saveContratoSupabase({
+          id: `cto-${data.placa}`,
+          numero: data.contrato || `CTO-${data.placa}`,
+          veiculoPlaca: data.placa,
+          fornecedor: data.locadora || "Locadora",
+          tipoContrato: "Locação",
+          dataVencimento: data.vencContrato,
+          status: data.status === "Inativo" ? "Encerrado" : "Ativo"
+        }).catch(() => {});
+      }
 
-      // 2. Atualização atômica imediata no estado da aplicação e cache local
+      // 2. Atualização atômica imediata no estado da aplicação, painel de detalhes e cache local
       let updated: Veiculo[];
       const cleanCurrentPlaca = placaFinal;
       if (editingVeh) {
@@ -2622,6 +2632,20 @@ export default function Frota() {
       }
       setVeiculos(updated);
       safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updated));
+
+      setSelectedVeiculo(prev => {
+        if (!prev) return null;
+        const pPlaca = (prev.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        return (prev.id === id || pPlaca === cleanCurrentPlaca) ? data : prev;
+      });
+
+      const activeToken = googleToken || getAccessToken();
+      if (activeToken) {
+        saveVehiclesToSheets(activeToken, updated).catch(() => {});
+      }
+
+      const now = new Date();
+      setLastSyncTime(now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
 
       showToast(
         "success",
@@ -2665,18 +2689,25 @@ export default function Frota() {
 
     saveChecklists([checklist, ...checklists]);
 
-    // Update vehicle odometer and status if retido
+    // Atualiza apenas o veículo alvo sem sobrescrever toda a frota
+    let targetUpdated: Veiculo | null = null;
     const updatedVehs = veiculos.map(v => {
       if (v.placa === placa) {
-        return {
+        targetUpdated = {
           ...v,
           odometro: odometro > v.odometro ? odometro : v.odometro,
-          status: checklist.status === "Retido" ? "Em Manutenção" as const : v.status
+          status: checklist.status === "Retido" ? "Em Manutenção" as const : v.status,
+          updatedAt: new Date().toISOString()
         };
+        return targetUpdated;
       }
       return v;
     });
-    saveVeiculos(updatedVehs);
+    setVeiculos(updatedVehs);
+    safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updatedVehs));
+    if (targetUpdated) {
+      saveVeiculoSupabase(targetUpdated).catch(() => {});
+    }
     setIsCheckModalOpen(false);
   };
 
@@ -2738,8 +2769,20 @@ export default function Frota() {
 
     saveReservas([res, ...reservas]);
 
-    // Set vehicle status to Reservado
-    saveVeiculos(veiculos.map(v => v.placa === placa ? { ...v, status: "Reservado" as const } : v));
+    // Atualiza apenas o veículo reservado sem sobrescrever os demais veículos
+    let targetUpdated: Veiculo | null = null;
+    const updatedVehs = veiculos.map(v => {
+      if (v.placa === placa) {
+        targetUpdated = { ...v, status: "Reservado" as const, updatedAt: new Date().toISOString() };
+        return targetUpdated;
+      }
+      return v;
+    });
+    setVeiculos(updatedVehs);
+    safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updatedVehs));
+    if (targetUpdated) {
+      saveVeiculoSupabase(targetUpdated).catch(() => {});
+    }
     setIsResModalOpen(false);
   };
 
@@ -2785,7 +2828,7 @@ export default function Frota() {
       base: vehicle?.filial || "",
       condutor: "",
       data: formData.get("data") as string,
-      kmPercorrido: odom, // storing odometro here as fallback, though it means KM percorrido in CSV. Wait, no. We'll set kmPercorrido as 0 for manual input if it's an odometer reading.
+      kmPercorrido: odom,
       litros: Number(formData.get("litros") || 0),
       valorTotal: Number(formData.get("valorTotal") || 0),
       combustivel: "",
@@ -2795,8 +2838,20 @@ export default function Frota() {
 
     saveAbastecimentos([fuel, ...abastecimentos]);
 
-    // Update vehicle odometer
-    saveVeiculos(veiculos.map(v => v.placa === placa ? { ...v, odometro: odom > v.odometro ? odom : v.odometro } : v));
+    // Atualiza apenas o veículo abastecido sem sobrescrever toda a frota
+    let targetUpdated: Veiculo | null = null;
+    const updatedVehs = veiculos.map(v => {
+      if (v.placa === placa) {
+        targetUpdated = { ...v, odometro: odom > v.odometro ? odom : v.odometro, updatedAt: new Date().toISOString() };
+        return targetUpdated;
+      }
+      return v;
+    });
+    setVeiculos(updatedVehs);
+    safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updatedVehs));
+    if (targetUpdated) {
+      saveVeiculoSupabase(targetUpdated).catch(() => {});
+    }
     setIsFuelModalOpen(false);
   };
 
@@ -2819,12 +2874,25 @@ export default function Frota() {
 
     saveManutencoes([maint, ...manutencoes]);
 
-    // Set vehicle status to Em Manutenção or update odometer
-    saveVeiculos(veiculos.map(v => v.placa === placa ? { 
-      ...v, 
-      odometro: odom > v.odometro ? odom : v.odometro,
-      status: "Em Manutenção" as const
-    } : v));
+    // Atualiza apenas o veículo em manutenção sem sobrescrever toda a frota
+    let targetUpdated: Veiculo | null = null;
+    const updatedVehs = veiculos.map(v => {
+      if (v.placa === placa) {
+        targetUpdated = {
+          ...v,
+          odometro: odom > v.odometro ? odom : v.odometro,
+          status: "Em Manutenção" as const,
+          updatedAt: new Date().toISOString()
+        };
+        return targetUpdated;
+      }
+      return v;
+    });
+    setVeiculos(updatedVehs);
+    safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updatedVehs));
+    if (targetUpdated) {
+      saveVeiculoSupabase(targetUpdated).catch(() => {});
+    }
     setIsMaintModalOpen(false);
   };
 
@@ -3785,7 +3853,7 @@ export default function Frota() {
                                     setModalLocadora(locUpper);
                                     setCustomLocadora("");
                                   } else {
-                                    setModalLocadora("Outra");
+                                    setModalLocadora("OUTRA");
                                     setCustomLocadora(loc);
                                   }
                                   setModalVencContrato(v.vencContrato || "");
@@ -4094,7 +4162,7 @@ export default function Frota() {
                                           setModalLocadora(locUpper);
                                           setCustomLocadora("");
                                         } else {
-                                          setModalLocadora("Outra");
+                                          setModalLocadora("OUTRA");
                                           setCustomLocadora(loc);
                                         }
                                         setModalVencContrato(v.vencContrato || "");
@@ -4351,12 +4419,45 @@ export default function Frota() {
                     <h2 className="text-lg font-display font-black text-slate-800 mt-3">{selectedVeiculo.modelo}</h2>
                     <p className="text-xs font-semibold text-slate-400">Cadastro Detalhado Risel ERP</p>
                   </div>
-                  <button 
-                    onClick={() => setSelectedVeiculo(null)}
-                    className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 cursor-pointer"
-                  >
-                    <X className="w-4 h-4 text-slate-500" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        const v = selectedVeiculo;
+                        const loc = v.locadora || "";
+                        const locUpper = loc.toUpperCase().trim();
+                        const isStandard = ["LOCALIZA GESTÃO DE FROTAS", "MOVIDA", "SUPER MAIS", "FROTA PRÓPRIA"].includes(locUpper);
+                        setEditingVeh(v);
+                        if (isStandard) {
+                          setModalLocadora(locUpper);
+                          setCustomLocadora("");
+                        } else {
+                          setModalLocadora("OUTRA");
+                          setCustomLocadora(loc);
+                        }
+                        setModalVencContrato(v.vencContrato || "");
+                        setModalTipoVinculo(v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"));
+                        setModalStatus(v.status);
+                        setModalDataInativacao(v.dataInativacao || "");
+                        setModalMotivoInativacao(v.motivoInativacao || "");
+                        setModalCpfCondutor(v.cpfCondutor || "");
+                        setModalCpfError(null);
+                        setModalCnhValidade(v.cnhValidade || "");
+                        setModalCnhNumero(v.cnhNumero || "");
+                        setModalCnhAnexoBase64(v.cnhAnexoBase64 || "");
+                        setModalCnhNomeArquivo(v.cnhNomeArquivo || "");
+                        setIsVehModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" /> Editar
+                    </button>
+                    <button 
+                      onClick={() => setSelectedVeiculo(null)}
+                      className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 cursor-pointer"
+                    >
+                      <X className="w-4 h-4 text-slate-500" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Info Fields Grid */}

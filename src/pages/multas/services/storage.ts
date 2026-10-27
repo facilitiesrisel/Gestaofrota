@@ -11,7 +11,9 @@ import {
   clearAllMultasSupabase,
   fetchEmailMappingsSupabase,
   saveEmailMappingsSupabase,
-  fetchVeiculosSupabase
+  fetchVeiculosSupabase,
+  saveVeiculoSupabase,
+  deleteVeiculoSupabase
 } from '../../../services/supabaseService';
 import { safeSetItem, safeGetItem, safeRemoveItem } from '../../../utils/safeStorage';
 
@@ -887,16 +889,25 @@ export const saveVeiculo = async (veiculo: Veiculo, originalId?: string) => {
     await idbDelete('veiculos', originalId);
   }
 
-  // Atualizar no storage
+  // Atualizar no storage e sincronizar com Supabase / Servidor
   try {
     const storedV = safeGetItem("risel_frota_veiculos_v2");
-    let list: Veiculo[] = storedV ? JSON.parse(storedV) : [];
+    let list: any[] = storedV ? JSON.parse(storedV) : [];
+    const cleanP = String(veiculo.placa || veiculo.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     if (originalId && originalId !== veiculo.id) {
       list = list.filter(v => v.id !== originalId);
     }
-    const idx = list.findIndex(v => v.id === veiculo.id);
-    if (idx >= 0) list[idx] = veiculo; else list.unshift(veiculo);
+    const idx = list.findIndex(v => v.id === veiculo.id || String(v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanP);
+    const mergedVeh = {
+      ...(idx >= 0 ? list[idx] : {}),
+      ...veiculo,
+      placa: cleanP,
+      status: String(veiculo.status || "Ativo").toUpperCase() === "INATIVO" ? "Inativo" : "Ativo",
+      updatedAt: new Date().toISOString()
+    };
+    if (idx >= 0) list[idx] = mergedVeh; else list.unshift(mergedVeh);
     safeSetItem("risel_frota_veiculos_v2", JSON.stringify(list));
+    saveVeiculoSupabase(mergedVeh).catch(() => {});
   } catch (e) {}
 
   // Se houver alteração de ID (Renomeação de Frota), excluir o antigo primeiro
@@ -951,6 +962,7 @@ export const deleteVeiculo = async (id: string) => {
   } catch (e) {}
 
   localStore.veiculos = localStore.veiculos.filter(v => v.id !== id);
+  deleteVeiculoSupabase(id).catch(() => {});
   if (url && url !== DEFAULT_API_URL) {
     await request({ action: 'delete', type: 'veiculo', payload: { id, ID: id } });
   }

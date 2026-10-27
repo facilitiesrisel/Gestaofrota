@@ -20,6 +20,8 @@ export interface Veiculo {
   dataInativacao?: string;
   motivoInativacao?: string;
   tipoVinculo?: "Contrato" | "Provisório" | "";
+  updatedAt?: string;
+  observacoes?: string;
 }
 
 export const VEICULOS_REAIS: Veiculo[] = [

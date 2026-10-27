@@ -1391,8 +1391,44 @@ export interface SupabaseVeiculo {
 export async function fetchVeiculosSupabase(): Promise<any[]> {
   try {
     const cleanPlateKey = (p: string) => String(p || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
-    let records: any[] = [];
-    let fromCloud = false;
+
+    const unpackRawRecord = (raw: any) => {
+      if (!raw || typeof raw !== 'object') return raw;
+      const cleanP = cleanPlateKey(raw.placa || raw.id);
+      let extra: any = {};
+      let plainObs = "";
+
+      if (typeof raw.observacoes === "string") {
+        const trimmed = raw.observacoes.trim();
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+          try {
+            extra = JSON.parse(trimmed);
+            if (typeof extra.observacoes === "string" && !extra.observacoes.trim().startsWith("{")) {
+              plainObs = extra.observacoes;
+            }
+          } catch (_) {}
+        } else {
+          plainObs = trimmed;
+        }
+      }
+
+      const definedTop: any = {};
+      for (const [k, val] of Object.entries(raw)) {
+        if (val !== undefined && k !== "observacoes") {
+          definedTop[k] = val;
+        }
+      }
+
+      return {
+        ...extra,
+        ...definedTop,
+        placa: cleanP,
+        updatedAt: definedTop.updatedAt || extra.updatedAt || "",
+        observacoes: plainObs
+      };
+    };
+
+    let cloudRecords: any[] = [];
 
     // 1. Consulta o banco na nuvem Supabase (Fonte Primária da Verdade)
     try {
@@ -1408,59 +1444,46 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
           const freshClient = forceResetToOfficialSupabase();
           const retryRes = await freshClient.from('veiculos').select('*').order('placa', { ascending: true });
           if (retryRes.data && retryRes.data.length > 0) {
-            records = retryRes.data;
-            fromCloud = true;
+            cloudRecords = retryRes.data.map(unpackRawRecord);
           }
         }
       } else if (data && data.length > 0) {
-        records = data;
-        fromCloud = true;
+        cloudRecords = data.map(unpackRawRecord);
       }
     } catch (sbErr) {
       console.warn("Falha de conexão com Supabase:", sbErr);
     }
 
-    // 2. Consulta o backend local para mesclar quaisquer alterações locais mais recentes
+    // 2. Consulta o backend local (que também sincroniza com Supabase no servidor)
     let localData: any[] = [];
     try {
       const localRes = await fetch("/api/veiculos");
       if (localRes.ok) {
         const parsed = await localRes.json();
         if (Array.isArray(parsed) && parsed.length > 0) {
-          localData = parsed;
+          localData = parsed.map(unpackRawRecord);
         }
       }
     } catch (_) {}
 
-    // Se o Supabase respondeu, envia cópia de segurança para o backend
-    if (fromCloud && records.length > 0) {
-      try {
-        fetch("/api/veiculos/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(records)
-        }).catch(() => {});
-      } catch (_) {}
-    } else if (records.length === 0 && localData.length > 0) {
-      // Se a nuvem estava temporariamente indisponível, assume os dados do backend local
-      records = localData;
-    }
-
-    // Mapa unificado indexado pela placa
+    // Mapa unificado indexado pela placa com resolução por timestamp updatedAt
     const unifiedRecordMap = new Map<string, any>();
-    
-    // Insere registros do Supabase
-    (records || []).forEach(r => {
+
+    (cloudRecords || []).forEach(r => {
       const p = cleanPlateKey(r.placa || r.id);
       if (p) unifiedRecordMap.set(p, r);
     });
 
-    // Mescla com os dados do backend local (priorizando edições mais completas)
     (localData || []).forEach(l => {
       const p = cleanPlateKey(l.placa || l.id);
-      if (p) {
-        const existing = unifiedRecordMap.get(p) || {};
+      if (!p) return;
+      const existing = unifiedRecordMap.get(p);
+      if (!existing) {
+        unifiedRecordMap.set(p, l);
+      } else if (l.updatedAt && (!existing.updatedAt || l.updatedAt > existing.updatedAt)) {
         unifiedRecordMap.set(p, { ...existing, ...l });
+      } else {
+        unifiedRecordMap.set(p, { ...l, ...existing });
       }
     });
 
@@ -1472,53 +1495,77 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
       dbPlacas.add(cleanR);
       const real = realMap.get(cleanR);
 
-      let extra: any = {};
-      if (row.observacoes && typeof row.observacoes === "string" && row.observacoes.startsWith("{")) {
-        try { extra = JSON.parse(row.observacoes); } catch (e) {}
-      }
-
-      // Prioridade absoluta para o que o usuário preencheu e salvou no banco
-      const filialFinal = row.filial || row.base || extra.filial || real?.filial || "Paulínia";
+      // Prioridade absoluta para os campos salvos no banco (respeitando até mesmo campos limpos pelo usuário)
+      const filialFinal = row.filial || row.base || real?.filial || "Paulínia";
       const condutorFinal = (row.condutor !== undefined && row.condutor !== null && String(row.condutor).trim() !== "")
         ? String(row.condutor).trim()
-        : (extra.condutor !== undefined && String(extra.condutor).trim() !== "" ? String(extra.condutor).trim() : (real?.condutor || "Disponível"));
-      const statusFinal = (row.status !== undefined && row.status !== null && String(row.status).trim() !== "")
-        ? (String(row.status).trim().toLowerCase() === "inativo" ? "Inativo" : String(row.status).trim().toLowerCase() === "em manutenção" ? "Em Manutenção" : "Ativo")
-        : (extra.status || real?.status || "Ativo");
-      const modeloFinal = row.modelo || extra.modelo || real?.modelo || "Veículo Frota";
+        : (real?.condutor || "Disponível");
+      const rawStatus = (row.status !== undefined && row.status !== null && String(row.status).trim() !== "")
+        ? String(row.status).trim()
+        : (real?.status || "Ativo");
+      const statusFinal = rawStatus.toLowerCase() === "inativo"
+        ? "Inativo"
+        : rawStatus.toLowerCase() === "em manutenção"
+          ? "Em Manutenção"
+          : rawStatus.toLowerCase() === "reservado"
+            ? "Reservado"
+            : rawStatus.toLowerCase() === "em viagem"
+              ? "Em Viagem"
+              : "Ativo";
+      const modeloFinal = row.modelo || real?.modelo || "Veículo Frota";
       const locadoraFinal = (row.locadora !== undefined && row.locadora !== null && String(row.locadora).trim() !== "")
         ? String(row.locadora).trim()
-        : (extra.locadora || real?.locadora || "Frota Própria");
+        : (real?.locadora || "Frota Própria");
       const contratoFinal = (row.contrato !== undefined && row.contrato !== null)
         ? String(row.contrato).trim()
-        : (extra.contrato || real?.contrato || "");
-      const vencFinal = row.venc_contrato || row.vencContrato || extra.vencContrato || real?.vencContrato || "";
+        : (real?.contrato || "");
+      const vencFinal = (row.vencContrato !== undefined && row.vencContrato !== null)
+        ? String(row.vencContrato).trim()
+        : (row.venc_contrato !== undefined && row.venc_contrato !== null ? String(row.venc_contrato).trim() : (real?.vencContrato || ""));
       const emailFinal = (row.email !== undefined && row.email !== null)
         ? String(row.email).trim()
-        : (extra.email || real?.email || "");
-      const gestorFinal = (row.gestor_resp !== undefined && row.gestor_resp !== null && String(row.gestor_resp).trim() !== "")
-        ? String(row.gestor_resp).trim()
-        : (row.gestorResp || extra.gestorResp || real?.gestorResp || "");
-      const contatoFinal = (row.contato_motorista !== undefined && row.contato_motorista !== null && String(row.contato_motorista).trim() !== "")
-        ? String(row.contato_motorista).trim()
-        : (row.contatoMotorista || extra.contatoMotorista || real?.contatoMotorista || "");
-      const funcaoFinal = row.funcao || extra.funcao || real?.funcao || "Motorista";
-      const setorFinal = row.setor || extra.setor || (real as any)?.setor || "";
-      const cpfFinal = row.cpf_condutor || row.cpfCondutor || extra.cpfCondutor || real?.cpfCondutor || "";
-      const cnhValFinal = row.cnh_validade || row.cnhValidade || extra.cnhValidade || "";
-      const cnhNumFinal = row.cnh_numero || row.cnhNumero || extra.cnhNumero || "";
-      const cnhArquivoFinal = row.cnh_nome_arquivo || row.cnhNomeArquivo || extra.cnhNomeArquivo || "";
-      const cnhAnexoFinal = row.cnh_anexo_base64 || row.cnhAnexoBase64 || extra.cnhAnexoBase64 || `/api/cnh/${cleanR}`;
-      const odometroFinal = Number(row.odometro || row.km_atual || extra.odometro || real?.odometro || 0);
-      const combustivelFinal = row.combustivel || row.combustivel_padrao || extra.combustivel || real?.combustivel || "Flex";
-      const dataTrocaFinal = row.data_troca_condutor || row.dataTrocaCondutor || extra.dataTrocaCondutor || real?.dataTrocaCondutor || "";
-      const dataInatFinal = extra.dataInativacao || row.data_inativacao || row.dataInativacao || (real as any)?.dataInativacao || "";
-      const motivoInatFinal = extra.motivoInativacao || row.motivo_inativacao || row.motivoInativacao || (real as any)?.motivoInativacao || "";
-      const tipoVinculoFinal = extra.tipoVinculo !== undefined ? extra.tipoVinculo : (row.tipo_vinculo !== undefined ? row.tipo_vinculo : (locadoraFinal === "FROTA PRÓPRIA" ? "" : "Contrato"));
-      const obsFinal = row.observacoes && !row.observacoes.startsWith("{") ? row.observacoes : (extra.observacoes || (real as any)?.observacoes || "");
+        : (real?.email || "");
+      const gestorFinal = (row.gestorResp !== undefined && row.gestorResp !== null)
+        ? String(row.gestorResp).trim()
+        : (row.gestor_resp !== undefined && row.gestor_resp !== null ? String(row.gestor_resp).trim() : (real?.gestorResp || ""));
+      const contatoFinal = (row.contatoMotorista !== undefined && row.contatoMotorista !== null)
+        ? String(row.contatoMotorista).trim()
+        : (row.contato_motorista !== undefined && row.contato_motorista !== null ? String(row.contato_motorista).trim() : (real?.contatoMotorista || ""));
+      const funcaoFinal = (row.funcao !== undefined && row.funcao !== null && String(row.funcao).trim() !== "")
+        ? String(row.funcao).trim()
+        : (real?.funcao || "Motorista");
+      const setorFinal = (row.setor !== undefined && row.setor !== null)
+        ? String(row.setor).trim()
+        : ((real as any)?.setor || "");
+      const cpfFinal = (row.cpfCondutor !== undefined && row.cpfCondutor !== null)
+        ? String(row.cpfCondutor).trim()
+        : (row.cpf_condutor || real?.cpfCondutor || "");
+      const cnhValFinal = (row.cnhValidade !== undefined && row.cnhValidade !== null)
+        ? String(row.cnhValidade).trim()
+        : (row.cnh_validade || "");
+      const cnhNumFinal = (row.cnhNumero !== undefined && row.cnhNumero !== null)
+        ? String(row.cnhNumero).trim()
+        : (row.cnh_numero || "");
+      const cnhArquivoFinal = row.cnhNomeArquivo || row.cnh_nome_arquivo || "";
+      const cnhAnexoFinal = row.cnhAnexoBase64 || row.cnh_anexo_base64 || `/api/cnh/${cleanR}`;
+      const odometroFinal = Number(row.odometro ?? row.km_atual ?? real?.odometro ?? 0);
+      const combustivelFinal = row.combustivel || row.combustivel_padrao || real?.combustivel || "Flex";
+      const dataTrocaFinal = row.dataTrocaCondutor || row.data_troca_condutor || real?.dataTrocaCondutor || "";
+      const dataInatFinal = (row.dataInativacao !== undefined && row.dataInativacao !== null)
+        ? String(row.dataInativacao).trim()
+        : (row.data_inativacao || (real as any)?.dataInativacao || "");
+      const motivoInatFinal = (row.motivoInativacao !== undefined && row.motivoInativacao !== null)
+        ? String(row.motivoInativacao).trim()
+        : (row.motivo_inativacao || (real as any)?.motivoInativacao || "");
+      const tipoVinculoFinal = row.tipoVinculo !== undefined
+        ? row.tipoVinculo
+        : (row.tipo_vinculo !== undefined ? row.tipo_vinculo : (String(locadoraFinal).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato"));
+      const obsFinal = typeof row.observacoes === "string" && !row.observacoes.startsWith("{")
+        ? row.observacoes
+        : ((real as any)?.observacoes || "");
 
       return {
-        id: row.id || cleanR,
+        id: row.id || `v-${cleanR.toLowerCase()}`,
         placa: cleanR,
         modelo: modeloFinal,
         vencContrato: vencFinal,
@@ -1544,6 +1591,7 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
         dataInativacao: dataInatFinal,
         motivoInativacao: motivoInatFinal,
         tipoVinculo: tipoVinculoFinal,
+        updatedAt: row.updatedAt || "",
         observacoes: obsFinal
       };
     });
@@ -1568,6 +1616,8 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
   try {
     const cleanPlaca = String(item.placa || item.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
     if (!cleanPlaca) return false;
+
+    const updatedAt = item.updatedAt || new Date().toISOString();
 
     let cnhAnexoRef = item.cnhAnexoBase64 || "";
     if (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.length > 2000) {
@@ -1607,29 +1657,31 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
 
     // Dados leves para a nuvem Supabase (sem anexos pesados de CNH)
     const extraData = JSON.stringify({
+      id: item.id || `v-${cleanPlaca.toLowerCase()}`,
       modelo: item.modelo || "Veículo Frota",
       condutor: item.condutor || "Disponível",
       status: item.status || "Ativo",
-      vencContrato: item.vencContrato || "",
-      cpfCondutor: item.cpfCondutor || "",
-      cnhValidade: item.cnhValidade || "",
-      cnhNumero: item.cnhNumero || "",
+      vencContrato: item.vencContrato ?? "",
+      cpfCondutor: item.cpfCondutor ?? "",
+      cnhValidade: item.cnhValidade ?? "",
+      cnhNumero: item.cnhNumero ?? "",
       cnhDriveFolder: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing",
-      cnhNomeArquivo: item.cnhNomeArquivo || "",
-      funcao: item.funcao || "",
-      setor: item.setor || "",
-      contatoMotorista: item.contatoMotorista || "",
-      gestorResp: item.gestorResp || "",
-      email: item.email || "",
+      cnhNomeArquivo: item.cnhNomeArquivo ?? "",
+      funcao: item.funcao ?? "",
+      setor: item.setor ?? "",
+      contatoMotorista: item.contatoMotorista ?? "",
+      gestorResp: item.gestorResp ?? "",
+      email: item.email ?? "",
       filial: resolvedFilial,
-      locadora: item.locadora || "",
-      contrato: item.contrato || "",
+      locadora: item.locadora ?? "",
+      contrato: item.contrato ?? "",
       odometro: Number(item.odometro || 0),
       combustivel: item.combustivel || "Flex",
-      dataTrocaCondutor: item.dataTrocaCondutor || "",
-      dataInativacao: item.dataInativacao || "",
-      motivoInativacao: item.motivoInativacao || "",
-      tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (item.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
+      dataTrocaCondutor: item.dataTrocaCondutor ?? "",
+      dataInativacao: item.dataInativacao ?? "",
+      motivoInativacao: item.motivoInativacao ?? "",
+      tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (String(item.locadora).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato"),
+      updatedAt,
       observacoes: cleanObs
     });
 
@@ -1644,17 +1696,17 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       status: item.status || "Ativo",
       km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
       combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
-      venc_contrato: item.vencContrato || "",
-      funcao: item.funcao || "Motorista",
-      contato_motorista: item.contatoMotorista || "",
-      gestor_resp: item.gestorResp || "",
-      email: item.email || "",
+      venc_contrato: item.vencContrato ?? "",
+      funcao: item.funcao ?? "Motorista",
+      contato_motorista: item.contatoMotorista ?? "",
+      gestor_resp: item.gestorResp ?? "",
+      email: item.email ?? "",
       filial: resolvedFilial,
       locadora: item.locadora || "Frota Própria",
-      contrato: item.contrato || "",
+      contrato: item.contrato ?? "",
       odometro: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
       combustivel: item.combustivel || item.combustivelPadrao || "Flex",
-      data_troca_condutor: item.dataTrocaCondutor || "",
+      data_troca_condutor: item.dataTrocaCondutor ?? "",
       observacoes: extraData
     };
 
@@ -1667,7 +1719,6 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
         .upsert(dbRecord, { onConflict: 'placa' });
 
       if (error) {
-        console.warn("Aviso ao salvar no Supabase, tentando record standard:", error.message);
         const standardRecord = {
           placa: cleanPlaca,
           modelo: item.modelo || "Veículo Frota",
@@ -1686,9 +1737,10 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       console.warn("Aviso ao sincronizar no Supabase:", sbErr);
     }
 
-    // 2. Grava no backend local atômico imediatamente
+    // 2. Grava no backend local atômico imediatamente (que também sincroniza com Supabase no servidor)
+    let backendSuccess = false;
     try {
-      await fetch("/api/veiculos/save", {
+      const bRes = await fetch("/api/veiculos/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -1696,12 +1748,14 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
           placa: cleanPlaca, 
           filial: resolvedFilial, 
           base: resolvedFilial,
-          cnhAnexoBase64: cnhAnexoRef 
+          cnhAnexoBase64: cnhAnexoRef,
+          updatedAt
         })
       });
+      backendSuccess = bRes.ok;
     } catch (_) {}
 
-    return supabaseSuccess;
+    return supabaseSuccess || backendSuccess;
   } catch (err) {
     console.error("Erro no saveVeiculoSupabase:", err);
     return false;
@@ -1735,29 +1789,36 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
     const dbRecords = sanitizedBatch.map(item => {
       const cleanPlaca = item.placa;
       const resolvedFilial = item.filial || item.base || "Paulínia";
+      const cleanObs = typeof item.observacoes === "string" && !item.observacoes.trim().startsWith("{") ? item.observacoes.trim() : "";
 
       const extraData = JSON.stringify({
-        vencContrato: item.vencContrato || "",
-        cpfCondutor: item.cpfCondutor || "",
-        cnhValidade: item.cnhValidade || "",
-        cnhNumero: item.cnhNumero || "",
+        id: item.id || `v-${cleanPlaca.toLowerCase()}`,
+        modelo: item.modelo || "Veículo Frota",
+        condutor: item.condutor || "Disponível",
+        status: item.status || "Ativo",
+        vencContrato: item.vencContrato ?? "",
+        cpfCondutor: item.cpfCondutor ?? "",
+        cnhValidade: item.cnhValidade ?? "",
+        cnhNumero: item.cnhNumero ?? "",
+        cnhDriveFolder: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing",
         cnhAnexoBase64: item.cnhAnexoBase64 || `/api/cnh/${cleanPlaca}`,
-        cnhNomeArquivo: item.cnhNomeArquivo || "",
-        funcao: item.funcao || "",
-        setor: item.setor || "",
-        contatoMotorista: item.contatoMotorista || "",
-        gestorResp: item.gestorResp || "",
-        email: item.email || "",
+        cnhNomeArquivo: item.cnhNomeArquivo ?? "",
+        funcao: item.funcao ?? "",
+        setor: item.setor ?? "",
+        contatoMotorista: item.contatoMotorista ?? "",
+        gestorResp: item.gestorResp ?? "",
+        email: item.email ?? "",
         filial: resolvedFilial,
-        locadora: item.locadora || "",
-        contrato: item.contrato || "",
-        odometro: item.odometro || 0,
+        locadora: item.locadora ?? "",
+        contrato: item.contrato ?? "",
+        odometro: Number(item.odometro || 0),
         combustivel: item.combustivel || "Flex",
-        dataTrocaCondutor: item.dataTrocaCondutor || "",
-        dataInativacao: item.dataInativacao || "",
-        motivoInativacao: item.motivoInativacao || "",
-        tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (item.locadora === "FROTA PRÓPRIA" ? "" : "Contrato"),
-        observacoes: item.observacoes || ""
+        dataTrocaCondutor: item.dataTrocaCondutor ?? "",
+        dataInativacao: item.dataInativacao ?? "",
+        motivoInativacao: item.motivoInativacao ?? "",
+        tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (String(item.locadora).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato"),
+        updatedAt: item.updatedAt || "",
+        observacoes: cleanObs
       });
 
       return {
@@ -1771,27 +1832,26 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
         status: item.status || "Ativo",
         km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
         combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
-        venc_contrato: item.vencContrato || "",
-        funcao: item.funcao || "Motorista",
-        contato_motorista: item.contatoMotorista || "",
-        gestor_resp: item.gestorResp || "",
-        email: item.email || "",
+        venc_contrato: item.vencContrato ?? "",
+        funcao: item.funcao ?? "Motorista",
+        contato_motorista: item.contatoMotorista ?? "",
+        gestor_resp: item.gestorResp ?? "",
+        email: item.email ?? "",
         filial: resolvedFilial,
         locadora: item.locadora || "Frota Própria",
-        contrato: item.contrato || "",
+        contrato: item.contrato ?? "",
         odometro: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
         combustivel: item.combustivel || item.combustivelPadrao || "Flex",
-        data_troca_condutor: item.dataTrocaCondutor || "",
+        data_troca_condutor: item.dataTrocaCondutor ?? "",
         observacoes: extraData
       };
     });
 
-    let { error } = await client
+    const { error } = await client
       .from('veiculos')
       .upsert(dbRecords, { onConflict: 'placa' });
 
     if (error) {
-      console.warn("Aviso no upsert em lote do Supabase, tentando padrão:", error.message);
       const standardBatch = dbRecords.map(r => ({
         placa: r.placa,
         modelo: r.modelo,
