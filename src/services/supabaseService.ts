@@ -3009,18 +3009,19 @@ export async function saveChecklistSupabase(checklist: any): Promise<boolean> {
 
 // 15. MAPEAMENTOS DE E-MAIL (CONFIGURAÇÕES DE MULTAS & FROTA)
 export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base' | 'frota_leve_placa' | 'frota_leve_base' | string): Promise<any | null> {
-  // 1. Consulta prioritária no backend local oficial
+  let serverData: any = null;
+  // 1. Consulta prioritária no backend local oficial (sem cache para refletir alterações imediatas)
   try {
-    const res = await fetch(`/api/email-mappings/${tipo}`);
+    const res = await fetch(`/api/email-mappings/${tipo}?_t=${Date.now()}`, { cache: 'no-store' });
     if (res.ok) {
       const data = await res.json();
       if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-        return data;
+        serverData = data;
       }
     }
   } catch (_) {}
 
-  // 2. Consulta fallback no Supabase
+  // 2. Consulta complementar no Supabase para garantir sincronia entre múltiplos dispositivos
   try {
     const client = getSupabaseClient();
     const { data, error } = await client
@@ -3029,16 +3030,21 @@ export async function fetchEmailMappingsSupabase(tipo: 'placa' | 'base' | 'frota
       .eq('tipo', tipo)
       .maybeSingle();
 
-    if (error || !data) return null;
-    return data.mappings;
-  } catch (err) {
-    return null;
-  }
+    if (!error && data && data.mappings && typeof data.mappings === 'object') {
+      if (serverData) {
+        return { ...serverData, ...data.mappings };
+      }
+      return data.mappings;
+    }
+  } catch (err) {}
+
+  return serverData;
 }
 
 export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base' | 'frota_leve_placa' | 'frota_leve_base' | string, mappings: any): Promise<boolean> {
   let serverOk = false;
-  // 1. Grava no backend local oficial
+  let supaOk = false;
+  // 1. Grava no backend local oficial (que também sincroniza com Supabase no servidor)
   try {
     const res = await fetch(`/api/email-mappings/${tipo}`, {
       method: 'POST',
@@ -3048,10 +3054,10 @@ export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base' | 'frota_
     serverOk = res.ok;
   } catch (_) {}
 
-  // 2. Grava de forma segura no Supabase
+  // 2. Grava de forma segura no Supabase pelo cliente
   try {
     const client = getSupabaseClient();
-    await client
+    const { error } = await client
       .from('email_mappings')
       .upsert({
         id: `map_${tipo}`,
@@ -3059,9 +3065,10 @@ export async function saveEmailMappingsSupabase(tipo: 'placa' | 'base' | 'frota_
         mappings,
         updated_at: new Date().toISOString()
       }, { onConflict: 'id' });
+    supaOk = !error;
   } catch (err) {}
 
-  return serverOk;
+  return serverOk || supaOk;
 }
 
 // 16. Script SQL de Criação das Tabelas do Risel ERP no Supabase

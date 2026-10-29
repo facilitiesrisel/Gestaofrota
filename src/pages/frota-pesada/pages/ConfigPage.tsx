@@ -321,13 +321,49 @@ const ConfigPage: React.FC = () => {
     loadSmtpStatus();
   }, []);
 
+  const [savedMappingMsg, setSavedMappingMsg] = useState<string | null>(null);
+
   const handleSave = async () => {
     setApiUrl(url);
     setDriveConfig(folderId, templateId);
+
+    let nextBaseMappings = { ...baseMappings };
+    let nextPlacaMappings = { ...placaMappings };
+
+    // Se houver uma linha em edição aberta no momento que o usuário clicou em "Salvar Tudo", aplica a edição
+    if (editingKey) {
+      const cleanEditKey = editingKey.toUpperCase().trim();
+      if (mappingMode === 'base') {
+        nextBaseMappings[cleanEditKey] = { to: editingTo.trim(), cc: editingCc.trim() };
+      } else {
+        nextPlacaMappings[cleanEditKey] = { to: editingTo.trim(), cc: editingCc.trim() };
+      }
+      setEditingKey(null);
+    }
+
+    // Se houver uma nova base/placa digitada no formulário abaixo ainda não adicionada, inclui também
+    if (newKey.trim() && (newTo.trim() || newCc.trim())) {
+      const cleanNewKey = newKey.toUpperCase().trim();
+      if (mappingMode === 'base') {
+        nextBaseMappings[cleanNewKey] = { to: newTo.trim(), cc: newCc.trim() };
+      } else {
+        nextPlacaMappings[cleanNewKey] = { to: newTo.trim(), cc: newCc.trim() };
+      }
+      setNewKey('');
+      setNewTo('');
+      setNewCc('');
+    }
+
+    setBaseMappings(nextBaseMappings);
+    setPlacaMappings(nextPlacaMappings);
+    await Promise.all([
+      saveBaseEmailMappings(nextBaseMappings),
+      savePlacaEmailMappings(nextPlacaMappings)
+    ]);
     
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
-    alert("Configurações gerais salvas com sucesso!");
+    alert("Configurações e destinatários de e-mail salvos com sucesso!");
   };
 
   const handleSaveMapping = async (keyToSave: string, toStr: string, ccStr: string) => {
@@ -341,6 +377,7 @@ const ConfigPage: React.FC = () => {
       };
       setBaseMappings(updated);
       await saveBaseEmailMappings(updated);
+      setSavedMappingMsg(`Destinatários da base "${cleanKey}" salvos com sucesso!`);
     } else {
       const updated = {
         ...placaMappings,
@@ -348,8 +385,10 @@ const ConfigPage: React.FC = () => {
       };
       setPlacaMappings(updated);
       await savePlacaEmailMappings(updated);
+      setSavedMappingMsg(`Destinatários da placa "${cleanKey}" salvos com sucesso!`);
     }
     setEditingKey(null);
+    setTimeout(() => setSavedMappingMsg(null), 4000);
   };
 
   const handleAddMapping = async () => {
@@ -581,6 +620,18 @@ const ConfigPage: React.FC = () => {
               </div>
             </div>
 
+            {savedMappingMsg && (
+              <div className="p-3 rounded-lg bg-emerald-600 text-white text-xs font-bold flex items-center justify-between shadow-sm animate-in fade-in duration-200">
+                <span className="flex items-center gap-2">
+                  <CheckCircle size={16} />
+                  {savedMappingMsg}
+                </span>
+                <button type="button" onClick={() => setSavedMappingMsg(null)} className="text-white/80 hover:text-white">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
             {/* Tabela de mapeamentos */}
             {(() => {
               const currentList = mappingMode === 'base' ? baseMappings : placaMappings;
@@ -626,9 +677,15 @@ const ConfigPage: React.FC = () => {
                                 {isEditing ? (
                                   <input
                                     type="text"
-                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    className="w-full border border-emerald-400 bg-white p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
                                     value={editingTo}
                                     onChange={e => setEditingTo(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleSaveMapping(key, editingTo, editingCc);
+                                      }
+                                    }}
                                     placeholder="email1@risel.com.br; email2@risel.com.br"
                                   />
                                 ) : (
@@ -639,9 +696,15 @@ const ConfigPage: React.FC = () => {
                                 {isEditing ? (
                                   <input
                                     type="text"
-                                    className="w-full border border-slate-300 p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    className="w-full border border-emerald-400 bg-white p-2 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
                                     value={editingCc}
                                     onChange={e => setEditingCc(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleSaveMapping(key, editingTo, editingCc);
+                                      }
+                                    }}
                                     placeholder="copia@risel.com.br"
                                   />
                                 ) : (
@@ -652,13 +715,16 @@ const ConfigPage: React.FC = () => {
                                 {isEditing ? (
                                   <div className="flex justify-center gap-1.5">
                                     <button
+                                      type="button"
                                       onClick={() => handleSaveMapping(key, editingTo, editingCc)}
-                                      className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors"
+                                      className="px-2.5 py-1.5 text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors text-xs font-bold flex items-center gap-1 shadow-xs"
                                       title="Salvar Alterações"
                                     >
-                                      <Check size={15} />
+                                      <Check size={14} />
+                                      <span>Salvar</span>
                                     </button>
                                     <button
+                                      type="button"
                                       onClick={() => setEditingKey(null)}
                                       className="p-1.5 text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
                                       title="Cancelar Edição"
@@ -669,6 +735,7 @@ const ConfigPage: React.FC = () => {
                                 ) : (
                                   <div className="flex justify-center gap-1.5">
                                     <button
+                                      type="button"
                                       onClick={() => {
                                         setEditingKey(key);
                                         setEditingTo(val.to || '');
@@ -680,6 +747,7 @@ const ConfigPage: React.FC = () => {
                                       <Edit2 size={13} />
                                     </button>
                                     <button
+                                      type="button"
                                       onClick={() => handleDeleteMapping(key)}
                                       className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
                                       title="Excluir Mapeamento"

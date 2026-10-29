@@ -68,12 +68,24 @@ export const DEFAULT_EMAIL_MAPPINGS: Record<string, { to: string; cc: string }> 
 
 export const DEFAULT_CC_EMAILS = 'lorena.padilha@risel.com.br; deny.goncalves@risel.com.br';
 
+export const BASE_ALIASES_MAP: Record<string, string[]> = {
+    'AGU': ['AGU', 'AGUAI', 'AGUAÍ'],
+    'CPB': ['CPB', 'CUBATAO', 'CUBATÃO'],
+    'JLS': ['JLS', 'JALES'],
+    'OUR': ['OUR', 'OURINHOS'],
+    'PLN': ['PLN', 'PAULINIA', 'PAULÍNIA'],
+    'SBC': ['SBC', 'SAO BERNARDO', 'SÃO BERNARDO', 'SAO BERNARDO DO CAMPO', 'SÃO BERNARDO DO CAMPO'],
+    'SUPRI': ['SUPRI', 'SUPRIMENTOS', 'SUPRIMENTO'],
+    'BTM': ['BTM', 'BETIM'],
+    'DCX': ['DCX', 'CAXIAS', 'DUQUE DE CAXIAS']
+};
+
 export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
     let localParsed: Record<string, { to: string; cc: string }> = {};
     const local = safeGetItem('risel_placa_email_mappings');
     if (local) {
         try {
-            localParsed = JSON.parse(local);
+            localParsed = JSON.parse(local) || {};
         } catch (e) {
             console.error("Erro ao carregar e-mails por placa locais:", e);
         }
@@ -82,7 +94,12 @@ export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: st
     try {
         const cloudMappings = await fetchEmailMappingsSupabase('placa');
         if (cloudMappings && typeof cloudMappings === 'object' && Object.keys(cloudMappings).length > 0) {
-            const merged = { ...cloudMappings, ...localParsed };
+            const localTs = Number(safeGetItem('risel_placa_email_mappings_ts') || '0');
+            // Se houve edição local muito recente (< 15s), preserva a edição local sobrepondo a nuvem
+            const isRecentLocal = Date.now() - localTs < 15000;
+            const merged = isRecentLocal
+                ? { ...cloudMappings, ...localParsed }
+                : { ...localParsed, ...cloudMappings };
             safeSetItem('risel_placa_email_mappings', JSON.stringify(merged));
             return merged;
         }
@@ -95,7 +112,8 @@ export const fetchPlacaEmailMappings = async (): Promise<Record<string, { to: st
 
 export const savePlacaEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
     const sanitized: Record<string, { to: string; cc: string }> = {};
-    Object.entries(mappings).forEach(([placa, val]) => {
+    Object.entries(mappings || {}).forEach(([placa, val]) => {
+        if (!val) return;
         let ccStr = (val.cc || '').trim();
         if (!ccStr.toLowerCase().includes('lorena.padilha@risel.com.br')) {
             ccStr = ccStr ? `${ccStr}; lorena.padilha@risel.com.br` : 'lorena.padilha@risel.com.br';
@@ -103,25 +121,44 @@ export const savePlacaEmailMappings = async (mappings: Record<string, { to: stri
         if (!ccStr.toLowerCase().includes('deny.goncalves@risel.com.br')) {
             ccStr = `${ccStr}; deny.goncalves@risel.com.br`;
         }
-        sanitized[placa.toUpperCase().trim()] = { to: val.to || '', cc: ccStr };
+        sanitized[placa.toUpperCase().trim()] = { to: (val.to || '').trim(), cc: ccStr };
     });
 
     safeSetItem('risel_placa_email_mappings', JSON.stringify(sanitized));
-    saveEmailMappingsSupabase('placa', sanitized).catch(e => console.warn("Aviso ao salvar mapeamento:", e));
-    return { success: true };
+    safeSetItem('risel_placa_email_mappings_ts', String(Date.now()));
+    try {
+        await saveEmailMappingsSupabase('placa', sanitized);
+    } catch (e) {
+        console.warn("Aviso ao salvar mapeamento de placa:", e);
+    }
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('risel:email-mappings-updated', { detail: { tipo: 'placa', mappings: sanitized } }));
+    }
+    return { success: true, mappings: sanitized };
 };
 
 export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: string; cc: string }>> => {
-    let baseMap: Record<string, { to: string; cc: string }> = DEFAULT_EMAIL_MAPPINGS;
+    let localParsed: Record<string, { to: string; cc: string }> = {};
     const local = safeGetItem('risel_base_email_mappings');
     if (local) {
-        try { baseMap = { ...DEFAULT_EMAIL_MAPPINGS, ...JSON.parse(local) }; } catch (e) {}
+        try {
+            localParsed = JSON.parse(local) || {};
+        } catch (e) {}
     }
+
+    let baseMap: Record<string, { to: string; cc: string }> = {
+        ...DEFAULT_EMAIL_MAPPINGS,
+        ...localParsed
+    };
 
     try {
         const cloudBase = await fetchEmailMappingsSupabase('base');
-        if (cloudBase && typeof cloudBase === 'object') {
-            baseMap = { ...baseMap, ...cloudBase };
+        if (cloudBase && typeof cloudBase === 'object' && Object.keys(cloudBase).length > 0) {
+            const localTs = Number(safeGetItem('risel_base_email_mappings_ts') || '0');
+            const isRecentLocal = Date.now() - localTs < 15000;
+            baseMap = isRecentLocal
+                ? { ...DEFAULT_EMAIL_MAPPINGS, ...cloudBase, ...localParsed }
+                : { ...DEFAULT_EMAIL_MAPPINGS, ...localParsed, ...cloudBase };
             safeSetItem('risel_base_email_mappings', JSON.stringify(baseMap));
         }
     } catch (e) {}
@@ -130,9 +167,104 @@ export const fetchBaseEmailMappings = async (): Promise<Record<string, { to: str
 };
 
 export const saveBaseEmailMappings = async (mappings: Record<string, { to: string; cc: string }>) => {
-    safeSetItem('risel_base_email_mappings', JSON.stringify(mappings));
-    saveEmailMappingsSupabase('base', mappings).catch(e => console.warn("Aviso ao salvar mapeamento de base:", e));
-    return { success: true };
+    const sanitized: Record<string, { to: string; cc: string }> = {};
+    Object.entries(mappings || {}).forEach(([baseKey, val]) => {
+        if (!val) return;
+        const cleanKey = baseKey.toUpperCase().trim();
+        if (!cleanKey) return;
+        sanitized[cleanKey] = {
+            to: (val.to || '').trim(),
+            cc: (val.cc || '').trim()
+        };
+    });
+
+    safeSetItem('risel_base_email_mappings', JSON.stringify(sanitized));
+    safeSetItem('risel_base_email_mappings_ts', String(Date.now()));
+    try {
+        await saveEmailMappingsSupabase('base', sanitized);
+    } catch (e) {
+        console.warn("Aviso ao salvar mapeamento de base:", e);
+    }
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('risel:email-mappings-updated', { detail: { tipo: 'base', mappings: sanitized } }));
+    }
+    return { success: true, mappings: sanitized };
+};
+
+export const resolveHeavyFleetEmailRecipients = (
+    baseInput?: string,
+    placaInput?: string,
+    baseMappings?: Record<string, { to: string; cc: string }>,
+    placaMappings?: Record<string, { to: string; cc: string }>
+): { matchedBaseKey: string | null; matchedPlacaKey: string | null; to: string; cc: string } => {
+    const activeBaseMap = baseMappings && Object.keys(baseMappings).length > 0 ? baseMappings : DEFAULT_EMAIL_MAPPINGS;
+    const activePlacaMap = placaMappings || {};
+
+    // 1. Verifica se há regra individual específica por Placa
+    if (placaInput) {
+        const rawPlaca = placaInput.toUpperCase().trim();
+        const cleanPlaca = rawPlaca.replace(/[^A-Z0-9]/g, '');
+        const foundPlacaKey = Object.keys(activePlacaMap).find(
+            k => k.toUpperCase().trim() === rawPlaca || k.toUpperCase().replace(/[^A-Z0-9]/g, '') === cleanPlaca
+        );
+        if (foundPlacaKey && activePlacaMap[foundPlacaKey]?.to) {
+            return {
+                matchedBaseKey: baseInput ? baseInput.toUpperCase().trim() : null,
+                matchedPlacaKey: foundPlacaKey,
+                to: activePlacaMap[foundPlacaKey].to || '',
+                cc: activePlacaMap[foundPlacaKey].cc || ''
+            };
+        }
+    }
+
+    // 2. Busca por Base Operacional (suportando siglas e nomes completos)
+    if (baseInput) {
+        const rawBase = baseInput.toUpperCase().trim();
+        const normalizeText = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+        const normBase = normalizeText(rawBase);
+
+        const mapKeys = Object.keys(activeBaseMap);
+
+        // 2a. Match exato pela chave cadastrada
+        let matchedKey = mapKeys.find(k => k.toUpperCase().trim() === rawBase || normalizeText(k) === normBase);
+
+        // 2b. Match via tabela de siglas/aliases (ex: "PAULÍNIA" <-> "PLN")
+        if (!matchedKey) {
+            for (const [canonicalKey, aliases] of Object.entries(BASE_ALIASES_MAP)) {
+                const normAliases = aliases.map(normalizeText);
+                if (normAliases.includes(normBase) || normAliases.some(a => a.length >= 3 && normBase.includes(a))) {
+                    matchedKey = mapKeys.find(
+                        k => normalizeText(k) === canonicalKey || normAliases.includes(normalizeText(k))
+                    );
+                    if (matchedKey) break;
+                }
+            }
+        }
+
+        // 2c. Match parcial (ex: "BASE PLN" contém "PLN")
+        if (!matchedKey) {
+            matchedKey = mapKeys.find(k => {
+                const nk = normalizeText(k);
+                return nk.length >= 2 && (normBase.includes(nk) || nk.includes(normBase));
+            });
+        }
+
+        if (matchedKey && activeBaseMap[matchedKey]) {
+            return {
+                matchedBaseKey: matchedKey,
+                matchedPlacaKey: null,
+                to: activeBaseMap[matchedKey].to || '',
+                cc: activeBaseMap[matchedKey].cc || ''
+            };
+        }
+    }
+
+    return {
+        matchedBaseKey: baseInput ? baseInput.toUpperCase().trim() : null,
+        matchedPlacaKey: null,
+        to: '',
+        cc: ''
+    };
 };
 
 // Setters

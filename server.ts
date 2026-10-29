@@ -6416,7 +6416,7 @@ async function startServer() {
     'SUPRI': { to: 'william.pereira@risel.com.br; lucas.daniel@risel.com.br; felipe.assumpcao@risel.com.br', cc: 'logistica6@risel.com.br' }
   };
 
-  app.get("/api/email-mappings/:tipo", (req, res) => {
+  app.get("/api/email-mappings/:tipo", async (req, res) => {
     try {
       const tipo = String(req.params.tipo || "").toLowerCase();
       let allMappings: any = {};
@@ -6427,28 +6427,55 @@ async function startServer() {
         } catch (_) {}
       }
 
+      const mapKey = tipo === "frota_pesada_base" ? "base" : tipo;
+      let localMap = allMappings[mapKey] || allMappings[tipo] || null;
+
+      // Sincroniza também com o Supabase no servidor para garantir consistência entre máquinas/reinicializações
+      try {
+        const { data: supaRow, error: supaErr } = await serverSupabase
+          .from("email_mappings")
+          .select("mappings, updated_at")
+          .eq("tipo", mapKey)
+          .maybeSingle();
+
+        if (!supaErr && supaRow && supaRow.mappings && typeof supaRow.mappings === "object") {
+          const localUpdatedAt = allMappings[`${mapKey}_updated_at`] || allMappings.updated_at || "";
+          const cloudUpdatedAt = supaRow.updated_at || "";
+          if (!localMap || Object.keys(localMap).length === 0 || (cloudUpdatedAt && cloudUpdatedAt > localUpdatedAt)) {
+            localMap = { ...(localMap || {}), ...supaRow.mappings };
+            allMappings[mapKey] = localMap;
+            allMappings[`${mapKey}_updated_at`] = cloudUpdatedAt || new Date().toISOString();
+            try {
+              if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+              fs.writeFileSync(EMAIL_MAPPINGS_FILE, JSON.stringify(allMappings, null, 2), "utf-8");
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+
       if (tipo === "frota_leve_base") {
         // Frota Leve: Totalmente isolada das regras e destinatários de logística da Frota Pesada
-        return res.json(allMappings.frota_leve_base || {});
+        return res.json(localMap || {});
       }
       if (tipo === "frota_leve_placa") {
         // Frota Leve: Mapeamento exclusivo por placa de veículo leve
-        return res.json(allMappings.frota_leve_placa || {});
+        return res.json(localMap || {});
       }
 
       if (tipo === "base" || tipo === "frota_pesada_base") {
-        const baseMap = { ...DEFAULT_SERVER_BASE_EMAILS, ...(allMappings.base || allMappings.frota_pesada_base || {}) };
+        const baseMap = { ...DEFAULT_SERVER_BASE_EMAILS, ...(localMap || {}) };
         return res.json(baseMap);
       }
-      return res.json(allMappings[tipo] || {});
+      return res.json(localMap || {});
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
   });
 
-  app.post("/api/email-mappings/:tipo", express.json({ limit: "10mb" }), (req, res) => {
+  app.post("/api/email-mappings/:tipo", express.json({ limit: "10mb" }), async (req, res) => {
     try {
-      const tipo = String(req.params.tipo || "").toLowerCase();
+      const rawTipo = String(req.params.tipo || "").toLowerCase();
+      const tipo = rawTipo === "frota_pesada_base" ? "base" : rawTipo;
       const mappings = req.body || {};
       let allMappings: any = {};
       if (fs.existsSync(EMAIL_MAPPINGS_FILE)) {
@@ -6458,12 +6485,35 @@ async function startServer() {
         } catch (_) {}
       }
 
+      const nowIso = new Date().toISOString();
       allMappings[tipo] = mappings;
-      allMappings.updated_at = new Date().toISOString();
+      if (tipo === "base") {
+        allMappings["frota_pesada_base"] = mappings;
+      }
+      allMappings[`${tipo}_updated_at`] = nowIso;
+      allMappings.updated_at = nowIso;
 
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(EMAIL_MAPPINGS_FILE, JSON.stringify(allMappings, null, 2), "utf-8");
-      return res.json({ success: true, count: Object.keys(mappings).length });
+
+      // Persiste também diretamente no Supabase pelo servidor para garantir sincronização global
+      try {
+        await serverSupabase
+          .from("email_mappings")
+          .upsert(
+            {
+              id: `map_${tipo}`,
+              tipo,
+              mappings,
+              updated_at: nowIso,
+            },
+            { onConflict: "id" }
+          );
+      } catch (supaErr) {
+        console.warn("Aviso ao sincronizar email_mappings no Supabase:", supaErr);
+      }
+
+      return res.json({ success: true, count: Object.keys(mappings).length, updated_at: nowIso });
     } catch (e: any) {
       console.error("Erro ao salvar mapeamentos de email:", e);
       return res.status(500).json({ error: e.message });

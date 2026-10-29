@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   fetchAllData, saveMulta, deleteMulta, saveVeiculo, saveCodigo, saveMotorista,
   cleanString, uploadFileToDrive, generateAuthPdfDocs, getDriveFolderId, getDocsTemplateId, formatInputText,
-  sendEmailWithAttachmentsApi 
+  sendEmailWithAttachmentsApi, fetchBaseEmailMappings, saveBaseEmailMappings,
+  fetchPlacaEmailMappings, savePlacaEmailMappings, DEFAULT_EMAIL_MAPPINGS, resolveHeavyFleetEmailRecipients
 } from '../services/storage';
 import { Multa, StatusMulta, TipoMulta, Veiculo, Motorista, CodigoMulta } from '../types';
 import { 
@@ -439,6 +440,13 @@ const MultasPage: React.FC = () => {
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [emailTo, setEmailTo] = useState('');
+  const [emailCc, setEmailCc] = useState('');
+  const [emailBaseKey, setEmailBaseKey] = useState('');
+  const [baseEmailMappings, setBaseEmailMappings] = useState<Record<string, { to: string; cc: string }>>(DEFAULT_EMAIL_MAPPINGS);
+  const [placaEmailMappings, setPlacaEmailMappings] = useState<Record<string, { to: string; cc: string }>>({});
+  const [saveEmailChangesToBase, setSaveEmailChangesToBase] = useState(true);
+  const [savingBaseRecipients, setSavingBaseRecipients] = useState(false);
+  const [savedBaseRecipientsFeedback, setSavedBaseRecipientsFeedback] = useState<string | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [mapMulta, setMapMulta] = useState<Multa | null>(null);
   const [showGlobalMap, setShowGlobalMap] = useState(false);
@@ -661,15 +669,36 @@ const MultasPage: React.FC = () => {
 
   const loadData = async (force: boolean = false) => {
       setLoading(true);
-      const data = await fetchAllData(force);
+      const [data, loadedBases, loadedPlacas] = await Promise.all([
+          fetchAllData(force),
+          fetchBaseEmailMappings(),
+          fetchPlacaEmailMappings()
+      ]);
       setMultas(data.multas);
       setVeiculos(data.veiculos);
       setMotoristas(data.motoristas);
       setCodigos(data.codigos);
+      if (loadedBases) setBaseEmailMappings(loadedBases);
+      if (loadedPlacas) setPlacaEmailMappings(loadedPlacas);
       setLoading(false);
   };
 
-  useEffect(() => { loadData(false); }, []);
+  useEffect(() => {
+      loadData(false);
+      const handleMappingsUpdated = (ev: Event) => {
+          const customEv = ev as CustomEvent;
+          if (customEv.detail?.tipo === 'base' && customEv.detail?.mappings) {
+              setBaseEmailMappings(customEv.detail.mappings);
+          } else if (customEv.detail?.tipo === 'placa' && customEv.detail?.mappings) {
+              setPlacaEmailMappings(customEv.detail.mappings);
+          } else {
+              fetchBaseEmailMappings().then(b => b && setBaseEmailMappings(b));
+              fetchPlacaEmailMappings().then(p => p && setPlacaEmailMappings(p));
+          }
+      };
+      window.addEventListener('risel:email-mappings-updated', handleMappingsUpdated);
+      return () => window.removeEventListener('risel:email-mappings-updated', handleMappingsUpdated);
+  }, []);
 
   const clearError = (field: string) => { if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n; }); };
 
@@ -1470,22 +1499,101 @@ const MultasPage: React.FC = () => {
         </div>`;
   };
 
+  const handleOpenEmailModal = async () => {
+      setSavedBaseRecipientsFeedback(null);
+      const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(formData.placa));
+      const rawBase = ((formData.base || '').trim() || (veiculoMatch?.base || '').trim() || (veiculoMatch?.filial || '').trim());
+
+      // Resolve imediatamente com o estado em memória para abrir o modal sem atraso
+      const initialResolved = resolveHeavyFleetEmailRecipients(rawBase, formData.placa, baseEmailMappings, placaEmailMappings);
+      const initialBaseKey = initialResolved.matchedBaseKey || rawBase.toUpperCase().trim() || '';
+      setEmailBaseKey(initialBaseKey);
+      setEmailTo(initialResolved.to);
+      setEmailCc(initialResolved.cc || 'logistica6@risel.com.br');
+      setSaveEmailChangesToBase(true);
+      setIsEmailModalOpen(true);
+
+      // Busca a versão mais recente do servidor/Supabase para garantir que alterações recentes estejam sincronizadas
+      try {
+          const [freshBases, freshPlacas] = await Promise.all([
+              fetchBaseEmailMappings(),
+              fetchPlacaEmailMappings()
+          ]);
+          if (freshBases) setBaseEmailMappings(freshBases);
+          if (freshPlacas) setPlacaEmailMappings(freshPlacas);
+
+          const freshResolved = resolveHeavyFleetEmailRecipients(
+              rawBase,
+              formData.placa,
+              freshBases || baseEmailMappings,
+              freshPlacas || placaEmailMappings
+          );
+          const resolvedBaseKey = freshResolved.matchedBaseKey || rawBase.toUpperCase().trim() || '';
+          setEmailBaseKey(resolvedBaseKey);
+          setEmailTo(freshResolved.to);
+          setEmailCc(freshResolved.cc || 'logistica6@risel.com.br');
+      } catch (e) {
+          console.warn("Aviso ao atualizar destinatários da base:", e);
+      }
+  };
+
+  const handleSaveRecipientsToBase = async (silent: boolean = false) => {
+      const targetBase = (emailBaseKey || formData.base || '').toUpperCase().trim();
+      if (!targetBase) {
+          if (!silent) alert("Informe ou selecione a sigla da Base Operacional para salvar os destinatários.");
+          return;
+      }
+      setSavingBaseRecipients(true);
+      try {
+          const updatedMap = {
+              ...baseEmailMappings,
+              [targetBase]: {
+                  to: emailTo.trim(),
+                  cc: emailCc.trim()
+              }
+          };
+          setBaseEmailMappings(updatedMap);
+          await saveBaseEmailMappings(updatedMap);
+          if (!silent) {
+              setSavedBaseRecipientsFeedback(`Destinatários salvos como padrão para a base "${targetBase}"!`);
+              setTimeout(() => setSavedBaseRecipientsFeedback(null), 4000);
+          }
+      } catch (e) {
+          console.error("Erro ao salvar destinatários da base:", e);
+          if (!silent) alert("Erro ao salvar destinatários da base.");
+      } finally {
+          setSavingBaseRecipients(false);
+      }
+  };
+
   const handleSendEmail = async () => {
       if (!formData.placa || !formData.ait) { alert("Faltam dados da multa."); return; }
       setSendingEmail(true);
+
+      // Se a opção de salvar alterações na base estiver ativa, persiste os destinatários editados para esta base
+      const targetBaseKey = (emailBaseKey || formData.base || '').toUpperCase().trim();
+      if (saveEmailChangesToBase && targetBaseKey) {
+          await handleSaveRecipientsToBase(true);
+      }
       
       // Parse main recipients list (split by ; or ,)
       const toRecipientsList = emailTo.split(/[;,]+/)
           .map(e => e.trim())
           .filter(e => e.length > 0 && e.includes('@'));
       
-      // CC Recipients: Mandatório conforme regra (deny.goncalves@risel.com.br e lorena.padilha@risel.com.br)
+      // Parse CC recipients from Base CC + Mandatory CC (deny.goncalves@risel.com.br e lorena.padilha@risel.com.br)
+      const baseCcList = emailCc.split(/[;,]+/)
+          .map(e => e.trim())
+          .filter(e => e.length > 0 && e.includes('@'));
+
       const ccRecipientsList = Array.from(new Set([
+          ...baseCcList,
           ...MANDATORY_CC_EMAILS
       ]));
       
       // Remove CC emails from To list if they are there to avoid duplication
-      const finalToList = toRecipientsList.filter(email => !ccRecipientsList.includes(email));
+      const ccLowerSet = new Set(ccRecipientsList.map(e => e.toLowerCase()));
+      const finalToList = toRecipientsList.filter(email => !ccLowerSet.has(email.toLowerCase()));
       
       const to_email = finalToList.join(',');
       const cc_email = ccRecipientsList.join(',');
@@ -1510,7 +1618,7 @@ const MultasPage: React.FC = () => {
       };
 
       const veiculoMatch = veiculos.find(v => cleanString(v.placa) === cleanString(formData.placa));
-      const baseStr = (formData.base || '').trim() || (veiculoMatch?.base || '').trim() || '-';
+      const baseStr = (formData.base || '').trim() || (veiculoMatch?.base || '').trim() || targetBaseKey || '-';
       const dataFormatada = getFormattedSubjectDate(formData.dataHoraInfracao);
       const subject = `NOTIFICAÇÃO DE MULTA: PLACA ${formData.placa}${formData.frota ? ' - FROTA: ' + formData.frota : ''} - BASE: ${baseStr} - DATA ${dataFormatada}`;
       const emailHtml = generateEmailHTML(formData);
@@ -2349,12 +2457,7 @@ const MultasPage: React.FC = () => {
 
                 <button 
                     type="button"
-                    onClick={() => { 
-                        const baseKey = formData.base ? Object.keys(EMAIL_MAPPINGS).find(k => formData.base!.toUpperCase().includes(k)) : null;
-                        const recipients = baseKey ? EMAIL_MAPPINGS[baseKey] : '';
-                        setEmailTo(recipients); 
-                        setIsEmailModalOpen(true); 
-                    }}
+                    onClick={handleOpenEmailModal}
                     className="px-3 py-1.5 rounded-lg border border-blue-200/80 bg-blue-50/70 hover:bg-blue-100 text-blue-700 hover:text-blue-800 text-xs font-semibold transition-all shadow-2xs hover:shadow-xs active:scale-95 flex items-center gap-1.5"
                     title="Enviar notificação da multa por e-mail"
                 >
@@ -2876,14 +2979,116 @@ const MultasPage: React.FC = () => {
 
         {isEmailModalOpen && (
             <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-                <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg animate-in zoom-in-95 duration-200">
-                    <h3 className="text-xl font-bold text-gray-800 mb-2 flex items-center"><Mail className="mr-2 text-blue-600"/> Enviar Notificação</h3>
-                    <p className="text-xs text-gray-500 mb-6">Confirme os destinatários para o envio da notificação de multa <strong>{formData.ait}</strong>.</p>
-                    <div className="mb-4">
-                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1 block">Para:</label>
-                        <input type="text" className="w-full border rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-medium" value={emailTo} onChange={e => setEmailTo(e.target.value)} placeholder="email1@exemplo.com; email2@exemplo.com" />
-                        <p className="text-[10px] text-gray-400 mt-1">Separe múltiplos e-mails com ponto e vírgula (;).</p>
+                <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xl animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-xl font-bold text-gray-800 flex items-center">
+                            <Mail className="mr-2 text-blue-600"/> Enviar Notificação
+                        </h3>
+                        <button
+                            type="button"
+                            onClick={() => setIsEmailModalOpen(false)}
+                            className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+                        >
+                            <X size={18} />
+                        </button>
                     </div>
+                    <p className="text-xs text-gray-500 mb-4">
+                        Confirme ou edite os destinatários para o envio da notificação de multa <strong>{formData.ait}</strong> (Placa: <strong>{formData.placa || '-'}</strong>).
+                    </p>
+
+                    {/* Seletor da Base Operacional vinculada */}
+                    <div className="mb-4 p-3 bg-blue-50/60 border border-blue-200 rounded-xl">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                                <label className="text-[11px] font-black text-blue-900 uppercase tracking-wide flex items-center gap-1.5">
+                                    <Building size={13} className="text-blue-700" />
+                                    Base Operacional dos Destinatários:
+                                </label>
+                                <p className="text-[10px] text-blue-700 mt-0.5">
+                                    Ao trocar a base ou editar os e-mails abaixo, você pode salvar como padrão da base.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <select
+                                    value={emailBaseKey}
+                                    onChange={e => {
+                                        const selectedKey = e.target.value;
+                                        setEmailBaseKey(selectedKey);
+                                        if (selectedKey && baseEmailMappings[selectedKey]) {
+                                            setEmailTo(baseEmailMappings[selectedKey].to || '');
+                                            setEmailCc(baseEmailMappings[selectedKey].cc || 'logistica6@risel.com.br');
+                                        }
+                                    }}
+                                    className="border border-blue-300 bg-white rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                                >
+                                    <option value="">Selecione a Base...</option>
+                                    {Object.keys(baseEmailMappings).sort().map(bKey => (
+                                        <option key={bKey} value={bKey}>{bKey}</option>
+                                    ))}
+                                    {emailBaseKey && !baseEmailMappings[emailBaseKey] && (
+                                        <option value={emailBaseKey}>{emailBaseKey} (Nova Base)</option>
+                                    )}
+                                </select>
+                                <button
+                                    type="button"
+                                    onClick={() => handleSaveRecipientsToBase(false)}
+                                    disabled={savingBaseRecipients || !emailBaseKey}
+                                    className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-2xs transition-colors shrink-0"
+                                    title="Salvar os e-mails abaixo como padrão para esta Base Operacional"
+                                >
+                                    {savingBaseRecipients ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                                    <span>Salvar na Base</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {savedBaseRecipientsFeedback && (
+                            <div className="mt-2 p-2 rounded-lg bg-emerald-600 text-white text-[11px] font-bold flex items-center gap-1.5">
+                                <CheckCircle2 size={13} />
+                                <span>{savedBaseRecipientsFeedback}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="mb-3">
+                        <label className="text-xs font-bold text-gray-600 uppercase tracking-wide mb-1 block">
+                            Para (Destinatários da Base {emailBaseKey || ''}):
+                        </label>
+                        <textarea
+                            rows={2}
+                            className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs font-medium text-slate-800"
+                            value={emailTo}
+                            onChange={e => setEmailTo(e.target.value)}
+                            placeholder="email1@risel.com.br; email2@risel.com.br"
+                        />
+                        <p className="text-[10px] text-gray-400 mt-0.5">Separe múltiplos e-mails com ponto e vírgula (;).</p>
+                    </div>
+
+                    <div className="mb-3">
+                        <label className="text-xs font-bold text-gray-600 uppercase tracking-wide mb-1 block">
+                            Em Cópia da Base (CC):
+                        </label>
+                        <input
+                            type="text"
+                            className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs font-medium text-slate-800"
+                            value={emailCc}
+                            onChange={e => setEmailCc(e.target.value)}
+                            placeholder="logistica6@risel.com.br"
+                        />
+                    </div>
+
+                    {emailBaseKey && (
+                        <label className="flex items-center gap-2 mb-4 cursor-pointer select-none text-xs text-slate-700 font-semibold bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+                            <input
+                                type="checkbox"
+                                checked={saveEmailChangesToBase}
+                                onChange={e => setSaveEmailChangesToBase(e.target.checked)}
+                                className="rounded text-blue-600 focus:ring-blue-500"
+                            />
+                            <span>Manter alterações de destinatários salvas para a base <strong>{emailBaseKey}</strong></span>
+                        </label>
+                    )}
+
                     <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-xl">
                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 mb-1">
                             <span>Cópia Fixa (CC Obrigatório):</span>
