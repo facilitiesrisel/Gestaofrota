@@ -3895,6 +3895,23 @@ export default function Frota() {
                                       CPF: {v.cpfCondutor}
                                     </span>
                                   )}
+                                  {(v.cnhNomeArquivo || (v.cnhAnexoBase64 && (v.cnhAnexoBase64.startsWith("data:") || v.cnhNomeArquivo)) || v.cnhNumero || v.cnhValidade) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPreviewCnhModal({
+                                          url: v.cnhAnexoBase64 || `/api/cnh/${v.placa}`,
+                                          nome: v.cnhNomeArquivo || `CNH - ${v.condutor || v.placa}`,
+                                          condutor: v.condutor || "Condutor",
+                                          placa: v.placa
+                                        });
+                                      }}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold cursor-pointer shadow-2xs transition-colors"
+                                      title="Visualizar CNH Anexada"
+                                    >
+                                      <FileText className="w-2.5 h-2.5" /> Ver CNH
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                               {v.contatoMotorista && (
@@ -4065,6 +4082,23 @@ export default function Frota() {
                                       <span className="font-mono text-slate-500 bg-slate-100 px-1 py-0.2 rounded text-[9.5px]">
                                         CPF: {v.cpfCondutor}
                                       </span>
+                                    )}
+                                    {(v.cnhNomeArquivo || (v.cnhAnexoBase64 && (v.cnhAnexoBase64.startsWith("data:") || v.cnhNomeArquivo)) || v.cnhNumero || v.cnhValidade) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPreviewCnhModal({
+                                            url: v.cnhAnexoBase64 || `/api/cnh/${v.placa}`,
+                                            nome: v.cnhNomeArquivo || `CNH - ${v.condutor || v.placa}`,
+                                            condutor: v.condutor || "Condutor",
+                                            placa: v.placa
+                                          });
+                                        }}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-300 text-[9.5px] font-bold cursor-pointer transition-colors"
+                                        title="Visualizar Cópia da CNH"
+                                      >
+                                        <FileText className="w-2.5 h-2.5" /> CNH
+                                      </button>
                                     )}
                                   </div>
                                 </td>
@@ -4478,41 +4512,48 @@ export default function Frota() {
                         CPF: {selectedVeiculo.cpfCondutor}
                       </span>
                     )}
-                    {selectedVeiculo.cnhValidade && (
+                    {(selectedVeiculo.cnhValidade || selectedVeiculo.cnhNumero || selectedVeiculo.cnhNomeArquivo || selectedVeiculo.cnhAnexoBase64) && (
                       <div className="mt-2 pt-2 border-t border-slate-200/60 space-y-1">
                         <div className="flex items-center justify-between">
                           <span className="text-[9px] font-bold uppercase text-emerald-800">CNH do Condutor</span>
-                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                            new Date(selectedVeiculo.cnhValidade).getTime() < new Date().setHours(0,0,0,0)
-                              ? "bg-rose-100 text-rose-800"
-                              : "bg-emerald-100 text-emerald-800"
-                          }`}>
-                            {new Date(selectedVeiculo.cnhValidade).getTime() < new Date().setHours(0,0,0,0)
-                              ? "Vencida"
-                              : "Válida"}
-                          </span>
+                          {selectedVeiculo.cnhValidade ? (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                              new Date(selectedVeiculo.cnhValidade).getTime() < new Date().setHours(0,0,0,0)
+                                ? "bg-rose-100 text-rose-800"
+                                : "bg-emerald-100 text-emerald-800"
+                            }`}>
+                              {new Date(selectedVeiculo.cnhValidade).getTime() < new Date().setHours(0,0,0,0)
+                                ? "Vencida"
+                                : "Válida"}
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
+                              Anexada
+                            </span>
+                          )}
                         </div>
-                        <p className="text-[10px] text-slate-700 font-medium">
-                          Validade: <strong>{selectedVeiculo.cnhValidade.split('-').reverse().join('/')}</strong>
-                        </p>
+                        {selectedVeiculo.cnhValidade && (
+                          <p className="text-[10px] text-slate-700 font-medium">
+                            Validade: <strong>{selectedVeiculo.cnhValidade.split('-').reverse().join('/')}</strong>
+                          </p>
+                        )}
                         {selectedVeiculo.cnhNumero && (
                           <p className="text-[10px] font-mono text-slate-500">Nº: {selectedVeiculo.cnhNumero}</p>
                         )}
-                        {selectedVeiculo.cnhAnexoBase64 && (
-                          <button
-                            onClick={() => {
-                              setPreviewCnhModal({
-                                url: selectedVeiculo.cnhAnexoBase64!,
-                                nome: selectedVeiculo.cnhNomeArquivo || `CNH_${selectedVeiculo.condutor}`,
-                                condutor: selectedVeiculo.condutor,
-                                placa: selectedVeiculo.placa
-                              });
-                            }}
-                            className="mt-1 w-full py-1 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
-                          >
-                            <FileText className="w-3 h-3" /> Ver Cópia da CNH
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewCnhModal({
+                              url: selectedVeiculo.cnhAnexoBase64 || `/api/cnh/${selectedVeiculo.placa}`,
+                              nome: selectedVeiculo.cnhNomeArquivo || `CNH_${selectedVeiculo.condutor}`,
+                              condutor: selectedVeiculo.condutor,
+                              placa: selectedVeiculo.placa
+                            });
+                          }}
+                          className="mt-1 w-full py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-xs"
+                        >
+                          <FileText className="w-3 h-3" /> Ver Cópia da CNH
+                        </button>
                       </div>
                     )}
                   </div>

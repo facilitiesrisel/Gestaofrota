@@ -42,120 +42,190 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
     let active = true;
     let createdUrl: string | null = null;
 
+    const convertBase64ToBlobUrl = (inputB64: string, fallbackName: string): { url: string; mime: string } | null => {
+      try {
+        let base64Pure = inputB64.trim();
+        let detectedMime = "application/pdf";
+
+        if (base64Pure.startsWith("data:")) {
+          const commaIdx = base64Pure.indexOf(",");
+          if (commaIdx !== -1) {
+            const header = base64Pure.slice(0, commaIdx);
+            base64Pure = base64Pure.slice(commaIdx + 1);
+            const matchMime = header.match(/data:([^;]+)/);
+            if (matchMime) detectedMime = matchMime[1];
+          }
+        }
+
+        if (fallbackName.toLowerCase().endsWith(".pdf")) detectedMime = "application/pdf";
+        else if (fallbackName.toLowerCase().endsWith(".jpg") || fallbackName.toLowerCase().endsWith(".jpeg")) detectedMime = "image/jpeg";
+        else if (fallbackName.toLowerCase().endsWith(".png")) detectedMime = "image/png";
+
+        const cleanBase64 = base64Pure.replace(/\s+/g, "");
+        const binaryString = atob(cleanBase64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        // Magic bytes detection
+        if (bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
+          detectedMime = "application/pdf";
+        } else if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+          detectedMime = "image/jpeg";
+        } else if (bytes.length > 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+          detectedMime = "image/png";
+        }
+
+        const blob = new Blob([bytes], { type: detectedMime });
+        return { url: URL.createObjectURL(blob), mime: detectedMime };
+      } catch (_) {
+        return null;
+      }
+    };
+
     const processUrl = async () => {
       setLoading(true);
       setError(null);
 
       try {
-        if (!rawUrl) {
-          setError("Nenhum arquivo ou documento informado para visualização.");
-          setLoading(false);
-          return;
-        }
+        const trimmed = (rawUrl || "").trim();
+        const isDriveFolderUrl = trimmed.includes("drive.google.com/drive/folders");
+        const isDirectDriveFileUrl = trimmed.includes("drive.google.com/file/d/");
 
-        const trimmed = rawUrl.trim();
-
-        // 1. Caso seja link do Google Drive
-        if (trimmed.includes("drive.google.com")) {
-          setMimeType("application/pdf");
-          let drivePreview = trimmed;
-          const matchD = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-          if (matchD) {
-            drivePreview = `https://drive.google.com/file/d/${matchD[1]}/preview`;
-          }
-          if (active) {
-            setBlobUrl(drivePreview);
-            setLoading(false);
-          }
-          return;
-        }
-
-        // 2. Caso seja uma rota local da API (/api/cnh/...)
-        if (trimmed.startsWith("/api/cnh")) {
-          try {
-            const resp = await fetch(trimmed);
-            if (!resp.ok) throw new Error(`Falha ao obter documento (HTTP ${resp.status})`);
-            const blob = await resp.blob();
-            const type = blob.type || (nome.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
-            const objectUrl = URL.createObjectURL(blob);
-            createdUrl = objectUrl;
-            if (active) {
-              setMimeType(type);
-              setBlobUrl(objectUrl);
-              setLoading(false);
-            }
-            return;
-          } catch (e: any) {
-            console.warn("Erro ao buscar via fetch local, tentando fallback:", e);
-          }
-        }
-
-        // 3. Caso seja Data URI base64 (data:application/pdf;base64,... ou data:image/...)
-        let base64Pure = trimmed;
-        let detectedMime = "application/pdf";
-
+        // 1. Caso seja Data URI base64 direta
         if (trimmed.startsWith("data:")) {
-          const commaIdx = trimmed.indexOf(",");
-          if (commaIdx !== -1) {
-            const header = trimmed.slice(0, commaIdx);
-            base64Pure = trimmed.slice(commaIdx + 1);
-            const matchMime = header.match(/data:([^;]+)/);
-            if (matchMime) detectedMime = matchMime[1];
+          const conv = convertBase64ToBlobUrl(trimmed, nome);
+          if (conv && active) {
+            createdUrl = conv.url;
+            setMimeType(conv.mime);
+            setBlobUrl(conv.url);
+            setLoading(false);
+            return;
           }
-        } else if (trimmed.startsWith("{") && trimmed.includes('"base64"')) {
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (parsed.base64) {
-              return processUrl();
-            }
-          } catch (_) {}
         }
 
-        // Detecta por extensão se não estiver claro
-        if (nome.toLowerCase().endsWith(".pdf")) detectedMime = "application/pdf";
-        else if (nome.toLowerCase().endsWith(".jpg") || nome.toLowerCase().endsWith(".jpeg")) detectedMime = "image/jpeg";
-        else if (nome.toLowerCase().endsWith(".png")) detectedMime = "image/png";
-
-        // Converte base64 para Uint8Array binário nativo
-        try {
-          const cleanBase64 = base64Pure.replace(/\s+/g, "");
-          const binaryString = atob(cleanBase64);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-
-          // Se os primeiros bytes forem %PDF-, força mime application/pdf
-          if (bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
-            detectedMime = "application/pdf";
-          }
-
-          const blob = new Blob([bytes], { type: detectedMime });
-          const objectUrl = URL.createObjectURL(blob);
-          createdUrl = objectUrl;
-
-          if (active) {
-            setMimeType(detectedMime);
-            setBlobUrl(objectUrl);
+        // 2. Caso seja link direto de um arquivo individual no Google Drive (/file/d/ID)
+        if (isDirectDriveFileUrl) {
+          const matchD = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+          if (matchD && active) {
+            setMimeType("application/pdf");
+            setBlobUrl(`https://drive.google.com/file/d/${matchD[1]}/preview`);
             setLoading(false);
+            return;
           }
-        } catch (b64Err: any) {
-          console.error("Falha ao converter base64:", b64Err);
-          if (active) {
-            // Se falhar a decodificação de base64 mas houver rota de API da placa
-            if (placa) {
-              setBlobUrl(`/api/cnh/${placa}`);
-              setMimeType("application/pdf");
-              setLoading(false);
-            } else {
-              setError("Não foi possível decodificar o documento da CNH. Verifique o arquivo anexado.");
-              setLoading(false);
+        }
+
+        // 3. Caso seja uma rota da API (/api/cnh/... ou /api/rac/cnh/...)
+        if (trimmed.startsWith("/api/") && !isDriveFolderUrl) {
+          try {
+            const sep = trimmed.includes("?") ? "&" : "?";
+            const resp = await fetch(`${trimmed}${sep}json=true`);
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data && data.base64) {
+                const conv = convertBase64ToBlobUrl(data.base64, data.nomeArquivo || nome);
+                if (conv && active) {
+                  createdUrl = conv.url;
+                  setMimeType(conv.mime);
+                  setBlobUrl(conv.url);
+                  setLoading(false);
+                  return;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Aviso ao consultar rota direta de CNH, tentando resolução unificada:", e);
+          }
+        }
+
+        // 4. Resolução inteligente via /api/cnh/resolve (por placa, condutor e nome do arquivo)
+        try {
+          const queryParams = new URLSearchParams({
+            placa: placa || "",
+            condutor: condutor || "",
+            nome: nome || "",
+            json: "true"
+          });
+          const resolveResp = await fetch(`/api/cnh/resolve?${queryParams.toString()}`);
+          if (resolveResp.ok) {
+            const resolveData = await resolveResp.json();
+            if (resolveData && resolveData.base64) {
+              const conv = convertBase64ToBlobUrl(resolveData.base64, resolveData.nomeArquivo || nome);
+              if (conv && active) {
+                createdUrl = conv.url;
+                setMimeType(conv.mime);
+                setBlobUrl(conv.url);
+                setLoading(false);
+                return;
+              }
             }
           }
+        } catch (_) {}
+
+        // 5. Tenta localizar no cofre local (localStorage) de CNHs ou na Frota Leve local
+        try {
+          const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const targetCond = norm(condutor);
+          const targetPlaca = (placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+
+          const rawFrota = localStorage.getItem("risel_frota_veiculos_v2");
+          if (rawFrota) {
+            const list = JSON.parse(rawFrota);
+            if (Array.isArray(list)) {
+              const vMatch = list.find((v: any) => {
+                const p = String(v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+                return (targetPlaca && p === targetPlaca) || (targetCond && norm(v.condutor) === targetCond);
+              });
+              if (vMatch?.cnhAnexoBase64 && vMatch.cnhAnexoBase64.startsWith("data:")) {
+                const conv = convertBase64ToBlobUrl(vMatch.cnhAnexoBase64, vMatch.cnhNomeArquivo || nome);
+                if (conv && active) {
+                  createdUrl = conv.url;
+                  setMimeType(conv.mime);
+                  setBlobUrl(conv.url);
+                  setLoading(false);
+                  return;
+                }
+              }
+            }
+          }
+
+          const rawVault = localStorage.getItem("risel_driver_cnh_vault");
+          if (rawVault) {
+            const vault = JSON.parse(rawVault);
+            const rec: any = Object.values(vault).find((r: any) => targetCond && norm(r?.driverName) === targetCond && r?.cnhData?.startsWith("data:"));
+            if (rec?.cnhData) {
+              const conv = convertBase64ToBlobUrl(rec.cnhData, rec.fileName || nome);
+              if (conv && active) {
+                createdUrl = conv.url;
+                setMimeType(conv.mime);
+                setBlobUrl(conv.url);
+                setLoading(false);
+                return;
+              }
+            }
+          }
+        } catch (_) {}
+
+        // 6. Última tentativa: se trimmed for base64 puro sem prefixo data:
+        if (trimmed && !trimmed.startsWith("http") && !trimmed.startsWith("/api/") && trimmed.length > 100) {
+          const conv = convertBase64ToBlobUrl(trimmed, nome);
+          if (conv && active) {
+            createdUrl = conv.url;
+            setMimeType(conv.mime);
+            setBlobUrl(conv.url);
+            setLoading(false);
+            return;
+          }
+        }
+
+        if (active) {
+          setError("A cópia digital desta CNH ainda não foi anexada ou está disponível apenas na pasta do Google Drive.");
+          setLoading(false);
         }
       } catch (err: any) {
         if (active) {
-          setError(err.message || "Erro desconhecido ao carregar o arquivo.");
+          setError(err.message || "Erro ao carregar o documento da CNH.");
           setLoading(false);
         }
       }
@@ -169,7 +239,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
         URL.revokeObjectURL(createdUrl);
       }
     };
-  }, [rawUrl, nome, placa]);
+  }, [rawUrl, nome, condutor, placa]);
 
   const isPdf = mimeType.includes("pdf") || (nome || "").toLowerCase().endsWith(".pdf");
 

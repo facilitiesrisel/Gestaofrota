@@ -5281,6 +5281,7 @@ async function startServer() {
         fileName: officialFileName,
         driverName: cleanDriverName,
         cnhDriveUrl: driveUrl,
+        cnhServerUrl: `/api/rac/cnh/${encodeURIComponent(officialFileName)}`,
         cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
         cnhDriveFileId: driveFileId,
         fileSize: buffer.length
@@ -5291,11 +5292,63 @@ async function startServer() {
     }
   });
 
+  // Servir arquivo de CNH do RAC por nome do arquivo ou nome do condutor
+  app.get("/api/rac/cnh/:identifier", (req, res) => {
+    try {
+      const rawId = decodeURIComponent(String(req.params.identifier || "")).trim();
+      if (!rawId || !fs.existsSync(RAC_CNHS_DIR)) {
+        return res.status(404).json({ error: "CNH RAC não encontrada." });
+      }
+      const files = fs.readdirSync(RAC_CNHS_DIR);
+      const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+      const targetNorm = norm(rawId.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, ""));
+
+      let match = files.find(f => f.toLowerCase() === rawId.toLowerCase());
+      if (!match && targetNorm) {
+        match = files.find(f => {
+          const base = f.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, "");
+          const fNorm = norm(base);
+          return fNorm === targetNorm || fNorm.includes(targetNorm) || targetNorm.includes(fNorm);
+        });
+      }
+
+      if (!match) {
+        return res.status(404).json({ error: "Arquivo de CNH RAC não localizado no servidor." });
+      }
+
+      const filePath = path.join(RAC_CNHS_DIR, match);
+      const buffer = fs.readFileSync(filePath);
+      let mimeType = "image/jpeg";
+      if (buffer.slice(0, 4).toString("utf-8") === "%PDF" || match.toLowerCase().endsWith(".pdf")) {
+        mimeType = "application/pdf";
+      } else if (buffer[0] === 0x89 && buffer[1] === 0x50) {
+        mimeType = "image/png";
+      }
+
+      if (req.query.json === "true") {
+        return res.json({
+          success: true,
+          nomeArquivo: match,
+          mimeType,
+          base64: `data:${mimeType};base64,${buffer.toString("base64")}`
+        });
+      }
+
+      const safeFilename = encodeURIComponent(match);
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Disposition", `inline; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
+      res.setHeader("Content-Length", buffer.length);
+      res.setHeader("Cache-Control", "no-cache, must-revalidate");
+      return res.send(buffer);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   /**
-   * Endpoint para sincronizar e purgar base64 pesado de todas as CNHs existentes,
-   * padronizando para a pasta do Google Drive e liberando a cota do Supabase.
+   * Endpoint para sincronizar CNHs existentes com o servidor sem apagar a visualização no app
    */
-  app.post("/api/rac/sync-all-cnhs-to-drive", express.json(), async (req, res) => {
+  app.post("/api/rac/sync-all-cnhs-to-drive", express.json({ limit: "50mb" }), async (req, res) => {
     try {
       const { rentals } = req.body;
       if (!Array.isArray(rentals)) {
@@ -5313,10 +5366,10 @@ async function startServer() {
           .replace(/\s+/g, " ");
 
         const ext = (r.cnhFileName && r.cnhFileName.toLowerCase().endsWith(".pdf")) ? "pdf" : "jpg";
-        const standardizedName = `CNH - ${driver}.${ext}`;
+        const standardizedName = r.cnhFileName || `CNH - ${driver}.${ext}`;
 
-        // Se houver base64, salva no servidor e remove a string base64 pesada
-        if (r.cnhBase64 && r.cnhBase64.length > 500) {
+        // Se houver base64 data URI, salva cópia física no servidor
+        if (r.cnhBase64 && typeof r.cnhBase64 === "string" && r.cnhBase64.startsWith("data:") && r.cnhBase64.length > 500) {
           try {
             const clean = r.cnhBase64.includes(",") ? r.cnhBase64.split(",")[1] : r.cnhBase64;
             const buf = Buffer.from(clean, "base64");
@@ -5330,10 +5383,10 @@ async function startServer() {
           ...r,
           cnhFileName: standardizedName,
           cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
-          cnhDriveUrl: r.cnhDriveUrl || RAC_CNH_DRIVE_FOLDER_URL,
+          cnhDriveUrl: r.cnhDriveUrl || `/api/rac/cnh/${encodeURIComponent(standardizedName)}`,
           hasCnhCopy: true,
-          // Remove o base64 pesado para evitar superlotação do Supabase e estouro de memória no celular
-          cnhBase64: undefined
+          // Mantém o base64 ou a rota direta do servidor para visualização imediata no modal
+          cnhBase64: r.cnhBase64 || `/api/rac/cnh/${encodeURIComponent(standardizedName)}`
         };
       });
 
@@ -5987,7 +6040,7 @@ async function startServer() {
       cnhValidade: definedRaw.cnhValidade !== undefined ? definedRaw.cnhValidade : (definedRaw.cnh_validade !== undefined ? definedRaw.cnh_validade : (extra.cnhValidade ?? "")),
       cnhNumero: definedRaw.cnhNumero !== undefined ? definedRaw.cnhNumero : (definedRaw.cnh_numero !== undefined ? definedRaw.cnh_numero : (extra.cnhNumero ?? "")),
       cnhNomeArquivo: definedRaw.cnhNomeArquivo !== undefined ? definedRaw.cnhNomeArquivo : (definedRaw.cnh_nome_arquivo !== undefined ? definedRaw.cnh_nome_arquivo : (extra.cnhNomeArquivo ?? "")),
-      cnhAnexoBase64: definedRaw.cnhAnexoBase64 || definedRaw.cnh_anexo_base64 || extra.cnhAnexoBase64 || `/api/cnh/${cleanPlaca}`,
+      cnhAnexoBase64: definedRaw.cnhAnexoBase64 || definedRaw.cnh_anexo_base64 || extra.cnhAnexoBase64 || ((definedRaw.cnhNomeArquivo || definedRaw.cnh_nome_arquivo || extra.cnhNomeArquivo) ? `/api/cnh/${cleanPlaca}` : ""),
       funcao: definedRaw.funcao !== undefined ? definedRaw.funcao : (extra.funcao ?? "Motorista"),
       setor: definedRaw.setor !== undefined ? definedRaw.setor : (extra.setor ?? ""),
       contatoMotorista: definedRaw.contatoMotorista !== undefined ? definedRaw.contatoMotorista : (definedRaw.contato_motorista !== undefined ? definedRaw.contato_motorista : (extra.contatoMotorista ?? "")),
@@ -6013,7 +6066,24 @@ async function startServer() {
     const resolvedFilial = v.filial || v.base || "Paulínia";
     const cleanObsText = typeof v.observacoes === "string" && !v.observacoes.trim().startsWith("{") ? v.observacoes.trim() : "";
 
-    // Preparação do JSON extra enxuto, sem anexos volumosos ou recursividade
+    // Se houver CNH em disco para esta placa e v.cnhAnexoBase64 for apenas a rota /api/cnh/, lê o base64 para persistir na nuvem caso caia o container
+    let persistedCnhBase64 = (rawVeh && typeof rawVeh.cnhAnexoBase64 === "string" && rawVeh.cnhAnexoBase64.startsWith("data:"))
+      ? rawVeh.cnhAnexoBase64
+      : (v.cnhAnexoBase64 || "");
+    if ((!persistedCnhBase64 || persistedCnhBase64.startsWith("/api/cnh/")) && fs.existsSync(CNH_DIR)) {
+      try {
+        const files = fs.readdirSync(CNH_DIR);
+        const match = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
+        if (match) {
+          const buf = fs.readFileSync(path.join(CNH_DIR, match));
+          if (buf.length < 3500000) {
+            const mime = buf.slice(0, 4).toString("utf-8") === "%PDF" ? "application/pdf" : (match.endsWith(".png") ? "image/png" : "image/jpeg");
+            persistedCnhBase64 = `data:${mime};base64,${buf.toString("base64")}`;
+          }
+        }
+      } catch (_) {}
+    }
+
     const extraData = JSON.stringify({
       id: v.id || `v-${cleanPlaca.toLowerCase()}`,
       modelo: v.modelo || "Veículo Frota",
@@ -6025,6 +6095,7 @@ async function startServer() {
       cnhNumero: v.cnhNumero ?? "",
       cnhDriveFolder: CNH_DRIVE_FOLDER_URL,
       cnhNomeArquivo: v.cnhNomeArquivo ?? "",
+      cnhAnexoBase64: persistedCnhBase64 || v.cnhAnexoBase64 || "",
       funcao: v.funcao ?? "Motorista",
       setor: v.setor ?? "",
       contatoMotorista: v.contatoMotorista ?? "",
@@ -6087,6 +6158,15 @@ async function startServer() {
         const cleanPlaca = unpacked.placa;
         if (unpacked.cnhAnexoBase64 && typeof unpacked.cnhAnexoBase64 === "string" && unpacked.cnhAnexoBase64.length > 2000) {
           saveCnhFileToDisk(cleanPlaca, unpacked.cnhAnexoBase64, unpacked.cnhNomeArquivo);
+          // Também salva na pasta RAC_CNHS_DIR com o nome do condutor para unificar reservas e frota leve
+          if (unpacked.condutor && unpacked.condutor !== "Disponível") {
+            try {
+              const cleanCond = String(unpacked.condutor).trim().replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ");
+              const ext = (unpacked.cnhNomeArquivo && unpacked.cnhNomeArquivo.toLowerCase().endsWith(".pdf")) || unpacked.cnhAnexoBase64.includes("application/pdf") ? "pdf" : "jpg";
+              const cleanB64 = unpacked.cnhAnexoBase64.includes(",") ? unpacked.cnhAnexoBase64.split(",")[1] : unpacked.cnhAnexoBase64;
+              fs.writeFileSync(path.join(RAC_CNHS_DIR, `CNH - ${cleanCond}.${ext}`), Buffer.from(cleanB64, "base64"));
+            } catch (_) {}
+          }
           unpacked.cnhAnexoBase64 = `/api/cnh/${cleanPlaca}`;
         }
         if (isSingleSave) {
@@ -6301,14 +6381,201 @@ async function startServer() {
     }
   });
 
+  // Endpoint unificado para resolver qualquer CNH por placa, condutor ou nome de arquivo
+  app.get("/api/cnh/resolve", async (req, res) => {
+    try {
+      const rawPlaca = String(req.query.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      const rawCondutor = String(req.query.condutor || "").trim();
+      const rawNome = String(req.query.nome || "").trim();
+      const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+      let foundBuffer: Buffer | null = null;
+      let foundMime = "application/pdf";
+      let foundName = rawNome || (rawCondutor ? `CNH - ${rawCondutor}.pdf` : `CNH_${rawPlaca}.pdf`);
+
+      const detectBufferMime = (buf: Buffer, filename: string): string => {
+        if (buf.slice(0, 4).toString("utf-8") === "%PDF") return "application/pdf";
+        if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+        if (filename.toLowerCase().endsWith(".png")) return "image/png";
+        if (filename.toLowerCase().endsWith(".jpg") || filename.toLowerCase().endsWith(".jpeg")) return "image/jpeg";
+        return "application/pdf";
+      };
+
+      // 1. Tenta por placa em CNH_DIR
+      if (rawPlaca && fs.existsSync(CNH_DIR)) {
+        const files = fs.readdirSync(CNH_DIR);
+        const match = files.find(f => f.startsWith(`${rawPlaca}.`) && !f.endsWith(".json"));
+        if (match) {
+          foundBuffer = fs.readFileSync(path.join(CNH_DIR, match));
+          foundName = match;
+          foundMime = detectBufferMime(foundBuffer, match);
+        }
+      }
+
+      // 2. Tenta por nome de arquivo ou condutor em RAC_CNHS_DIR
+      if (!foundBuffer && fs.existsSync(RAC_CNHS_DIR)) {
+        const racFiles = fs.readdirSync(RAC_CNHS_DIR);
+        const condNorm = norm(rawCondutor.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, ""));
+        const nomeNorm = norm(rawNome.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, ""));
+
+        let match = racFiles.find(f => (rawNome && f.toLowerCase() === rawNome.toLowerCase()));
+        if (!match && (condNorm || nomeNorm)) {
+          match = racFiles.find(f => {
+            const fNorm = norm(f.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, ""));
+            return (condNorm && (fNorm === condNorm || fNorm.includes(condNorm) || condNorm.includes(fNorm))) ||
+                   (nomeNorm && (fNorm === nomeNorm || fNorm.includes(nomeNorm) || nomeNorm.includes(fNorm)));
+          });
+        }
+        if (match) {
+          foundBuffer = fs.readFileSync(path.join(RAC_CNHS_DIR, match));
+          foundName = match;
+          foundMime = detectBufferMime(foundBuffer, match);
+        }
+      }
+
+      // 3. Tenta localizar no arquivo VEICULOS_FILE (por placa ou nome do condutor)
+      if (!foundBuffer && fs.existsSync(VEICULOS_FILE)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(VEICULOS_FILE, "utf-8")) || [];
+          const condNorm = norm(rawCondutor);
+          const vMatch = parsed.find((v: any) => {
+            const p = String(v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+            if (rawPlaca && p === rawPlaca) return true;
+            if (condNorm && v.condutor && norm(v.condutor) === condNorm) return true;
+            return false;
+          });
+          if (vMatch) {
+            const vUnpacked = unpackVehicleRecord(vMatch);
+            if (vUnpacked.cnhAnexoBase64 && vUnpacked.cnhAnexoBase64.startsWith("data:")) {
+              const comma = vUnpacked.cnhAnexoBase64.indexOf(",");
+              const b64 = comma !== -1 ? vUnpacked.cnhAnexoBase64.slice(comma + 1) : vUnpacked.cnhAnexoBase64;
+              foundBuffer = Buffer.from(b64, "base64");
+              foundName = vUnpacked.cnhNomeArquivo || `CNH_${vUnpacked.placa}.pdf`;
+              foundMime = detectBufferMime(foundBuffer, foundName);
+            } else if (vUnpacked.placa && fs.existsSync(CNH_DIR)) {
+              const files = fs.readdirSync(CNH_DIR);
+              const m = files.find(f => f.startsWith(`${vUnpacked.placa}.`) && !f.endsWith(".json"));
+              if (m) {
+                foundBuffer = fs.readFileSync(path.join(CNH_DIR, m));
+                foundName = vUnpacked.cnhNomeArquivo || m;
+                foundMime = detectBufferMime(foundBuffer, foundName);
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 4. Tenta consultar no Supabase (tabela veiculos) caso o servidor tenha reiniciado
+      if (!foundBuffer) {
+        try {
+          const { data } = await serverSupabase.from("veiculos").select("*");
+          if (Array.isArray(data)) {
+            const condNorm = norm(rawCondutor);
+            const row = data.find((r: any) => {
+              const p = String(r.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+              if (rawPlaca && p === rawPlaca) return true;
+              const u = unpackVehicleRecord(r);
+              if (condNorm && u.condutor && norm(u.condutor) === condNorm) return true;
+              return false;
+            });
+            if (row) {
+              const u = unpackVehicleRecord(row);
+              if (u.cnhAnexoBase64 && u.cnhAnexoBase64.startsWith("data:")) {
+                const comma = u.cnhAnexoBase64.indexOf(",");
+                const b64 = comma !== -1 ? u.cnhAnexoBase64.slice(comma + 1) : u.cnhAnexoBase64;
+                foundBuffer = Buffer.from(b64, "base64");
+                foundName = u.cnhNomeArquivo || `CNH_${u.placa}.pdf`;
+                foundMime = detectBufferMime(foundBuffer, foundName);
+                saveCnhFileToDisk(u.placa, u.cnhAnexoBase64, foundName);
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!foundBuffer) {
+        return res.status(404).json({ error: "Documento da CNH não encontrado." });
+      }
+
+      if (req.query.json === "true") {
+        return res.json({
+          success: true,
+          nomeArquivo: foundName,
+          mimeType: foundMime,
+          base64: `data:${foundMime};base64,${foundBuffer.toString("base64")}`
+        });
+      }
+
+      const safeFilename = encodeURIComponent(foundName);
+      res.setHeader("Content-Type", foundMime);
+      res.setHeader("Content-Disposition", `inline; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
+      res.setHeader("Content-Length", foundBuffer.length);
+      res.setHeader("Cache-Control", "no-cache, must-revalidate");
+      return res.send(foundBuffer);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   // Servir arquivo da CNH (PDF ou Imagem nativa) para visualização perfeita em iframe sem "monte de letras"
-  app.get("/api/cnh/:placa", (req, res) => {
+  app.get("/api/cnh/:placa", async (req, res) => {
     try {
       const cleanPlaca = String(req.params.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-      if (!fs.existsSync(CNH_DIR)) return res.status(404).json({ error: "Diretório de CNH não encontrado." });
+      if (!fs.existsSync(CNH_DIR)) fs.mkdirSync(CNH_DIR, { recursive: true });
       
-      const files = fs.readdirSync(CNH_DIR);
-      const match = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
+      let files = fs.readdirSync(CNH_DIR);
+      let match = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
+
+      // Se não estiver no disco efêmero, tenta recuperar de VEICULOS_FILE, Supabase ou RAC_CNHS_DIR
+      if (!match) {
+        try {
+          let recoveredBase64 = "";
+          let recoveredName = "";
+          let recoveredDriver = "";
+          if (fs.existsSync(VEICULOS_FILE)) {
+            const parsed = JSON.parse(fs.readFileSync(VEICULOS_FILE, "utf-8")) || [];
+            const vFound = parsed.find((v: any) => String(v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === cleanPlaca);
+            if (vFound) {
+              const u = unpackVehicleRecord(vFound);
+              recoveredDriver = u.condutor || "";
+              recoveredName = u.cnhNomeArquivo || "";
+              if (u.cnhAnexoBase64 && u.cnhAnexoBase64.startsWith("data:")) {
+                recoveredBase64 = u.cnhAnexoBase64;
+              }
+            }
+          }
+          if (!recoveredBase64) {
+            const { data } = await serverSupabase.from("veiculos").select("*").eq("placa", cleanPlaca).maybeSingle();
+            if (data) {
+              const u = unpackVehicleRecord(data);
+              recoveredDriver = recoveredDriver || u.condutor || "";
+              recoveredName = recoveredName || u.cnhNomeArquivo || "";
+              if (u.cnhAnexoBase64 && u.cnhAnexoBase64.startsWith("data:")) {
+                recoveredBase64 = u.cnhAnexoBase64;
+              }
+            }
+          }
+          if (recoveredBase64) {
+            saveCnhFileToDisk(cleanPlaca, recoveredBase64, recoveredName || `cnh_${cleanPlaca}.pdf`);
+            files = fs.readdirSync(CNH_DIR);
+            match = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
+          } else if (recoveredDriver && fs.existsSync(RAC_CNHS_DIR)) {
+            const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+            const target = norm(recoveredDriver);
+            const racFiles = fs.readdirSync(RAC_CNHS_DIR);
+            const racMatch = racFiles.find(f => norm(f).includes(target));
+            if (racMatch) {
+              const buf = fs.readFileSync(path.join(RAC_CNHS_DIR, racMatch));
+              const ext = racMatch.toLowerCase().endsWith(".pdf") ? "pdf" : "jpg";
+              fs.writeFileSync(path.join(CNH_DIR, `${cleanPlaca}.${ext}`), buf);
+              files = fs.readdirSync(CNH_DIR);
+              match = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
+            }
+          }
+        } catch (_) {}
+      }
+
       if (!match) {
         return res.status(404).json({ error: "CNH não encontrada para este veículo." });
       }

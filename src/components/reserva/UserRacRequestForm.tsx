@@ -390,8 +390,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         cnhDriveUrl: cnhDriveUrl,
         cnhDriveFolderUrl: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
         cnhDriveFileId: cnhDriveFileId,
-        // NÃO salvar base64 pesado no Supabase / Firestore para evitar superlotação
-        cnhBase64: undefined,
+        cnhBase64: cnhFile?.base64 || (cnhStatus.hasCnh ? cnhStatus.cnhRecord?.cnhData : undefined) || `/api/rac/cnh/${encodeURIComponent(officialCnhFileName)}`,
         cnhUploadDate: new Date(),
         protocolNumber: protocolNumber
       };
@@ -403,7 +402,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
         id: createdRef?.id || `local_${Date.now()}`
       };
 
-      // 2. Se anexou CNH nova, salva no cofre de CNHs vinculada ao Drive
+      // 2. Se anexou CNH nova, salva no cofre de CNHs vinculada ao Drive e ao servidor
       if (cnhFile) {
         saveDriverCnhRecord({
           driverName: finalDriverName,
@@ -412,6 +411,7 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
           fileName: officialCnhFileName,
           fileType: cnhFile.file.type,
           fileSize: cnhFile.file.size,
+          cnhData: cnhFile.base64,
           cnhDriveUrl: cnhDriveUrl,
           cnhDriveFolderUrl: GOOGLE_DRIVE_RAC_CNH_FOLDER_URL,
           cnhDriveFileId: cnhDriveFileId,

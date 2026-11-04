@@ -50,6 +50,9 @@ export interface Reservation {
   rejectReason?: string;
   adminNotes?: string;
   requestTimestamp?: Date;
+  hasCnhCopy?: boolean;
+  cnhFileName?: string;
+  cnhBase64?: string;
 }
 
 export interface DailyTrip {

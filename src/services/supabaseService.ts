@@ -1547,7 +1547,7 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
         ? String(row.cnhNumero).trim()
         : (row.cnh_numero || "");
       const cnhArquivoFinal = row.cnhNomeArquivo || row.cnh_nome_arquivo || "";
-      const cnhAnexoFinal = row.cnhAnexoBase64 || row.cnh_anexo_base64 || `/api/cnh/${cleanR}`;
+      const cnhAnexoFinal = row.cnhAnexoBase64 || row.cnh_anexo_base64 || (cnhArquivoFinal ? `/api/cnh/${cleanR}` : "");
       const odometroFinal = Number(row.odometro ?? row.km_atual ?? real?.odometro ?? 0);
       const combustivelFinal = row.combustivel || row.combustivel_padrao || real?.combustivel || "Flex";
       const dataTrocaFinal = row.dataTrocaCondutor || row.data_troca_condutor || real?.dataTrocaCondutor || "";
@@ -1620,19 +1620,20 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
     const updatedAt = item.updatedAt || new Date().toISOString();
 
     let cnhAnexoRef = item.cnhAnexoBase64 || "";
+    const originalBase64 = (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.startsWith("data:")) ? cnhAnexoRef : "";
     if (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.length > 2000) {
       cnhAnexoRef = `/api/cnh/${cleanPlaca}`;
     }
 
     // Salva o anexo de CNH no disco / Google Drive via servidor
-    if (item.cnhAnexoBase64 && typeof item.cnhAnexoBase64 === "string" && item.cnhAnexoBase64.length > 2000) {
+    if (originalBase64 && originalBase64.length > 200) {
       try {
         await fetch(`/api/cnh/${cleanPlaca}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
-            base64: item.cnhAnexoBase64, 
-            nomeArquivo: item.cnhNomeArquivo,
+            base64: originalBase64, 
+            nomeArquivo: item.cnhNomeArquivo || `CNH_${cleanPlaca}.pdf`,
             driveUrl: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing"
           })
         });
@@ -1655,7 +1656,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
 
     const cleanObs = sanitizeTextOnlyObs(item.observacoes);
 
-    // Dados leves para a nuvem Supabase (sem anexos pesados de CNH)
+    // Persiste metadados e CNH (se tamanho razoável) no JSON extra do Supabase para recuperação entre instâncias
     const extraData = JSON.stringify({
       id: item.id || `v-${cleanPlaca.toLowerCase()}`,
       modelo: item.modelo || "Veículo Frota",
@@ -1667,6 +1668,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       cnhNumero: item.cnhNumero ?? "",
       cnhDriveFolder: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing",
       cnhNomeArquivo: item.cnhNomeArquivo ?? "",
+      cnhAnexoBase64: (originalBase64 && originalBase64.length < 3500000) ? originalBase64 : cnhAnexoRef,
       funcao: item.funcao ?? "",
       setor: item.setor ?? "",
       contatoMotorista: item.contatoMotorista ?? "",
@@ -1737,7 +1739,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       console.warn("Aviso ao sincronizar no Supabase:", sbErr);
     }
 
-    // 2. Grava no backend local atômico imediatamente (que também sincroniza com Supabase no servidor)
+    // 2. Grava no backend local atômico imediatamente (enviando base64 original para gravação física no servidor)
     let backendSuccess = false;
     try {
       const bRes = await fetch("/api/veiculos/save", {
@@ -1748,7 +1750,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
           placa: cleanPlaca, 
           filial: resolvedFilial, 
           base: resolvedFilial,
-          cnhAnexoBase64: cnhAnexoRef,
+          cnhAnexoBase64: originalBase64 || cnhAnexoRef,
           updatedAt
         })
       });

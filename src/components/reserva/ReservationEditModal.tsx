@@ -11,6 +11,8 @@ import {
   formatToDateTimeLocalInput, 
   validateReservationDates 
 } from '../../utils/reservaDateUtils';
+import { CnhViewerModal } from '../CnhViewerModal';
+import { findDriverCnhInVaultOrFleet, saveDriverCnhRecord } from '../../services/cnhService';
 
 interface ReservationEditModalProps {
   isOpen: boolean;
@@ -20,9 +22,10 @@ interface ReservationEditModalProps {
 }
 
 const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onClose, reservation, onSave }) => {
-  const { vehicles, reservations, dailyTrips } = useReservations();
+  const { vehicles } = useReservations();
   const [formData, setFormData] = useState<Partial<Reservation>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isViewingCnh, setIsViewingCnh] = useState(false);
 
   useEffect(() => {
     if (reservation) {
@@ -39,13 +42,52 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setErrorMessage(null);
-    const upperCaseFields = ['requesterName', 'department', 'role', 'destination', 'destinationCity', 'purpose'];
+    const upperCaseFields = ['requesterName', 'department', 'role', 'destination', 'destinationCity', 'purpose', 'driverName'];
 
     if (upperCaseFields.includes(name)) {
       setFormData({ ...formData, [name]: value.toUpperCase() });
     } else {
       setFormData({ ...formData, [name]: value });
     }
+  };
+
+  const handleCnhUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result as string;
+      const driver = (formData.driverName || formData.requesterName || 'Condutor').trim();
+      const ext = file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'jpg';
+      const officialName = `CNH - ${driver}.${ext}`;
+      setFormData(prev => ({
+        ...prev,
+        hasCnhCopy: true,
+        cnhFileName: officialName,
+        cnhBase64: base64
+      }));
+      try {
+        await fetch('/api/rac/upload-cnh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            driverName: driver,
+            fileData: base64,
+            mimeType: file.type || (ext === 'pdf' ? 'application/pdf' : 'image/jpeg')
+          })
+        });
+        saveDriverCnhRecord({
+          driverName: driver,
+          email: formData.email,
+          fileName: officialName,
+          fileType: file.type,
+          fileSize: file.size,
+          cnhData: base64,
+          uploadDate: new Date().toISOString()
+        });
+      } catch (_) {}
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -96,143 +138,194 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
 
   if (!isOpen) return null;
 
+  const currentVehicle = vehicles.find(v => v.id === formData.vehicleId);
+  const currentDriver = formData.driverName || formData.requesterName || 'Condutor';
+  const resolvedCnh = findDriverCnhInVaultOrFleet(currentDriver, formData.email, currentVehicle?.plate);
+  const effectiveCnhUrl = formData.cnhBase64 || resolvedCnh.url;
+  const effectiveCnhName = formData.cnhFileName || resolvedCnh.fileName;
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Editar Reserva">
-      <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
-        {errorMessage && (
-          <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-bold animate-shake">
-            ⚠️ {errorMessage}
-          </div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-                <label className="block text-sm font-medium text-gray-700">Solicitante</label>
-                <input type="text" name="requesterName" value={formData.requesterName || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+    <>
+      <Modal isOpen={isOpen} onClose={onClose} title="Editar Reserva">
+        <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+          {errorMessage && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-bold animate-shake">
+              ⚠️ {errorMessage}
             </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700">E-mail</label>
-                <input type="email" name="email" value={formData.email || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700">Setor</label>
-                <input type="text" name="department" list="modal-setores-list" value={formData.department || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
-                <datalist id="modal-setores-list">
-                    {SETORES_OFICIAIS.map(s => (
-                        <option key={s} value={s} />
-                    ))}
-                </datalist>
-            </div>
-             <div>
-                <label className="block text-sm font-medium text-gray-700">Função</label>
-                <input type="text" name="role" value={formData.role || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700">Saída</label>
-                <input type="datetime-local" name="departureDateTime" value={formData.departureDateTime as any} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700">Retorno</label>
-                <input type="datetime-local" name="returnDate" value={formData.returnDate as any} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700">Local de Destino</label>
-                <input type="text" name="destination" value={formData.destination || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700">Cidade de Destino</label>
-                <input type="text" list="cities" name="destinationCity" value={formData.destinationCity || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
-                <datalist id="cities">{SP_CITIES.map(city => <option key={city} value={city} />)}</datalist>
-            </div>
-             <div>
-                <label className="block text-sm font-medium text-gray-700">Veículo</label>
-                 <select name="vehicleId" value={formData.vehicleId} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm">
-                    {vehicles.filter(v => {
-                      return v.isActive !== false || v.id === formData.vehicleId;
-                    }).map(v => <option key={v.id} value={v.id}>{v.model} - {v.plate}</option>)}
-                </select>
-            </div>
-             <div>
-                <label className="block text-sm font-medium text-gray-700">Status</label>
-                 <select name="status" value={formData.status} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm">
-                    {Object.values(ReservationStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">Solicitante</label>
+                  <input type="text" name="requesterName" value={formData.requesterName || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+              </div>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">Condutor Autorizado</label>
+                  <input type="text" name="driverName" value={formData.driverName || formData.requesterName || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+              </div>
 
-            {formData.status === ReservationStatus.Completed && (() => {
-              const currentVeh = vehicles.find(v => v.id === formData.vehicleId);
-              const currentKm = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
-              return (
-                <div className="md:col-span-2 bg-emerald-50/70 p-4 rounded-xl border border-emerald-300 space-y-3">
-                  <div className="flex items-center gap-2 text-emerald-900 font-bold text-sm">
-                    <span>🏁</span>
-                    <span>Dados de Conclusão e Devolução do Veículo (Sem restrições)</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Hodômetro / KM Final <span className="text-emerald-700 font-semibold">(Livre / Sem restrições)</span>
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          name="finalKm"
-                          value={formData.finalKm || ''}
-                          onChange={handleChange}
-                          placeholder="Digite qualquer KM desejado"
-                          className="w-full text-sm border border-emerald-300 bg-white p-2.5 pr-12 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
-                        />
-                        <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400">KM</span>
-                      </div>
-                      <p className="text-[11px] text-slate-600 mt-1">
-                        KM atual do veículo: <strong>{currentKm.toLocaleString('pt-BR')} km</strong>. Permitido qualquer valor sem bloqueios.
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Data e Hora Efetiva de Devolução <span className="text-emerald-700 font-semibold">(Sem restrições)</span>
-                      </label>
-                      <input
-                        type="datetime-local"
-                        name="actualReturnDateTime"
-                        value={formData.actualReturnDateTime ? new Date(formData.actualReturnDateTime).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16)}
-                        onChange={(e) => setFormData({ ...formData, actualReturnDateTime: new Date(e.target.value) as any })}
-                        className="w-full text-sm border border-emerald-300 bg-white p-2.5 rounded-lg text-slate-900 focus:ring-2 focus:ring-emerald-500"
-                      />
-                      <p className="text-[11px] text-slate-600 mt-1">
-                        Permitido digitar qualquer data/hora retroativa ou futura.
-                      </p>
-                    </div>
+              {/* Bloco de CNH do Condutor na Reserva */}
+              <div className="md:col-span-2 bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-base">🪪</span>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-slate-800 block truncate">
+                      CNH do Condutor: {effectiveCnhName}
+                    </span>
+                    <span className="text-[10px] text-emerald-700 font-semibold block">
+                      Sincronizada entre Controle de Frota Leve e Gestão de Reservas
+                    </span>
                   </div>
                 </div>
-              );
-            })()}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsViewingCnh(true)}
+                    className="px-3 py-1.5 rounded-lg bg-[#114D38] hover:bg-[#1a664c] text-white text-xs font-bold cursor-pointer transition-colors shadow-2xs"
+                  >
+                    Visualizar CNH
+                  </button>
+                  <label className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold cursor-pointer transition-colors">
+                    Anexar / Trocar CNH
+                    <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleCnhUpload} />
+                  </label>
+                </div>
+              </div>
 
-             <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Motivo da Viagem</label>
-                <input type="text" name="purpose" value={formData.purpose || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
-            </div>
-            <div className="md:col-span-2 bg-emerald-50/60 p-3 rounded-xl border border-emerald-200">
-                <label className="block text-xs font-bold text-emerald-900 mb-1">
-                  📝 Observações da Gestão de Frota / Administrador (Serão enviadas por e-mail ao solicitante)
-                </label>
-                <textarea 
-                  name="adminNotes" 
-                  rows={3}
-                  value={formData.adminNotes || ''} 
-                  onChange={(e) => setFormData({ ...formData, adminNotes: e.target.value })} 
-                  placeholder="Ex: Chave disponível na portaria. Veículo revisado e liberado para a rota informada."
-                  className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-            </div>
-        </div>
-        <div className="flex justify-end gap-3 pt-4">
-          <button type="button" onClick={onClose} className="bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded hover:bg-gray-300">Cancelar</button>
-          <button type="submit" className="bg-primary text-white font-bold py-2 px-4 rounded hover:bg-green-800">Salvar Alterações</button>
-        </div>
-      </form>
-    </Modal>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">E-mail</label>
+                  <input type="email" name="email" value={formData.email || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
+              </div>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">Setor</label>
+                  <input type="text" name="department" list="modal-setores-list" value={formData.department || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+                  <datalist id="modal-setores-list">
+                      {SETORES_OFICIAIS.map(s => (
+                          <option key={s} value={s} />
+                      ))}
+                  </datalist>
+              </div>
+               <div>
+                  <label className="block text-sm font-medium text-gray-700">Função</label>
+                  <input type="text" name="role" value={formData.role || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+              </div>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">Saída</label>
+                  <input type="datetime-local" name="departureDateTime" value={formData.departureDateTime as any} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
+              </div>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">Retorno</label>
+                  <input type="datetime-local" name="returnDate" value={formData.returnDate as any} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
+              </div>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">Local de Destino</label>
+                  <input type="text" name="destination" value={formData.destination || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+              </div>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700">Cidade de Destino</label>
+                  <input type="text" list="cities" name="destinationCity" value={formData.destinationCity || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+                  <datalist id="cities">{SP_CITIES.map(city => <option key={city} value={city} />)}</datalist>
+              </div>
+               <div>
+                  <label className="block text-sm font-medium text-gray-700">Veículo</label>
+                   <select name="vehicleId" value={formData.vehicleId} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm">
+                      {vehicles.filter(v => {
+                        return v.isActive !== false || v.id === formData.vehicleId;
+                      }).map(v => <option key={v.id} value={v.id}>{v.model} - {v.plate}</option>)}
+                  </select>
+              </div>
+               <div>
+                  <label className="block text-sm font-medium text-gray-700">Status</label>
+                   <select name="status" value={formData.status} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm">
+                      {Object.values(ReservationStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+              </div>
+
+              {formData.status === ReservationStatus.Completed && (() => {
+                const currentVeh = vehicles.find(v => v.id === formData.vehicleId);
+                const currentKm = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
+                return (
+                  <div className="md:col-span-2 bg-emerald-50/70 p-4 rounded-xl border border-emerald-300 space-y-3">
+                    <div className="flex items-center gap-2 text-emerald-900 font-bold text-sm">
+                      <span>🏁</span>
+                      <span>Dados de Conclusão e Devolução do Veículo (Sem restrições)</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Hodômetro / KM Final <span className="text-emerald-700 font-semibold">(Livre / Sem restrições)</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            name="finalKm"
+                            value={formData.finalKm || ''}
+                            onChange={handleChange}
+                            placeholder="Digite qualquer KM desejado"
+                            className="w-full text-sm border border-emerald-300 bg-white p-2.5 pr-12 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                          />
+                          <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400">KM</span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 mt-1">
+                          KM atual do veículo: <strong>{currentKm.toLocaleString('pt-BR')} km</strong>. Permitido qualquer valor sem bloqueios.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Data e Hora Efetiva de Devolução <span className="text-emerald-700 font-semibold">(Sem restrições)</span>
+                        </label>
+                        <input
+                          type="datetime-local"
+                          name="actualReturnDateTime"
+                          value={formData.actualReturnDateTime ? new Date(formData.actualReturnDateTime).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16)}
+                          onChange={(e) => setFormData({ ...formData, actualReturnDateTime: new Date(e.target.value) as any })}
+                          className="w-full text-sm border border-emerald-300 bg-white p-2.5 rounded-lg text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <p className="text-[11px] text-slate-600 mt-1">
+                          Permitido digitar qualquer data/hora retroativa ou futura.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+               <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700">Motivo da Viagem</label>
+                  <input type="text" name="purpose" value={formData.purpose || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
+              </div>
+              <div className="md:col-span-2 bg-emerald-50/60 p-3 rounded-xl border border-emerald-200">
+                  <label className="block text-xs font-bold text-emerald-900 mb-1">
+                    📝 Observações da Gestão de Frota / Administrador (Serão enviadas por e-mail ao solicitante)
+                  </label>
+                  <textarea 
+                    name="adminNotes" 
+                    rows={3}
+                    value={formData.adminNotes || ''} 
+                    onChange={(e) => setFormData({ ...formData, adminNotes: e.target.value })} 
+                    placeholder="Ex: Chave disponível na portaria. Veículo revisado e liberado para a rota informada."
+                    className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+              </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4">
+            <button type="button" onClick={onClose} className="bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded hover:bg-gray-300">Cancelar</button>
+            <button type="submit" className="bg-primary text-white font-bold py-2 px-4 rounded hover:bg-green-800">Salvar Alterações</button>
+          </div>
+        </form>
+      </Modal>
+
+      {isViewingCnh && (
+        <CnhViewerModal
+          rawUrl={effectiveCnhUrl}
+          nome={effectiveCnhName}
+          condutor={currentDriver}
+          placa={currentVehicle?.plate || resolvedCnh.placa}
+          onClose={() => setIsViewingCnh(false)}
+        />
+      )}
+    </>
   );
 };
 
