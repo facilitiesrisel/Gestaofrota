@@ -8134,7 +8134,7 @@ Responda sempre em Português do Brasil com clareza, objetividade, sofisticaçã
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false, watch: null },
       appType: "spa",
     });
     app.use(vite.middlewares);

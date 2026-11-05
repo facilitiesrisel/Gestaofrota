@@ -30,6 +30,12 @@
             }
           });
         }
+        window.addEventListener('unhandledrejection', function(event) {
+          var msg = event && event.reason && (event.reason.message || String(event.reason));
+          if (msg && (msg.indexOf('WebSocket closed without opened') !== -1 || msg.indexOf('[vite]') !== -1)) {
+            event.preventDefault();
+          }
+        });
       } catch (e) {}
     </script>
   </head>
