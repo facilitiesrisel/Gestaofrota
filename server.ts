@@ -5200,15 +5200,325 @@ async function startServer() {
 
   const RAC_CNH_DRIVE_FOLDER_ID = "1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U";
   const RAC_CNH_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br";
+  const FROTA_CNH_DRIVE_FOLDER_ID = "1tIJ67ADpN6blterYogPq9SObDVHr3xsk";
+
+  let lastRacFirestoreSyncMs = 0;
+  let isSyncingRacFirestore = false;
+
+  const normalizeDriverKey = (s: string) =>
+    String(s || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/^cnh\s*-\s*/i, "")
+      .replace(/\.(pdf|jpg|jpeg|png)$/i, "")
+      .replace(/[^a-z0-9]/g, "");
 
   /**
-   * Endpoint de upload de CNH para o Google Drive oficial da Risel
-   * Pasta: https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br
+   * Sincroniza e recupera todas as CNHs armazenadas no Firestore (racRentals e driver_cnh_vault)
+   * e na Frota Leve (CNH_DIR + VEICULOS_FILE) para o diretório local RAC_CNHS_DIR,
+   * além de reparar documentos irmãos no Firestore que tiveram cnhBase64 limpo no passado.
+   */
+  async function syncRacCnhsFromFirestore(force = false): Promise<void> {
+    const now = Date.now();
+    if (!force && now - lastRacFirestoreSyncMs < 15000) return;
+    if (isSyncingRacFirestore) return;
+    isSyncingRacFirestore = true;
+    lastRacFirestoreSyncMs = now;
+
+    try {
+      if (!fs.existsSync(RAC_CNHS_DIR)) fs.mkdirSync(RAC_CNHS_DIR, { recursive: true });
+      if (!fs.existsSync(CNH_DIR)) fs.mkdirSync(CNH_DIR, { recursive: true });
+
+      const knownDriverCnhs = new Map<string, { base64: string; fileName: string; mimeType: string; driverName: string }>();
+
+      // 1. Espelha CNHs existentes na Frota Leve (CNH_DIR + VEICULOS_FILE) por nome do condutor
+      if (fs.existsSync(VEICULOS_FILE) && fs.existsSync(CNH_DIR)) {
+        try {
+          const cnhFiles = fs.readdirSync(CNH_DIR);
+          const veiculosRaw = JSON.parse(fs.readFileSync(VEICULOS_FILE, "utf-8")) || [];
+          if (Array.isArray(veiculosRaw)) {
+            for (const v of veiculosRaw) {
+              const placa = String(v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+              const condutor = String(v.condutor || "").trim();
+              if (!placa || !condutor || condutor.toLowerCase() === "disponível" || condutor.toLowerCase() === "disponivel") continue;
+              const matchFile = cnhFiles.find(f => f.startsWith(`${placa}.`) && !f.endsWith(".json"));
+              if (matchFile) {
+                const buf = fs.readFileSync(path.join(CNH_DIR, matchFile));
+                const isPdf = buf.slice(0, 4).toString("utf-8") === "%PDF" || matchFile.toLowerCase().endsWith(".pdf");
+                const ext = isPdf ? "pdf" : "jpg";
+                const mime = isPdf ? "application/pdf" : "image/jpeg";
+                const stdName = `CNH - ${condutor.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ")}.${ext}`;
+                const targetRacPath = path.join(RAC_CNHS_DIR, stdName);
+                if (!fs.existsSync(targetRacPath)) {
+                  fs.writeFileSync(targetRacPath, buf);
+                }
+                const dKey = normalizeDriverKey(condutor);
+                if (dKey && buf.length < 900000) {
+                  knownDriverCnhs.set(dKey, {
+                    base64: `data:${mime};base64,${buf.toString("base64")}`,
+                    fileName: stdName,
+                    mimeType: mime,
+                    driverName: condutor
+                  });
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 2. Carrega arquivos já presentes em RAC_CNHS_DIR para o mapa
+      try {
+        const existingRacFiles = fs.readdirSync(RAC_CNHS_DIR);
+        for (const f of existingRacFiles) {
+          const fullP = path.join(RAC_CNHS_DIR, f);
+          const stat = fs.statSync(fullP);
+          if (!stat.isFile()) continue;
+          const dKey = normalizeDriverKey(f);
+          if (dKey && !knownDriverCnhs.has(dKey)) {
+            const buf = fs.readFileSync(fullP);
+            const isPdf = buf.slice(0, 4).toString("utf-8") === "%PDF" || f.toLowerCase().endsWith(".pdf");
+            const mime = isPdf ? "application/pdf" : (f.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg");
+            if (buf.length < 900000) {
+              knownDriverCnhs.set(dKey, {
+                base64: `data:${mime};base64,${buf.toString("base64")}`,
+                fileName: f,
+                mimeType: mime,
+                driverName: f.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, "")
+              });
+            }
+          }
+        }
+      } catch (_) {}
+
+      const db = await getServerFirestore();
+
+      // 3. Consulta cofre dedicado driver_cnh_vault no Firestore
+      try {
+        const vaultSnap = await db.collection("driver_cnh_vault").get();
+        vaultSnap.forEach((doc: any) => {
+          const d = doc.data();
+          if (d && d.cnhBase64 && typeof d.cnhBase64 === "string" && d.cnhBase64.startsWith("data:") && d.cnhBase64.length > 500) {
+            const driver = String(d.driverName || doc.id || "Condutor").trim();
+            const isPdf = d.cnhBase64.includes("application/pdf") || String(d.fileName || "").toLowerCase().endsWith(".pdf");
+            const ext = isPdf ? "pdf" : "jpg";
+            const mime = isPdf ? "application/pdf" : "image/jpeg";
+            const stdName = d.fileName || `CNH - ${driver.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ")}.${ext}`;
+            const pureB64 = d.cnhBase64.includes(",") ? d.cnhBase64.split(",")[1] : d.cnhBase64;
+            const buf = Buffer.from(pureB64, "base64");
+            fs.writeFileSync(path.join(RAC_CNHS_DIR, stdName), buf);
+            const dKey = normalizeDriverKey(driver);
+            if (dKey) {
+              knownDriverCnhs.set(dKey, {
+                base64: d.cnhBase64,
+                fileName: stdName,
+                mimeType: mime,
+                driverName: driver
+              });
+            }
+          }
+        });
+      } catch (_) {}
+
+      // 4. Consulta coleção racRentals no Firestore
+      const snap = await db.collection("racRentals").get();
+      const docsNeedingRepair: Array<{ id: string; driverName: string; dKey: string }> = [];
+
+      snap.forEach((doc: any) => {
+        const r = doc.data();
+        const driver = String(r.driverName || r.condutor || r.requesterName || "").trim();
+        const dKey = normalizeDriverKey(driver || r.cnhFileName || "");
+        const hasValidBase64 = r.cnhBase64 && typeof r.cnhBase64 === "string" && r.cnhBase64.startsWith("data:") && r.cnhBase64.length > 500;
+
+        if (hasValidBase64) {
+          const isPdf = r.cnhBase64.includes("application/pdf") || String(r.cnhFileName || "").toLowerCase().endsWith(".pdf");
+          const ext = isPdf ? "pdf" : "jpg";
+          const mime = isPdf ? "application/pdf" : "image/jpeg";
+          const cleanDriver = (driver || "Condutor").replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ");
+          const stdName = `CNH - ${cleanDriver}.${ext}`;
+          const pureB64 = r.cnhBase64.includes(",") ? r.cnhBase64.split(",")[1] : r.cnhBase64;
+          const buf = Buffer.from(pureB64, "base64");
+
+          fs.writeFileSync(path.join(RAC_CNHS_DIR, stdName), buf);
+          if (r.cnhFileName && r.cnhFileName !== stdName) {
+            const safeCustom = String(r.cnhFileName).replace(/[\\/:*?"<>|]/g, "");
+            if (safeCustom) {
+              fs.writeFileSync(path.join(RAC_CNHS_DIR, safeCustom), buf);
+            }
+          }
+
+          if (dKey && buf.length < 900000) {
+            knownDriverCnhs.set(dKey, {
+              base64: r.cnhBase64,
+              fileName: r.cnhFileName || stdName,
+              mimeType: mime,
+              driverName: driver
+            });
+          }
+        } else if (dKey) {
+          docsNeedingRepair.push({ id: doc.id, driverName: driver, dKey });
+        }
+      });
+
+      // 5. Repara automaticamente documentos racRentals que perderam o cnhBase64 mas cujo condutor possui CNH conhecida
+      for (const item of docsNeedingRepair) {
+        const known = knownDriverCnhs.get(item.dKey);
+        if (known && known.base64) {
+          try {
+            await db.collection("racRentals").doc(item.id).set({
+              cnhBase64: known.base64,
+              cnhFileName: known.fileName,
+              hasCnhCopy: true,
+              cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
+              cnhDriveUrl: `/api/rac/cnh/${encodeURIComponent(known.fileName)}`
+            }, { merge: true });
+            console.log(`[Server RAC CNH] CNH recuperada e vinculada automaticamente ao registro ${item.id} (${item.driverName})`);
+          } catch (_) {}
+        }
+      }
+    } catch (err: any) {
+      console.warn("[Server RAC CNH] Aviso ao sincronizar CNHs com Firestore:", err.message);
+    } finally {
+      isSyncingRacFirestore = false;
+    }
+  }
+
+  // Helper para upload direto para uma pasta do Google Drive usando token OAuth2 ou Apps Script
+  async function uploadBufferToDriveFolder(options: {
+    buffer: Buffer;
+    fileName: string;
+    mimeType: string;
+    folderId: string;
+    placa?: string;
+    condutor?: string;
+    token?: string;
+  }): Promise<{ success: boolean; fileId?: string; webViewLink?: string }> {
+    const cleanBase64 = options.buffer.toString("base64");
+
+    // 1. Se houver token OAuth do Google Drive, faz upload via Google Drive REST API v3 com sobreposição limpa
+    if (options.token) {
+      try {
+        const escapedName = options.fileName.replace(/'/g, "\\'");
+        const q = `'${options.folderId}' in parents and name = '${escapedName}' and trashed = false`;
+        const searchRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,webViewLink)`,
+          {
+            headers: { Authorization: `Bearer ${options.token}` }
+          }
+        );
+        if (searchRes.ok) {
+          const searchData: any = await searchRes.json();
+          if (Array.isArray(searchData.files) && searchData.files.length > 0) {
+            for (const oldFile of searchData.files) {
+              try {
+                await fetch(`https://www.googleapis.com/drive/v3/files/${oldFile.id}`, {
+                  method: "DELETE",
+                  headers: { Authorization: `Bearer ${options.token}` }
+                });
+              } catch (_) {}
+            }
+          }
+        }
+
+        const metadata = {
+          name: options.fileName,
+          parents: [options.folderId]
+        };
+        const boundary = "-------314159265358979323846";
+        const delimiter = `\r\n--${boundary}\r\n`;
+        const closeDelimiter = `\r\n--${boundary}--`;
+
+        const multipartRequestBody =
+          delimiter +
+          "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+          JSON.stringify(metadata) +
+          delimiter +
+          `Content-Type: ${options.mimeType || "application/pdf"}\r\n` +
+          "Content-Transfer-Encoding: base64\r\n\r\n" +
+          cleanBase64 +
+          closeDelimiter;
+
+        const driveRes = await fetch(
+          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,webContentLink",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${options.token}`,
+              "Content-Type": `multipart/related; boundary=${boundary}`
+            },
+            body: multipartRequestBody
+          }
+        );
+
+        if (driveRes.ok) {
+          const driveData: any = await driveRes.json();
+          const fileId = driveData.id;
+          if (fileId) {
+            try {
+              await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${options.token}`,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ role: "reader", type: "anyone" })
+              });
+            } catch (_) {}
+          }
+          return {
+            success: true,
+            fileId,
+            webViewLink: driveData.webViewLink || `https://drive.google.com/file/d/${fileId}/view`
+          };
+        }
+      } catch (e: any) {
+        console.warn("[Drive Upload OAuth] Aviso:", e.message);
+      }
+    }
+
+    // 2. Fallback via Google Apps Script caso DriveApp esteja autorizado no script
+    const targetAppsScript = (storedAppsScriptUrl || DEFAULT_APPS_SCRIPT_URL || "").trim();
+    if (targetAppsScript) {
+      try {
+        const gsRes = await fetch(targetAppsScript, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({
+            action: "upload",
+            folderId: options.folderId,
+            placa: options.placa || "",
+            condutor: options.condutor || "",
+            fileName: options.fileName,
+            fileData: cleanBase64,
+            mimeType: options.mimeType || "application/pdf"
+          })
+        });
+        if (gsRes.ok) {
+          const gsData: any = await gsRes.json().catch(() => ({}));
+          if (gsData && gsData.success && gsData.fileId) {
+            return {
+              success: true,
+              fileId: gsData.fileId,
+              webViewLink: gsData.fileUrl || `https://drive.google.com/file/d/${gsData.fileId}/view`
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
+    return { success: false };
+  }
+
+  /**
+   * Endpoint de upload de CNH para o Google Drive oficial da Risel e persistência em nuvem (Firestore + Servidor)
+   * Pasta RAC: https://drive.google.com/drive/folders/1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U?hl=pt-br
+   * Pasta Frota Leve: https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing
    * Padrão oficial: "CNH - [Nome do Condutor].[ext]"
    */
   app.post("/api/rac/upload-cnh", express.json({ limit: "50mb" }), async (req, res) => {
     try {
-      const { driverName, fileData, mimeType, token } = req.body;
+      const { driverName, fileData, mimeType, token, placa, fileName: customRequestedName } = req.body;
       if (!fileData) {
         return res.status(400).json({ error: "Dados do arquivo não informados." });
       }
@@ -5218,61 +5528,107 @@ async function startServer() {
         .replace(/[\\/:*?"<>|]/g, "")
         .replace(/\s+/g, " ");
 
-      const ext = (mimeType && mimeType.includes("pdf")) ? "pdf" : "jpg";
-      const officialFileName = `CNH - ${cleanDriverName}.${ext}`;
-
       const cleanBase64 = fileData.includes(",") ? fileData.split(",")[1] : fileData;
-      const buffer = Buffer.from(cleanBase64, "base64");
+      const buffer = Buffer.from(cleanBase64.trim(), "base64");
 
-      // Salva cópia local segura no servidor para garantir persistência física
+      const isPdf =
+        buffer.slice(0, 4).toString("utf-8") === "%PDF" ||
+        (mimeType && mimeType.includes("pdf")) ||
+        (customRequestedName && String(customRequestedName).toLowerCase().endsWith(".pdf"));
+      const ext = isPdf ? "pdf" : "jpg";
+      const detectedMime = isPdf ? "application/pdf" : "image/jpeg";
+      const officialFileName = `CNH - ${cleanDriverName}.${ext}`;
+      const fullDataUri = `data:${detectedMime};base64,${cleanBase64.trim()}`;
+
+      if (!fs.existsSync(RAC_CNHS_DIR)) fs.mkdirSync(RAC_CNHS_DIR, { recursive: true });
+
+      // 1. Salva cópia local segura no servidor em RAC_CNHS_DIR
       const localFilePath = path.join(RAC_CNHS_DIR, officialFileName);
       fs.writeFileSync(localFilePath, buffer);
+      if (customRequestedName && customRequestedName !== officialFileName) {
+        const safeCustom = String(customRequestedName).replace(/[\\/:*?"<>|]/g, "");
+        if (safeCustom) {
+          fs.writeFileSync(path.join(RAC_CNHS_DIR, safeCustom), buffer);
+        }
+      }
+
+      // 2. Se houver placa válida, também salva em CNH_DIR da Frota Leve
+      const cleanPlaca = String(placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      if (cleanPlaca && cleanPlaca !== "ADEFINIR" && cleanPlaca.length >= 6) {
+        saveCnhFileToDisk(cleanPlaca, fullDataUri, officialFileName);
+      }
 
       let driveFileId = `cnh_${Date.now()}`;
-      let driveUrl = RAC_CNH_DRIVE_FOLDER_URL;
+      let driveUrl = `/api/rac/cnh/${encodeURIComponent(officialFileName)}`;
 
-      // Se houver token do Google Drive, faz o upload direto para a API oficial do Google Drive
-      if (token) {
+      // 3. Faz upload para as pastas oficiais do Google Drive (RAC e Frota Leve)
+      const upRac = await uploadBufferToDriveFolder({
+        buffer,
+        fileName: officialFileName,
+        mimeType: detectedMime,
+        folderId: RAC_CNH_DRIVE_FOLDER_ID,
+        placa: cleanPlaca,
+        condutor: cleanDriverName,
+        token
+      });
+      if (upRac.success && upRac.fileId) {
+        driveFileId = upRac.fileId;
+        driveUrl = upRac.webViewLink || driveUrl;
+      }
+
+      // Espelha também na pasta oficial de CNHs da Frota Leve (1tIJ67ADpN6blterYogPq9SObDVHr3xsk)
+      await uploadBufferToDriveFolder({
+        buffer,
+        fileName: cleanPlaca && cleanPlaca !== "ADEFINIR" ? `CNH_${cleanPlaca}_${cleanDriverName.replace(/\s+/g, "_")}.${ext}` : officialFileName,
+        mimeType: detectedMime,
+        folderId: FROTA_CNH_DRIVE_FOLDER_ID,
+        placa: cleanPlaca,
+        condutor: cleanDriverName,
+        token
+      });
+
+      // 4. Persiste no Firestore (driver_cnh_vault e atualiza todos os registros racRentals deste condutor)
+      if (buffer.length < 950000) {
         try {
-          const metadata = {
-            name: officialFileName,
-            parents: [RAC_CNH_DRIVE_FOLDER_ID]
-          };
-
-          const boundary = "-------314159265358979323846";
-          const delimiter = `\r\n--${boundary}\r\n`;
-          const closeDelimiter = `\r\n--${boundary}--`;
-
-          const multipartRequestBody =
-            delimiter +
-            "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
-            JSON.stringify(metadata) +
-            delimiter +
-            `Content-Type: ${mimeType || "image/jpeg"}\r\n` +
-            "Content-Transfer-Encoding: base64\r\n\r\n" +
-            cleanBase64 +
-            closeDelimiter;
-
-          const driveRes = await fetch(
-            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,webContentLink",
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": `multipart/related; boundary=${boundary}`
-              },
-              body: multipartRequestBody
-            }
-          );
-
-          if (driveRes.ok) {
-            const driveData: any = await driveRes.json();
-            driveFileId = driveData.id || driveFileId;
-            driveUrl = driveData.webViewLink || `https://drive.google.com/file/d/${driveFileId}/view`;
-            console.log(`[Risel Google Drive] CNH salva no Drive: ${officialFileName} (ID: ${driveFileId})`);
+          const db = await getServerFirestore();
+          const dKey = normalizeDriverKey(cleanDriverName);
+          if (dKey) {
+            await db.collection("driver_cnh_vault").doc(dKey).set({
+              driverName: cleanDriverName,
+              fileName: officialFileName,
+              mimeType: detectedMime,
+              cnhBase64: fullDataUri,
+              cnhDriveUrl: driveUrl,
+              cnhDriveFileId: driveFileId,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
           }
-        } catch (driveErr: any) {
-          console.warn("[Risel Google Drive] Aviso no upload da CNH:", driveErr.message);
+
+          const racSnap = await db.collection("racRentals").get();
+          const updates: Promise<any>[] = [];
+          racSnap.forEach((doc: any) => {
+            const r = doc.data();
+            const rKey = normalizeDriverKey(r.driverName || r.condutor || r.requesterName || "");
+            const fKey = normalizeDriverKey(r.cnhFileName || "");
+            if ((dKey && (rKey === dKey || rKey.includes(dKey) || dKey.includes(rKey))) || (dKey && fKey === dKey)) {
+              updates.push(
+                db.collection("racRentals").doc(doc.id).set({
+                  cnhBase64: fullDataUri,
+                  cnhFileName: officialFileName,
+                  hasCnhCopy: true,
+                  cnhDriveUrl: driveUrl,
+                  cnhDriveFileId: driveFileId,
+                  cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL
+                }, { merge: true })
+              );
+            }
+          });
+          if (updates.length > 0) {
+            await Promise.allSettled(updates);
+            console.log(`[Server RAC CNH] ${updates.length} locações RAC atualizadas no Firestore com a CNH de ${cleanDriverName}`);
+          }
+        } catch (fErr: any) {
+          console.warn("[Server RAC CNH] Aviso ao persistir CNH no Firestore:", fErr.message);
         }
       }
 
@@ -5284,6 +5640,7 @@ async function startServer() {
         cnhServerUrl: `/api/rac/cnh/${encodeURIComponent(officialFileName)}`,
         cnhDriveFolderUrl: RAC_CNH_DRIVE_FOLDER_URL,
         cnhDriveFileId: driveFileId,
+        base64: fullDataUri,
         fileSize: buffer.length
       });
     } catch (err: any) {
@@ -5293,23 +5650,33 @@ async function startServer() {
   });
 
   // Servir arquivo de CNH do RAC por nome do arquivo ou nome do condutor
-  app.get("/api/rac/cnh/:identifier", (req, res) => {
+  app.get("/api/rac/cnh/:identifier", async (req, res) => {
     try {
       const rawId = decodeURIComponent(String(req.params.identifier || "")).trim();
-      if (!rawId || !fs.existsSync(RAC_CNHS_DIR)) {
-        return res.status(404).json({ error: "CNH RAC não encontrada." });
+      if (!rawId) {
+        return res.status(404).json({ error: "Identificador de CNH RAC ausente." });
       }
-      const files = fs.readdirSync(RAC_CNHS_DIR);
-      const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
-      const targetNorm = norm(rawId.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, ""));
+      if (!fs.existsSync(RAC_CNHS_DIR)) fs.mkdirSync(RAC_CNHS_DIR, { recursive: true });
 
-      let match = files.find(f => f.toLowerCase() === rawId.toLowerCase());
-      if (!match && targetNorm) {
-        match = files.find(f => {
-          const base = f.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, "");
-          const fNorm = norm(base);
-          return fNorm === targetNorm || fNorm.includes(targetNorm) || targetNorm.includes(fNorm);
-        });
+      const findMatchInRacDir = () => {
+        const files = fs.readdirSync(RAC_CNHS_DIR);
+        const targetNorm = normalizeDriverKey(rawId);
+        let m = files.find(f => f.toLowerCase() === rawId.toLowerCase());
+        if (!m && targetNorm) {
+          m = files.find(f => {
+            const fNorm = normalizeDriverKey(f);
+            return fNorm === targetNorm || fNorm.includes(targetNorm) || targetNorm.includes(fNorm);
+          });
+        }
+        return m;
+      };
+
+      let match = findMatchInRacDir();
+
+      // Se não encontrou no disco local, sincroniza imediatamente do Firestore (racRentals + driver_cnh_vault) e Frota Leve
+      if (!match) {
+        await syncRacCnhsFromFirestore(true);
+        match = findMatchInRacDir();
       }
 
       if (!match) {
@@ -5340,6 +5707,179 @@ async function startServer() {
       res.setHeader("Content-Length", buffer.length);
       res.setHeader("Cache-Control", "no-cache, must-revalidate");
       return res.send(buffer);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Endpoint para sincronizar TODAS as CNHs do Servidor (Frota Leve + RAC + Firestore)
+   * com as pastas oficiais do Google Drive (1tIJ67ADpN6blterYogPq9SObDVHr3xsk e 1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U)
+   * e também buscar CNHs existentes no Drive do usuário caso tenham sido salvas fora da pasta.
+   */
+  app.post("/api/cnh/sync-all-to-drive", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { token, targetCondutor } = req.body || {};
+      await syncRacCnhsFromFirestore(true);
+
+      let uploadedFrota = 0;
+      let uploadedRac = 0;
+      let recoveredFromDrive = false;
+
+      if (token) {
+        if (targetCondutor) {
+          try {
+            const cleanSearch = String(targetCondutor).trim().split(/\s+/).slice(0, 2).join(" ").replace(/'/g, "\\'");
+            const qSearch = `name contains '${cleanSearch}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
+            const sRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qSearch)}&fields=files(id,name,mimeType,webViewLink)`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (sRes.ok) {
+              const sData: any = await sRes.json();
+              if (Array.isArray(sData.files) && sData.files.length > 0) {
+                const candidate = sData.files[0];
+                const dlRes = await fetch(`https://www.googleapis.com/drive/v3/files/${candidate.id}?alt=media`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+                if (dlRes.ok) {
+                  const arrBuf = await dlRes.arrayBuffer();
+                  const buf = Buffer.from(arrBuf);
+                  if (buf.length > 500) {
+                    const isPdf = buf.slice(0, 4).toString("utf-8") === "%PDF" || String(candidate.mimeType).includes("pdf");
+                    const ext = isPdf ? "pdf" : "jpg";
+                    const stdName = `CNH - ${String(targetCondutor).trim()}.${ext}`;
+                    fs.writeFileSync(path.join(RAC_CNHS_DIR, stdName), buf);
+                    recoveredFromDrive = true;
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+        }
+
+        const getExistingFolderFileNames = async (folderId: string): Promise<Set<string>> => {
+          const set = new Set<string>();
+          try {
+            const q = `'${folderId}' in parents and trashed = false`;
+            const r = await fetch(
+              `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&pageSize=200&fields=files(id,name)`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (r.ok) {
+              const d: any = await r.json();
+              if (Array.isArray(d.files)) {
+                d.files.forEach((f: any) => {
+                  if (f && f.name) set.add(String(f.name).toLowerCase().trim());
+                });
+              }
+            }
+          } catch (_) {}
+          return set;
+        };
+
+        const existingFrotaNames = await getExistingFolderFileNames(FROTA_CNH_DRIVE_FOLDER_ID);
+        const existingRacNames = await getExistingFolderFileNames(RAC_CNH_DRIVE_FOLDER_ID);
+
+        const placaToCondutor = new Map<string, string>();
+        if (fs.existsSync(VEICULOS_FILE)) {
+          try {
+            const vList = JSON.parse(fs.readFileSync(VEICULOS_FILE, "utf-8")) || [];
+            vList.forEach((v: any) => {
+              const p = String(v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+              if (p && v.condutor && v.condutor !== "Disponível") {
+                placaToCondutor.set(p, String(v.condutor).trim());
+              }
+            });
+          } catch (_) {}
+        }
+
+        if (fs.existsSync(CNH_DIR)) {
+          const cnhFiles = fs.readdirSync(CNH_DIR).filter(f => !f.endsWith(".json"));
+          for (const f of cnhFiles) {
+            try {
+              const placa = path.basename(f, path.extname(f)).toUpperCase();
+              const cond = placaToCondutor.get(placa) || "";
+              const buf = fs.readFileSync(path.join(CNH_DIR, f));
+              const isPdf = buf.slice(0, 4).toString("utf-8") === "%PDF" || f.toLowerCase().endsWith(".pdf");
+              const ext = isPdf ? "pdf" : "jpg";
+              const mime = isPdf ? "application/pdf" : "image/jpeg";
+              const driveFileName = cond
+                ? `CNH - ${cond.replace(/[\\/:*?"<>|]/g, "")} (${placa}).${ext}`
+                : `CNH_${placa}.${ext}`;
+
+              if (!existingFrotaNames.has(driveFileName.toLowerCase()) && !existingFrotaNames.has(f.toLowerCase())) {
+                const up = await uploadBufferToDriveFolder({
+                  buffer: buf,
+                  fileName: driveFileName,
+                  mimeType: mime,
+                  folderId: FROTA_CNH_DRIVE_FOLDER_ID,
+                  placa,
+                  condutor: cond,
+                  token
+                });
+                if (up.success) {
+                  uploadedFrota++;
+                  existingFrotaNames.add(driveFileName.toLowerCase());
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
+        if (fs.existsSync(RAC_CNHS_DIR)) {
+          const racFiles = fs.readdirSync(RAC_CNHS_DIR);
+          for (const f of racFiles) {
+            try {
+              const fullP = path.join(RAC_CNHS_DIR, f);
+              if (!fs.statSync(fullP).isFile()) continue;
+              const buf = fs.readFileSync(fullP);
+              const isPdf = buf.slice(0, 4).toString("utf-8") === "%PDF" || f.toLowerCase().endsWith(".pdf");
+              const mime = isPdf ? "application/pdf" : "image/jpeg";
+
+              if (!existingRacNames.has(f.toLowerCase())) {
+                const up1 = await uploadBufferToDriveFolder({
+                  buffer: buf,
+                  fileName: f,
+                  mimeType: mime,
+                  folderId: RAC_CNH_DRIVE_FOLDER_ID,
+                  token
+                });
+                if (up1.success) {
+                  uploadedRac++;
+                  existingRacNames.add(f.toLowerCase());
+                }
+              }
+
+              if (!existingFrotaNames.has(f.toLowerCase())) {
+                const up2 = await uploadBufferToDriveFolder({
+                  buffer: buf,
+                  fileName: f,
+                  mimeType: mime,
+                  folderId: FROTA_CNH_DRIVE_FOLDER_ID,
+                  token
+                });
+                if (up2.success) {
+                  uploadedFrota++;
+                  existingFrotaNames.add(f.toLowerCase());
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      const totalFrotaLocal = fs.existsSync(CNH_DIR) ? fs.readdirSync(CNH_DIR).filter(f => !f.endsWith(".json")).length : 0;
+      const totalRacLocal = fs.existsSync(RAC_CNHS_DIR) ? fs.readdirSync(RAC_CNHS_DIR).length : 0;
+
+      return res.json({
+        success: true,
+        uploadedFrota,
+        uploadedRac,
+        recoveredFromDrive,
+        totalFrotaLocal,
+        totalRacLocal
+      });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
@@ -6413,8 +6953,9 @@ async function startServer() {
         }
       }
 
-      // 2. Tenta por nome de arquivo ou condutor em RAC_CNHS_DIR
-      if (!foundBuffer && fs.existsSync(RAC_CNHS_DIR)) {
+      // 2. Tenta por nome de arquivo ou condutor em RAC_CNHS_DIR (sincronizando antes do Firestore se necessário)
+      const searchRacDir = () => {
+        if (!fs.existsSync(RAC_CNHS_DIR)) return;
         const racFiles = fs.readdirSync(RAC_CNHS_DIR);
         const condNorm = norm(rawCondutor.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, ""));
         const nomeNorm = norm(rawNome.replace(/^cnh\s*-\s*/i, "").replace(/\.(pdf|jpg|jpeg|png)$/i, ""));
@@ -6432,6 +6973,14 @@ async function startServer() {
           foundName = match;
           foundMime = detectBufferMime(foundBuffer, match);
         }
+      };
+
+      if (!foundBuffer) {
+        searchRacDir();
+      }
+      if (!foundBuffer && (rawCondutor || rawNome)) {
+        await syncRacCnhsFromFirestore(false);
+        searchRacDir();
       }
 
       // 3. Tenta localizar no arquivo VEICULOS_FILE (por placa ou nome do condutor)
@@ -6665,6 +7214,28 @@ async function startServer() {
       meta.salvoEm = new Date().toISOString();
       if (driveUrl) meta.driveUrl = driveUrl;
       fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8");
+
+      // Se base64 e token foram enviados, também envia para a pasta oficial do Google Drive
+      if (base64 && req.body?.token) {
+        try {
+          const cleanB64 = base64.includes(",") ? base64.split(",")[1] : base64;
+          const buf = Buffer.from(cleanB64.trim(), "base64");
+          const isPdf = buf.slice(0, 4).toString("utf-8") === "%PDF" || String(meta.nomeArquivo).toLowerCase().endsWith(".pdf");
+          const up = await uploadBufferToDriveFolder({
+            buffer: buf,
+            fileName: meta.nomeArquivo,
+            mimeType: isPdf ? "application/pdf" : "image/jpeg",
+            folderId: CNH_DRIVE_FOLDER_ID,
+            placa: cleanPlaca,
+            condutor: req.body?.condutor || "",
+            token: req.body.token
+          });
+          if (up.success && up.webViewLink) {
+            meta.driveUrl = up.webViewLink;
+            fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8");
+          }
+        } catch (_) {}
+      }
 
       return res.json({ success: true, url: `/api/cnh/${cleanPlaca}`, nomeArquivo: meta.nomeArquivo, driveUrl: meta.driveUrl });
     } catch (e: any) {
@@ -7596,9 +8167,12 @@ Responda sempre em Português do Brasil com clareza, objetividade, sofisticaçã
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
 
-    // Inicialização da sincronização oficial de lançamentos com o Supabase
+    // Inicialização da sincronização oficial de lançamentos com o Supabase e CNHs com o Firestore
     syncLancamentosFromSupabase(true).catch(e => {
       console.warn("[Server Lancamentos] Falha na sincronização inicial do Supabase:", e.message);
+    });
+    syncRacCnhsFromFirestore(true).catch(e => {
+      console.warn("[Server RAC CNH] Falha na sincronização inicial de CNHs do Firestore:", e.message);
     });
 
     // Rotina Keep-Alive para Render e plataformas em nuvem:

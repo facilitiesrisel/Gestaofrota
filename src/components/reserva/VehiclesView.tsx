@@ -64,14 +64,19 @@ const VehicleForm: React.FC<{ vehicle: Vehicle | null, onSave: (data: any) => vo
 
     useEffect(() => {
         if (vehicle) {
+            const safeDateStr = (val: any) => {
+                if (!val) return '';
+                const d = val instanceof Date ? val : (val?.seconds ? new Date(val.seconds * 1000) : new Date(val));
+                return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : '';
+            };
             setFormData({
                 model: vehicle.model,
                 plate: vehicle.plate,
                 year: vehicle.year,
                 lastKm: vehicle.lastKm || 0,
-                lastServiceDate: vehicle.lastServiceDate ? new Date(vehicle.lastServiceDate).toISOString().split('T')[0] : '',
+                lastServiceDate: safeDateStr(vehicle.lastServiceDate),
                 lastServiceKm: vehicle.lastServiceKm || 0,
-                lastWashDate: vehicle.lastWashDate ? new Date(vehicle.lastWashDate).toISOString().split('T')[0] : '',
+                lastWashDate: safeDateStr(vehicle.lastWashDate),
                 isActive: vehicle.isActive !== false,
                 type: vehicle.type || 'Operações',
             });

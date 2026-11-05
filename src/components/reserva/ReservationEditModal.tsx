@@ -34,7 +34,9 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
         ...reservation,
         departureDateTime: formatToDateTimeLocalInput(reservation.departureDateTime) as any,
         returnDate: formatToDateTimeLocalInput(reservation.returnDate) as any,
-        actualReturnDateTime: reservation.actualReturnDateTime ? formatToDateTimeLocalInput(reservation.actualReturnDateTime) as any : undefined,
+        actualReturnDateTime: reservation.actualReturnDateTime
+          ? (formatToDateTimeLocalInput(reservation.actualReturnDateTime) as any)
+          : (formatToDateTimeLocalInput(new Date()) as any),
       });
     }
   }, [reservation]);
@@ -45,9 +47,17 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
     const upperCaseFields = ['requesterName', 'department', 'role', 'destination', 'destinationCity', 'purpose', 'driverName'];
 
     if (upperCaseFields.includes(name)) {
-      setFormData({ ...formData, [name]: value.toUpperCase() });
+      setFormData(prev => ({ ...prev, [name]: value.toUpperCase() }));
+    } else if (name === 'status' && value === ReservationStatus.Completed) {
+      setFormData(prev => ({
+        ...prev,
+        status: value as ReservationStatus,
+        actualReturnDateTime: prev.actualReturnDateTime
+          ? (formatToDateTimeLocalInput(prev.actualReturnDateTime) as any)
+          : (formatToDateTimeLocalInput(new Date()) as any),
+      }));
     } else {
-      setFormData({ ...formData, [name]: value });
+      setFormData(prev => ({ ...prev, [name]: value }));
     }
   };
 
@@ -112,14 +122,19 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
       }
     }
 
+    const isCompletedStatus = formData.status === ReservationStatus.Completed;
+    const resolvedActualReturn = formData.actualReturnDateTime
+      ? parseLocalDateTime(formData.actualReturnDateTime)
+      : (isCompletedStatus ? new Date() : undefined);
+
     const dataToSave: { [key: string]: any } = {
         ...formData,
         department: formData.department ? normalizeNomeSetor(formData.department) : formData.department,
         destinationCity: formData.destinationCity ? normalizeCidade(formData.destinationCity) : formData.destinationCity,
         departureDateTime: formData.departureDateTime ? parseLocalDateTime(formData.departureDateTime) : undefined,
         returnDate: formData.returnDate ? parseLocalDateTime(formData.returnDate) : undefined,
-        actualReturnDateTime: formData.actualReturnDateTime ? parseLocalDateTime(formData.actualReturnDateTime) : undefined,
-        finalKm: processedFinalKm !== undefined ? processedFinalKm : (formData.finalKm !== undefined ? Number(formData.finalKm) : undefined),
+        actualReturnDateTime: resolvedActualReturn,
+        finalKm: processedFinalKm !== undefined ? processedFinalKm : (formData.finalKm !== undefined && String(formData.finalKm).trim() !== '' ? Number(formData.finalKm) : undefined),
         distanceKm: formData.distanceKm ? Number(formData.distanceKm) : undefined,
     };
 
@@ -210,11 +225,11 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
               </div>
               <div>
                   <label className="block text-sm font-medium text-gray-700">Saída</label>
-                  <input type="datetime-local" name="departureDateTime" value={formData.departureDateTime as any} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
+                  <input type="datetime-local" name="departureDateTime" value={(formData.departureDateTime as any) || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
               </div>
               <div>
                   <label className="block text-sm font-medium text-gray-700">Retorno</label>
-                  <input type="datetime-local" name="returnDate" value={formData.returnDate as any} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
+                  <input type="datetime-local" name="returnDate" value={(formData.returnDate as any) || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" />
               </div>
               <div>
                   <label className="block text-sm font-medium text-gray-700">Local de Destino</label>
@@ -243,6 +258,9 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
               {formData.status === ReservationStatus.Completed && (() => {
                 const currentVeh = vehicles.find(v => v.id === formData.vehicleId);
                 const currentKm = currentVeh ? (currentVeh.lastKm || currentVeh.initialKm || 0) : 0;
+                const returnInputVal = typeof formData.actualReturnDateTime === 'string'
+                  ? formData.actualReturnDateTime
+                  : formatToDateTimeLocalInput(formData.actualReturnDateTime || new Date());
                 return (
                   <div className="md:col-span-2 bg-emerald-50/70 p-4 rounded-xl border border-emerald-300 space-y-3">
                     <div className="flex items-center gap-2 text-emerald-900 font-bold text-sm">
@@ -259,7 +277,7 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
                           <input
                             type="number"
                             name="finalKm"
-                            value={formData.finalKm || ''}
+                            value={formData.finalKm ?? ''}
                             onChange={handleChange}
                             placeholder="Digite qualquer KM desejado"
                             className="w-full text-sm border border-emerald-300 bg-white p-2.5 pr-12 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
@@ -278,8 +296,8 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
                         <input
                           type="datetime-local"
                           name="actualReturnDateTime"
-                          value={formData.actualReturnDateTime ? new Date(formData.actualReturnDateTime).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16)}
-                          onChange={(e) => setFormData({ ...formData, actualReturnDateTime: new Date(e.target.value) as any })}
+                          value={returnInputVal}
+                          onChange={handleChange}
                           className="w-full text-sm border border-emerald-300 bg-white p-2.5 rounded-lg text-slate-900 focus:ring-2 focus:ring-emerald-500"
                         />
                         <p className="text-[11px] text-slate-600 mt-1">

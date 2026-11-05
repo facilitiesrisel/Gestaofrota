@@ -7,6 +7,7 @@ import { useReservations } from '../../context/ReservationContext';
 import Modal from './Modal';
 import { SP_CITIES } from '../../constants_reserva';
 import { normalizeCidade } from '../../utils/baseOperacional';
+import { formatToDateTimeLocalInput, parseLocalDateTime } from '../../utils/reservaDateUtils';
 
 interface DailyTripEditModalProps {
   isOpen: boolean;
@@ -21,18 +22,10 @@ const DailyTripEditModal: React.FC<DailyTripEditModalProps> = ({ isOpen, onClose
 
   useEffect(() => {
     if (trip) {
-      // Formata as datas para os inputs de datetime-local
-      const formatDateTimeLocal = (date: Date | undefined) => {
-        if (!date) return '';
-        const d = new Date(date);
-        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-        return d.toISOString().slice(0, 16);
-      };
-      
       setFormData({
         ...trip,
-        departureDateTime: formatDateTimeLocal(trip.departureDateTime) as any,
-        actualReturnDateTime: formatDateTimeLocal(trip.actualReturnDateTime) as any,
+        departureDateTime: (trip.departureDateTime ? formatToDateTimeLocalInput(trip.departureDateTime) : '') as any,
+        actualReturnDateTime: (trip.actualReturnDateTime ? formatToDateTimeLocalInput(trip.actualReturnDateTime) : '') as any,
       });
     }
   }, [trip]);
@@ -63,8 +56,8 @@ const DailyTripEditModal: React.FC<DailyTripEditModalProps> = ({ isOpen, onClose
         destinationCity: normalizeCidade(destinationCity),
         destination,
         purpose,
-        departureDateTime: departureDateTime ? new Date(departureDateTime as any) : undefined,
-        actualReturnDateTime: actualReturnDateTime ? new Date(actualReturnDateTime as any) : undefined,
+        departureDateTime: departureDateTime ? parseLocalDateTime(departureDateTime) : undefined,
+        actualReturnDateTime: actualReturnDateTime ? parseLocalDateTime(actualReturnDateTime) : undefined,
         finalKm: (finalKm || finalKm === 0) ? Number(finalKm) : undefined,
     };
 

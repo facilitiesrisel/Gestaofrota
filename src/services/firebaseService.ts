@@ -1083,7 +1083,7 @@ export const subscribeToVehicles = (onUpdate: (data: Vehicle[]) => void, onError
 };
 
 export const addVehicle = (data: Omit<Vehicle, 'id'>) => vehiclesCollection.add(removeUndefined(data));
-export const updateVehicle = (id: string, data: Partial<Omit<Vehicle, 'id'>>) => vehiclesCollection.doc(id).update(removeUndefined(data));
+export const updateVehicle = (id: string, data: Partial<Omit<Vehicle, 'id'>>) => vehiclesCollection.doc(id).set(removeUndefined(data), { merge: true });
 export const deleteVehicle = async (id: string) => {
     try {
         if (!id || id.startsWith('local_')) return;
@@ -1192,10 +1192,10 @@ export const fetchBackendReservations = async (): Promise<Reservation[]> => {
         return items.map(item => ({
           ...item,
           status: normalizeStatus(item.status),
-          departureDateTime: item.departureDateTime ? new Date(item.departureDateTime) : new Date(),
-          returnDate: item.returnDate ? new Date(item.returnDate) : new Date(),
-          actualReturnDateTime: item.actualReturnDateTime ? new Date(item.actualReturnDateTime) : undefined,
-          requestTimestamp: item.requestTimestamp ? new Date(item.requestTimestamp) : undefined
+          departureDateTime: item.departureDateTime ? parseLocalDateTime(item.departureDateTime) : new Date(),
+          returnDate: item.returnDate ? parseLocalDateTime(item.returnDate) : new Date(),
+          actualReturnDateTime: item.actualReturnDateTime ? parseLocalDateTime(item.actualReturnDateTime) : undefined,
+          requestTimestamp: item.requestTimestamp ? parseLocalDateTime(item.requestTimestamp) : undefined
         }));
       }
     }
@@ -1264,11 +1264,18 @@ export const getReservations = async (): Promise<Reservation[]> => {
           const overrideData = recent?.data || persistent;
           if (overrideData?.status) finalStatus = normalizeStatus(overrideData.status);
           if (overrideData?.adminNotes !== undefined) finalNotes = overrideData.adminNotes;
-          return {
+          const merged = {
             ...remoteRes,
             ...overrideData,
             status: finalStatus,
-            adminNotes: finalNotes
+            adminNotes: finalNotes,
+          };
+          return {
+            ...merged,
+            departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : remoteRes.departureDateTime,
+            returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : remoteRes.returnDate,
+            actualReturnDateTime: merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : remoteRes.actualReturnDateTime,
+            requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : remoteRes.requestTimestamp,
           };
         }
 
@@ -1325,11 +1332,18 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
 
                 if (isRecent && !isBackendFinalized) {
                     const overrideData = recent?.data || persistent;
-                    map.set(b.id, {
+                    const merged = {
                         ...(existing || b),
                         ...b,
                         ...overrideData,
                         status: overrideData.status ? normalizeStatus(overrideData.status) : normBackendStatus
+                    };
+                    map.set(b.id, {
+                        ...merged,
+                        departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : b.departureDateTime,
+                        returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : b.returnDate,
+                        actualReturnDateTime: merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : b.actualReturnDateTime,
+                        requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : b.requestTimestamp,
                     });
                 } else {
                     map.set(b.id, { 
@@ -1340,7 +1354,7 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                 }
             });
             const merged = Array.from(map.values()).sort((a, b) => 
-                new Date(b.departureDateTime).getTime() - new Date(a.departureDateTime).getTime()
+                parseLocalDateTime(b.departureDateTime).getTime() - parseLocalDateTime(a.departureDateTime).getTime()
             );
             saveReservationsToLocalStorage(merged);
             onUpdate(merged);
@@ -1375,11 +1389,18 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                     const overrideData = recent?.data || persistent;
                     if (overrideData?.status) finalStatus = normalizeStatus(overrideData.status);
                     if (overrideData?.adminNotes !== undefined) finalNotes = overrideData.adminNotes;
-                    return {
+                    const merged = {
                         ...remoteRes,
                         ...overrideData,
                         status: finalStatus,
                         adminNotes: finalNotes
+                    };
+                    return {
+                        ...merged,
+                        departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : remoteRes.departureDateTime,
+                        returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : remoteRes.returnDate,
+                        actualReturnDateTime: merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : remoteRes.actualReturnDateTime,
+                        requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : remoteRes.requestTimestamp,
                     };
                 }
 
@@ -1440,7 +1461,7 @@ export const addReservation = async (data: Omit<Reservation, 'id' | 'status' | '
         r.id === deterministicId ||
         (r.vehicleId === data.vehicleId &&
          r.requesterName === data.requesterName &&
-         Math.abs(new Date(r.departureDateTime).getTime() - new Date(data.departureDateTime).getTime()) < 30000)
+         Math.abs(parseLocalDateTime(r.departureDateTime).getTime() - parseLocalDateTime(data.departureDateTime).getTime()) < 30000)
     );
 
     if (!isDuplicate) {
@@ -1500,9 +1521,9 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
             ...currentList[idx],
             ...sanitizedData,
             status: sanitizedData.status ? normalizeStatus(sanitizedData.status) : currentList[idx].status,
-            departureDateTime: sanitizedData.departureDateTime ? new Date(sanitizedData.departureDateTime) : currentList[idx].departureDateTime,
-            returnDate: sanitizedData.returnDate ? new Date(sanitizedData.returnDate) : currentList[idx].returnDate,
-            actualReturnDateTime: sanitizedData.actualReturnDateTime ? new Date(sanitizedData.actualReturnDateTime) : currentList[idx].actualReturnDateTime,
+            departureDateTime: sanitizedData.departureDateTime ? parseLocalDateTime(sanitizedData.departureDateTime) : currentList[idx].departureDateTime,
+            returnDate: sanitizedData.returnDate ? parseLocalDateTime(sanitizedData.returnDate) : currentList[idx].returnDate,
+            actualReturnDateTime: sanitizedData.actualReturnDateTime ? parseLocalDateTime(sanitizedData.actualReturnDateTime) : currentList[idx].actualReturnDateTime,
         };
         saveReservationsToLocalStorage(currentList);
         notifyReservationListeners();

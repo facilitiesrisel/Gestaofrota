@@ -415,14 +415,17 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
   const finalizeReservation = useCallback(async (id: string, vehicleId: string, finalKm: number | null, actualReturnDateTime: Date) => {
     const reservation = reservations.find(r => r.id === id);
     if (!reservation) {
-        console.error("Reservation not found for finalization:", id);
-        throw new Error("Reserva não encontrada para finalizar.");
+        console.warn("Reservation not found in current state for finalization, proceeding with id:", id);
     }
 
     try {
+      const validReturnDate = (actualReturnDateTime instanceof Date && !isNaN(actualReturnDateTime.getTime()))
+        ? actualReturnDateTime
+        : new Date();
+
       const updateData: any = {
         status: ReservationStatus.Completed,
-        actualReturnDateTime: actualReturnDateTime || new Date(),
+        actualReturnDateTime: validReturnDate,
       };
 
       // Aceita qualquer KM digitado sem restrições
@@ -430,10 +433,16 @@ export const ReservationProvider: React.FC<{ children: ReactNode }> = ({ childre
         const finalKmNum = Number(finalKm);
         updateData.finalKm = finalKmNum;
 
-        // Atualiza o cadastro do veículo na UI e no backend
+        // Atualiza o cadastro do veículo na UI e no backend sem bloquear a finalização da reserva
         setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, lastKm: finalKmNum } : v));
-        await firebaseApi.updateVehicle(vehicleId, { lastKm: finalKmNum });
-        checkAndSendMaintenanceAlert(vehicleId, finalKmNum);
+        try {
+          if (vehicleId) {
+            await firebaseApi.updateVehicle(vehicleId, { lastKm: finalKmNum });
+            checkAndSendMaintenanceAlert(vehicleId, finalKmNum);
+          }
+        } catch (vehErr) {
+          console.warn("Aviso ao atualizar hodômetro do veículo durante finalização da reserva:", vehErr);
+        }
       }
 
       // Atualiza a reserva na UI e no backend

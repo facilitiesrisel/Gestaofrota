@@ -6,7 +6,7 @@ import { normalizeNomeSetor, SETORES_OFICIAIS } from '../../utils/setorOperacion
 import { addRacRental, sendEmail, generateRacEmailHtml } from '../../services/firebaseService';
 import { checkDriverCnhStatus, saveDriverCnhRecord } from '../../services/cnhService';
 import { optimizeCnhFile, formatFileSize } from '../../utils/imageOptimizer';
-import { uploadRacCnhFileToDrive, GOOGLE_DRIVE_RAC_CNH_FOLDER_URL } from '../../services/googleDriveService';
+import { uploadRacCnhFileToDrive, GOOGLE_DRIVE_RAC_CNH_FOLDER_URL, getValidDriveToken } from '../../services/googleDriveService';
 import Modal from './Modal';
 import { 
   CarIcon, 
@@ -326,13 +326,15 @@ export const UserRacRequestForm: React.FC<UserRacRequestFormProps> = ({ onSucces
 
       if (cnhFile && cnhFile.base64) {
         try {
+          const driveToken = await getValidDriveToken();
           const uploadRes = await fetch('/api/rac/upload-cnh', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               driverName: finalDriverName,
               fileData: cnhFile.base64,
-              mimeType: cnhFile.file.type || (cnhFile.isImage ? 'image/jpeg' : 'application/pdf')
+              mimeType: cnhFile.file.type || (cnhFile.isImage ? 'image/jpeg' : 'application/pdf'),
+              token: driveToken || undefined
             })
           });
 

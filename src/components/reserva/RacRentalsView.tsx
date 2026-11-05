@@ -100,7 +100,20 @@ const parseCurrencyInput = (val: string): number => {
 };
 
 // Formats a date to ISO string for datetime-local input fields (YYYY-MM-DDTHH:MM)
-const formatToLocalISO = (date: Date): string => {
+const formatToLocalISO = (dateInput: any): string => {
+    let date: Date;
+    if (dateInput instanceof Date && !isNaN(dateInput.getTime())) {
+        date = dateInput;
+    } else if (dateInput && typeof dateInput === 'object' && typeof dateInput.toDate === 'function') {
+        date = dateInput.toDate();
+    } else if (dateInput && typeof dateInput === 'object' && typeof dateInput.seconds === 'number') {
+        date = new Date(dateInput.seconds * 1000);
+    } else {
+        date = new Date(dateInput);
+    }
+    if (isNaN(date.getTime())) {
+        date = new Date();
+    }
     const tzoffset = date.getTimezoneOffset() * 60000;
     const localISOTime = (new Date(date.getTime() - tzoffset)).toISOString().slice(0, 16);
     return localISOTime;
@@ -3377,6 +3390,18 @@ const RacRentalsView: React.FC<RacRentalsViewProps> = ({ embedded = false }) => 
                     condutor={viewingCnh.name}
                     placa={viewingCnh.placa}
                     onClose={() => setViewingCnh(null)}
+                    onCnhUpdated={(newBase64, newFileName) => {
+                        setViewingCnh(prev => prev ? { ...prev, url: newBase64, fileName: newFileName } : null);
+                        setRentals(prev => prev.map(r => {
+                            const rDriver = (r.driverName || r.requesterName || '').toLowerCase().trim();
+                            const targetDriver = (viewingCnh.name || '').toLowerCase().trim();
+                            if (rDriver && targetDriver && (rDriver === targetDriver || rDriver.includes(targetDriver))) {
+                                return { ...r, cnhBase64: newBase64, cnhFileName: newFileName, hasCnhCopy: true };
+                            }
+                            return r;
+                        }));
+                        showToast(`CNH de ${viewingCnh.name} atualizada e sincronizada com sucesso!`, 'success');
+                    }}
                 />
             )}
 

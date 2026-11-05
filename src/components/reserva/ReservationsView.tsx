@@ -18,7 +18,7 @@ import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardLi
 import { QRCodeSVG } from 'qrcode.react';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor } from '../../utils/setorOperacional';
-import { formatDateTimeBR, formatDateBR, parseLocalDateTime } from '../../utils/reservaDateUtils';
+import { formatDateTimeBR, formatDateBR, parseLocalDateTime, formatToDateTimeLocalInput } from '../../utils/reservaDateUtils';
 import { CnhViewerModal } from '../CnhViewerModal';
 import { findDriverCnhInVaultOrFleet } from '../../services/cnhService';
 
@@ -436,9 +436,27 @@ const ReservationsView: React.FC = () => {
         try {
           const wasApproved = selectedReservation.status === ReservationStatus.Approved;
           const isNowApproved = updatedData.status === ReservationStatus.Approved;
+          const isNowCompleted = updatedData.status === ReservationStatus.Completed;
+
+          if (isNowCompleted) {
+            const targetVehicleId = updatedData.vehicleId || selectedReservation.vehicleId;
+            const finalKmVal = (updatedData.finalKm !== undefined && updatedData.finalKm !== null && !isNaN(Number(updatedData.finalKm)))
+              ? Number(updatedData.finalKm)
+              : null;
+            const returnDateVal = updatedData.actualReturnDateTime
+              ? parseLocalDateTime(updatedData.actualReturnDateTime)
+              : new Date();
+
+            await finalizeReservation(
+              selectedReservation.id,
+              targetVehicleId,
+              finalKmVal,
+              returnDateVal
+            );
+          }
 
           await updateReservation(selectedReservation.id, updatedData);
-          showToast("Reserva atualizada com sucesso no sistema.", 'success');
+          showToast(isNowCompleted ? "Reserva concluída e atualizada com sucesso!" : "Reserva atualizada com sucesso no sistema.", 'success');
 
           if (isNowApproved && !wasApproved) {
             const merged = { ...selectedReservation, ...updatedData };
@@ -476,9 +494,10 @@ const ReservationsView: React.FC = () => {
   
   const handleOpenFinalizeModal = (reservation: Reservation) => {
         setSelectedReservation(reservation);
-        const now = new Date();
-        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-        setFinalizeFormData({ finalKm: reservation.finalKm?.toString() || '', actualReturnDateTime: now.toISOString().slice(0, 16) });
+        setFinalizeFormData({
+          finalKm: reservation.finalKm !== undefined && reservation.finalKm !== null ? String(reservation.finalKm) : '',
+          actualReturnDateTime: formatToDateTimeLocalInput(reservation.actualReturnDateTime || new Date())
+        });
         setIsFinalizeModalOpen(true);
   };
 
@@ -487,13 +506,9 @@ const ReservationsView: React.FC = () => {
     if (!selectedReservation) return;
 
     // Data e horário: qualquer data e horário sem restrições (retroativa, presente ou futura)
-    let returnDateObj = new Date();
-    if (finalizeFormData.actualReturnDateTime) {
-      const parsedDate = new Date(finalizeFormData.actualReturnDateTime);
-      if (!isNaN(parsedDate.getTime())) {
-        returnDateObj = parsedDate;
-      }
-    }
+    const returnDateObj = finalizeFormData.actualReturnDateTime
+      ? parseLocalDateTime(finalizeFormData.actualReturnDateTime)
+      : new Date();
 
     // KM: qualquer KM sem restrições (pode ser qualquer número positivo, zero ou livre)
     let finalKmNum: number | null = null;
@@ -1610,7 +1625,7 @@ const ReservationsView: React.FC = () => {
                                               </button>
                                           </>
                                       )}
-                                      {res.status === ReservationStatus.InUse && (
+                                      {(res.status === ReservationStatus.InUse || res.status === ReservationStatus.Approved) && (
                                           <button onClick={() => handleOpenFinalizeModal(res)} className="text-emerald-700 hover:bg-emerald-50 p-1.5 rounded-lg transition-colors border border-emerald-200 cursor-pointer" title="Concluir / Finalizar Viagem">
                                               <CheckIcon className="h-5 w-5" />
                                           </button>
@@ -1730,7 +1745,7 @@ const ReservationsView: React.FC = () => {
                                                 </button>
                                             </>
                                         )}
-                                        {res.status === ReservationStatus.InUse && (
+                                        {(res.status === ReservationStatus.InUse || res.status === ReservationStatus.Approved) && (
                                             <button onClick={() => handleOpenFinalizeModal(res)} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white text-xs font-black flex items-center gap-1 cursor-pointer shadow-2xs" title="Finalizar Viagem">
                                                 <CheckIcon className="h-4 w-4" /> Finalizar
                                             </button>
