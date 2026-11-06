@@ -915,6 +915,9 @@ const docToReservation = (doc: any): Reservation | null => {
         return null;
     }
 
+    const normStatus = normalizeStatus(data.status);
+    const isCompleted = normStatus === ReservationStatus.Completed;
+
     return {
         id: doc.id,
         requesterName: requesterName,
@@ -927,10 +930,12 @@ const docToReservation = (doc: any): Reservation | null => {
         destinationCity: data.destinationCity || data.cidadeDestino || '',
         distanceKm: data.distanceKm,
         vehicleId: vehicleId,
-        status: normalizeStatus(data.status),
+        status: normStatus,
         driverName: data.driverName || data.condutor,
-        actualReturnDateTime: convertOptionalFirestoreDate(data.actualReturnDateTime || data.dataRetornoEfetiva || data.dataRetornoEfetivo),
-        finalKm: data.finalKm !== undefined && data.finalKm !== null ? Number(data.finalKm) : undefined,
+        actualReturnDateTime: isCompleted
+            ? convertOptionalFirestoreDate(data.actualReturnDateTime || data.dataRetornoEfetiva || data.dataRetornoEfetivo)
+            : undefined,
+        finalKm: isCompleted && data.finalKm !== undefined && data.finalKm !== null ? Number(data.finalKm) : undefined,
         purpose: data.purpose || data.motivo,
         rejectReason: data.rejectReason || data.motivoRejeicao || data.motivoRecusa,
         adminNotes: data.adminNotes || data.observacoesGestao || data.notasAdmin,
@@ -1117,17 +1122,15 @@ export const getReservationsFromLocalStorage = (): Reservation[] => {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       return parsed.map((item: any) => {
-        let normStatus = normalizeStatus(item.status);
-        // Blindagem contra cache defasado no F5: se possuir actualReturnDateTime ou finalKm, a devolução já ocorreu
-        if (item.actualReturnDateTime || (item.finalKm !== undefined && item.finalKm !== null && Number(item.finalKm) > 0)) {
-          normStatus = ReservationStatus.Completed;
-        }
+        const normStatus = normalizeStatus(item.status);
+        const isCompleted = normStatus === ReservationStatus.Completed;
         return {
           ...item,
           status: normStatus,
           departureDateTime: item.departureDateTime ? parseLocalDateTime(item.departureDateTime) : new Date(),
           returnDate: item.returnDate ? parseLocalDateTime(item.returnDate) : new Date(),
-          actualReturnDateTime: item.actualReturnDateTime ? parseLocalDateTime(item.actualReturnDateTime) : undefined,
+          actualReturnDateTime: isCompleted && item.actualReturnDateTime ? parseLocalDateTime(item.actualReturnDateTime) : undefined,
+          finalKm: isCompleted && item.finalKm !== undefined && item.finalKm !== null ? Number(item.finalKm) : undefined,
           requestTimestamp: item.requestTimestamp ? parseLocalDateTime(item.requestTimestamp) : undefined
         };
       });
@@ -1189,14 +1192,19 @@ export const fetchBackendReservations = async (): Promise<Reservation[]> => {
     if (res.ok) {
       const items = await res.json();
       if (Array.isArray(items)) {
-        return items.map(item => ({
-          ...item,
-          status: normalizeStatus(item.status),
-          departureDateTime: item.departureDateTime ? parseLocalDateTime(item.departureDateTime) : new Date(),
-          returnDate: item.returnDate ? parseLocalDateTime(item.returnDate) : new Date(),
-          actualReturnDateTime: item.actualReturnDateTime ? parseLocalDateTime(item.actualReturnDateTime) : undefined,
-          requestTimestamp: item.requestTimestamp ? parseLocalDateTime(item.requestTimestamp) : undefined
-        }));
+        return items.map(item => {
+          const normStatus = normalizeStatus(item.status);
+          const isCompleted = normStatus === ReservationStatus.Completed;
+          return {
+            ...item,
+            status: normStatus,
+            departureDateTime: item.departureDateTime ? parseLocalDateTime(item.departureDateTime) : new Date(),
+            returnDate: item.returnDate ? parseLocalDateTime(item.returnDate) : new Date(),
+            actualReturnDateTime: isCompleted && item.actualReturnDateTime ? parseLocalDateTime(item.actualReturnDateTime) : undefined,
+            finalKm: isCompleted && item.finalKm !== undefined && item.finalKm !== null ? Number(item.finalKm) : undefined,
+            requestTimestamp: item.requestTimestamp ? parseLocalDateTime(item.requestTimestamp) : undefined
+          };
+        });
       }
     }
   } catch (e) {
@@ -1324,32 +1332,33 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                                  (persistent && (Date.now() - persistent.timestamp < 30000));
                 
                 const normBackendStatus = normalizeStatus(b.status);
-                const isBackendFinalized = normBackendStatus === ReservationStatus.Completed ||
-                                          normBackendStatus === ReservationStatus.Rejected ||
-                                          normBackendStatus === ReservationStatus.Cancelled ||
-                                          Boolean(b.actualReturnDateTime) ||
-                                          (b.finalKm !== undefined && b.finalKm !== null && Number(b.finalKm) > 0);
 
-                if (isRecent && !isBackendFinalized) {
+                if (isRecent) {
                     const overrideData = recent?.data || persistent;
+                    const resolvedStatus = overrideData.status ? normalizeStatus(overrideData.status) : normBackendStatus;
+                    const isCompleted = resolvedStatus === ReservationStatus.Completed;
                     const merged = {
                         ...(existing || b),
                         ...b,
                         ...overrideData,
-                        status: overrideData.status ? normalizeStatus(overrideData.status) : normBackendStatus
+                        status: resolvedStatus
                     };
                     map.set(b.id, {
                         ...merged,
                         departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : b.departureDateTime,
                         returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : b.returnDate,
-                        actualReturnDateTime: merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : b.actualReturnDateTime,
+                        actualReturnDateTime: isCompleted && merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : undefined,
+                        finalKm: isCompleted && merged.finalKm !== undefined && merged.finalKm !== null ? Number(merged.finalKm) : undefined,
                         requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : b.requestTimestamp,
                     });
                 } else {
+                    const isCompleted = normBackendStatus === ReservationStatus.Completed;
                     map.set(b.id, { 
                         ...(existing || {}), 
                         ...b,
-                        status: isBackendFinalized ? ReservationStatus.Completed : normBackendStatus
+                        status: normBackendStatus,
+                        actualReturnDateTime: isCompleted ? b.actualReturnDateTime : undefined,
+                        finalKm: isCompleted ? b.finalKm : undefined
                     });
                 }
             });
@@ -1368,27 +1377,20 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
         if (reservations.length > 0) {
             const persistentOverrides = getPersistentReservationOverrides();
 
-            // Reconciliação canônica: o Firestore é a fonte da verdade oficial.
-            // Se o documento no Firestore já é Concluída, Rejeitada ou Cancelada, ou possui devolução física, NUNCA reverte!
             const reconciled = reservations.map(remoteRes => {
                 const recent = recentReservationUpdates.get(remoteRes.id);
                 const persistent = persistentOverrides[remoteRes.id];
                 const isRecent = (recent && (Date.now() - recent.timestamp < 30000)) ||
                                  (persistent && (Date.now() - persistent.timestamp < 30000));
                 
-                let finalStatus = remoteRes.status;
+                let finalStatus = normalizeStatus(remoteRes.status);
                 let finalNotes = remoteRes.adminNotes;
 
-                const isRemoteFinalized = remoteRes.status === ReservationStatus.Completed ||
-                                          remoteRes.status === ReservationStatus.Rejected ||
-                                          remoteRes.status === ReservationStatus.Cancelled ||
-                                          Boolean(remoteRes.actualReturnDateTime) ||
-                                          (remoteRes.finalKm !== undefined && remoteRes.finalKm !== null && Number(remoteRes.finalKm) > 0);
-
-                if (isRecent && !isRemoteFinalized) {
+                if (isRecent) {
                     const overrideData = recent?.data || persistent;
                     if (overrideData?.status) finalStatus = normalizeStatus(overrideData.status);
                     if (overrideData?.adminNotes !== undefined) finalNotes = overrideData.adminNotes;
+                    const isCompleted = finalStatus === ReservationStatus.Completed;
                     const merged = {
                         ...remoteRes,
                         ...overrideData,
@@ -1399,14 +1401,18 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                         ...merged,
                         departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : remoteRes.departureDateTime,
                         returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : remoteRes.returnDate,
-                        actualReturnDateTime: merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : remoteRes.actualReturnDateTime,
+                        actualReturnDateTime: isCompleted && merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : undefined,
+                        finalKm: isCompleted && merged.finalKm !== undefined && merged.finalKm !== null ? Number(merged.finalKm) : undefined,
                         requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : remoteRes.requestTimestamp,
                     };
                 }
 
+                const isCompleted = finalStatus === ReservationStatus.Completed;
                 return {
                     ...remoteRes,
-                    status: isRemoteFinalized ? ReservationStatus.Completed : finalStatus,
+                    status: finalStatus,
+                    actualReturnDateTime: isCompleted ? remoteRes.actualReturnDateTime : undefined,
+                    finalKm: isCompleted ? remoteRes.finalKm : undefined,
                     adminNotes: finalNotes
                 };
             });
@@ -1504,9 +1510,17 @@ export const addReservation = async (data: Omit<Reservation, 'id' | 'status' | '
 };
 
 export const updateReservation = async (id: string, data: Partial<Omit<Reservation, 'id'>>) => {
-    const sanitizedData = { ...data };
+    const sanitizedData: any = { ...data };
     if (sanitizedData.department !== undefined) {
         sanitizedData.department = normalizeNomeSetor(sanitizedData.department, 'Operações');
+    }
+    if (sanitizedData.status) {
+        const targetStatus = normalizeStatus(sanitizedData.status);
+        sanitizedData.status = targetStatus;
+        if (targetStatus !== ReservationStatus.Completed) {
+            sanitizedData.actualReturnDateTime = null;
+            sanitizedData.finalKm = null;
+        }
     }
 
     // Registra a atualização recente no mapa de concorrência e no override persistente
@@ -1517,13 +1531,20 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
     const currentList = getReservationsFromLocalStorage();
     const idx = currentList.findIndex(r => r.id === id);
     if (idx !== -1) {
+        const nextStatus = sanitizedData.status ? normalizeStatus(sanitizedData.status) : currentList[idx].status;
+        const isCompleted = nextStatus === ReservationStatus.Completed;
         currentList[idx] = {
             ...currentList[idx],
             ...sanitizedData,
-            status: sanitizedData.status ? normalizeStatus(sanitizedData.status) : currentList[idx].status,
+            status: nextStatus,
             departureDateTime: sanitizedData.departureDateTime ? parseLocalDateTime(sanitizedData.departureDateTime) : currentList[idx].departureDateTime,
             returnDate: sanitizedData.returnDate ? parseLocalDateTime(sanitizedData.returnDate) : currentList[idx].returnDate,
-            actualReturnDateTime: sanitizedData.actualReturnDateTime ? parseLocalDateTime(sanitizedData.actualReturnDateTime) : currentList[idx].actualReturnDateTime,
+            actualReturnDateTime: isCompleted
+                ? (sanitizedData.actualReturnDateTime ? parseLocalDateTime(sanitizedData.actualReturnDateTime) : currentList[idx].actualReturnDateTime)
+                : undefined,
+            finalKm: isCompleted
+                ? (sanitizedData.finalKm !== undefined && sanitizedData.finalKm !== null ? Number(sanitizedData.finalKm) : currentList[idx].finalKm)
+                : undefined,
         };
         saveReservationsToLocalStorage(currentList);
         notifyReservationListeners();

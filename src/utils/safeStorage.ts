@@ -142,9 +142,14 @@ function sanitizeVehiclesForStorage(vehicles: any[]): any[] {
   if (!Array.isArray(vehicles)) return [];
   return vehicles.map(v => {
     if (!v || typeof v !== "object") return v;
+    const cleanPlaca = (v.placa || v.id || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
+    const rawCnh = typeof v.cnhAnexoBase64 === 'string' ? v.cnhAnexoBase64 : '';
+    const safeCnh = rawCnh.length > 0 && rawCnh.length < 200000
+      ? rawCnh
+      : ((rawCnh.length >= 200000 || v.cnhNomeArquivo) && cleanPlaca ? `/api/cnh/${cleanPlaca}` : '');
     return {
       id: v.id || v.placa,
-      placa: (v.placa || '').toUpperCase().trim(),
+      placa: cleanPlaca,
       modelo: v.modelo || '',
       marca: v.marca || '',
       ano: v.ano || '',
@@ -155,7 +160,7 @@ function sanitizeVehiclesForStorage(vehicles: any[]): any[] {
       cnhValidade: v.cnhValidade || '',
       cnhNumero: v.cnhNumero || '',
       cnhNomeArquivo: v.cnhNomeArquivo || '',
-      cnhAnexoBase64: typeof v.cnhAnexoBase64 === 'string' && v.cnhAnexoBase64.length < 200000 ? v.cnhAnexoBase64 : '',
+      cnhAnexoBase64: safeCnh,
       funcao: v.funcao || '',
       setor: v.setor || '',
       contatoMotorista: v.contatoMotorista || '',
@@ -170,12 +175,15 @@ function sanitizeVehiclesForStorage(vehicles: any[]): any[] {
       status: v.status ? (v.status.toLowerCase() === 'inativo' ? 'Inativo' : v.status.toLowerCase() === 'em manutenção' ? 'Em Manutenção' : 'Ativo') : 'Ativo',
       vencContrato: v.vencContrato || '',
       validadeLicenciamento: v.validadeLicenciamento || '',
+      dataTrocaCondutor: v.dataTrocaCondutor || '',
       dataInativacao: v.dataInativacao || '',
       motivoInativacao: v.motivoInativacao || '',
       tipoVinculo: v.tipoVinculo !== undefined ? v.tipoVinculo : (v.locadora === 'FROTA PRÓPRIA' ? '' : 'Contrato'),
       tipo: v.tipo || 'Passeio',
       capacidade: v.capacidade || '',
-      regiao: v.regiao || ''
+      regiao: v.regiao || '',
+      updatedAt: v.updatedAt || '',
+      observacoes: typeof v.observacoes === 'string' && !v.observacoes.trim().startsWith('{') ? v.observacoes : ''
     };
   });
 }

@@ -1748,29 +1748,35 @@ export default function Frota() {
       return clean.length >= 7;
     };
 
-    // 1. Veículos e Contratos (Sincronizados com o Supabase Real)
+    // 1. Veículos e Contratos (Sincronizados com o Supabase Real e Backend)
     fetchVeiculosSupabase().then(supabaseVehicles => {
       if (supabaseVehicles && supabaseVehicles.length > 0) {
-        setVeiculos(supabaseVehicles);
-        safeSetItem("risel_frota_veiculos_v2", JSON.stringify(supabaseVehicles));
+        setVeiculos(prev => {
+          const prevMap = new Map<string, Veiculo>();
+          for (const v of (prev || [])) {
+            const p = (v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+            if (p) prevMap.set(p, v);
+          }
+          const merged = supabaseVehicles.map(cloudVeh => {
+            const p = (cloudVeh.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+            const localVeh = prevMap.get(p);
+            if (localVeh?.updatedAt && cloudVeh.updatedAt) {
+              const tLocal = new Date(localVeh.updatedAt).getTime();
+              const tCloud = new Date(cloudVeh.updatedAt).getTime();
+              if (!isNaN(tLocal) && !isNaN(tCloud) && tLocal > tCloud) {
+                return localVeh;
+              }
+            }
+            return cloudVeh;
+          });
+          safeSetItem("risel_frota_veiculos_v2", JSON.stringify(merged));
+          return merged;
+        });
       } else {
-        // Se a tabela no Supabase estiver vazia e não houver cache local, inicializa com VEICULOS_REAIS
         const cached = safeGetItem("risel_frota_veiculos_v2");
         if (!cached) {
           setVeiculos(VEICULOS_REAIS);
           safeSetItem("risel_frota_veiculos_v2", JSON.stringify(VEICULOS_REAIS));
-          saveBatchVeiculosSupabase(VEICULOS_REAIS).catch(e => console.warn("Aviso ao salvar veículos no Supabase:", e));
-          
-          const contratosBatch = VEICULOS_REAIS.filter(v => Boolean(v.vencContrato)).map(v => ({
-            id: `cto-${v.placa}`,
-            numero: v.contrato || `CTO-${v.placa}`,
-            veiculoPlaca: v.placa,
-            fornecedor: v.locadora || "Locadora",
-            tipoContrato: "Locação",
-            dataVencimento: v.vencContrato,
-            status: "Ativo"
-          }));
-          saveBatchContratosSupabase(contratosBatch).catch(e => console.warn("Aviso ao salvar contratos no Supabase:", e));
         }
       }
     }).catch(err => {
@@ -2264,12 +2270,40 @@ export default function Frota() {
 
   // Sincronização direta e em tempo real com a nuvem Supabase
   const handleSyncFromCloud = async (showFeedback = true) => {
+    if (!showFeedback && (isVehModalOpen || isSavingVeh)) {
+      return;
+    }
     setIsSyncingCloud(true);
     try {
       const freshVehicles = await fetchVeiculosSupabase();
       if (freshVehicles && freshVehicles.length > 0) {
-        setVeiculos(freshVehicles);
-        safeSetItem("risel_frota_veiculos_v2", JSON.stringify(freshVehicles));
+        setVeiculos(prev => {
+          const prevMap = new Map<string, Veiculo>();
+          for (const v of (prev || [])) {
+            const p = (v.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+            if (p) prevMap.set(p, v);
+          }
+          const merged = freshVehicles.map(cloudVeh => {
+            const p = (cloudVeh.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+            const localVeh = prevMap.get(p);
+            if (localVeh?.updatedAt && cloudVeh.updatedAt) {
+              const tLocal = new Date(localVeh.updatedAt).getTime();
+              const tCloud = new Date(cloudVeh.updatedAt).getTime();
+              if (!isNaN(tLocal) && !isNaN(tCloud) && tLocal > tCloud) {
+                return localVeh;
+              }
+            }
+            return cloudVeh;
+          });
+          // Preserva veículos recém-adicionados localmente que ainda não apareceram no snapshot remoto
+          for (const [placa, localVeh] of prevMap.entries()) {
+            if (!merged.some(m => (m.placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === placa)) {
+              merged.push(localVeh);
+            }
+          }
+          safeSetItem("risel_frota_veiculos_v2", JSON.stringify(merged));
+          return merged;
+        });
         const now = new Date();
         const timeStr = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         setLastSyncTime(timeStr);
@@ -2293,17 +2327,21 @@ export default function Frota() {
   // Sincronização automática com a nuvem ao focar na janela ou a cada 90 segundos
   useEffect(() => {
     const handleFocus = () => {
-      handleSyncFromCloud(false);
+      if (!isVehModalOpen && !isSavingVeh) {
+        handleSyncFromCloud(false);
+      }
     };
     window.addEventListener("focus", handleFocus);
     const cloudInterval = setInterval(() => {
-      handleSyncFromCloud(false);
+      if (!isVehModalOpen && !isSavingVeh) {
+        handleSyncFromCloud(false);
+      }
     }, 90 * 1000);
     return () => {
       window.removeEventListener("focus", handleFocus);
       clearInterval(cloudInterval);
     };
-  }, []);
+  }, [isVehModalOpen, isSavingVeh]);
 
   const saveChecklists = (data: Checklist[]) => {
     setChecklists(data);
@@ -2548,9 +2586,10 @@ export default function Frota() {
 
     const placaFinal = cleanUpper(formData.get("placa")).replace(/[^a-zA-Z0-9]/g, '');
     const matchingGeo = geoPositions.find(gp => gp.plate && gp.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === placaFinal);
-    const odometroFinal = (matchingGeo && typeof matchingGeo.odometer === 'number') 
-      ? matchingGeo.odometer 
-      : Number(formData.get("odometro") || 0);
+    const typedOdometro = Number(formData.get("odometro") || 0);
+    const odometroFinal = typedOdometro > 0
+      ? typedOdometro
+      : ((matchingGeo && typeof matchingGeo.odometer === 'number') ? matchingGeo.odometer : 0);
 
     const selectedStatus = (formData.get("status") as Veiculo["status"]) || modalStatus as Veiculo["status"];
     const inputDataInativacao = formData.get("dataInativacao") as string || modalDataInativacao;
@@ -2569,8 +2608,12 @@ export default function Frota() {
     setModalCpfError(null);
 
     const nowIso = new Date().toISOString();
+    const rawCnhInput = modalCnhAnexoBase64 || "";
+    const normalizedCnhUrl = rawCnhInput
+      ? (rawCnhInput.startsWith("data:") ? `/api/cnh/${placaFinal}` : rawCnhInput)
+      : "";
 
-    const data: Veiculo = {
+    const dataForSave: Veiculo = {
       id,
       placa: placaFinal,
       modelo: cleanUpper(formData.get("modelo")),
@@ -2579,8 +2622,8 @@ export default function Frota() {
       cpfCondutor: cleanCpfDigits ? formatCPF(cleanCpfDigits) : "",
       cnhValidade: modalCnhValidade || (formData.get("cnhValidade") as string) || "",
       cnhNumero: modalCnhNumero || (formData.get("cnhNumero") as string) || "",
-      cnhAnexoBase64: modalCnhAnexoBase64 || "",
-      cnhNomeArquivo: modalCnhNomeArquivo || "",
+      cnhAnexoBase64: rawCnhInput,
+      cnhNomeArquivo: modalCnhNomeArquivo || (rawCnhInput ? `CNH_${placaFinal}.pdf` : ""),
       funcao: cleanUpper(formData.get("funcao")),
       setor: cleanUpper(formData.get("setor")),
       contatoMotorista: cleanUpper(formData.get("contatoMotorista")),
@@ -2599,49 +2642,72 @@ export default function Frota() {
         ? ((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() as "Contrato" | "Provisório" | "")
         : (((formData.get("tipoVinculo") as string ?? modalTipoVinculo ?? "").trim() || "Contrato") as "Contrato" | "Provisório"),
       updatedAt: nowIso,
-      observacoes: editingVeh?.observacoes || ""
+      observacoes: ""
+    };
+
+    const dataForState: Veiculo = {
+      ...dataForSave,
+      cnhAnexoBase64: normalizedCnhUrl
+    };
+
+    const cleanCurrentPlaca = placaFinal;
+    const applyOptimisticUpdate = (list: Veiculo[]): Veiculo[] => {
+      let found = false;
+      const next = list.map(v => {
+        const vPlaca = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        if (v.id === id || vPlaca === cleanCurrentPlaca) {
+          found = true;
+          return dataForState;
+        }
+        return v;
+      });
+      if (!found) next.push(dataForState);
+      return next;
     };
 
     setIsSavingVeh(true);
     try {
-      // 1. Gravação prioritária na nuvem oficial Supabase e sincronização no backend do servidor
-      await saveVeiculoSupabase(data);
-
-      if (data.vencContrato) {
-        saveContratoSupabase({
-          id: `cto-${data.placa}`,
-          numero: data.contrato || `CTO-${data.placa}`,
-          veiculoPlaca: data.placa,
-          fornecedor: data.locadora || "Locadora",
-          tipoContrato: "Locação",
-          dataVencimento: data.vencContrato,
-          status: data.status === "Inativo" ? "Encerrado" : "Ativo"
-        }).catch(() => {});
-      }
-
-      // 2. Atualização atômica imediata no estado da aplicação, painel de detalhes e cache local
-      let updated: Veiculo[];
-      const cleanCurrentPlaca = placaFinal;
-      if (editingVeh) {
-        updated = veiculos.map(v => {
-          const vPlaca = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-          return (v.id === id || vPlaca === cleanCurrentPlaca) ? data : v;
-        });
-      } else {
-        updated = [...veiculos, data];
-      }
-      setVeiculos(updated);
-      safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updated));
+      // 1. Atualização atômica imediata na memória e cache local (usando functional update para evitar closure obsoleta)
+      let latestList: Veiculo[] = [];
+      setVeiculos(prev => {
+        const updated = applyOptimisticUpdate(prev);
+        latestList = updated;
+        safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updated));
+        return updated;
+      });
 
       setSelectedVeiculo(prev => {
         if (!prev) return null;
         const pPlaca = (prev.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        return (prev.id === id || pPlaca === cleanCurrentPlaca) ? data : prev;
+        return (prev.id === id || pPlaca === cleanCurrentPlaca) ? dataForState : prev;
       });
 
+      // 2. Gravação prioritária na nuvem oficial Supabase, Cofre de CNH (/api/cnh) e sincronização no backend do servidor
+      await saveVeiculoSupabase(dataForSave);
+
+      // Re-garante o estado atualizado após conclusão da rede
+      setVeiculos(prev => {
+        const updated = applyOptimisticUpdate(prev);
+        latestList = updated;
+        safeSetItem("risel_frota_veiculos_v2", JSON.stringify(updated));
+        return updated;
+      });
+
+      if (dataForSave.vencContrato) {
+        saveContratoSupabase({
+          id: `cto-${dataForSave.placa}`,
+          numero: dataForSave.contrato || `CTO-${dataForSave.placa}`,
+          veiculoPlaca: dataForSave.placa,
+          fornecedor: dataForSave.locadora || "Locadora",
+          tipoContrato: "Locação",
+          dataVencimento: dataForSave.vencContrato,
+          status: dataForSave.status === "Inativo" ? "Encerrado" : "Ativo"
+        }).catch(() => {});
+      }
+
       const activeToken = googleToken || getAccessToken();
-      if (activeToken) {
-        saveVehiclesToSheets(activeToken, updated).catch(() => {});
+      if (activeToken && latestList.length > 0) {
+        saveVehiclesToSheets(activeToken, latestList).catch(() => {});
       }
 
       const now = new Date();
@@ -4879,10 +4945,8 @@ export default function Frota() {
                           <button
                             type="button"
                             onClick={() => {
-                              if (confirm("Deseja remover a cópia da CNH deste condutor?")) {
-                                setModalCnhAnexoBase64("");
-                                setModalCnhNomeArquivo("");
-                              }
+                              setModalCnhAnexoBase64("");
+                              setModalCnhNomeArquivo("");
                             }}
                             className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                             title="Remover CNH"

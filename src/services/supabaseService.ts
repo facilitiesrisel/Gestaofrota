@@ -287,6 +287,26 @@ export function mapSupabaseRowToLancamento(row: any): any {
     }
   }
 
+  const isRealFileContent = (val?: any): boolean => {
+    if (!val || typeof val !== "string") return false;
+    const t = val.trim();
+    if (!t || t.includes("/drive/folders/")) return false;
+    if (t.startsWith("data:") && t.length > 50) return true;
+    if (!t.startsWith("http") && t.length > 100) return true;
+    if (
+      t.startsWith("http") &&
+      (t.includes("/file/d/") ||
+        t.includes("id=") ||
+        t.includes("/storage/v1/object/") ||
+        t.includes("/api/lancamentos/"))
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  const cleanRowBase64 = isRealFileContent(row.arquivo_anexo_base64) ? row.arquivo_anexo_base64 : "";
+
   let parsedAnexos: any[] = [];
   if (row.anexos) {
     if (Array.isArray(row.anexos)) {
@@ -304,16 +324,23 @@ export function mapSupabaseRowToLancamento(row: any): any {
       }
     } catch (e) {}
   }
-  if ((!parsedAnexos || parsedAnexos.length === 0) && (row.arquivo_anexo_base64 || row.nome_arquivo_anexo)) {
+
+  parsedAnexos = (parsedAnexos || []).map((a: any) => ({
+    ...a,
+    url: isRealFileContent(a?.url) ? a.url : undefined,
+    base64: isRealFileContent(a?.base64) ? a.base64 : ""
+  }));
+
+  if ((!parsedAnexos || parsedAnexos.length === 0) && (cleanRowBase64 || row.nome_arquivo_anexo)) {
     parsedAnexos = [{
       id: "anx-1",
       nome: row.nome_arquivo_anexo || "Documento.pdf",
-      base64: row.arquivo_anexo_base64 || ""
+      base64: cleanRowBase64
     }];
-  } else if (parsedAnexos.length > 0 && row.arquivo_anexo_base64 && !parsedAnexos[0].base64) {
+  } else if (parsedAnexos.length > 0 && cleanRowBase64 && !isRealFileContent(parsedAnexos[0].base64)) {
     parsedAnexos[0] = {
       ...parsedAnexos[0],
-      base64: row.arquivo_anexo_base64
+      base64: cleanRowBase64
     };
   }
 
@@ -346,10 +373,10 @@ export function mapSupabaseRowToLancamento(row: any): any {
     cnpj: row.cnpj,
     estabelecimento: parsedBase || "100 - Paulínia",
     nomeArquivoAnexo: row.nome_arquivo_anexo || (parsedAnexos[0]?.nome || ""),
-    arquivoAnexoBase64: row.arquivo_anexo_base64 || (parsedAnexos[0]?.base64 || ""),
-    driveUrl: parsedDriveUrl || undefined,
+    arquivoAnexoBase64: cleanRowBase64 || (parsedAnexos[0]?.base64 || ""),
+    driveUrl: isRealFileContent(parsedDriveUrl) ? parsedDriveUrl : undefined,
     anexos: parsedAnexos,
-    temAnexo: Boolean(row.arquivo_anexo_base64 || row.nome_arquivo_anexo || parsedAnexos.length > 0),
+    temAnexo: Boolean(cleanRowBase64 || row.nome_arquivo_anexo || parsedAnexos.length > 0),
     itemSistema: row.item_sistema,
     dataEmissao: row.data_emissao,
     observacao: cleanObs,
@@ -511,6 +538,24 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     const filialBase = item.estabelecimento || "100 - Paulínia";
     const updatedAtIso = item.updatedAt || new Date().toISOString();
 
+    const isValidAttachmentContent = (val?: any): boolean => {
+      if (!val || typeof val !== "string") return false;
+      const t = val.trim();
+      if (!t || t.includes("/drive/folders/")) return false;
+      if (t.startsWith("data:") && t.length > 50) return true;
+      if (!t.startsWith("http") && t.length > 100) return true;
+      if (
+        t.startsWith("http") &&
+        (t.includes("/file/d/") ||
+          t.includes("id=") ||
+          t.includes("/storage/v1/object/") ||
+          t.includes("/api/lancamentos/"))
+      ) {
+        return true;
+      }
+      return false;
+    };
+
     // Higieniza observação removendo tags pré-existentes para garantir que novas alterações substituam as antigas
     let cleanObs = String(item.observacao || "")
       .replace(/\[Nº DOC:[^\]]*\]/gi, "")
@@ -532,7 +577,9 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
     if (centCusto) tags.push(`[CENTRO DE CUSTO: ${centCusto}]`);
     if (alcada) tags.push(`[ALÇADA: ${alcada}]`);
     if (filialBase) tags.push(`[BASE: ${filialBase}]`);
-    if (item.driveUrl) tags.push(`[GOOGLE DRIVE: ${item.driveUrl}]`);
+    if (item.driveUrl && isValidAttachmentContent(item.driveUrl)) {
+      tags.push(`[GOOGLE DRIVE: ${item.driveUrl}]`);
+    }
     tags.push(`[UPDATED_AT: ${updatedAtIso}]`);
 
     const contatoMeta: Record<string, string> = {};
@@ -551,7 +598,6 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
 
     const anexosArr = Array.isArray(item.anexos) ? item.anexos : [];
     const GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID = "1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz";
-    const GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL = `https://drive.google.com/drive/folders/${GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID}?hl=pt-br`;
 
     const fornSlug = String(item.fornecedor || "Fornecedor").trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
     const docSlug = String(numDoc || item.doc || targetId).trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 20);
@@ -572,8 +618,9 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data && data.success && (data.downloadUrl || data.fileUrl)) {
-            return data.downloadUrl || data.fileUrl;
+          const candidateLink = data?.downloadUrl || data?.fileUrl;
+          if (data && data.success && data.fileId && isValidAttachmentContent(candidateLink)) {
+            return candidateLink;
           }
         }
       } catch (e) {
@@ -582,14 +629,20 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
       return null;
     };
 
-    // Economia de tráfego e banco de dados: envia anexo para a pasta oficial do Google Drive e salva apenas a URL no Supabase
-    let finalAnexo = item.arquivoAnexoUrl || item.driveUrl || item.arquivoAnexoBase64 || (anexosArr[0]?.url || anexosArr[0]?.base64 || "");
+    // Preserva sempre o conteúdo real do anexo (base64 data: ou link direto de arquivo), NUNCA substituindo pelo link genérico de pasta!
+    const rawCandidates = [
+      item.arquivoAnexoBase64,
+      anexosArr[0]?.base64,
+      item.arquivoAnexoUrl,
+      item.driveUrl,
+      anexosArr[0]?.url
+    ];
+    let finalAnexo = rawCandidates.find(c => isValidAttachmentContent(c)) || "";
     const primaryFileName = item.nomeArquivoAnexo || (anexosArr[0]?.nome || "documento.pdf");
 
     if (finalAnexo && !finalAnexo.startsWith("http")) {
       const driveLink = await uploadToDriveFolder(finalAnexo, primaryFileName);
-      if (driveLink) {
-        finalAnexo = driveLink;
+      if (driveLink && isValidAttachmentContent(driveLink)) {
         item.driveUrl = driveLink;
         item.arquivoAnexoUrl = driveLink;
       } else {
@@ -599,47 +652,38 @@ export async function saveLancamentoSupabase(item: any): Promise<boolean> {
             primaryFileName,
             item.dataVencimento || item.dataLancamento
           );
-          if (storageResult && storageResult.publicUrl) {
-            finalAnexo = storageResult.publicUrl;
-          } else if (finalAnexo.length > 15000) {
-            // Nunca sobrecarrega o Supabase com base64 pesado; aponta para a pasta do Drive mientras mantém binário no servidor
-            finalAnexo = GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL;
+          if (storageResult && storageResult.publicUrl && isValidAttachmentContent(storageResult.publicUrl)) {
+            item.arquivoAnexoUrl = storageResult.publicUrl;
           }
-        } catch {
-          if (finalAnexo.length > 15000) {
-            finalAnexo = GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL;
-          }
-        }
+        } catch {}
       }
     }
 
-    if (item.driveUrl && !tags.some(t => t.startsWith("[GOOGLE DRIVE:"))) {
+    if (item.driveUrl && isValidAttachmentContent(item.driveUrl) && !tags.some(t => t.startsWith("[GOOGLE DRIVE:"))) {
       tags.push(`[GOOGLE DRIVE: ${item.driveUrl}]`);
-    } else if (finalAnexo && finalAnexo.startsWith("http") && !tags.some(t => t.startsWith("[GOOGLE DRIVE:"))) {
-      tags.push(`[GOOGLE DRIVE: ${finalAnexo}]`);
     }
 
-    // Prepara os anexos para ANEXOS_JSON enviando cada arquivo para a pasta do Google Drive (sem gravar base64 pesado no Supabase)
+    // Prepara os anexos para ANEXOS_JSON mantendo anexos múltiplos íntegros
     if (anexosArr.length > 0) {
       const processedAnexos = [];
       for (let i = 0; i < Math.min(anexosArr.length, 6); i++) {
         const a = anexosArr[i];
-        let aUrlOrData = a.url || a.driveUrl || a.base64 || "";
-        if (i === 0 && finalAnexo && finalAnexo.startsWith("http")) {
-          aUrlOrData = finalAnexo;
-        } else if (aUrlOrData && !aUrlOrData.startsWith("http")) {
-          const uploadedLink = await uploadToDriveFolder(aUrlOrData, a.nome || `anexo_${i + 1}.pdf`);
-          if (uploadedLink) {
-            aUrlOrData = uploadedLink;
-          } else if (aUrlOrData.length > 15000) {
-            aUrlOrData = GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL;
+        const rawUrl = a.url || a.driveUrl || "";
+        let validUrl = isValidAttachmentContent(rawUrl) && rawUrl.startsWith("http") ? rawUrl : undefined;
+        const validB64 = isValidAttachmentContent(a.base64) ? a.base64 : (validUrl || "");
+
+        if (!validUrl && validB64 && !validB64.startsWith("http")) {
+          const uploadedLink = await uploadToDriveFolder(validB64, a.nome || `anexo_${i + 1}.pdf`);
+          if (uploadedLink && isValidAttachmentContent(uploadedLink)) {
+            validUrl = uploadedLink;
           }
         }
+
         processedAnexos.push({
           id: a.id || `anx-${i + 1}`,
           nome: a.nome || `Anexo_${i + 1}`,
-          url: aUrlOrData && aUrlOrData.startsWith("http") ? aUrlOrData : undefined,
-          base64: aUrlOrData && aUrlOrData.startsWith("http") ? aUrlOrData : ""
+          url: validUrl,
+          base64: i === 0 ? (validUrl || "") : validB64
         });
       }
       tags.push(`[ANEXOS_JSON: ${JSON.stringify(processedAnexos)}]`);
@@ -1388,6 +1432,57 @@ export interface SupabaseVeiculo {
   created_at?: string;
 }
 
+// Cache persistente de edições locais recentes de veículos para impedir reversão por sincronizações em andamento
+const VEHICLE_OVERRIDES_KEY = "risel_frota_vehicle_overrides_v2";
+const recentVehicleEdits = new Map<string, { timestamp: number; data: any }>();
+
+function getVehicleOverrides(): Record<string, { timestamp: number; data: any }> {
+  try {
+    const raw = localStorage.getItem(VEHICLE_OVERRIDES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    const valid: Record<string, { timestamp: number; data: any }> = {};
+    let changed = false;
+    Object.keys(parsed || {}).forEach(placa => {
+      const entry = parsed[placa];
+      // Protege alterações realizadas nos últimos 10 minutos contra qualquer snapshot atrasado
+      if (entry && entry.timestamp && (now - entry.timestamp) < 10 * 60 * 1000 && entry.data) {
+        valid[placa] = entry;
+      } else {
+        changed = true;
+      }
+    });
+    if (changed) {
+      localStorage.setItem(VEHICLE_OVERRIDES_KEY, JSON.stringify(valid));
+    }
+    return valid;
+  } catch {
+    return {};
+  }
+}
+
+function setVehicleOverride(placa: string, data: any): void {
+  const cleanP = String(placa || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
+  if (!cleanP) return;
+  const entry = {
+    timestamp: Date.now(),
+    data: {
+      ...data,
+      placa: cleanP,
+      cnhAnexoBase64: typeof data.cnhAnexoBase64 === "string" && data.cnhAnexoBase64.length > 2000
+        ? `/api/cnh/${cleanP}`
+        : (data.cnhAnexoBase64 || (data.cnhNomeArquivo ? `/api/cnh/${cleanP}` : ""))
+    }
+  };
+  recentVehicleEdits.set(cleanP, entry);
+  try {
+    const current = getVehicleOverrides();
+    current[cleanP] = entry;
+    localStorage.setItem(VEHICLE_OVERRIDES_KEY, JSON.stringify(current));
+  } catch {}
+}
+
 export async function fetchVeiculosSupabase(): Promise<any[]> {
   try {
     const cleanPlateKey = (p: string) => String(p || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
@@ -1397,12 +1492,14 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
       const cleanP = cleanPlateKey(raw.placa || raw.id);
       let extra: any = {};
       let plainObs = "";
+      let hasExtraJson = false;
 
       if (typeof raw.observacoes === "string") {
         const trimmed = raw.observacoes.trim();
         if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
           try {
             extra = JSON.parse(trimmed);
+            hasExtraJson = true;
             if (typeof extra.observacoes === "string" && !extra.observacoes.trim().startsWith("{")) {
               plainObs = extra.observacoes;
             }
@@ -1413,60 +1510,89 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
       }
 
       const definedTop: any = {};
+      const snakeToIgnore = new Set([
+        "observacoes",
+        "km_atual",
+        "combustivel_padrao",
+        "venc_contrato",
+        "contato_motorista",
+        "gestor_resp",
+        "data_troca_condutor",
+        "cpf_condutor",
+        "cnh_validade",
+        "cnh_numero",
+        "cnh_nome_arquivo",
+        "cnh_anexo_base64",
+        "data_inativacao",
+        "motivo_inativacao",
+        "tipo_vinculo",
+        "created_at"
+      ]);
       for (const [k, val] of Object.entries(raw)) {
-        if (val !== undefined && k !== "observacoes") {
+        if (val !== undefined && val !== null && !snakeToIgnore.has(k)) {
           definedTop[k] = val;
         }
       }
 
+      const merged = hasExtraJson ? { ...definedTop, ...extra } : { ...extra, ...definedTop };
+      const rawCnh = merged.cnhAnexoBase64 || raw.cnh_anexo_base64 || "";
+      const cnhName = merged.cnhNomeArquivo || raw.cnh_nome_arquivo || "";
+      const normalizedCnh = (typeof rawCnh === "string" && rawCnh.length > 2000 && cleanP)
+        ? `/api/cnh/${cleanP}`
+        : (rawCnh || (cnhName && cleanP ? `/api/cnh/${cleanP}` : ""));
+
       return {
-        ...extra,
-        ...definedTop,
+        ...merged,
         placa: cleanP,
-        updatedAt: definedTop.updatedAt || extra.updatedAt || "",
+        cnhNomeArquivo: cnhName,
+        cnhAnexoBase64: normalizedCnh,
+        updatedAt: merged.updatedAt || extra.updatedAt || definedTop.updatedAt || "",
         observacoes: plainObs
       };
     };
 
     let cloudRecords: any[] = [];
-
-    // 1. Consulta o banco na nuvem Supabase (Fonte Primária da Verdade)
-    try {
-      const client = getSupabaseClient();
-      const { data, error } = await client
-        .from('veiculos')
-        .select('*')
-        .order('placa', { ascending: true });
-
-      if (error) {
-        console.warn("Aviso ao buscar veículos no Supabase:", error.message);
-        if (error.message?.includes("API key") || error.code === "PGRST301" || error.code === "401") {
-          const freshClient = forceResetToOfficialSupabase();
-          const retryRes = await freshClient.from('veiculos').select('*').order('placa', { ascending: true });
-          if (retryRes.data && retryRes.data.length > 0) {
-            cloudRecords = retryRes.data.map(unpackRawRecord);
-          }
-        }
-      } else if (data && data.length > 0) {
-        cloudRecords = data.map(unpackRawRecord);
-      }
-    } catch (sbErr) {
-      console.warn("Falha de conexão com Supabase:", sbErr);
-    }
-
-    // 2. Consulta o backend local (que também sincroniza com Supabase no servidor)
     let localData: any[] = [];
-    try {
-      const localRes = await fetch("/api/veiculos");
-      if (localRes.ok) {
-        const parsed = await localRes.json();
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          localData = parsed.map(unpackRawRecord);
-        }
-      }
-    } catch (_) {}
 
-    // Mapa unificado indexado pela placa com resolução por timestamp updatedAt
+    // Consulta em paralelo o backend local (/api/veiculos, que já consolida disco + Supabase) e o cliente Supabase
+    await Promise.all([
+      (async () => {
+        try {
+          const localRes = await fetch("/api/veiculos");
+          if (localRes.ok) {
+            const parsed = await localRes.json();
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              localData = parsed.map(unpackRawRecord);
+            }
+          }
+        } catch (_) {}
+      })(),
+      (async () => {
+        try {
+          const client = getSupabaseClient();
+          const { data, error } = await client
+            .from('veiculos')
+            .select('*')
+            .order('placa', { ascending: true });
+
+          if (error) {
+            if (error.message?.includes("API key") || error.code === "PGRST301" || error.code === "401") {
+              const freshClient = forceResetToOfficialSupabase();
+              const retryRes = await freshClient.from('veiculos').select('*').order('placa', { ascending: true });
+              if (retryRes.data && retryRes.data.length > 0) {
+                cloudRecords = retryRes.data.map(unpackRawRecord);
+              }
+            }
+          } else if (data && data.length > 0) {
+            cloudRecords = data.map(unpackRawRecord);
+          }
+        } catch (sbErr) {
+          console.warn("Falha de conexão com Supabase:", sbErr);
+        }
+      })()
+    ]);
+
+    // Mapa unificado indexado pela placa com resolução estrita por timestamp updatedAt
     const unifiedRecordMap = new Map<string, any>();
 
     (cloudRecords || []).forEach(r => {
@@ -1480,10 +1606,23 @@ export async function fetchVeiculosSupabase(): Promise<any[]> {
       const existing = unifiedRecordMap.get(p);
       if (!existing) {
         unifiedRecordMap.set(p, l);
-      } else if (l.updatedAt && (!existing.updatedAt || l.updatedAt > existing.updatedAt)) {
+      } else if (l.updatedAt && (!existing.updatedAt || l.updatedAt >= existing.updatedAt)) {
         unifiedRecordMap.set(p, { ...existing, ...l });
       } else {
         unifiedRecordMap.set(p, { ...l, ...existing });
+      }
+    });
+
+    // Aplica proteção de edições locais recentes (garante que um salvamento recém-feito nunca seja revertido)
+    const activeOverrides = getVehicleOverrides();
+    recentVehicleEdits.forEach((val, key) => {
+      activeOverrides[key] = val;
+    });
+    Object.entries(activeOverrides).forEach(([placaKey, entry]) => {
+      if (!entry || !entry.data) return;
+      const existing = unifiedRecordMap.get(placaKey);
+      if (!existing || !existing.updatedAt || (entry.data.updatedAt && entry.data.updatedAt >= existing.updatedAt)) {
+        unifiedRecordMap.set(placaKey, { ...(existing || {}), ...entry.data });
       }
     });
 
@@ -1621,9 +1760,21 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
 
     let cnhAnexoRef = item.cnhAnexoBase64 || "";
     const originalBase64 = (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.startsWith("data:")) ? cnhAnexoRef : "";
-    if (cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.length > 2000) {
+    if ((cnhAnexoRef && typeof cnhAnexoRef === "string" && cnhAnexoRef.length > 2000) || (item.cnhNomeArquivo && !cnhAnexoRef)) {
       cnhAnexoRef = `/api/cnh/${cleanPlaca}`;
     }
+
+    const resolvedFilial = item.filial || item.base || "Paulínia";
+
+    // Registra imediatamente o override local com timestamp para blindar contra syncs paralelos
+    setVehicleOverride(cleanPlaca, {
+      ...item,
+      placa: cleanPlaca,
+      filial: resolvedFilial,
+      base: resolvedFilial,
+      cnhAnexoBase64: cnhAnexoRef,
+      updatedAt
+    });
 
     // Salva o anexo de CNH no disco / Google Drive via servidor
     if (originalBase64 && originalBase64.length > 200) {
@@ -1634,17 +1785,16 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
           body: JSON.stringify({ 
             base64: originalBase64, 
             nomeArquivo: item.cnhNomeArquivo || `CNH_${cleanPlaca}.pdf`,
+            condutor: item.condutor || "",
             driveUrl: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing"
           })
         });
       } catch (_) {}
     }
 
-    const resolvedFilial = item.filial || item.base || "Paulínia";
-
     const sanitizeTextOnlyObs = (rawObs: any): string => {
       if (!rawObs || typeof rawObs !== 'string') return "";
-      let s = rawObs.trim();
+      const s = rawObs.trim();
       if (s.startsWith("{") && s.endsWith("}")) {
         try {
           const parsed = JSON.parse(s);
@@ -1656,7 +1806,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
 
     const cleanObs = sanitizeTextOnlyObs(item.observacoes);
 
-    // Persiste metadados e CNH (se tamanho razoável) no JSON extra do Supabase para recuperação entre instâncias
+    // Persiste metadados e referência limpa da CNH (/api/cnh/:placa) no JSON extra do Supabase
     const extraData = JSON.stringify({
       id: item.id || `v-${cleanPlaca.toLowerCase()}`,
       modelo: item.modelo || "Veículo Frota",
@@ -1668,7 +1818,7 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       cnhNumero: item.cnhNumero ?? "",
       cnhDriveFolder: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing",
       cnhNomeArquivo: item.cnhNomeArquivo ?? "",
-      cnhAnexoBase64: (originalBase64 && originalBase64.length < 3500000) ? originalBase64 : cnhAnexoRef,
+      cnhAnexoBase64: cnhAnexoRef,
       funcao: item.funcao ?? "",
       setor: item.setor ?? "",
       contatoMotorista: item.contatoMotorista ?? "",
@@ -1712,50 +1862,55 @@ export async function saveVeiculoSupabase(item: any): Promise<boolean> {
       observacoes: extraData
     };
 
-    // 1. Grava no Supabase (await com retorno de confirmação)
-    let supabaseSuccess = false;
-    try {
-      const client = getSupabaseClient();
-      const { error } = await client
-        .from('veiculos')
-        .upsert(dbRecord, { onConflict: 'placa' });
-
-      if (error) {
-        const standardRecord = {
-          placa: cleanPlaca,
-          modelo: item.modelo || "Veículo Frota",
-          base: resolvedFilial,
-          condutor: item.condutor || "Disponível",
-          status: item.status || "Ativo",
-          km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
-          observacoes: extraData
-        };
-        const res2 = await client.from('veiculos').upsert(standardRecord, { onConflict: 'placa' });
-        supabaseSuccess = !res2.error;
-      } else {
-        supabaseSuccess = true;
-      }
-    } catch (sbErr) {
-      console.warn("Aviso ao sincronizar no Supabase:", sbErr);
-    }
-
-    // 2. Grava no backend local atômico imediatamente (enviando base64 original para gravação física no servidor)
+    // Grava em paralelo no backend local atômico (que persiste em disco + Supabase) e diretamente no Supabase
     let backendSuccess = false;
-    try {
-      const bRes = await fetch("/api/veiculos/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          ...item, 
-          placa: cleanPlaca, 
-          filial: resolvedFilial, 
-          base: resolvedFilial,
-          cnhAnexoBase64: originalBase64 || cnhAnexoRef,
-          updatedAt
-        })
-      });
-      backendSuccess = bRes.ok;
-    } catch (_) {}
+    let supabaseSuccess = false;
+
+    await Promise.all([
+      (async () => {
+        try {
+          const bRes = await fetch("/api/veiculos/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              ...item, 
+              placa: cleanPlaca, 
+              filial: resolvedFilial, 
+              base: resolvedFilial,
+              cnhAnexoBase64: originalBase64 || cnhAnexoRef,
+              updatedAt
+            })
+          });
+          backendSuccess = bRes.ok;
+        } catch (_) {}
+      })(),
+      (async () => {
+        try {
+          const client = getSupabaseClient();
+          const { error } = await client
+            .from('veiculos')
+            .upsert(dbRecord, { onConflict: 'placa' });
+
+          if (error) {
+            const standardRecord = {
+              placa: cleanPlaca,
+              modelo: item.modelo || "Veículo Frota",
+              base: resolvedFilial,
+              condutor: item.condutor || "Disponível",
+              status: item.status || "Ativo",
+              km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
+              observacoes: extraData
+            };
+            const res2 = await client.from('veiculos').upsert(standardRecord, { onConflict: 'placa' });
+            supabaseSuccess = !res2.error;
+          } else {
+            supabaseSuccess = true;
+          }
+        } catch (sbErr) {
+          console.warn("Aviso ao sincronizar no Supabase:", sbErr);
+        }
+      })()
+    ]);
 
     return supabaseSuccess || backendSuccess;
   } catch (err) {
@@ -1777,96 +1932,15 @@ export async function saveBatchVeiculosSupabase(items: any[]): Promise<{ count: 
       return { ...item, placa: cleanPlaca, cnhAnexoBase64: cnhAnexoRef };
     });
 
-    // 1. Grava no backend local imediatamente
-    try {
-      await fetch("/api/veiculos/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sanitizedBatch)
-      });
-    } catch (_) {}
-
-    // 2. Grava no Supabase com records leves e sanitizados
-    const client = getSupabaseClient();
-    const dbRecords = sanitizedBatch.map(item => {
-      const cleanPlaca = item.placa;
-      const resolvedFilial = item.filial || item.base || "Paulínia";
-      const cleanObs = typeof item.observacoes === "string" && !item.observacoes.trim().startsWith("{") ? item.observacoes.trim() : "";
-
-      const extraData = JSON.stringify({
-        id: item.id || `v-${cleanPlaca.toLowerCase()}`,
-        modelo: item.modelo || "Veículo Frota",
-        condutor: item.condutor || "Disponível",
-        status: item.status || "Ativo",
-        vencContrato: item.vencContrato ?? "",
-        cpfCondutor: item.cpfCondutor ?? "",
-        cnhValidade: item.cnhValidade ?? "",
-        cnhNumero: item.cnhNumero ?? "",
-        cnhDriveFolder: "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing",
-        cnhAnexoBase64: item.cnhAnexoBase64 || `/api/cnh/${cleanPlaca}`,
-        cnhNomeArquivo: item.cnhNomeArquivo ?? "",
-        funcao: item.funcao ?? "",
-        setor: item.setor ?? "",
-        contatoMotorista: item.contatoMotorista ?? "",
-        gestorResp: item.gestorResp ?? "",
-        email: item.email ?? "",
-        filial: resolvedFilial,
-        locadora: item.locadora ?? "",
-        contrato: item.contrato ?? "",
-        odometro: Number(item.odometro || 0),
-        combustivel: item.combustivel || "Flex",
-        dataTrocaCondutor: item.dataTrocaCondutor ?? "",
-        dataInativacao: item.dataInativacao ?? "",
-        motivoInativacao: item.motivoInativacao ?? "",
-        tipoVinculo: item.tipoVinculo !== undefined ? item.tipoVinculo : (String(item.locadora).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato"),
-        updatedAt: item.updatedAt || "",
-        observacoes: cleanObs
-      });
-
-      return {
-        placa: cleanPlaca,
-        modelo: item.modelo || "Veículo Frota",
-        marca: item.marca || "",
-        ano: Number(item.ano) || new Date().getFullYear(),
-        tipo: item.tipo || "Leve",
-        base: resolvedFilial,
-        condutor: item.condutor || "Disponível",
-        status: item.status || "Ativo",
-        km_atual: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
-        combustivel_padrao: item.combustivel || item.combustivelPadrao || "Flex",
-        venc_contrato: item.vencContrato ?? "",
-        funcao: item.funcao ?? "Motorista",
-        contato_motorista: item.contatoMotorista ?? "",
-        gestor_resp: item.gestorResp ?? "",
-        email: item.email ?? "",
-        filial: resolvedFilial,
-        locadora: item.locadora || "Frota Própria",
-        contrato: item.contrato ?? "",
-        odometro: Number(item.odometro || item.kmAtual || item.km_atual) || 0,
-        combustivel: item.combustivel || item.combustivelPadrao || "Flex",
-        data_troca_condutor: item.dataTrocaCondutor ?? "",
-        observacoes: extraData
-      };
+    // Delega ao servidor (/api/veiculos/save), que faz a mesclagem segura respeitando updatedAt
+    // e sincroniza apenas os itens mais recentes com o Supabase sem sobrescrever edições de outros usuários
+    const res = await fetch("/api/veiculos/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sanitizedBatch)
     });
 
-    const { error } = await client
-      .from('veiculos')
-      .upsert(dbRecords, { onConflict: 'placa' });
-
-    if (error) {
-      const standardBatch = dbRecords.map(r => ({
-        placa: r.placa,
-        modelo: r.modelo,
-        base: r.base,
-        condutor: r.condutor,
-        status: r.status,
-        km_atual: r.km_atual,
-        observacoes: r.observacoes
-      }));
-      await client.from('veiculos').upsert(standardBatch, { onConflict: 'placa' });
-    }
-
-    return { count: dbRecords.length, success: true };
+    return { count: sanitizedBatch.length, success: res.ok };
   } catch (err) {
     console.error("Erro no saveBatchVeiculosSupabase:", err);
     return { count: 0, success: false };

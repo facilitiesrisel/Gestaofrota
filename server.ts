@@ -1371,13 +1371,18 @@ async function startServer() {
         if (snap && snap.docs && snap.docs.length > 0) {
           const firestoreItems = snap.docs.map((d: any) => {
             const data = d.data();
+            const normStatus = normalizeReservationStatus(data.status);
+            const isCompleted = normStatus === "Concluída";
             return {
               ...data,
               id: d.id,
-              status: normalizeReservationStatus(data.status),
+              status: normStatus,
               departureDateTime: data.departureDateTime?.toDate ? data.departureDateTime.toDate().toISOString() : data.departureDateTime,
               returnDate: data.returnDate?.toDate ? data.returnDate.toDate().toISOString() : data.returnDate,
-              actualReturnDateTime: data.actualReturnDateTime?.toDate ? data.actualReturnDateTime.toDate().toISOString() : data.actualReturnDateTime,
+              actualReturnDateTime: isCompleted
+                ? (data.actualReturnDateTime?.toDate ? data.actualReturnDateTime.toDate().toISOString() : data.actualReturnDateTime)
+                : undefined,
+              finalKm: isCompleted ? data.finalKm : undefined,
               requestTimestamp: data.requestTimestamp?.toDate ? data.requestTimestamp.toDate().toISOString() : data.requestTimestamp,
             };
           });
@@ -1389,10 +1394,16 @@ async function startServer() {
       }
 
       // 2. Fallback resiliente: lê arquivo local persistente com status devidamente normalizados
-      const list = loadStoredReservations().map(r => ({
-        ...r,
-        status: normalizeReservationStatus(r.status)
-      }));
+      const list = loadStoredReservations().map(r => {
+        const normStatus = normalizeReservationStatus(r.status);
+        const isCompleted = normStatus === "Concluída";
+        return {
+          ...r,
+          status: normStatus,
+          actualReturnDateTime: isCompleted ? r.actualReturnDateTime : undefined,
+          finalKm: isCompleted ? r.finalKm : undefined
+        };
+      });
       return res.json(list);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1413,6 +1424,14 @@ async function startServer() {
       let updatedItem: any;
       const cleanData: any = { ...data };
 
+      if (cleanData.status) {
+        cleanData.status = normalizeReservationStatus(cleanData.status);
+        if (cleanData.status !== "Concluída") {
+          cleanData.actualReturnDateTime = null;
+          cleanData.finalKm = null;
+        }
+      }
+
       if (cleanData.departureDateTime && typeof cleanData.departureDateTime === "string") {
         cleanData.departureDateTime = new Date(cleanData.departureDateTime);
       }
@@ -1424,19 +1443,30 @@ async function startServer() {
       }
 
       if (idx !== -1) {
-        list[idx] = { 
+        const mergedItem = { 
           ...list[idx], 
-          ...data, 
+          ...data,
+          ...(cleanData.status ? { status: cleanData.status } : {}),
           id, 
           updatedAt: new Date().toISOString() 
         };
+        if (mergedItem.status && normalizeReservationStatus(mergedItem.status) !== "Concluída") {
+          delete mergedItem.actualReturnDateTime;
+          delete mergedItem.finalKm;
+        }
+        list[idx] = mergedItem;
         updatedItem = list[idx];
       } else {
         updatedItem = { 
           id, 
           ...data, 
+          ...(cleanData.status ? { status: cleanData.status } : {}),
           updatedAt: new Date().toISOString() 
         };
+        if (updatedItem.status && normalizeReservationStatus(updatedItem.status) !== "Concluída") {
+          delete updatedItem.actualReturnDateTime;
+          delete updatedItem.finalKm;
+        }
         list.unshift(updatedItem);
       }
       saveStoredReservations(list);
@@ -2194,9 +2224,27 @@ async function startServer() {
     return trimmed;
   }
 
+  // Verifica se um valor de anexo representa conteúdo real de arquivo (data: base64 ou link direto de arquivo, nunca link genérico de pasta)
+  function isRealFileAttachmentValue(val: any): boolean {
+    if (!val || typeof val !== "string") return false;
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.includes("/drive/folders/")) return false;
+    if (trimmed.startsWith("data:") && trimmed.length > 50) return true;
+    if (!trimmed.startsWith("http") && trimmed.length > 100) return true;
+    if (
+      trimmed.startsWith("http") &&
+      (trimmed.includes("/file/d/") ||
+        trimmed.includes("id=") ||
+        trimmed.includes("/storage/v1/object/") ||
+        trimmed.includes("/api/lancamentos/"))
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   // Helper para converter registro do frontend/JSON para o formato da tabela 'lancamentos' no Supabase
   // Envia EXCLUSIVAMENTE as colunas existentes no PostgreSQL do Supabase, codificando metadados em observacao
-  // IMPORTANTE: Nunca grava strings base64 pesadas no Supabase para não sobrecarregar o banco; grava apenas a URL do Google Drive!
   function mapToSupabaseLancamento(item: any) {
     const numId = Number(item.id);
     const cleanId = !isNaN(numId) && numId > 0 ? numId : item.id;
@@ -2206,15 +2254,17 @@ async function startServer() {
     const alcada = item.aprovadores || "";
     const filialBase = item.estabelecimento || "";
     const anexoNome = item.nomeArquivoAnexo || item.nome_arquivo_anexo || item.anexos?.[0]?.nome || "";
-    const rawAnexo = item.driveUrl || item.arquivoAnexoUrl || item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || item.anexos?.[0]?.url || item.anexos?.[0]?.base64 || "";
-    // Para não sobrecarregar o Supabase, se o anexo ainda for um base64 grande (> 15KB), armazena apenas a referência leve da pasta do Drive ou endpoint local
-    const lightweightAnexoRef = (rawAnexo && rawAnexo.startsWith("http"))
-      ? rawAnexo
-      : (item.driveUrl && item.driveUrl.startsWith("http"))
-      ? item.driveUrl
-      : (rawAnexo && rawAnexo.length > 15000)
-      ? GOOGLE_DRIVE_LANCAMENTOS_FOLDER_URL
-      : rawAnexo;
+
+    // Prioriza sempre o conteúdo real do arquivo (base64 data: ou link direto de arquivo com /file/d/), NUNCA substituindo pelo link genérico da pasta!
+    const candidates = [
+      item.arquivoAnexoBase64,
+      item.arquivo_anexo_base64,
+      item.anexos?.[0]?.base64,
+      item.arquivoAnexoUrl,
+      item.driveUrl,
+      item.anexos?.[0]?.url
+    ];
+    const validAnexoRef = candidates.find(c => isRealFileAttachmentValue(c)) || "";
 
     const updatedAtIso = item.updatedAt || new Date().toISOString();
 
@@ -2227,8 +2277,8 @@ async function startServer() {
     if (centCusto) tags.push(`[CENTRO DE CUSTO: ${centCusto}]`);
     if (alcada) tags.push(`[ALÇADA: ${alcada}]`);
     if (filialBase) tags.push(`[BASE: ${filialBase}]`);
-    if (item.driveUrl || (lightweightAnexoRef && lightweightAnexoRef.startsWith("http"))) {
-      tags.push(`[GOOGLE DRIVE: ${item.driveUrl || lightweightAnexoRef}]`);
+    if (item.driveUrl && isRealFileAttachmentValue(item.driveUrl)) {
+      tags.push(`[GOOGLE DRIVE: ${item.driveUrl}]`);
     }
     tags.push(`[UPDATED_AT: ${updatedAtIso}]`);
 
@@ -2248,13 +2298,15 @@ async function startServer() {
 
     if (Array.isArray(item.anexos) && item.anexos.length > 0) {
       const compactAnexos = item.anexos.slice(0, 6).map((a: any, idx: number) => {
-        const candidateUrl = a.url || a.driveUrl || (a.base64 && a.base64.startsWith("http") ? a.base64 : "") || (idx === 0 ? lightweightAnexoRef : "");
+        const rawUrl = a.url || a.driveUrl || "";
+        const validUrl = isRealFileAttachmentValue(rawUrl) && rawUrl.startsWith("http") ? rawUrl : undefined;
+        const validB64 = isRealFileAttachmentValue(a.base64) ? a.base64 : (validUrl || "");
         return {
           id: a.id || `anx-${idx + 1}`,
           nome: a.nome || `Anexo_${idx + 1}`,
-          url: candidateUrl && candidateUrl.startsWith("http") ? candidateUrl : undefined,
-          // Nunca salva base64 pesado dentro da coluna observacao do Supabase
-          base64: candidateUrl && candidateUrl.startsWith("http") ? candidateUrl : ""
+          url: validUrl,
+          // Para o anexo 0, o base64 já vai em arquivo_anexo_base64; para anexos adicionais (idx > 0), preserva no JSON para multi-anexos funcionarem em qualquer máquina
+          base64: idx === 0 ? (validUrl || "") : validB64
         };
       });
       tags.push(`[ANEXOS_JSON: ${JSON.stringify(compactAnexos)}]`);
@@ -2284,8 +2336,8 @@ async function startServer() {
       lancado_por: item.lancadoPor || item.lancado_por || "Sistema"
     };
 
-    if (lightweightAnexoRef || (!anexoNome && (!Array.isArray(item.anexos) || item.anexos.length === 0))) {
-      record.arquivo_anexo_base64 = lightweightAnexoRef || "";
+    if (validAnexoRef || (!anexoNome && (!Array.isArray(item.anexos) || item.anexos.length === 0))) {
+      record.arquivo_anexo_base64 = validAnexoRef || "";
     }
 
     return record;
@@ -2329,20 +2381,30 @@ async function startServer() {
           });
         }
 
+        const itemsToHealInSupabase: any[] = [];
+
         const mapped = data
           .filter((row: any) => !deletedSet.has(String(row.id)))
           .map((row: any) => {
             const meta = parseMetadataFromObservacao(row.observacao);
+            const cleanRemoteB64 = isRealFileAttachmentValue(row.arquivo_anexo_base64) ? row.arquivo_anexo_base64 : "";
 
-            let anexosList: any[] = meta.anexos;
-            if ((!anexosList || anexosList.length === 0) && (row.arquivo_anexo_base64 || row.nome_arquivo_anexo)) {
+            let anexosList: any[] = Array.isArray(meta.anexos)
+              ? meta.anexos.map((a: any) => ({
+                  ...a,
+                  url: isRealFileAttachmentValue(a?.url) ? a.url : undefined,
+                  base64: isRealFileAttachmentValue(a?.base64) ? a.base64 : ""
+                }))
+              : [];
+
+            if ((!anexosList || anexosList.length === 0) && (cleanRemoteB64 || row.nome_arquivo_anexo)) {
               anexosList = [{
                 id: "anx-1",
                 nome: row.nome_arquivo_anexo || "Documento.pdf",
-                base64: row.arquivo_anexo_base64 || ""
+                base64: cleanRemoteB64
               }];
-            } else if (anexosList.length > 0 && row.arquivo_anexo_base64 && !anexosList[0].base64) {
-              anexosList[0] = { ...anexosList[0], base64: row.arquivo_anexo_base64 };
+            } else if (anexosList.length > 0 && cleanRemoteB64 && !isRealFileAttachmentValue(anexosList[0].base64)) {
+              anexosList[0] = { ...anexosList[0], base64: cleanRemoteB64 };
             }
 
             const numDoc = meta.numDoc || row.codigo_lancamento || row.numero_documento || "";
@@ -2380,8 +2442,8 @@ async function startServer() {
               numeroDocumento: numDoc,
               codLancamentoOc: codOc,
               nomeArquivoAnexo: row.nome_arquivo_anexo || (anexosList[0]?.nome || ""),
-              arquivoAnexoBase64: row.arquivo_anexo_base64 || (anexosList[0]?.base64 || ""),
-              driveUrl: meta.driveUrl || undefined,
+              arquivoAnexoBase64: cleanRemoteB64 || (anexosList[0]?.base64 || ""),
+              driveUrl: isRealFileAttachmentValue(meta.driveUrl) ? meta.driveUrl : undefined,
               anexos: anexosList,
               itemSistema: row.item_sistema || "",
               frequencia: row.frequencia || "Esporádico",
@@ -2404,18 +2466,34 @@ async function startServer() {
               localMap.delete(String(remoteMapped.id));
               const localTs = existingLocal.updatedAt ? (Date.parse(existingLocal.updatedAt) || 0) : (existingLocal.updatedAtMs || 0);
               const remoteTs = remoteMapped.updatedAt ? (Date.parse(remoteMapped.updatedAt) || 0) : 0;
+
+              const localHasRealB64 = isRealFileAttachmentValue(existingLocal.arquivoAnexoBase64);
+              const remoteHasRealB64 = isRealFileAttachmentValue(remoteMapped.arquivoAnexoBase64);
+
               if (localTs > remoteTs) {
+                if (localHasRealB64 && !remoteHasRealB64) {
+                  itemsToHealInSupabase.push(existingLocal);
+                }
                 return existingLocal;
               }
-              // Preserva base64 local se o remoto vier sem base64
-              if (!remoteMapped.arquivoAnexoBase64 && existingLocal.arquivoAnexoBase64 && remoteMapped.nomeArquivoAnexo) {
+
+              // Preserva SEMPRE o base64 real em disco caso o registro remoto no Supabase estivesse com URL de pasta ou vazio
+              if ((!remoteHasRealB64 || (existingLocal.arquivoAnexoBase64?.startsWith("data:") && !remoteMapped.arquivoAnexoBase64?.startsWith("data:"))) && localHasRealB64 && remoteMapped.nomeArquivoAnexo) {
                 remoteMapped.arquivoAnexoBase64 = existingLocal.arquivoAnexoBase64;
+                if (!remoteHasRealB64) {
+                  itemsToHealInSupabase.push(remoteMapped);
+                }
               }
               if (Array.isArray(remoteMapped.anexos) && Array.isArray(existingLocal.anexos)) {
                 remoteMapped.anexos = remoteMapped.anexos.map((ra: any, idx: number) => {
-                  if (ra.base64) return ra;
+                  if (isRealFileAttachmentValue(ra.base64) && ra.base64.startsWith("data:")) return ra;
                   const matchLocal = existingLocal.anexos.find((la: any) => (la.id && la.id === ra.id) || (la.nome && la.nome === ra.nome)) || existingLocal.anexos[idx];
-                  if (matchLocal?.base64) return { ...ra, base64: matchLocal.base64 };
+                  if (matchLocal && isRealFileAttachmentValue(matchLocal.base64)) {
+                    return { ...ra, base64: matchLocal.base64 };
+                  }
+                  if (idx === 0 && isRealFileAttachmentValue(remoteMapped.arquivoAnexoBase64)) {
+                    return { ...ra, base64: remoteMapped.arquivoAnexoBase64 };
+                  }
                   return ra;
                 });
               }
@@ -2426,6 +2504,7 @@ async function startServer() {
         // Inclui itens locais recém-criados que ainda não subiram ao Supabase
         for (const leftoverLocal of localMap.values()) {
           mapped.push(leftoverLocal);
+          itemsToHealInSupabase.push(leftoverLocal);
         }
         mapped.sort((a: any, b: any) => (Number(b.id) || 0) - (Number(a.id) || 0));
 
@@ -2433,6 +2512,20 @@ async function startServer() {
         fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(mapped, null, 2), "utf-8");
         serverLancamentosVersion = Date.now();
         console.log(`[Server Lancamentos] Sincronizados com sucesso ${mapped.length} registros do Supabase PostgreSQL oficial.`);
+
+        // Auto-Heal: se havia registros no Supabase onde arquivo_anexo_base64 tinha sido substituído por link de pasta, restaura o base64 real no Supabase em background
+        if (itemsToHealInSupabase.length > 0) {
+          Promise.resolve().then(async () => {
+            for (const itemToHeal of itemsToHealInSupabase) {
+              try {
+                const sbRow = mapToSupabaseLancamento(itemToHeal);
+                await serverSupabase.from("lancamentos").upsert(sbRow, { onConflict: "id" });
+              } catch {}
+            }
+            console.log(`[Server Lancamentos] Auto-Heal concluiu restauração de ${itemsToHealInSupabase.length} anexo(s) no Supabase.`);
+          });
+        }
+
         return mapped;
       }
     } catch (err: any) {
@@ -2567,19 +2660,23 @@ async function startServer() {
         );
 
         if (userStillHasAttachment) {
-          if (!cleanItem.arquivoAnexoBase64 && existingRecord.arquivoAnexoBase64) {
+          if (
+            (!isRealFileAttachmentValue(cleanItem.arquivoAnexoBase64) ||
+              (existingRecord.arquivoAnexoBase64?.startsWith("data:") && !cleanItem.arquivoAnexoBase64?.startsWith("data:"))) &&
+            isRealFileAttachmentValue(existingRecord.arquivoAnexoBase64)
+          ) {
             cleanItem.arquivoAnexoBase64 = existingRecord.arquivoAnexoBase64;
           }
           if (Array.isArray(cleanItem.anexos) && cleanItem.anexos.length > 0 && Array.isArray(existingRecord.anexos)) {
             cleanItem.anexos = cleanItem.anexos.map((att: any, idx: number) => {
-              if (att.base64) return att;
+              if (isRealFileAttachmentValue(att.base64) && att.base64.startsWith("data:")) return att;
               const matchOld = existingRecord.anexos.find(
                 (oa: any) => (oa.id && oa.id === att.id) || (oa.nome && oa.nome === att.nome)
               ) || existingRecord.anexos[idx];
-              if (matchOld?.base64) {
+              if (matchOld && isRealFileAttachmentValue(matchOld.base64)) {
                 return { ...att, base64: matchOld.base64 };
               }
-              if (idx === 0 && cleanItem.arquivoAnexoBase64) {
+              if (idx === 0 && isRealFileAttachmentValue(cleanItem.arquivoAnexoBase64)) {
                 return { ...att, base64: cleanItem.arquivoAnexoBase64 };
               }
               return att;
@@ -2591,7 +2688,7 @@ async function startServer() {
       }
 
       // 1. Envia automaticamente os anexos em base64 para a pasta oficial do Google Drive (1jakLnREoQ8W0-lz2aLWA1wXK4oaE_9Jz)
-      // para centralizar no Google Drive corporativo e NÃO sobrecarregar o Supabase!
+      // mantendo sempre o base64 real para leitura instantânea e download sem bloqueios!
       try {
         const fornSlug = String(cleanItem.fornecedor || "Fornecedor").trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
         const docSlug = String(cleanItem.codigoLancamento || cleanItem.doc || docId).trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 20);
@@ -2600,7 +2697,8 @@ async function startServer() {
           for (let i = 0; i < cleanItem.anexos.length; i++) {
             const att = cleanItem.anexos[i];
             const rawB64 = att?.base64 || (i === 0 ? cleanItem.arquivoAnexoBase64 : "");
-            const alreadyDrive = (att?.url && att.url.includes("drive.google.com")) || (typeof rawB64 === "string" && rawB64.includes("drive.google.com"));
+            const alreadyDrive = (att?.url && isRealFileAttachmentValue(att.url) && att.url.includes("drive.google.com")) ||
+              (typeof rawB64 === "string" && isRealFileAttachmentValue(rawB64) && rawB64.includes("drive.google.com"));
             if (rawB64 && !rawB64.startsWith("http") && !alreadyDrive) {
               const origName = att?.nome || cleanItem.nomeArquivoAnexo || `Anexo_${i + 1}.pdf`;
               const driveFileName = `${fornSlug}_${docSlug}_${origName}`.replace(/_+/g, "_");
@@ -2609,9 +2707,10 @@ async function startServer() {
                 fileData: rawB64,
                 folderId: GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID
               });
-              if (upRes.success && upRes.fileUrl) {
+              if (upRes.success && upRes.fileId && upRes.fileUrl && !upRes.fileUrl.includes("/drive/folders/")) {
                 cleanItem.anexos[i] = {
                   ...att,
+                  base64: rawB64,
                   url: upRes.downloadUrl || upRes.fileUrl,
                   driveUrl: upRes.fileUrl,
                   embedUrl: upRes.embedUrl,
@@ -2634,7 +2733,7 @@ async function startServer() {
             fileData: cleanItem.arquivoAnexoBase64,
             folderId: GOOGLE_DRIVE_LANCAMENTOS_FOLDER_ID
           });
-          if (upRes.success && upRes.fileUrl) {
+          if (upRes.success && upRes.fileId && upRes.fileUrl && !upRes.fileUrl.includes("/drive/folders/")) {
             cleanItem.driveUrl = upRes.fileUrl;
             cleanItem.arquivoAnexoUrl = upRes.downloadUrl || upRes.fileUrl;
           }
@@ -2654,7 +2753,7 @@ async function startServer() {
         fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(list, null, 2), "utf-8");
       } catch (fsErr) {}
 
-      // 3. Grava no Supabase PostgreSQL oficial (enviando apenas o link leve do Google Drive sem base64 pesado!)
+      // 3. Grava no Supabase PostgreSQL oficial (preservando o anexo real para qualquer máquina abrir/baixar)
       try {
         const sbRow = mapToSupabaseLancamento(cleanItem);
         const { error: sbErr } = await serverSupabase
@@ -2663,23 +2762,25 @@ async function startServer() {
         if (sbErr) {
           console.warn("[Server Lancamentos] Aviso ao salvar no Supabase:", sbErr.message);
         } else {
-          console.log(`[Server Lancamentos] Lançamento ${docId} gravado com sucesso no Supabase PostgreSQL (Drive URL: ${cleanItem.driveUrl || "N/A"}).`);
+          console.log(`[Server Lancamentos] Lançamento ${docId} gravado com sucesso no Supabase PostgreSQL.`);
         }
       } catch (sbEx: any) {
         console.warn("[Server Lancamentos] Exceção ao gravar no Supabase:", sbEx.message);
       }
 
-      // 4. Grava no Firestore em background (versão enxuta com link do Drive para não estourar limite de 1MB do Firestore)
+      // 4. Grava no Firestore em background (versão enxuta para não estourar limite de 1MB do Firestore)
       getServerFirestore().then(db => {
         const firestoreItem = {
           ...cleanItem,
-          arquivoAnexoBase64: cleanItem.driveUrl || cleanItem.arquivoAnexoUrl || (cleanItem.arquivoAnexoBase64 && cleanItem.arquivoAnexoBase64.length < 150000 ? cleanItem.arquivoAnexoBase64 : ""),
+          arquivoAnexoBase64: (cleanItem.arquivoAnexoBase64 && cleanItem.arquivoAnexoBase64.length < 700000)
+            ? cleanItem.arquivoAnexoBase64
+            : (cleanItem.driveUrl || cleanItem.arquivoAnexoUrl || ""),
           anexos: Array.isArray(cleanItem.anexos)
             ? cleanItem.anexos.map((a: any) => ({
                 id: a.id,
                 nome: a.nome,
                 url: a.url || a.driveUrl || "",
-                base64: a.url || a.driveUrl || (a.base64 && a.base64.length < 100000 ? a.base64 : "")
+                base64: (a.base64 && a.base64.length < 250000) ? a.base64 : (a.url || a.driveUrl || "")
               }))
             : []
         };
@@ -2735,8 +2836,23 @@ async function startServer() {
               ...newItem,
               observacao: stripServerInternalObsTags(newItem.observacao ?? existing.observacao ?? "")
             };
-            if (!mergedItem.arquivoAnexoBase64 && existing.arquivoAnexoBase64 && (mergedItem.nomeArquivoAnexo || mergedItem.temAnexo)) {
+            if (
+              (!isRealFileAttachmentValue(mergedItem.arquivoAnexoBase64) ||
+                (existing.arquivoAnexoBase64?.startsWith("data:") && !mergedItem.arquivoAnexoBase64?.startsWith("data:"))) &&
+              isRealFileAttachmentValue(existing.arquivoAnexoBase64) &&
+              (mergedItem.nomeArquivoAnexo || mergedItem.temAnexo)
+            ) {
               mergedItem.arquivoAnexoBase64 = existing.arquivoAnexoBase64;
+            }
+            if (Array.isArray(mergedItem.anexos) && Array.isArray(existing.anexos)) {
+              mergedItem.anexos = mergedItem.anexos.map((att: any, idx: number) => {
+                if (isRealFileAttachmentValue(att?.base64) && att.base64.startsWith("data:")) return att;
+                const oldMatch = existing.anexos.find((oa: any) => (oa.id && oa.id === att?.id) || (oa.nome && oa.nome === att?.nome)) || existing.anexos[idx];
+                if (oldMatch && isRealFileAttachmentValue(oldMatch.base64)) {
+                  return { ...att, base64: oldMatch.base64 };
+                }
+                return att;
+              });
             }
             map.set(idStr, mergedItem);
           } else {
@@ -2753,10 +2869,10 @@ async function startServer() {
       fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(merged, null, 2), "utf-8");
       fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(merged, null, 2), "utf-8");
 
-      // Grava no Supabase em lotes
+      // Grava no Supabase em lotes usando os itens mesclados (com base64 real preservado!)
       try {
-        const sbRows = items.map(mapToSupabaseLancamento);
-        const chunkSize = 50;
+        const sbRows = merged.map(mapToSupabaseLancamento);
+        const chunkSize = 25;
         for (let i = 0; i < sbRows.length; i += chunkSize) {
           const chunk = sbRows.slice(i, i + chunkSize);
           await serverSupabase.from("lancamentos").upsert(chunk, { onConflict: "id" });
@@ -2837,7 +2953,111 @@ async function startServer() {
     }
   });
 
-  // Rota para recuperar o anexo PDF/imagem/arquivo original completo de um lançamento
+  // Helper centralizado para buscar um lançamento (disco local, backup ou Supabase) e resolver seus anexos
+  async function findAndResolveLancamentoAttachment(targetId: string) {
+    let foundItem: any = null;
+    if (fs.existsSync(LANCAMENTOS_FILE)) {
+      try {
+        const list = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
+        if (Array.isArray(list)) {
+          foundItem = list.find((i: any) => String(i.id) === targetId || String(i.doc).includes(targetId));
+        }
+      } catch (e) {}
+    }
+
+    if (!foundItem && fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
+      try {
+        const list = JSON.parse(fs.readFileSync(LANCAMENTOS_BACKUP_FILE, "utf-8"));
+        if (Array.isArray(list)) {
+          foundItem = list.find((i: any) => String(i.id) === targetId || String(i.doc).includes(targetId));
+        }
+      } catch (e) {}
+    }
+
+    // Se não achou no disco ou se o registro local não tiver base64 real, consulta o Supabase
+    const hasLocalRealB64 = foundItem && (
+      isRealFileAttachmentValue(foundItem.arquivoAnexoBase64) ||
+      (Array.isArray(foundItem.anexos) && foundItem.anexos.some((a: any) => isRealFileAttachmentValue(a?.base64)))
+    );
+
+    if (!foundItem || !hasLocalRealB64) {
+      try {
+        const numId = Number(targetId);
+        const query = !isNaN(numId) && numId > 0
+          ? serverSupabase.from("lancamentos").select("*").eq("id", numId).single()
+          : serverSupabase.from("lancamentos").select("*").eq("id", targetId).single();
+        const { data: sbData, error: sbErr } = await query;
+        if (!sbErr && sbData) {
+          const meta = parseMetadataFromObservacao(sbData.observacao);
+          const sbB64 = isRealFileAttachmentValue(sbData.arquivo_anexo_base64) ? sbData.arquivo_anexo_base64 : "";
+          const sbAnexos = Array.isArray(meta.anexos) ? meta.anexos : [];
+          if (!foundItem) {
+            foundItem = {
+              id: sbData.id,
+              nomeArquivoAnexo: sbData.nome_arquivo_anexo || sbAnexos[0]?.nome || "Documento.pdf",
+              arquivoAnexoBase64: sbB64,
+              driveUrl: isRealFileAttachmentValue(meta.driveUrl) ? meta.driveUrl : undefined,
+              anexos: sbAnexos.length > 0 ? sbAnexos : (sbB64 ? [{ id: "anx-1", nome: sbData.nome_arquivo_anexo || "Documento.pdf", base64: sbB64 }] : [])
+            };
+          } else if (sbB64 && !isRealFileAttachmentValue(foundItem.arquivoAnexoBase64)) {
+            foundItem.arquivoAnexoBase64 = sbB64;
+          }
+        }
+      } catch {}
+    }
+
+    if (!foundItem) return null;
+
+    const nome = foundItem.nomeArquivoAnexo || foundItem.anexos?.[0]?.nome || "Documento.pdf";
+    const candidates = [
+      foundItem.arquivoAnexoBase64,
+      foundItem.anexos?.[0]?.base64,
+      foundItem.driveUrl,
+      foundItem.arquivoAnexoUrl,
+      foundItem.anexos?.[0]?.url
+    ];
+    let base64 = candidates.find(c => isRealFileAttachmentValue(c)) || "";
+
+    if (base64 && base64.startsWith("http")) {
+      const resolved = await resolveDriveUrlToDataUrl(base64, nome);
+      if (resolved && resolved.startsWith("data:")) {
+        base64 = resolved;
+      }
+    }
+
+    const rawAnexos = Array.isArray(foundItem.anexos) && foundItem.anexos.length > 0
+      ? foundItem.anexos
+      : (base64 ? [{ id: "anx-1", nome, base64 }] : []);
+
+    const resolvedAnexos = await Promise.all(
+      rawAnexos.map(async (anx: any, idx: number) => {
+        const anxCandidates = [anx?.base64, anx?.url, idx === 0 ? base64 : ""];
+        let anxB64 = anxCandidates.find(c => isRealFileAttachmentValue(c)) || "";
+        if (anxB64 && anxB64.startsWith("http")) {
+          const resUrl = await resolveDriveUrlToDataUrl(anxB64, anx.nome || nome);
+          if (resUrl && resUrl.startsWith("data:")) {
+            anxB64 = resUrl;
+          }
+        }
+        return {
+          ...anx,
+          id: anx?.id || `anx-${idx + 1}`,
+          nome: anx?.nome || (idx === 0 ? nome : `Anexo_${idx + 1}.pdf`),
+          base64: anxB64
+        };
+      })
+    );
+
+    return {
+      id: foundItem.id,
+      nome,
+      driveUrl: isRealFileAttachmentValue(foundItem.driveUrl) ? foundItem.driveUrl : undefined,
+      arquivoAnexoBase64: base64 || resolvedAnexos[0]?.base64 || "",
+      anexos: resolvedAnexos
+    };
+  }
+
+  // Rota para recuperar o anexo PDF/imagem/arquivo original completo de um lançamento (JSON)
   app.get("/api/lancamentos/:id/anexo", async (req, res) => {
     try {
       const targetId = String(req.params.id || "").trim();
@@ -2845,63 +3065,84 @@ async function startServer() {
         return res.status(400).json({ success: false, error: "ID ausente" });
       }
 
-      let foundItem: any = null;
-      if (fs.existsSync(LANCAMENTOS_FILE)) {
-        try {
-          const list = JSON.parse(fs.readFileSync(LANCAMENTOS_FILE, "utf-8"));
-          if (Array.isArray(list)) {
-            foundItem = list.find((i: any) => String(i.id) === targetId || String(i.doc).includes(targetId));
-          }
-        } catch (e) {}
-      }
-
-      if (!foundItem && fs.existsSync(LANCAMENTOS_BACKUP_FILE)) {
-        try {
-          const list = JSON.parse(fs.readFileSync(LANCAMENTOS_BACKUP_FILE, "utf-8"));
-          if (Array.isArray(list)) {
-            foundItem = list.find((i: any) => String(i.id) === targetId || String(i.doc).includes(targetId));
-          }
-        } catch (e) {}
-      }
-
-      if (!foundItem) {
+      const resolved = await findAndResolveLancamentoAttachment(targetId);
+      if (!resolved) {
         return res.status(404).json({ success: false, error: "Lançamento não encontrado" });
       }
 
-      const nome = foundItem.nomeArquivoAnexo || foundItem.anexos?.[0]?.nome || "Documento.pdf";
-      let base64 = foundItem.arquivoAnexoBase64 || foundItem.anexos?.[0]?.base64 || foundItem.driveUrl || foundItem.arquivoAnexoUrl || "";
-
-      // Se o anexo salvo for um link do Google Drive, resolve para Data URL (base64) para o visualizador interno Canvas funcionar sem bloqueio
-      if (base64 && base64.startsWith("http")) {
-        base64 = await resolveDriveUrlToDataUrl(base64, nome);
-      }
-
-      const resolvedAnexos = Array.isArray(foundItem.anexos)
-        ? await Promise.all(
-            foundItem.anexos.map(async (anx: any, idx: number) => {
-              let anxB64 = anx.base64 || anx.url || (idx === 0 ? base64 : "");
-              if (anxB64 && anxB64.startsWith("http")) {
-                anxB64 = await resolveDriveUrlToDataUrl(anxB64, anx.nome || nome);
-              }
-              return {
-                ...anx,
-                base64: anxB64
-              };
-            })
-          )
-        : [];
-
       return res.json({
         success: true,
-        id: foundItem.id,
-        nome,
-        driveUrl: foundItem.driveUrl,
-        arquivoAnexoBase64: base64,
-        anexos: resolvedAnexos
+        ...resolved
       });
     } catch (err: any) {
       console.error("[Server Lancamentos] Erro ao recuperar anexo:", err);
       return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Rota direta de streaming binário (PDF / Imagem / XML / .MSG / Office) para abrir em Nova Aba ou Baixar sem qualquer bloqueio do navegador
+  app.get("/api/lancamentos/:id/file", async (req, res) => {
+    try {
+      const targetId = String(req.params.id || "").trim();
+      const index = Math.max(0, parseInt(String(req.query.index || "0"), 10) || 0);
+      const isDownload = req.query.download === "1" || req.query.download === "true";
+
+      if (!targetId) {
+        return res.status(400).send("ID do lançamento ausente.");
+      }
+
+      const resolved = await findAndResolveLancamentoAttachment(targetId);
+      if (!resolved) {
+        return res.status(404).send("Lançamento não encontrado.");
+      }
+
+      const targetAnexo = resolved.anexos?.[index] || resolved.anexos?.[0];
+      const fileName = targetAnexo?.nome || resolved.nome || `Documento_${targetId}.pdf`;
+      const rawData = targetAnexo?.base64 || resolved.arquivoAnexoBase64 || "";
+
+      if (!rawData || !isRealFileAttachmentValue(rawData)) {
+        return res.status(404).send("Arquivo anexo não encontrado para este lançamento.");
+      }
+
+      if (rawData.startsWith("http://") || rawData.startsWith("https://")) {
+        return res.redirect(rawData);
+      }
+
+      let mime = inferServerMimeFromNameAndBase64(fileName, rawData);
+      let b64Clean = rawData;
+      if (rawData.startsWith("data:")) {
+        const commaIdx = rawData.indexOf(",");
+        if (commaIdx !== -1) {
+          const header = rawData.slice(0, commaIdx);
+          const mimeMatch = header.match(/^data:([^;]+);/i);
+          if (mimeMatch && mimeMatch[1] && mimeMatch[1] !== "application/octet-stream") {
+            mime = mimeMatch[1].trim();
+          }
+          b64Clean = rawData.slice(commaIdx + 1);
+        }
+      }
+
+      const buf = Buffer.from(b64Clean.replace(/\s/g, ""), "base64");
+      if (buf.length >= 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) {
+        mime = "application/pdf";
+      } else if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+        mime = "image/png";
+      } else if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+        mime = "image/jpeg";
+      }
+
+      const safeAsciiName = fileName.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Content-Length", buf.length);
+      res.setHeader(
+        "Content-Disposition",
+        `${isDownload ? "attachment" : "inline"}; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+      );
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.send(buf);
+    } catch (err: any) {
+      console.error("[Server Lancamentos] Erro ao servir binário do anexo:", err);
+      return res.status(500).send("Erro ao processar arquivo anexo.");
     }
   });
 
@@ -6528,12 +6769,14 @@ async function startServer() {
     const cleanPlaca = String(raw.placa || raw.id || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
     let extra: any = {};
     let plainObs = "";
+    let hasExtraJson = false;
 
     if (typeof raw.observacoes === "string") {
       const trimmed = raw.observacoes.trim();
       if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
         try {
           extra = JSON.parse(trimmed);
+          hasExtraJson = true;
           if (typeof extra.observacoes === "string" && !extra.observacoes.trim().startsWith("{")) {
             plainObs = extra.observacoes;
           }
@@ -6544,15 +6787,37 @@ async function startServer() {
     }
 
     const definedRaw: any = {};
+    const snakeToIgnore = new Set([
+      "observacoes",
+      "km_atual",
+      "combustivel_padrao",
+      "venc_contrato",
+      "contato_motorista",
+      "gestor_resp",
+      "data_troca_condutor",
+      "cpf_condutor",
+      "cnh_validade",
+      "cnh_numero",
+      "cnh_nome_arquivo",
+      "cnh_anexo_base64",
+      "data_inativacao",
+      "motivo_inativacao",
+      "tipo_vinculo",
+      "created_at"
+    ]);
     for (const [k, val] of Object.entries(raw)) {
-      if (val !== undefined && k !== "observacoes") {
+      if (val !== undefined && val !== null && !snakeToIgnore.has(k)) {
         definedRaw[k] = val;
       }
     }
 
-    const resolvedFilial = definedRaw.filial ?? definedRaw.base ?? extra.filial ?? extra.base ?? "Paulínia";
-    const resolvedLocadora = definedRaw.locadora !== undefined ? definedRaw.locadora : (extra.locadora !== undefined ? extra.locadora : "Frota Própria");
-    const rawStatus = String(definedRaw.status ?? extra.status ?? "Ativo").trim();
+    // Se o registro veio do Supabase (hasExtraJson = true), extra contém o snapshot completo salvo pela aplicação
+    // e não deve ter seus campos sobrescritos por colunas legadas que não foram atualizadas no fallback
+    const src = hasExtraJson ? { ...definedRaw, ...extra } : { ...extra, ...definedRaw };
+
+    const resolvedFilial = src.filial ?? src.base ?? raw.filial ?? raw.base ?? "Paulínia";
+    const resolvedLocadora = src.locadora !== undefined ? src.locadora : "Frota Própria";
+    const rawStatus = String(src.status ?? raw.status ?? "Ativo").trim();
     const normalizedStatus = rawStatus.toLowerCase() === "inativo"
       ? "Inativo"
       : rawStatus.toLowerCase() === "em manutenção"
@@ -6563,38 +6828,63 @@ async function startServer() {
             ? "Em Viagem"
             : "Ativo";
 
+    const cnhNome = src.cnhNomeArquivo !== undefined
+      ? src.cnhNomeArquivo
+      : (raw.cnh_nome_arquivo ?? "");
+    let cnhRef = src.cnhAnexoBase64 || raw.cnh_anexo_base64 || "";
+
+    // Se houver um data: base64 pesado embutido no registro, extrai imediatamente para arquivo físico em CNH_DIR
+    // e substitui pela rota leve /api/cnh/:placa para que o JSON de veículos nunca fique com 18MB
+    if (cnhRef && typeof cnhRef === "string" && cnhRef.startsWith("data:") && cnhRef.length > 1000 && cleanPlaca) {
+      saveCnhFileToDisk(cleanPlaca, cnhRef, cnhNome || `CNH_${cleanPlaca}.pdf`);
+      cnhRef = `/api/cnh/${cleanPlaca}`;
+    } else if (!cnhRef && cnhNome && cleanPlaca) {
+      cnhRef = `/api/cnh/${cleanPlaca}`;
+    } else if (!cnhRef && cleanPlaca && fs.existsSync(CNH_DIR)) {
+      try {
+        const files = fs.readdirSync(CNH_DIR);
+        if (files.some(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"))) {
+          cnhRef = `/api/cnh/${cleanPlaca}`;
+        }
+      } catch (_) {}
+    }
+
     return {
-      ...extra,
-      ...definedRaw,
-      id: definedRaw.id || extra.id || `v-${cleanPlaca.toLowerCase()}`,
+      id: src.id || `v-${cleanPlaca.toLowerCase()}`,
       placa: cleanPlaca,
-      modelo: definedRaw.modelo ?? extra.modelo ?? "Veículo Frota",
-      condutor: definedRaw.condutor ?? extra.condutor ?? "Disponível",
+      modelo: src.modelo ?? "Veículo Frota",
+      marca: src.marca ?? "",
+      ano: Number(src.ano) || 2026,
+      tipo: src.tipo ?? "Leve",
+      condutor: src.condutor ?? "Disponível",
       status: normalizedStatus,
       filial: resolvedFilial,
       base: resolvedFilial,
       locadora: resolvedLocadora,
-      contrato: definedRaw.contrato !== undefined ? definedRaw.contrato : (extra.contrato ?? ""),
-      vencContrato: definedRaw.vencContrato !== undefined ? definedRaw.vencContrato : (definedRaw.venc_contrato !== undefined ? definedRaw.venc_contrato : (extra.vencContrato ?? "")),
-      cpfCondutor: definedRaw.cpfCondutor !== undefined ? definedRaw.cpfCondutor : (definedRaw.cpf_condutor !== undefined ? definedRaw.cpf_condutor : (extra.cpfCondutor ?? "")),
-      cnhValidade: definedRaw.cnhValidade !== undefined ? definedRaw.cnhValidade : (definedRaw.cnh_validade !== undefined ? definedRaw.cnh_validade : (extra.cnhValidade ?? "")),
-      cnhNumero: definedRaw.cnhNumero !== undefined ? definedRaw.cnhNumero : (definedRaw.cnh_numero !== undefined ? definedRaw.cnh_numero : (extra.cnhNumero ?? "")),
-      cnhNomeArquivo: definedRaw.cnhNomeArquivo !== undefined ? definedRaw.cnhNomeArquivo : (definedRaw.cnh_nome_arquivo !== undefined ? definedRaw.cnh_nome_arquivo : (extra.cnhNomeArquivo ?? "")),
-      cnhAnexoBase64: definedRaw.cnhAnexoBase64 || definedRaw.cnh_anexo_base64 || extra.cnhAnexoBase64 || ((definedRaw.cnhNomeArquivo || definedRaw.cnh_nome_arquivo || extra.cnhNomeArquivo) ? `/api/cnh/${cleanPlaca}` : ""),
-      funcao: definedRaw.funcao !== undefined ? definedRaw.funcao : (extra.funcao ?? "Motorista"),
-      setor: definedRaw.setor !== undefined ? definedRaw.setor : (extra.setor ?? ""),
-      contatoMotorista: definedRaw.contatoMotorista !== undefined ? definedRaw.contatoMotorista : (definedRaw.contato_motorista !== undefined ? definedRaw.contato_motorista : (extra.contatoMotorista ?? "")),
-      gestorResp: definedRaw.gestorResp !== undefined ? definedRaw.gestorResp : (definedRaw.gestor_resp !== undefined ? definedRaw.gestor_resp : (extra.gestorResp ?? "")),
-      email: definedRaw.email !== undefined ? definedRaw.email : (extra.email ?? ""),
-      odometro: Number(definedRaw.odometro ?? definedRaw.km_atual ?? extra.odometro ?? 0),
-      combustivel: definedRaw.combustivel ?? definedRaw.combustivel_padrao ?? extra.combustivel ?? "Flex",
-      dataTrocaCondutor: definedRaw.dataTrocaCondutor !== undefined ? definedRaw.dataTrocaCondutor : (definedRaw.data_troca_condutor !== undefined ? definedRaw.data_troca_condutor : (extra.dataTrocaCondutor ?? "")),
-      dataInativacao: definedRaw.dataInativacao !== undefined ? definedRaw.dataInativacao : (definedRaw.data_inativacao !== undefined ? definedRaw.data_inativacao : (extra.dataInativacao ?? "")),
-      motivoInativacao: definedRaw.motivoInativacao !== undefined ? definedRaw.motivoInativacao : (definedRaw.motivo_inativacao !== undefined ? definedRaw.motivo_inativacao : (extra.motivoInativacao ?? "")),
-      tipoVinculo: definedRaw.tipoVinculo !== undefined
-        ? definedRaw.tipoVinculo
-        : (extra.tipoVinculo !== undefined ? extra.tipoVinculo : (String(resolvedLocadora).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato")),
-      updatedAt: definedRaw.updatedAt || extra.updatedAt || "",
+      contrato: src.contrato !== undefined ? src.contrato : "",
+      vencContrato: src.vencContrato !== undefined ? src.vencContrato : (raw.venc_contrato ?? ""),
+      cpfCondutor: src.cpfCondutor !== undefined ? src.cpfCondutor : (raw.cpf_condutor ?? ""),
+      cnhValidade: src.cnhValidade !== undefined ? src.cnhValidade : (raw.cnh_validade ?? ""),
+      cnhNumero: src.cnhNumero !== undefined ? src.cnhNumero : (raw.cnh_numero ?? ""),
+      cnhDriveFolder: CNH_DRIVE_FOLDER_URL,
+      cnhNomeArquivo: cnhNome,
+      cnhAnexoBase64: cnhRef,
+      funcao: src.funcao !== undefined ? src.funcao : "Motorista",
+      setor: src.setor !== undefined ? src.setor : "",
+      contatoMotorista: src.contatoMotorista !== undefined ? src.contatoMotorista : (raw.contato_motorista ?? ""),
+      gestorResp: src.gestorResp !== undefined ? src.gestorResp : (raw.gestor_resp ?? ""),
+      email: src.email !== undefined ? src.email : "",
+      odometro: Number(src.odometro ?? raw.km_atual ?? 0),
+      kmAtual: Number(src.odometro ?? raw.km_atual ?? 0),
+      combustivel: src.combustivel ?? raw.combustivel_padrao ?? "Flex",
+      combustivelPadrao: src.combustivel ?? raw.combustivel_padrao ?? "Flex",
+      dataTrocaCondutor: src.dataTrocaCondutor !== undefined ? src.dataTrocaCondutor : (raw.data_troca_condutor ?? ""),
+      dataInativacao: src.dataInativacao !== undefined ? src.dataInativacao : (raw.data_inativacao ?? ""),
+      motivoInativacao: src.motivoInativacao !== undefined ? src.motivoInativacao : (raw.motivo_inativacao ?? ""),
+      tipoVinculo: src.tipoVinculo !== undefined
+        ? src.tipoVinculo
+        : (String(resolvedLocadora).toUpperCase().trim() === "FROTA PRÓPRIA" ? "" : "Contrato"),
+      updatedAt: src.updatedAt || "",
       observacoes: plainObs
     };
   };
@@ -6606,23 +6896,7 @@ async function startServer() {
     const resolvedFilial = v.filial || v.base || "Paulínia";
     const cleanObsText = typeof v.observacoes === "string" && !v.observacoes.trim().startsWith("{") ? v.observacoes.trim() : "";
 
-    // Se houver CNH em disco para esta placa e v.cnhAnexoBase64 for apenas a rota /api/cnh/, lê o base64 para persistir na nuvem caso caia o container
-    let persistedCnhBase64 = (rawVeh && typeof rawVeh.cnhAnexoBase64 === "string" && rawVeh.cnhAnexoBase64.startsWith("data:"))
-      ? rawVeh.cnhAnexoBase64
-      : (v.cnhAnexoBase64 || "");
-    if ((!persistedCnhBase64 || persistedCnhBase64.startsWith("/api/cnh/")) && fs.existsSync(CNH_DIR)) {
-      try {
-        const files = fs.readdirSync(CNH_DIR);
-        const match = files.find(f => f.startsWith(`${cleanPlaca}.`) && !f.endsWith(".json"));
-        if (match) {
-          const buf = fs.readFileSync(path.join(CNH_DIR, match));
-          if (buf.length < 3500000) {
-            const mime = buf.slice(0, 4).toString("utf-8") === "%PDF" ? "application/pdf" : (match.endsWith(".png") ? "image/png" : "image/jpeg");
-            persistedCnhBase64 = `data:${mime};base64,${buf.toString("base64")}`;
-          }
-        }
-      } catch (_) {}
-    }
+    const cnhUrlRef = v.cnhAnexoBase64 || (v.cnhNomeArquivo ? `/api/cnh/${cleanPlaca}` : "");
 
     const extraData = JSON.stringify({
       id: v.id || `v-${cleanPlaca.toLowerCase()}`,
@@ -6635,7 +6909,7 @@ async function startServer() {
       cnhNumero: v.cnhNumero ?? "",
       cnhDriveFolder: CNH_DRIVE_FOLDER_URL,
       cnhNomeArquivo: v.cnhNomeArquivo ?? "",
-      cnhAnexoBase64: persistedCnhBase64 || v.cnhAnexoBase64 || "",
+      cnhAnexoBase64: cnhUrlRef,
       funcao: v.funcao ?? "Motorista",
       setor: v.setor ?? "",
       contatoMotorista: v.contatoMotorista ?? "",
@@ -6694,16 +6968,18 @@ async function startServer() {
 
       const sanitizeVehicleItem = (v: any, isSingleSave: boolean) => {
         if (!v || typeof v !== "object") return v;
+        const rawBase64 = typeof v.cnhAnexoBase64 === "string" && v.cnhAnexoBase64.startsWith("data:") && v.cnhAnexoBase64.length > 1000
+          ? v.cnhAnexoBase64
+          : "";
         const unpacked = unpackVehicleRecord(v);
         const cleanPlaca = unpacked.placa;
-        if (unpacked.cnhAnexoBase64 && typeof unpacked.cnhAnexoBase64 === "string" && unpacked.cnhAnexoBase64.length > 2000) {
-          saveCnhFileToDisk(cleanPlaca, unpacked.cnhAnexoBase64, unpacked.cnhNomeArquivo);
-          // Também salva na pasta RAC_CNHS_DIR com o nome do condutor para unificar reservas e frota leve
+        if (rawBase64) {
+          saveCnhFileToDisk(cleanPlaca, rawBase64, unpacked.cnhNomeArquivo);
           if (unpacked.condutor && unpacked.condutor !== "Disponível") {
             try {
               const cleanCond = String(unpacked.condutor).trim().replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ");
-              const ext = (unpacked.cnhNomeArquivo && unpacked.cnhNomeArquivo.toLowerCase().endsWith(".pdf")) || unpacked.cnhAnexoBase64.includes("application/pdf") ? "pdf" : "jpg";
-              const cleanB64 = unpacked.cnhAnexoBase64.includes(",") ? unpacked.cnhAnexoBase64.split(",")[1] : unpacked.cnhAnexoBase64;
+              const ext = (unpacked.cnhNomeArquivo && unpacked.cnhNomeArquivo.toLowerCase().endsWith(".pdf")) || rawBase64.includes("application/pdf") ? "pdf" : "jpg";
+              const cleanB64 = rawBase64.includes(",") ? rawBase64.split(",")[1] : rawBase64;
               fs.writeFileSync(path.join(RAC_CNHS_DIR, `CNH - ${cleanCond}.${ext}`), Buffer.from(cleanB64, "base64"));
             } catch (_) {}
           }

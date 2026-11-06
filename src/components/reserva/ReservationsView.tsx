@@ -45,14 +45,20 @@ const formatDuration = (start: Date | string, end: Date | string) => {
 const isReservationArchived = (s: any, res?: any): boolean => {
   const str = String(s || '').toLowerCase().trim();
   if (
+    str === 'pendente' || str === 'pending' ||
+    str === 'aprovada' || str === 'aprovado' || str === 'approved' ||
+    str === 'em uso' || str === 'inuse' || str === 'em_uso' || str === 'in_use'
+  ) {
+    return false;
+  }
+  if (
     str === 'concluída' || str === 'concluida' || str === 'completed' || str === 'finalizada' || str === 'finalizado' ||
     str === 'rejeitada' || str === 'rejeitado' || str === 'rejected' ||
     str === 'cancelada' || str === 'cancelado' || str === 'cancelled'
   ) {
     return true;
   }
-  // Se possuir data real de devolução ou km final registrado, é comprovadamente finalizada/arquivada
-  if (res && (res.actualReturnDateTime || (res.finalKm !== undefined && res.finalKm !== null && Number(res.finalKm) > 0))) {
+  if (res && !str && (res.actualReturnDateTime || (res.finalKm !== undefined && res.finalKm !== null && Number(res.finalKm) > 0))) {
     return true;
   }
   return false;
@@ -219,10 +225,12 @@ const ReservationsView: React.FC = () => {
       showToast("Aprovando reserva e enviando e-mails...", 'info');
 
       try {
-        // 2. Atualiza no estado/storage com timeout defensivo no Firestore
+        // 2. Atualiza no estado/storage com timeout defensivo no Firestore (limpando campos de devolução)
         await updateReservation(resSnapshot.id, { 
           status: ReservationStatus.Approved,
-          adminNotes: finalNotes.trim() || undefined
+          adminNotes: finalNotes.trim() || undefined,
+          actualReturnDateTime: null as any,
+          finalKm: null as any
         });
 
         // 3. Monta e envia o e-mail de aprovação de forma fidedigna
@@ -453,6 +461,9 @@ const ReservationsView: React.FC = () => {
               finalKmVal,
               returnDateVal
             );
+          } else if (updatedData.status) {
+            updatedData.actualReturnDateTime = null as any;
+            updatedData.finalKm = null as any;
           }
 
           await updateReservation(selectedReservation.id, updatedData);

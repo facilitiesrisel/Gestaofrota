@@ -2145,17 +2145,24 @@ export default function Lancamento() {
 
       const parsedId = isNaN(Number(targetEditingId)) ? targetEditingId : Number(targetEditingId);
 
+      const isCleanAttachmentB64 = (v?: string) => Boolean(v && typeof v === "string" && v.trim().length > 10 && !v.includes("/drive/folders/"));
+
       // Se o usuário manteve os anexos (currentAnexos > 0) mas algum estava sem base64 em memória, recupera do existing
       const mergedAnexos = currentAnexos.map((att: any, idx: number) => {
-        if (att.base64) return att;
+        if (isCleanAttachmentB64(att.base64)) return att;
         const oldMatch = Array.isArray(existing?.anexos)
           ? (existing.anexos.find((oa: any) => (oa.id && oa.id === att.id) || (oa.nome && oa.nome === att.nome)) || existing.anexos[idx])
           : null;
         return {
           ...att,
-          base64: oldMatch?.base64 || (idx === 0 ? (existing?.arquivoAnexoBase64 || "") : "")
+          base64: (oldMatch && isCleanAttachmentB64(oldMatch.base64) ? oldMatch.base64 : "") ||
+            (idx === 0 && isCleanAttachmentB64(existing?.arquivoAnexoBase64) ? existing.arquivoAnexoBase64 : "")
         };
       });
+
+      const resolvedPrimaryB64 = isCleanAttachmentB64(finalBase64Anexo)
+        ? finalBase64Anexo
+        : (finalNomeAnexo && isCleanAttachmentB64(existing?.arquivoAnexoBase64) ? existing.arquivoAnexoBase64 : "");
 
       savedItem = {
         ...(existing || {}),
@@ -2172,7 +2179,7 @@ export default function Lancamento() {
         cnpj: data.cnpj,
         estabelecimento: finalEstabelecimento,
         nomeArquivoAnexo: finalNomeAnexo,
-        arquivoAnexoBase64: finalBase64Anexo || (finalNomeAnexo ? (existing?.arquivoAnexoBase64 || "") : ""),
+        arquivoAnexoBase64: resolvedPrimaryB64,
         anexos: mergedAnexos,
         temAnexo: Boolean(finalNomeAnexo || mergedAnexos.length > 0),
         itemSistema: data.itemSistema || "",
@@ -2338,11 +2345,12 @@ export default function Lancamento() {
 
   // Disparo / Reenvio manual do e-mail de aprovação abrindo o modal corporativo de destinatários
   const handleManualSendEmail = async (item: any) => {
-    let b64 = item.arquivoAnexoBase64 || item.anexos?.[0]?.base64;
+    const isInlineB64 = (v?: string) => Boolean(v && typeof v === "string" && v.trim().length > 80 && !v.trim().startsWith("http") && !v.includes("/drive/folders/"));
+    let b64 = isInlineB64(item.arquivoAnexoBase64) ? item.arquivoAnexoBase64 : (isInlineB64(item.anexos?.[0]?.base64) ? item.anexos[0].base64 : "");
     let anxList = item.anexos || [];
 
-    // Se o item em cache estiver sem o base64 do anexo, recupera de imediato do servidor
-    if ((!b64 || b64.length < 50) && item.id) {
+    // Se o item em cache estiver sem o base64 inline do anexo, recupera de imediato do servidor
+    if (!b64 && item.id) {
       try {
         const res = await fetchLancamentoAnexoOriginal(item.id);
         if (res && res.arquivoAnexoBase64) {
@@ -2458,10 +2466,13 @@ export default function Lancamento() {
       .replace(/\s+/g, " ")
       .trim();
 
+    const isInlineB64 = (v?: string) => Boolean(v && typeof v === "string" && v.trim().length > 80 && !v.trim().startsWith("http") && !v.includes("/drive/folders/"));
+    const sanitizeB64 = (v?: string) => (v && typeof v === "string" && !v.includes("/drive/folders/") ? v : "");
+
     const initialAnexos = Array.isArray(item.anexos) && item.anexos.length > 0
-      ? item.anexos.slice(0, 4)
-      : ((item.arquivoAnexoBase64 || item.nomeArquivoAnexo)
-          ? [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 || "" }]
+      ? item.anexos.slice(0, 4).map((a: any) => ({ ...a, base64: sanitizeB64(a?.base64) }))
+      : ((sanitizeB64(item.arquivoAnexoBase64) || item.nomeArquivoAnexo)
+          ? [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: sanitizeB64(item.arquivoAnexoBase64) }]
           : []);
 
     setEditingId(item.id);
@@ -2492,7 +2503,7 @@ export default function Lancamento() {
       multaMotorista: item.multaMotorista || "",
       multaGravidade: item.multaGravidade || "Média",
       nomeArquivoAnexo: item.nomeArquivoAnexo || (initialAnexos[0]?.nome || ""),
-      arquivoAnexoBase64: item.arquivoAnexoBase64 || (initialAnexos[0]?.base64 || ""),
+      arquivoAnexoBase64: sanitizeB64(item.arquivoAnexoBase64) || (initialAnexos[0]?.base64 || ""),
       anexos: initialAnexos,
       centroCusto: item.centroCusto || "C.C 101 - Operacional",
       cidade: item.cidade || matchedForn?.cidade || "",
@@ -2502,11 +2513,11 @@ export default function Lancamento() {
     });
     setIsFormOpen(true);
 
-    // Se o registro possui anexo cadastrado mas o base64 estava ausente no cache local, hidrata em segundo plano
+    // Se o registro possui anexo cadastrado mas o base64 inline estava ausente no cache local, hidrata em segundo plano
     const needsBase64Hydration = Boolean(
       item.id &&
       (item.temAnexo || item.nomeArquivoAnexo || initialAnexos.length > 0) &&
-      (!item.arquivoAnexoBase64 || initialAnexos.some((a: any) => !a.base64))
+      (!isInlineB64(item.arquivoAnexoBase64) || initialAnexos.some((a: any) => !isInlineB64(a.base64)))
     );
     if (needsBase64Hydration) {
       fetchLancamentoAnexoOriginal(item.id).then(res => {
@@ -2520,7 +2531,9 @@ export default function Lancamento() {
           return {
             ...prev,
             nomeArquivoAnexo: prev.nomeArquivoAnexo || res.nome || (hydratedAnexos[0]?.nome || ""),
-            arquivoAnexoBase64: prev.arquivoAnexoBase64 || res.arquivoAnexoBase64 || (hydratedAnexos[0]?.base64 || ""),
+            arquivoAnexoBase64: isInlineB64(prev.arquivoAnexoBase64)
+              ? prev.arquivoAnexoBase64
+              : (res.arquivoAnexoBase64 || hydratedAnexos[0]?.base64 || ""),
             anexos: hydratedAnexos
           };
         });
@@ -3579,6 +3592,31 @@ export default function Lancamento() {
                                   >
                                     <Eye className="w-2.5 h-2.5" />
                                   </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const raw = anx.base64 || (idx === 0 ? formData.arquivoAnexoBase64 : "");
+                                      if (raw && raw.startsWith("data:")) {
+                                        const a = document.createElement("a");
+                                        a.href = raw;
+                                        a.download = anx.nome || `Documento_${idx + 1}.pdf`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                      } else if (editingId) {
+                                        const a = document.createElement("a");
+                                        a.href = `/api/lancamentos/${encodeURIComponent(String(editingId))}/file?index=${idx}&download=1`;
+                                        a.download = anx.nome || `Documento_${idx + 1}.pdf`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                      }
+                                    }}
+                                    className="p-1 rounded hover:bg-emerald-50 text-emerald-700 border border-emerald-200 bg-white transition-colors cursor-pointer"
+                                    title="Baixar este anexo"
+                                  >
+                                    <Download className="w-2.5 h-2.5" />
+                                  </button>
                                   <button 
                                     type="button" 
                                     onClick={() => {
@@ -4341,57 +4379,85 @@ export default function Lancamento() {
                                 </span>
                                 <span className="truncate max-w-[130px] font-bold text-slate-800">{(item.doc || "").toUpperCase()}</span>
                                 {Boolean((Array.isArray(item.anexos) && item.anexos.length > 0) || item.nomeArquivoAnexo || item.arquivoAnexoBase64) && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const anxList = Array.isArray(item.anexos) && item.anexos.length > 0
-                                        ? item.anexos
-                                        : [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }];
-                                      setViewingAnexo({
-                                        id: item.id,
-                                        nome: item.nomeArquivoAnexo || anxList[0]?.nome || "Documento.pdf",
-                                        fornecedor: item.fornecedor,
-                                        fornecedorCnpj: item.cnpj || "Sem CNPJ",
-                                        valor: item.valor,
-                                        cnpj: item.cnpj || "Sem CNPJ",
-                                        doc: item.doc || item.codigoLancamento || "S/N",
-                                        descricao: item.descricao,
-                                        tipo: item.tipo || item.tipoDocumento || "NF-e",
-                                        estabelecimento: item.estabelecimento,
-                                        centroCusto: item.centroCusto,
-                                        aprovadores: item.aprovadores,
-                                        formaPagto: item.formaPagto || item.formaPagamento,
-                                        itemSistema: item.itemSistema,
-                                        lancadoPor: item.lancadoPor,
-                                        status: item.status,
-                                        frequencia: item.frequencia,
-                                        dataEmissao: item.dataEmissao || item.dataLancamento,
-                                        dataVencimento: item.dataVencimento || item.vencimento,
-                                        observacao: item.observacao,
-                                        arquivoAnexoBase64: item.arquivoAnexoBase64 || anxList[0]?.base64,
-                                        arquivoAnexoUrl: item.driveUrl || item.arquivoAnexoUrl || anxList[0]?.url,
-                                        anexos: anxList
-                                      });
-                                    }}
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[9.5px] font-black cursor-pointer hover:bg-rose-100 transition-colors shrink-0"
-                                    title={Array.isArray(item.anexos) && item.anexos.length > 1 ? `Ver ${item.anexos.length} documentos anexos` : `Ver anexo: ${item.nomeArquivoAnexo || item.anexos?.[0]?.nome || "Documento"}`}
-                                  >
-                                    <FileText className="w-3 h-3 text-rose-600" />
-                                    {(() => {
-                                      if (Array.isArray(item.anexos) && item.anexos.length > 1) {
-                                        return `${item.anexos.length} Anexos`;
-                                      }
-                                      const fName = String(item.nomeArquivoAnexo || item.anexos?.[0]?.nome || "").toLowerCase();
-                                      if (/\.(msg|eml|oft|pst)$/.test(fName)) return "E-MAIL";
-                                      if (fName.endsWith(".xml")) return "XML";
-                                      if (/\.(xlsx|xls|csv)$/.test(fName)) return "EXCEL";
-                                      if (/\.(docx|doc)$/.test(fName)) return "WORD";
-                                      if (/\.(png|jpe?g|webp|gif|bmp)$/.test(fName)) return "IMG";
-                                      if (/\.(zip|rar|7z)$/.test(fName)) return "ZIP";
-                                      if (/\.(txt|ret|rem)$/.test(fName)) return "TXT";
-                                      return "PDF";
-                                    })()}
-                                  </button>
+                                  <div className="inline-flex items-center gap-1 shrink-0">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const anxList = Array.isArray(item.anexos) && item.anexos.length > 0
+                                          ? item.anexos
+                                          : [{ id: "anx-1", nome: item.nomeArquivoAnexo || "Documento.pdf", base64: item.arquivoAnexoBase64 }];
+                                        setViewingAnexo({
+                                          id: item.id,
+                                          nome: item.nomeArquivoAnexo || anxList[0]?.nome || "Documento.pdf",
+                                          fornecedor: item.fornecedor,
+                                          fornecedorCnpj: item.cnpj || "Sem CNPJ",
+                                          valor: item.valor,
+                                          cnpj: item.cnpj || "Sem CNPJ",
+                                          doc: item.doc || item.codigoLancamento || "S/N",
+                                          descricao: item.descricao,
+                                          tipo: item.tipo || item.tipoDocumento || "NF-e",
+                                          estabelecimento: item.estabelecimento,
+                                          centroCusto: item.centroCusto,
+                                          aprovadores: item.aprovadores,
+                                          formaPagto: item.formaPagto || item.formaPagamento,
+                                          itemSistema: item.itemSistema,
+                                          lancadoPor: item.lancadoPor,
+                                          status: item.status,
+                                          frequencia: item.frequencia,
+                                          dataEmissao: item.dataEmissao || item.dataLancamento,
+                                          dataVencimento: item.dataVencimento || item.vencimento,
+                                          observacao: item.observacao,
+                                          arquivoAnexoBase64: item.arquivoAnexoBase64 || anxList[0]?.base64,
+                                          arquivoAnexoUrl: item.driveUrl || item.arquivoAnexoUrl || anxList[0]?.url,
+                                          anexos: anxList
+                                        });
+                                      }}
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[9.5px] font-black cursor-pointer hover:bg-rose-100 transition-colors shrink-0"
+                                      title={Array.isArray(item.anexos) && item.anexos.length > 1 ? `Abrir e visualizar ${item.anexos.length} documentos anexos` : `Abrir e visualizar anexo: ${item.nomeArquivoAnexo || item.anexos?.[0]?.nome || "Documento"}`}
+                                    >
+                                      <FileText className="w-3 h-3 text-rose-600" />
+                                      {(() => {
+                                        if (Array.isArray(item.anexos) && item.anexos.length > 1) {
+                                          return `${item.anexos.length} Anexos`;
+                                        }
+                                        const fName = String(item.nomeArquivoAnexo || item.anexos?.[0]?.nome || "").toLowerCase();
+                                        if (/\.(msg|eml|oft|pst)$/.test(fName)) return "E-MAIL";
+                                        if (fName.endsWith(".xml")) return "XML";
+                                        if (/\.(xlsx|xls|csv)$/.test(fName)) return "EXCEL";
+                                        if (/\.(docx|doc)$/.test(fName)) return "WORD";
+                                        if (/\.(png|jpe?g|webp|gif|bmp)$/.test(fName)) return "IMG";
+                                        if (/\.(zip|rar|7z)$/.test(fName)) return "ZIP";
+                                        if (/\.(txt|ret|rem)$/.test(fName)) return "TXT";
+                                        return "PDF";
+                                      })()}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const primaryName = item.nomeArquivoAnexo || item.anexos?.[0]?.nome || `Documento_${item.id}.pdf`;
+                                        const rawB64 = item.arquivoAnexoBase64 || item.anexos?.[0]?.base64 || "";
+                                        if (rawB64 && rawB64.startsWith("data:")) {
+                                          const a = document.createElement("a");
+                                          a.href = rawB64;
+                                          a.download = primaryName;
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          document.body.removeChild(a);
+                                        } else if (item.id) {
+                                          const a = document.createElement("a");
+                                          a.href = `/api/lancamentos/${encodeURIComponent(String(item.id))}/file?index=0&download=1`;
+                                          a.download = primaryName;
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          document.body.removeChild(a);
+                                        }
+                                      }}
+                                      className="inline-flex items-center justify-center p-1 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer shrink-0"
+                                      title={`Baixar anexo: ${item.nomeArquivoAnexo || item.anexos?.[0]?.nome || "Documento"}`}
+                                    >
+                                      <Download className="w-3 h-3" />
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             </td>

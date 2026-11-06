@@ -233,30 +233,71 @@ function mergeTwoLancamentoVersions(primaryOrOlder: any, secondaryOrNewer: any):
     loser = normB;
   }
 
-  // Hidrata base64 dos anexos caso o vencedor tenha vindo do localStorage slim (sem base64)
+  const isInlineB64 = (val?: any): boolean => {
+    if (!val || typeof val !== "string") return false;
+    const t = val.trim();
+    return (t.startsWith("data:") && t.length > 50) || (!t.startsWith("http") && t.length > 100);
+  };
+
+  const isValidAttachmentRef = (val?: any): boolean => {
+    if (!val || typeof val !== "string") return false;
+    const t = val.trim();
+    if (!t || t.includes("/drive/folders/")) return false;
+    if (isInlineB64(t)) return true;
+    if (
+      t.startsWith("http") &&
+      (t.includes("/file/d/") ||
+        t.includes("id=") ||
+        t.includes("/storage/v1/object/") ||
+        t.includes("/api/lancamentos/"))
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  // Hidrata base64 dos anexos caso o vencedor tenha vindo sem base64 inline ou com link de pasta
   const loserAnexos: any[] = Array.isArray(loser.anexos) ? loser.anexos : [];
   let mergedAnexos: any[] = Array.isArray(winner.anexos) ? [...winner.anexos] : [];
 
   if (mergedAnexos.length > 0) {
     mergedAnexos = mergedAnexos.map((anx: any, idx: number) => {
-      if (anx && anx.base64 && anx.base64.length > 50) return anx;
+      if (anx && isInlineB64(anx.base64)) return anx;
       const matchInLoser = loserAnexos.find((la: any) => (la?.id && la.id === anx?.id) || (la?.nome && la.nome === anx?.nome)) || loserAnexos[idx];
-      if (matchInLoser && matchInLoser.base64) {
+      if (matchInLoser && isInlineB64(matchInLoser.base64)) {
         return { ...anx, base64: matchInLoser.base64 };
       }
-      if (idx === 0 && loser.arquivoAnexoBase64 && loser.arquivoAnexoBase64.length > 50) {
+      if (idx === 0 && isInlineB64(loser.arquivoAnexoBase64)) {
         return { ...anx, base64: loser.arquivoAnexoBase64 };
       }
-      return anx;
+      if (anx && isValidAttachmentRef(anx.base64)) return anx;
+      if (matchInLoser && isValidAttachmentRef(matchInLoser.base64)) {
+        return { ...anx, base64: matchInLoser.base64 };
+      }
+      return { ...anx, base64: "" };
     });
   } else if (winner.temAnexo && loserAnexos.length > 0) {
     mergedAnexos = loserAnexos;
   }
 
-  const bestBase64 =
-    winner.arquivoAnexoBase64 ||
-    mergedAnexos[0]?.base64 ||
-    ((winner.temAnexo || winner.nomeArquivoAnexo) ? (loser.arquivoAnexoBase64 || loserAnexos[0]?.base64 || "") : "");
+  const pickBestB64 = (...candidates: any[]): string => {
+    for (const c of candidates) {
+      if (isInlineB64(c)) return c.trim();
+    }
+    for (const c of candidates) {
+      if (isValidAttachmentRef(c)) return c.trim();
+    }
+    return "";
+  };
+
+  const bestBase64 = (winner.temAnexo || winner.nomeArquivoAnexo || mergedAnexos.length > 0)
+    ? pickBestB64(
+        winner.arquivoAnexoBase64,
+        mergedAnexos[0]?.base64,
+        loser.arquivoAnexoBase64,
+        loserAnexos[0]?.base64
+      )
+    : pickBestB64(winner.arquivoAnexoBase64, mergedAnexos[0]?.base64);
 
   return normalizeLancamento({
     ...loser,
@@ -355,6 +396,23 @@ export function normalizeLancamento(item: any): any {
     }
   }
 
+  const sanitizeAttachmentVal = (val?: any): string => {
+    if (!val || typeof val !== "string") return "";
+    const t = val.trim();
+    if (!t || t.includes("/drive/folders/")) return "";
+    if ((t.startsWith("data:") && t.length > 50) || (!t.startsWith("http") && t.length > 100)) return t;
+    if (
+      t.startsWith("http") &&
+      (t.includes("/file/d/") ||
+        t.includes("id=") ||
+        t.includes("/storage/v1/object/") ||
+        t.includes("/api/lancamentos/"))
+    ) {
+      return t;
+    }
+    return "";
+  };
+
   let finalAnexos = Array.isArray(item.anexos) && item.anexos.length > 0 ? item.anexos.slice(0, 4) : [];
   if (finalAnexos.length === 0 && rawObs && (rawObs.includes("[ANEXOS_JSON:") || rawObs.includes("[ANEXOS_META_JSON:"))) {
     try {
@@ -367,7 +425,14 @@ export function normalizeLancamento(item: any): any {
       }
     } catch (e) {}
   }
-  const fallbackBase64 = item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || "";
+
+  finalAnexos = finalAnexos.map((a: any) => ({
+    ...a,
+    url: sanitizeAttachmentVal(a?.url) || undefined,
+    base64: sanitizeAttachmentVal(a?.base64)
+  }));
+
+  const fallbackBase64 = sanitizeAttachmentVal(item.arquivoAnexoBase64 || item.arquivo_anexo_base64 || "");
   const fallbackNomeAnexo = item.nomeArquivoAnexo || item.nome_arquivo_anexo || "";
   if (finalAnexos.length === 0 && (fallbackBase64 || fallbackNomeAnexo)) {
     finalAnexos = [{
@@ -1207,10 +1272,22 @@ export async function fetchLancamentoAnexoOriginal(id: string | number): Promise
   const targetId = String(id || "").trim();
   if (!targetId) return null;
 
-  // 1. Tenta buscar no cache em memória primeiro
+  const isInlineBase64Data = (val?: any): boolean => {
+    if (!val || typeof val !== "string") return false;
+    const t = val.trim();
+    return (t.startsWith("data:") && t.length > 50) || (!t.startsWith("http") && t.length > 100);
+  };
+
+  // 1. Tenta buscar no cache em memória primeiro (somente se já possuir o binário base64 completo, não links)
   const current = getLancamentosUnified();
   const cached = current.find(i => String(i.id) === targetId);
-  if (cached && (cached.arquivoAnexoBase64 || (Array.isArray(cached.anexos) && cached.anexos.some((a: any) => a?.base64)))) {
+  const cachedHasAllInline = Boolean(
+    cached &&
+    isInlineBase64Data(cached.arquivoAnexoBase64) &&
+    (!Array.isArray(cached.anexos) || cached.anexos.length === 0 || cached.anexos.every((a: any) => isInlineBase64Data(a?.base64)))
+  );
+
+  if (cached && cachedHasAllInline) {
     return {
       nome: cached.nomeArquivoAnexo || cached.anexos?.[0]?.nome || "Documento.pdf",
       arquivoAnexoBase64: cached.arquivoAnexoBase64 || cached.anexos?.[0]?.base64 || "",
@@ -1225,7 +1302,9 @@ export async function fetchLancamentoAnexoOriginal(id: string | number): Promise
       const data = await res.json();
       if (data.success && (data.arquivoAnexoBase64 || (Array.isArray(data.anexos) && data.anexos.length > 0))) {
         if (cached) {
-          cached.arquivoAnexoBase64 = data.arquivoAnexoBase64 || cached.arquivoAnexoBase64;
+          if (data.arquivoAnexoBase64 && !data.arquivoAnexoBase64.includes("/drive/folders/")) {
+            cached.arquivoAnexoBase64 = data.arquivoAnexoBase64;
+          }
           if (Array.isArray(data.anexos) && data.anexos.length > 0) {
             cached.anexos = data.anexos;
           }
@@ -1241,7 +1320,7 @@ export async function fetchLancamentoAnexoOriginal(id: string | number): Promise
     console.warn("[LancamentosService] Falha ao carregar anexo do servidor:", err);
   }
 
-  // 3. Fallback Supabase
+  // 3. Fallback Supabase (ignorando links genéricos de pasta)
   try {
     const client = getSupabaseClient();
     if (client) {
@@ -1250,7 +1329,7 @@ export async function fetchLancamentoAnexoOriginal(id: string | number): Promise
         ? client.from("lancamentos").select("arquivo_anexo_base64, nome_arquivo_anexo").eq("id", targetId).single()
         : client.from("lancamentos").select("arquivo_anexo_base64, nome_arquivo_anexo").eq("id", numId).single();
       const { data, error } = await query;
-      if (!error && data && data.arquivo_anexo_base64) {
+      if (!error && data && data.arquivo_anexo_base64 && !String(data.arquivo_anexo_base64).includes("/drive/folders/")) {
         return {
           nome: data.nome_arquivo_anexo || "Documento.pdf",
           arquivoAnexoBase64: data.arquivo_anexo_base64,

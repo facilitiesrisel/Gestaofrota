@@ -30,13 +30,15 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
   useEffect(() => {
     if (reservation) {
       setErrorMessage(null);
+      const isCurrentlyCompleted = reservation.status === ReservationStatus.Completed;
       setFormData({
         ...reservation,
         departureDateTime: formatToDateTimeLocalInput(reservation.departureDateTime) as any,
         returnDate: formatToDateTimeLocalInput(reservation.returnDate) as any,
-        actualReturnDateTime: reservation.actualReturnDateTime
-          ? (formatToDateTimeLocalInput(reservation.actualReturnDateTime) as any)
-          : (formatToDateTimeLocalInput(new Date()) as any),
+        actualReturnDateTime: isCurrentlyCompleted
+          ? (formatToDateTimeLocalInput(reservation.actualReturnDateTime || new Date()) as any)
+          : ('' as any),
+        finalKm: isCurrentlyCompleted ? reservation.finalKm : undefined,
       });
     }
   }, [reservation]);
@@ -48,14 +50,23 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
 
     if (upperCaseFields.includes(name)) {
       setFormData(prev => ({ ...prev, [name]: value.toUpperCase() }));
-    } else if (name === 'status' && value === ReservationStatus.Completed) {
-      setFormData(prev => ({
-        ...prev,
-        status: value as ReservationStatus,
-        actualReturnDateTime: prev.actualReturnDateTime
-          ? (formatToDateTimeLocalInput(prev.actualReturnDateTime) as any)
-          : (formatToDateTimeLocalInput(new Date()) as any),
-      }));
+    } else if (name === 'status') {
+      if (value === ReservationStatus.Completed) {
+        setFormData(prev => ({
+          ...prev,
+          status: value as ReservationStatus,
+          actualReturnDateTime: prev.actualReturnDateTime
+            ? (formatToDateTimeLocalInput(prev.actualReturnDateTime) as any)
+            : (formatToDateTimeLocalInput(new Date()) as any),
+        }));
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          status: value as ReservationStatus,
+          actualReturnDateTime: '' as any,
+          finalKm: undefined,
+        }));
+      }
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
     }
@@ -123,9 +134,9 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
     }
 
     const isCompletedStatus = formData.status === ReservationStatus.Completed;
-    const resolvedActualReturn = formData.actualReturnDateTime
-      ? parseLocalDateTime(formData.actualReturnDateTime)
-      : (isCompletedStatus ? new Date() : undefined);
+    const resolvedActualReturn = isCompletedStatus
+      ? (formData.actualReturnDateTime ? parseLocalDateTime(formData.actualReturnDateTime) : new Date())
+      : null;
 
     const dataToSave: { [key: string]: any } = {
         ...formData,
@@ -134,7 +145,9 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
         departureDateTime: formData.departureDateTime ? parseLocalDateTime(formData.departureDateTime) : undefined,
         returnDate: formData.returnDate ? parseLocalDateTime(formData.returnDate) : undefined,
         actualReturnDateTime: resolvedActualReturn,
-        finalKm: processedFinalKm !== undefined ? processedFinalKm : (formData.finalKm !== undefined && String(formData.finalKm).trim() !== '' ? Number(formData.finalKm) : undefined),
+        finalKm: isCompletedStatus
+          ? (processedFinalKm !== undefined ? processedFinalKm : (formData.finalKm !== undefined && String(formData.finalKm).trim() !== '' ? Number(formData.finalKm) : undefined))
+          : null,
         distanceKm: formData.distanceKm ? Number(formData.distanceKm) : undefined,
     };
 

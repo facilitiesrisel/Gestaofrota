@@ -3,11 +3,11 @@ import {
   FileText, X, Download, Printer, ExternalLink, Eye, RotateCw, ZoomIn, 
   ZoomOut, ShieldCheck, Building, Calendar, DollarSign, UserCheck, 
   CheckCircle2, CreditCard, ChevronLeft, ChevronRight, Sparkles, RefreshCw,
-  Clock, Tag, User, HelpCircle, FileCheck, Layers, Loader2
+  Clock, Tag, User, HelpCircle, FileCheck, Layers, Loader2, Upload
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import { cn } from "../../lib/utils";
-import { fetchLancamentoAnexoOriginal } from "../../services/lancamentosService";
+import { fetchLancamentoAnexoOriginal, saveLancamentoUnified, getLancamentosUnified } from "../../services/lancamentosService";
 
 // Configurar worker do PDF.js para processamento em background seguro
 if (typeof window !== "undefined") {
@@ -180,10 +180,16 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
     }
 
     const isInlineBase64 = (val?: string) => Boolean(val && val.trim().length > 80 && !val.trim().startsWith("http"));
+    const isValidUrlOrB64 = (val?: string) => {
+      if (!val || typeof val !== "string") return false;
+      const t = val.trim();
+      if (!t || t.includes("/drive/folders/")) return false;
+      return isInlineBase64(t) || t.startsWith("http");
+    };
 
     const hasImmediateBase64 = Boolean(
-      isInlineBase64(documento.arquivoAnexoBase64) ||
-      (Array.isArray(documento.anexos) && documento.anexos.some(a => isInlineBase64(a?.base64) || isInlineBase64(a?.arquivoAnexoBase64)))
+      isInlineBase64(documento.arquivoAnexoBase64) &&
+      (!Array.isArray(documento.anexos) || documento.anexos.length === 0 || documento.anexos.every(a => isInlineBase64(a?.base64) || isInlineBase64(a?.arquivoAnexoBase64)))
     );
 
     if (!hasImmediateBase64 && documento.id) {
@@ -210,10 +216,10 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
     const pickBestContent = (...candidates: (string | undefined)[]) => {
       // Prioriza base64 inline ("data:...") sobre links HTTP para renderizar no Canvas sem bloqueio
       for (const c of candidates) {
-        if (c && c.trim().length > 80 && !c.trim().startsWith("http")) return c.trim();
+        if (c && c.trim().length > 80 && !c.trim().startsWith("http") && !c.includes("/drive/folders/")) return c.trim();
       }
       for (const c of candidates) {
-        if (c && c.trim().length > 5) return c.trim();
+        if (c && c.trim().length > 5 && !c.includes("/drive/folders/")) return c.trim();
       }
       return "";
     };
@@ -241,17 +247,18 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
           anx?.url,
           remoteMatch?.url
         );
+        const cleanUrl = [anx?.url, remoteMatch?.url].find(u => u && !u.includes("/drive/folders/"));
         return {
           id: anx.id || `anx-${idx + 1}`,
           nome: anx.nome || remoteMatch?.nome || (idx === 0 ? (documento.nome || remoteData?.nome || "Documento_Fiscal.pdf") : `Anexo_${idx + 1}.pdf`),
           base64: bestB64,
-          url: anx.url || remoteMatch?.url
+          url: cleanUrl
         };
       });
     }
 
-    // 2. Arquivo único de fatura
-    if (fallbackBase64) {
+    // 2. Arquivo único de fatura (ou se possui ID de lançamento salvo com nome de anexo)
+    if (fallbackBase64 || documento.nome || remoteData?.nome || documento.id) {
       return [{
         id: "anx-1",
         nome: documento.nome || remoteData?.nome || "Documento_Fiscal.pdf",
@@ -320,18 +327,19 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
     setTextPreview(null);
     setPdfRenderMode("canvas");
 
-    const rawData = (
-      currentAnexo?.base64 || 
-      currentAnexo?.arquivoAnexoBase64 || 
-      currentAnexo?.content || 
-      currentAnexo?.url ||
-      remoteData?.arquivoAnexoBase64 || 
-      documento.arquivoAnexoBase64 || 
-      documento.arquivoAnexoUrl ||
-      ""
-    )?.trim();
+    const rawCandidates = [
+      currentAnexo?.base64,
+      currentAnexo?.arquivoAnexoBase64,
+      currentAnexo?.content,
+      currentAnexo?.url,
+      remoteData?.arquivoAnexoBase64,
+      documento.arquivoAnexoBase64,
+      documento.arquivoAnexoUrl
+    ];
 
-    if (!rawData) {
+    const rawData = (rawCandidates.find(c => c && typeof c === "string" && c.trim().length > 5 && !c.includes("/drive/folders/")) || "").trim();
+
+    if (!rawData && !documento.id) {
       setBlobUrl(null);
       setIsLoading(false);
       return;
@@ -344,9 +352,29 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
       try {
         let dataToProcess = inputData;
 
-        // Se for um link HTTP (como Google Drive), tenta converter via proxy do servidor para base64 binário
-        // garantindo que o PDF.js Canvas renderize direto na tela sem qualquer bloqueio de iframe do Chrome!
-        if (dataToProcess.startsWith("http://") || dataToProcess.startsWith("https://")) {
+        // Se não veio base64 em memória mas o documento tem ID salvo, busca direto os bytes na rota binária /api/lancamentos/:id/file
+        if ((!dataToProcess || dataToProcess.startsWith("http://") || dataToProcess.startsWith("https://")) && documento.id) {
+          try {
+            const fileEndpoint = `/api/lancamentos/${encodeURIComponent(String(documento.id))}/file?index=${activeAnexoIndex}&_t=${Date.now()}`;
+            const directRes = await fetch(fileEndpoint);
+            if (directRes.ok) {
+              const arrayBuf = await directRes.arrayBuffer();
+              if (arrayBuf && arrayBuf.byteLength > 0) {
+                const bytes = new Uint8Array(arrayBuf);
+                let binary = "";
+                const chunkSize = 0x8000;
+                for (let i = 0; i < bytes.length; i += chunkSize) {
+                  binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+                }
+                const contentType = directRes.headers.get("content-type") || inferMimeFromFileName(fileName);
+                dataToProcess = `data:${contentType};base64,${btoa(binary)}`;
+              }
+            }
+          } catch {}
+        }
+
+        // Se ainda for um link HTTP externo (como Google Drive), tenta converter via proxy do servidor para base64 binário
+        if (dataToProcess && (dataToProcess.startsWith("http://") || dataToProcess.startsWith("https://"))) {
           try {
             const proxyRes = await fetch(`/api/drive/proxy?url=${encodeURIComponent(dataToProcess)}&fileName=${encodeURIComponent(fileName)}`);
             if (proxyRes.ok) {
@@ -359,6 +387,12 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
         }
 
         if (isCancelled) return;
+
+        if (!dataToProcess || dataToProcess.includes("/drive/folders/")) {
+          setBlobUrl(null);
+          setIsLoading(false);
+          return;
+        }
 
         let isImg = false;
         let isPdf = false;
@@ -449,9 +483,20 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
               setCurrentPage(1);
               setPdfRenderMode("canvas");
               setIsLoading(false);
-            }).catch(err => {
-              console.warn("[DocumentoAnexoModal] Aviso Canvas PDF:", err);
-              setIsLoading(false);
+            }).catch(() => {
+              // Fallback sem worker externo caso CDN esteja bloqueado na rede corporativa
+              pdfjsLib.getDocument({ data: rawBytes!.slice(0), disableWorker: true } as any).promise.then(doc => {
+                if (isCancelled) return;
+                setPdfDoc(doc);
+                setNumPages(doc.numPages);
+                setCurrentPage(1);
+                setPdfRenderMode("canvas");
+                setIsLoading(false);
+              }).catch(err2 => {
+                console.warn("[DocumentoAnexoModal] Aviso Canvas PDF (usando Modo Nativo):", err2);
+                setPdfRenderMode("native");
+                setIsLoading(false);
+              });
             });
           } else {
             setIsLoading(false);
@@ -551,12 +596,31 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
   const statusRaw = documento.status || "Aguardando Aprovação";
   const statusDisplay = statusRaw === "Aguardando aprovação" ? "Aguardando Aprovação" : statusRaw;
 
+  const directServerFileUrl = documento.id
+    ? `/api/lancamentos/${encodeURIComponent(String(documento.id))}/file?index=${activeAnexoIndex}`
+    : null;
+
   const handleDownload = () => {
     try {
-      if (blobUrl) {
+      if (blobUrl && (blobUrl.startsWith("blob:") || blobUrl.startsWith("data:"))) {
         const a = document.createElement("a");
         a.href = blobUrl;
         a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else if (directServerFileUrl) {
+        const a = document.createElement("a");
+        a.href = `${directServerFileUrl}&download=1`;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else if (blobUrl && !blobUrl.includes("/drive/folders/")) {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = fileName;
+        a.target = "_blank";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -565,13 +629,21 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
       }
     } catch (err) {
       console.error("Erro ao baixar documento:", err);
-      if (blobUrl) window.open(blobUrl, "_blank");
+      if (directServerFileUrl) {
+        window.open(`${directServerFileUrl}&download=1`, "_blank");
+      } else if (blobUrl) {
+        window.open(blobUrl, "_blank");
+      }
     }
   };
 
   const handleOpenInNewTab = () => {
-    if (blobUrl) {
+    if (directServerFileUrl && (!blobUrl || !blobUrl.startsWith("blob:"))) {
+      window.open(directServerFileUrl, "_blank", "noopener,noreferrer");
+    } else if (blobUrl && !blobUrl.includes("/drive/folders/")) {
       window.open(blobUrl, "_blank", "noopener,noreferrer");
+    } else if (directServerFileUrl) {
+      window.open(directServerFileUrl, "_blank", "noopener,noreferrer");
     } else {
       window.print();
     }
@@ -894,9 +966,12 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
                 <div className="flex-1 w-full h-full p-2 sm:p-4 bg-slate-950 flex flex-col">
                   {(() => {
                     const driveMatch = String(blobUrl || "").match(/(?:\/file\/d\/|[?&]id=)([a-zA-Z0-9_-]{15,})/);
+                    const basePreviewUrl = (blobUrl && blobUrl.startsWith("blob:"))
+                      ? blobUrl
+                      : (directServerFileUrl || blobUrl || "");
                     const previewSrc = driveMatch && driveMatch[1]
                       ? `https://drive.google.com/file/d/${driveMatch[1]}/preview`
-                      : `${blobUrl}#view=FitH&toolbar=1`;
+                      : `${basePreviewUrl}#view=FitH&toolbar=1`;
                     return (
                       <object
                         data={previewSrc}
@@ -931,24 +1006,81 @@ export const DocumentoAnexoModal: React.FC<DocumentoAnexoModalProps> = ({
 
             </div>
           ) : viewMode === "pdf" && !blobUrl ? (
-            /* AVISO QUANDO NÃO HÁ ARQUIVO ANEXO CADASTRADO */
+            /* AVISO QUANDO NÃO HÁ ARQUIVO ANEXO CADASTRADO OU QUANDO PRECISA SER ANEXADO */
             <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-950 text-center space-y-4">
-              <div className="w-16 h-16 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 shadow-inner">
-                <FileText className="w-8 h-8 text-slate-500" />
-              </div>
-              <div className="max-w-md space-y-1.5">
-                <h4 className="text-base font-bold text-slate-200">Nenhum arquivo PDF de fatura anexado</h4>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Este lançamento não possui um arquivo PDF ou imagem anexado diretamente. Você pode visualizar o Espelho Fiscal Digital padronizado com todos os dados cadastrais da fatura.
-                </p>
-              </div>
-              <button
-                onClick={() => setViewMode("voucher")}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center gap-2 cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                Visualizar Espelho Fiscal Digital
-              </button>
+              {isLoading || isFetchingRemote ? (
+                <>
+                  <Loader2 className="w-10 h-10 text-emerald-400 animate-spin" />
+                  <p className="text-xs font-semibold text-slate-300">Carregando arquivo anexo do servidor...</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 shadow-inner">
+                    <FileText className="w-8 h-8 text-emerald-400" />
+                  </div>
+                  <div className="max-w-md space-y-1.5">
+                    <h4 className="text-base font-bold text-slate-200">
+                      {fileName && fileName !== "Documento Fiscal.pdf"
+                        ? `Arquivo pendente de vínculo: ${fileName}`
+                        : "Nenhum arquivo anexado diretamente"}
+                    </h4>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Você pode anexar ou atualizar o arquivo original agora mesmo com 1 clique (ele ficará salvo permanentemente para todos os usuários), ou visualizar o Espelho Fiscal Digital.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                    {documento.id && (
+                      <label className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition-all shadow-md shadow-emerald-600/20 flex items-center gap-2 cursor-pointer">
+                        <Upload className="w-4 h-4" />
+                        Anexar / Restaurar Arquivo Agora
+                        <input
+                          type="file"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = async (ev) => {
+                              const dataUrl = String(ev.target?.result || "");
+                              if (!dataUrl) return;
+                              const newName = documento.nome || file.name;
+                              const newAnexo = { id: `anx-${Date.now()}`, nome: newName, base64: dataUrl };
+                              setRemoteData({
+                                nome: newName,
+                                arquivoAnexoBase64: dataUrl,
+                                anexos: [newAnexo]
+                              });
+                              if (documento.id) {
+                                const existing = getLancamentosUnified().find(l => String(l.id) === String(documento.id));
+                                if (existing) {
+                                  await saveLancamentoUnified({
+                                    ...existing,
+                                    nomeArquivoAnexo: newName,
+                                    arquivoAnexoBase64: dataUrl,
+                                    anexos: [newAnexo],
+                                    temAnexo: true,
+                                    updatedAt: new Date().toISOString(),
+                                    updatedAtMs: Date.now()
+                                  });
+                                  window.dispatchEvent(new Event("risel_lancamentos_updated"));
+                                }
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }}
+                        />
+                      </label>
+                    )}
+                    <button
+                      onClick={() => setViewMode("voucher")}
+                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <Sparkles className="w-4 h-4 text-emerald-400" />
+                      Visualizar Espelho Fiscal Digital
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           ) : viewMode === "image" && blobUrl ? (
             /* VISUALIZAÇÃO DE IMAGEM */
