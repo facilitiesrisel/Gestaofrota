@@ -781,8 +781,13 @@ export default function Lancamento() {
   useEffect(() => {
     // Limpa dados legados fictícios de mensais se existirem
     localStorage.removeItem("risel_mensais");
-    // Dispara sincronização autoritativa imediata ao entrar na tela
-    forceSyncLancamentos();
+    // Dispara sincronização autoritativa imediata ao entrar na tela e garante atualização de estado
+    forceSyncLancamentos().then((items) => {
+      if (Array.isArray(items) && items.length > 0) {
+        setLancamentos(items);
+        setSnapshotInfo(getLancamentosSnapshotInfo());
+      }
+    }).catch(() => {});
   }, []);
 
   const handleTestSupabase = async () => {

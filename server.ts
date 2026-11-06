@@ -2346,6 +2346,46 @@ async function startServer() {
   let isSyncingLancamentosFromSupabase = false;
   let lastLancamentosSyncTime = 0;
 
+  const LANCAMENTOS_FAST_COLS_WITH_OBS = "id, status, data_lancamento, data_vencimento, fornecedor, doc, valor, forma_pagto, tipo, descricao, cnpj, estabelecimento, nome_arquivo_anexo, item_sistema, data_emissao, observacao, frequencia, lancado_por, data_aprovacao, created_at";
+  const LANCAMENTOS_FAST_COLS_NO_OBS = "id, status, data_lancamento, data_vencimento, fornecedor, doc, valor, forma_pagto, tipo, descricao, cnpj, estabelecimento, nome_arquivo_anexo, item_sistema, data_emissao, frequencia, lancado_por, data_aprovacao, created_at";
+
+  function stripHeavyBase64ForLancamentoList(item: any) {
+    if (!item) return item;
+    const idEnc = encodeURIComponent(String(item.id || ""));
+    const rawAnexos = Array.isArray(item.anexos) ? item.anexos : [];
+    const hasAnexo = Boolean(
+      item.temAnexo ||
+      item.nomeArquivoAnexo ||
+      isRealFileAttachmentValue(item.arquivoAnexoBase64) ||
+      rawAnexos.length > 0
+    );
+    const slimAnexos = rawAnexos.length > 0
+      ? rawAnexos.map((a: any, idx: number) => ({
+          id: a?.id || `anx-${idx + 1}`,
+          nome: a?.nome || item.nomeArquivoAnexo || `Documento_${idx + 1}.pdf`,
+          url: (a?.url && String(a.url).startsWith("http")) ? a.url : `/api/lancamentos/${idEnc}/file?index=${idx}`,
+          base64: ""
+        }))
+      : (hasAnexo
+          ? [{
+              id: "anx-1",
+              nome: item.nomeArquivoAnexo || "Documento.pdf",
+              url: `/api/lancamentos/${idEnc}/file?index=0`,
+              base64: ""
+            }]
+          : []);
+
+    return {
+      ...item,
+      observacao: stripServerInternalObsTags(item.observacao || ""),
+      temAnexo: hasAnexo,
+      nomeArquivoAnexo: item.nomeArquivoAnexo || slimAnexos[0]?.nome || "",
+      arquivoAnexoBase64: "",
+      arquivoAnexoUrl: item.arquivoAnexoUrl || (hasAnexo ? `/api/lancamentos/${idEnc}/file?index=0` : ""),
+      anexos: slimAnexos
+    };
+  }
+
   async function syncLancamentosFromSupabase(force: boolean = false): Promise<any[]> {
     const now = Date.now();
     if (!force && (now - lastLancamentosSyncTime < 8000)) {
@@ -2356,10 +2396,10 @@ async function startServer() {
     lastLancamentosSyncTime = now;
 
     try {
+      // Consulta ultrarrápida sem as colunas TOAST pesadas (arquivo_anexo_base64 e observacao com ANEXOS_JSON)
       const { data, error } = await serverSupabase
         .from("lancamentos")
-        .select("*")
-        .order("id", { ascending: false });
+        .select(LANCAMENTOS_FAST_COLS_NO_OBS);
 
       if (!error && Array.isArray(data) && data.length > 0) {
         const deletedIds = getStoredDeletedLancamentoIds();
@@ -2381,15 +2421,20 @@ async function startServer() {
           });
         }
 
-        const itemsToHealInSupabase: any[] = [];
-
         const mapped = data
           .filter((row: any) => !deletedSet.has(String(row.id)))
           .map((row: any) => {
             const meta = parseMetadataFromObservacao(row.observacao);
-            const cleanRemoteB64 = isRealFileAttachmentValue(row.arquivo_anexo_base64) ? row.arquivo_anexo_base64 : "";
+            const existingLocal = localMap.get(String(row.id));
+            if (existingLocal) {
+              localMap.delete(String(row.id));
+            }
 
-            let anexosList: any[] = Array.isArray(meta.anexos)
+            const localB64 = existingLocal && isRealFileAttachmentValue(existingLocal.arquivoAnexoBase64)
+              ? existingLocal.arquivoAnexoBase64
+              : "";
+
+            let anexosList: any[] = Array.isArray(meta.anexos) && meta.anexos.length > 0
               ? meta.anexos.map((a: any) => ({
                   ...a,
                   url: isRealFileAttachmentValue(a?.url) ? a.url : undefined,
@@ -2397,105 +2442,77 @@ async function startServer() {
                 }))
               : [];
 
-            if ((!anexosList || anexosList.length === 0) && (cleanRemoteB64 || row.nome_arquivo_anexo)) {
+            if (existingLocal && Array.isArray(existingLocal.anexos) && existingLocal.anexos.length > 0) {
+              anexosList = existingLocal.anexos;
+            } else if (anexosList.length === 0 && (localB64 || row.nome_arquivo_anexo)) {
               anexosList = [{
                 id: "anx-1",
                 nome: row.nome_arquivo_anexo || "Documento.pdf",
-                base64: cleanRemoteB64
+                base64: localB64
               }];
-            } else if (anexosList.length > 0 && cleanRemoteB64 && !isRealFileAttachmentValue(anexosList[0].base64)) {
-              anexosList[0] = { ...anexosList[0], base64: cleanRemoteB64 };
             }
 
-            const numDoc = meta.numDoc || row.codigo_lancamento || row.numero_documento || "";
-            const codOc = meta.codOc || row.cod_lancamento_oc || "";
-            const centroCusto = meta.centroCusto || row.centro_custo || "C.C 101 - Operacional";
-            const aprovadores = meta.aprovadores || row.aprovadores || "Deny e Gerência";
-            const estabelecimento = meta.estabelecimento || row.estabelecimento || "100 - Paulínia";
-            const updatedAt = meta.updatedAt || row.updated_at || "";
+            const numDoc = meta.numDoc || existingLocal?.codigoLancamento || existingLocal?.numeroDocumento || "";
+            const codOc = meta.codOc || existingLocal?.codLancamentoOc || "";
+            const centroCusto = meta.centroCusto || existingLocal?.centroCusto || "C.C 101 - Operacional";
+            const aprovadores = meta.aprovadores || existingLocal?.aprovadores || "Deny e Gerência";
+            const estabelecimento = meta.estabelecimento || row.estabelecimento || existingLocal?.estabelecimento || "100 - Paulínia";
+            const updatedAt = meta.updatedAt || existingLocal?.updatedAt || row.created_at || "";
 
             const remoteMapped: any = {
+              ...(existingLocal || {}),
               id: Number(row.id) || row.id,
               status: row.status,
               dataLancamento: row.data_lancamento,
               data_lancamento: row.data_lancamento,
               dataVencimento: row.data_vencimento,
               data_vencimento: row.data_vencimento,
-              dataEmissao: row.data_emissao,
-              data_emissao: row.data_emissao,
-              dataAprovacao: row.data_aprovacao,
-              data_aprovacao: row.data_aprovacao,
+              dataEmissao: row.data_emissao || existingLocal?.dataEmissao || "",
+              data_emissao: row.data_emissao || existingLocal?.data_emissao || "",
+              dataAprovacao: row.data_aprovacao || existingLocal?.dataAprovacao || "",
+              data_aprovacao: row.data_aprovacao || existingLocal?.data_aprovacao || "",
               fornecedor: row.fornecedor,
-              cnpj: row.cnpj,
+              cnpj: row.cnpj || existingLocal?.cnpj || "",
               doc: row.doc,
               valor: row.valor,
               formaPagto: row.forma_pagto,
               forma_pagto: row.forma_pagto,
               tipo: row.tipo,
-              descricao: row.descricao,
+              descricao: row.descricao || existingLocal?.descricao || "",
               centroCusto: centroCusto,
               centro_custo: centroCusto,
               aprovadores: aprovadores,
               estabelecimento: estabelecimento,
-              observacao: meta.cleanObservacao,
+              observacao: meta.cleanObservacao || existingLocal?.observacao || "",
               codigoLancamento: numDoc,
               numeroDocumento: numDoc,
               codLancamentoOc: codOc,
-              nomeArquivoAnexo: row.nome_arquivo_anexo || (anexosList[0]?.nome || ""),
-              arquivoAnexoBase64: cleanRemoteB64 || (anexosList[0]?.base64 || ""),
-              driveUrl: isRealFileAttachmentValue(meta.driveUrl) ? meta.driveUrl : undefined,
+              nomeArquivoAnexo: row.nome_arquivo_anexo || (anexosList[0]?.nome || existingLocal?.nomeArquivoAnexo || ""),
+              arquivoAnexoBase64: localB64,
+              temAnexo: Boolean(row.nome_arquivo_anexo || anexosList.length > 0 || localB64 || existingLocal?.temAnexo),
+              driveUrl: isRealFileAttachmentValue(meta.driveUrl) ? meta.driveUrl : existingLocal?.driveUrl,
               anexos: anexosList,
-              itemSistema: row.item_sistema || "",
-              frequencia: row.frequencia || "Esporádico",
-              lancadoPor: row.lancado_por,
-              cidade: meta.contato.cidade || row.cidade || "",
-              uf: meta.contato.uf || row.uf || "",
-              telefone: meta.contato.telefone || row.telefone || "",
-              email: meta.contato.email || row.email || "",
-              multaPlaca: meta.contato.multaPlaca || undefined,
-              multaInfracao: meta.contato.multaInfracao || undefined,
-              multaMotorista: meta.contato.multaMotorista || undefined,
-              multaGravidade: meta.contato.multaGravidade || undefined,
-              moduloPetroshow: meta.contato.moduloPetroshow || undefined,
+              itemSistema: row.item_sistema || existingLocal?.itemSistema || "",
+              frequencia: row.frequencia || existingLocal?.frequencia || "Esporádico",
+              lancadoPor: row.lancado_por || existingLocal?.lancadoPor || "Sistema",
+              cidade: meta.contato.cidade || existingLocal?.cidade || "",
+              uf: meta.contato.uf || existingLocal?.uf || "",
+              telefone: meta.contato.telefone || existingLocal?.telefone || "",
+              email: meta.contato.email || existingLocal?.email || "",
+              multaPlaca: meta.contato.multaPlaca || existingLocal?.multaPlaca || undefined,
+              multaInfracao: meta.contato.multaInfracao || existingLocal?.multaInfracao || undefined,
+              multaMotorista: meta.contato.multaMotorista || existingLocal?.multaMotorista || undefined,
+              multaGravidade: meta.contato.multaGravidade || existingLocal?.multaGravidade || undefined,
+              moduloPetroshow: meta.contato.moduloPetroshow || existingLocal?.moduloPetroshow || undefined,
               createdAt: row.created_at,
               updatedAt: updatedAt
             };
 
-            const existingLocal = localMap.get(String(remoteMapped.id));
             if (existingLocal) {
-              localMap.delete(String(remoteMapped.id));
               const localTs = existingLocal.updatedAt ? (Date.parse(existingLocal.updatedAt) || 0) : (existingLocal.updatedAtMs || 0);
               const remoteTs = remoteMapped.updatedAt ? (Date.parse(remoteMapped.updatedAt) || 0) : 0;
-
-              const localHasRealB64 = isRealFileAttachmentValue(existingLocal.arquivoAnexoBase64);
-              const remoteHasRealB64 = isRealFileAttachmentValue(remoteMapped.arquivoAnexoBase64);
-
               if (localTs > remoteTs) {
-                if (localHasRealB64 && !remoteHasRealB64) {
-                  itemsToHealInSupabase.push(existingLocal);
-                }
                 return existingLocal;
-              }
-
-              // Preserva SEMPRE o base64 real em disco caso o registro remoto no Supabase estivesse com URL de pasta ou vazio
-              if ((!remoteHasRealB64 || (existingLocal.arquivoAnexoBase64?.startsWith("data:") && !remoteMapped.arquivoAnexoBase64?.startsWith("data:"))) && localHasRealB64 && remoteMapped.nomeArquivoAnexo) {
-                remoteMapped.arquivoAnexoBase64 = existingLocal.arquivoAnexoBase64;
-                if (!remoteHasRealB64) {
-                  itemsToHealInSupabase.push(remoteMapped);
-                }
-              }
-              if (Array.isArray(remoteMapped.anexos) && Array.isArray(existingLocal.anexos)) {
-                remoteMapped.anexos = remoteMapped.anexos.map((ra: any, idx: number) => {
-                  if (isRealFileAttachmentValue(ra.base64) && ra.base64.startsWith("data:")) return ra;
-                  const matchLocal = existingLocal.anexos.find((la: any) => (la.id && la.id === ra.id) || (la.nome && la.nome === ra.nome)) || existingLocal.anexos[idx];
-                  if (matchLocal && isRealFileAttachmentValue(matchLocal.base64)) {
-                    return { ...ra, base64: matchLocal.base64 };
-                  }
-                  if (idx === 0 && isRealFileAttachmentValue(remoteMapped.arquivoAnexoBase64)) {
-                    return { ...ra, base64: remoteMapped.arquivoAnexoBase64 };
-                  }
-                  return ra;
-                });
               }
             }
             return remoteMapped;
@@ -2504,7 +2521,6 @@ async function startServer() {
         // Inclui itens locais recém-criados que ainda não subiram ao Supabase
         for (const leftoverLocal of localMap.values()) {
           mapped.push(leftoverLocal);
-          itemsToHealInSupabase.push(leftoverLocal);
         }
         mapped.sort((a: any, b: any) => (Number(b.id) || 0) - (Number(a.id) || 0));
 
@@ -2512,20 +2528,6 @@ async function startServer() {
         fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(mapped, null, 2), "utf-8");
         serverLancamentosVersion = Date.now();
         console.log(`[Server Lancamentos] Sincronizados com sucesso ${mapped.length} registros do Supabase PostgreSQL oficial.`);
-
-        // Auto-Heal: se havia registros no Supabase onde arquivo_anexo_base64 tinha sido substituído por link de pasta, restaura o base64 real no Supabase em background
-        if (itemsToHealInSupabase.length > 0) {
-          Promise.resolve().then(async () => {
-            for (const itemToHeal of itemsToHealInSupabase) {
-              try {
-                const sbRow = mapToSupabaseLancamento(itemToHeal);
-                await serverSupabase.from("lancamentos").upsert(sbRow, { onConflict: "id" });
-              } catch {}
-            }
-            console.log(`[Server Lancamentos] Auto-Heal concluiu restauração de ${itemsToHealInSupabase.length} anexo(s) no Supabase.`);
-          });
-        }
-
         return mapped;
       }
     } catch (err: any) {
@@ -2557,15 +2559,16 @@ async function startServer() {
           localList.forEach(item => {
             const idStr = String(item.id);
             if (!deletedSet.has(idStr)) {
-              const cleaned = {
-                ...item,
-                observacao: stripServerInternalObsTags(item.observacao || "")
-              };
-              itemMap.set(idStr, cleaned);
+              itemMap.set(idStr, stripHeavyBase64ForLancamentoList(item));
             }
           });
         }
       } catch (e) {}
+
+      // Se o arquivo local tiver poucos registros (< 50), dispara sincronização em background com o Supabase para hidratar todos os registros
+      if (itemMap.size < 50) {
+        syncLancamentosFromSupabase(false).catch(() => {});
+      }
 
       if (itemMap.size > 0) {
         const items = Array.from(itemMap.values());
@@ -2583,10 +2586,11 @@ async function startServer() {
 
       // Se o disco local estiver vazio, busca diretamente do Supabase
       const fetched = await syncLancamentosFromSupabase(true);
+      const slimFetched = fetched.map(stripHeavyBase64ForLancamentoList);
       return res.json({
         success: true,
-        count: fetched.length,
-        items: fetched,
+        count: slimFetched.length,
+        items: slimFetched,
         deletedIds,
         version: serverLancamentosVersion,
         updatedAt: Date.now()
@@ -3288,10 +3292,12 @@ async function startServer() {
 
       fs.writeFileSync(LANCAMENTOS_FILE, JSON.stringify(itemsToRestore, null, 2), "utf-8");
       fs.writeFileSync(LANCAMENTOS_BACKUP_FILE, JSON.stringify(itemsToRestore, null, 2), "utf-8");
+      try { fs.writeFileSync(LANCAMENTOS_DELETED_FILE, "[]", "utf-8"); } catch (e) {}
 
       serverLancamentosVersion = Date.now();
+      const slimRestored = itemsToRestore.map(stripHeavyBase64ForLancamentoList);
       console.info(`[Server Lancamentos] Sucesso: ${itemsToRestore.length} lançamentos restaurados do backup ${path.basename(targetFile)}. Versão: ${serverLancamentosVersion}`);
-      return res.json({ success: true, count: itemsToRestore.length, items: itemsToRestore, version: serverLancamentosVersion });
+      return res.json({ success: true, count: slimRestored.length, items: slimRestored, version: serverLancamentosVersion });
     } catch (e: any) {
       console.error("[Server Lancamentos] Erro na restauração:", e);
       return res.status(500).json({ success: false, error: e.message });

@@ -6,6 +6,7 @@ import {
   getSupabaseClient,
   mapSupabaseRowToLancamento
 } from "./supabaseService";
+import { safeSetItem } from "../utils/safeStorage";
 
 // Evento customizado para notificar todos os componentes do sistema na mesma janela/abas
 const SYNC_EVENT = "risel_lancamentos_sync_event";
@@ -652,16 +653,17 @@ function notifyListeners(items: any[], forceAllowEmpty: boolean = false) {
 
   try {
     const slimItems = prepareItemsForLocalStorage(items);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(slimItems));
+    const serialized = JSON.stringify(slimItems);
+    safeSetItem(STORAGE_KEY, serialized);
     
     // Se a lista possui itens, atualiza o snapshot imutável de contingência
     if (items.length > 0) {
-      localStorage.setItem(SNAPSHOT_BACKUP_KEY, JSON.stringify(slimItems));
-      localStorage.setItem(SNAPSHOT_TIMESTAMP_KEY, new Date().toISOString());
+      safeSetItem(SNAPSHOT_BACKUP_KEY, serialized);
+      safeSetItem(SNAPSHOT_TIMESTAMP_KEY, new Date().toISOString());
     }
 
     try {
-      sessionStorage.setItem("risel_lancamentos_session", JSON.stringify(slimItems));
+      sessionStorage.setItem("risel_lancamentos_session", serialized);
     } catch (sErr) {}
   } catch (e) {
     console.warn("[LancamentosSync] Erro ao persistir em localStorage:", e);
@@ -818,123 +820,154 @@ export function initLancamentosSync(): () => void {
 }
 
 let isPulling = false;
+let activePullPromise: Promise<any[]> | null = null;
 
 // B. Busca no Banco de Dados do Servidor, Firestore e Supabase com proteção absoluta contra perda de dados ou reversão de status
 export async function pullFromCloudAndServer(force: boolean = false): Promise<any[]> {
-  if (isPulling) return cachedLancamentos;
+  if (isPulling && activePullPromise) {
+    return activePullPromise;
+  }
   isPulling = true;
 
-  try {
-    let deletedIds = getDeletedIds();
-    const idMap = new Map<string, any>();
-    let databaseFetched = false;
-
-    // 1. Busca no Servidor backend (/api/lancamentos) com proteção total anti-cache
+  activePullPromise = (async () => {
     try {
-      const res = await fetch(`/api/lancamentos?_t=${Date.now()}`, {
-        cache: "no-store",
-        headers: {
-          "Cache-Control": "no-cache, no-store, must-revalidate",
-          "Pragma": "no-cache"
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
+      let deletedIds = getDeletedIds();
+      const idMap = new Map<string, any>();
+      let serverFetched = false;
 
-        if (data.version) {
-          lastKnownServerVersion = Math.max(lastKnownServerVersion, data.version);
-        }
-
-        // Se o servidor retornou IDs deletados, sincroniza com o conjunto local
-        if (data.deletedIds && Array.isArray(data.deletedIds)) {
-          data.deletedIds.forEach((id: any) => addDeletedId(id));
-          deletedIds = getDeletedIds();
-        }
-
-        if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-          databaseFetched = true;
-          data.items.forEach((item: any) => {
-            const idStr = String(item.id);
-            if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
-              idMap.set(idStr, normalizeLancamento(item));
-            }
-          });
-        }
-      }
-    } catch (e) {
-      console.warn("[LancamentosSync] Falha ao consultar backend /api/lancamentos:", e);
-    }
-
-    // 2. Busca no Supabase (com proteção de quota e mesclagem estrita por timestamp updatedAt)
-    const now = Date.now();
-    if (now > supabaseQuotaExceededUntil) {
+      // 1. Busca imediata no Servidor backend (/api/lancamentos) — resposta leve (< 100KB) em poucos milissegundos
       try {
-        const supaItems = await fetchLancamentosSupabase();
-        if (Array.isArray(supaItems) && supaItems.length > 0) {
-          databaseFetched = true;
-          supaItems.forEach(item => {
-            const idStr = String(item.id);
-            if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
-              const existing = idMap.get(idStr);
-              if (existing) {
-                idMap.set(idStr, mergeTwoLancamentoVersions(existing, item));
-              } else {
+        const res = await fetch(`/api/lancamentos?_t=${Date.now()}`, {
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+
+          if (data.version) {
+            lastKnownServerVersion = Math.max(lastKnownServerVersion, data.version);
+          }
+
+          // Sincroniza deletedIds com a lista autoritativa do servidor
+          if (data.deletedIds && Array.isArray(data.deletedIds)) {
+            const serverDeletedSet = new Set(data.deletedIds.map(String));
+            // Se o servidor possui itens que estavam marcados localmente como deletados (ex: após restauração), limpa do deletedIds local
+            if (Array.isArray(data.items)) {
+              data.items.forEach((it: any) => {
+                if (it && it.id !== undefined && !serverDeletedSet.has(String(it.id))) {
+                  removeDeletedId(it.id);
+                }
+              });
+            }
+            data.deletedIds.forEach((id: any) => addDeletedId(id));
+            deletedIds = getDeletedIds();
+          }
+
+          if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+            serverFetched = true;
+            data.items.forEach((item: any) => {
+              const idStr = String(item.id);
+              if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
                 idMap.set(idStr, normalizeLancamento(item));
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[LancamentosSync] Falha ao consultar backend /api/lancamentos:", e);
+      }
+
+      // Mescla com cache em memória e gravações recentes da sessão
+      const applyLocalAndRecentOverrides = () => {
+        if (cachedLancamentos && cachedLancamentos.length > 0) {
+          cachedLancamentos.forEach(localItem => {
+            const idStr = String(localItem.id);
+            if (!deletedIds.has(idStr) && !isFictitiousLancamento(localItem)) {
+              const remoteItem = idMap.get(idStr);
+              if (!remoteItem) {
+                idMap.set(idStr, normalizeLancamento(localItem));
+              } else {
+                idMap.set(idStr, mergeTwoLancamentoVersions(remoteItem, localItem));
               }
             }
           });
         }
-      } catch (e: any) {
-        const msg = String(e?.message || "");
-        if (msg.includes("exceed_egress_quota") || msg.includes("quota")) {
-          supabaseQuotaExceededUntil = Date.now() + 15 * 60 * 1000;
-          console.warn("[LancamentosSync] Supabase com restrição de tráfego. Utilizando banco de dados local redundante.");
+        idMap.forEach((currentVal, idStr) => {
+          const recent = getRecentSave(idStr);
+          if (recent) {
+            idMap.set(idStr, mergeTwoLancamentoVersions(currentVal, recent.item));
+          }
+        });
+        return Array.from(idMap.values())
+          .filter(item => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
+          .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+      };
+
+      // Notifica IMEDIATAMENTE após o Servidor responder para que a tela nunca fique vazia aguardando o Supabase
+      let immediateItems = applyLocalAndRecentOverrides();
+      if (immediateItems.length > 0 || serverFetched) {
+        const currentSig = computeLancamentosSignature(cachedLancamentos);
+        const immediateSig = computeLancamentosSignature(immediateItems);
+        if (force || currentSig !== immediateSig || cachedLancamentos.length !== immediateItems.length) {
+          notifyListeners(immediateItems);
         }
       }
-    }
 
-    // 3. Mescla itens do cache local e da trava de gravações recentes para garantir que criações ou edições nunca sejam revertidas
-    if (cachedLancamentos && cachedLancamentos.length > 0) {
-      cachedLancamentos.forEach(localItem => {
-        const idStr = String(localItem.id);
-        if (!deletedIds.has(idStr) && !isFictitiousLancamento(localItem)) {
-          const remoteItem = idMap.get(idStr);
-          if (!remoteItem) {
-            idMap.set(idStr, normalizeLancamento(localItem));
-          } else {
-            idMap.set(idStr, mergeTwoLancamentoVersions(remoteItem, localItem));
+      // 2. Se o servidor já entregou os dados, sincroniza com o Supabase em background sem bloquear a tela;
+      //    se o servidor falhou/veio vazio, aguarda o Supabase com timeout curto
+      const runSupabasePull = async () => {
+        const now = Date.now();
+        if (now <= supabaseQuotaExceededUntil) return;
+        try {
+          const supaItems = await fetchLancamentosSupabase();
+          if (Array.isArray(supaItems) && supaItems.length > 0) {
+            supaItems.forEach(item => {
+              const idStr = String(item.id);
+              if (!deletedIds.has(idStr) && !isFictitiousLancamento(item)) {
+                const existing = idMap.get(idStr);
+                if (existing) {
+                  idMap.set(idStr, mergeTwoLancamentoVersions(existing, item));
+                } else {
+                  idMap.set(idStr, normalizeLancamento(item));
+                }
+              }
+            });
+            const mergedAfterSupa = applyLocalAndRecentOverrides();
+            const sigBefore = computeLancamentosSignature(cachedLancamentos);
+            const sigAfter = computeLancamentosSignature(mergedAfterSupa);
+            if (sigBefore !== sigAfter || cachedLancamentos.length !== mergedAfterSupa.length) {
+              notifyListeners(mergedAfterSupa);
+            }
+          }
+        } catch (e: any) {
+          const msg = String(e?.message || "");
+          if (msg.includes("exceed_egress_quota") || msg.includes("quota")) {
+            supabaseQuotaExceededUntil = Date.now() + 15 * 60 * 1000;
           }
         }
-      });
-    }
+      };
 
-    // 4. Garante prioridade absoluta para itens recém-salvos nesta sessão
-    idMap.forEach((currentVal, idStr) => {
-      const recent = getRecentSave(idStr);
-      if (recent) {
-        idMap.set(idStr, mergeTwoLancamentoVersions(currentVal, recent.item));
+      if (immediateItems.length > 0) {
+        runSupabasePull().catch(() => {});
+        return immediateItems;
+      } else {
+        await runSupabasePull();
+        const finalItems = applyLocalAndRecentOverrides();
+        if (finalItems.length > 0) {
+          notifyListeners(finalItems);
+        }
+        return finalItems.length > 0 ? finalItems : cachedLancamentos;
       }
-    });
-
-    // 5. Monta a lista oficial autoritativa estritamente com dados reais
-    const freshItems = Array.from(idMap.values())
-      .filter(item => !deletedIds.has(String(item.id)) && !isFictitiousLancamento(item))
-      .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
-
-    // Atualiza o cache e notifica ouvintes se houver QUALQUER diferença de conteúdo
-    if (freshItems.length > 0 || databaseFetched) {
-      const currentSignature = computeLancamentosSignature(cachedLancamentos);
-      const freshSignature = computeLancamentosSignature(freshItems);
-      
-      if (force || currentSignature !== freshSignature || cachedLancamentos.length !== freshItems.length) {
-        notifyListeners(freshItems);
-      }
+    } finally {
+      isPulling = false;
+      activePullPromise = null;
     }
+  })();
 
-    return freshItems.length > 0 ? freshItems : cachedLancamentos;
-  } finally {
-    isPulling = false;
-  }
+  return activePullPromise;
 }
 
 // Auto-Heal: envia itens locais válidos para o servidor se o servidor tiver sido reiniciado

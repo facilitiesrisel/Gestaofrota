@@ -402,21 +402,25 @@ export function mapSupabaseRowToLancamento(row: any): any {
   };
 }
 
-// 3. Buscar Lançamentos no Supabase
+// 3. Buscar Lançamentos no Supabase (consulta leve sem binários base64 para evitar statement timeout)
 export async function fetchLancamentosSupabase(): Promise<any[]> {
   try {
     const client = getSupabaseClient();
-    const { data, error } = await client
-      .from('lancamentos')
-      .select('*')
-      .order('id', { ascending: false });
+    const fastCols = "id, status, data_lancamento, data_vencimento, fornecedor, doc, valor, forma_pagto, tipo, descricao, cnpj, estabelecimento, nome_arquivo_anexo, item_sistema, data_emissao, frequencia, lancado_por, data_aprovacao, created_at";
+    const queryPromise = client.from('lancamentos').select(fastCols);
+    const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) =>
+      setTimeout(() => resolve({ data: null, error: { message: "Timeout fetchLancamentosSupabase" } }), 8000)
+    );
+    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
 
-    if (error) {
-      console.warn("Aviso ao buscar lançamentos no Supabase:", error.message);
+    if (error || !data) {
+      if (error) console.warn("Aviso ao buscar lançamentos no Supabase:", error.message);
       return [];
     }
 
-    return (data || []).map(mapSupabaseRowToLancamento);
+    const mapped = (data || []).map(mapSupabaseRowToLancamento);
+    mapped.sort((a: any, b: any) => (Number(b.id) || 0) - (Number(a.id) || 0));
+    return mapped;
   } catch (err) {
     console.error("Erro no fetchLancamentosSupabase:", err);
     return [];
