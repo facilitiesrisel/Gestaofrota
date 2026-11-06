@@ -13,10 +13,17 @@ import {
   Loader2,
   CheckCircle2,
   Upload,
-  CloudUpload
+  CloudUpload,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
+import * as pdfjsLib from "pdfjs-dist";
 import { connectGoogleDrive, getValidDriveToken } from "../services/googleDriveService";
 import { saveDriverCnhRecord, RAC_CNH_DRIVE_FOLDER_URL } from "../services/cnhService";
+
+if (typeof window !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+}
 
 export const CNH_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1tIJ67ADpN6blterYogPq9SObDVHr3xsk?usp=sharing";
 
@@ -39,6 +46,11 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
 }) => {
   const initialIsImageByName = /\.(jpe?g|png|webp|gif)$/i.test(nome || "");
   const [blobUrl, setBlobUrl] = useState<string>("");
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [numPages, setNumPages] = useState<number>(1);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [renderingPage, setRenderingPage] = useState<boolean>(false);
   const [mimeType, setMimeType] = useState<string>(initialIsImageByName ? "image/jpeg" : "application/pdf");
   const [displayFileName, setDisplayFileName] = useState<string>(nome);
   const [loading, setLoading] = useState<boolean>(true);
@@ -50,6 +62,8 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [reloadTrigger, setReloadTrigger] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const renderTaskRef = useRef<any>(null);
 
   const isRacContext =
     !placa ||
@@ -58,9 +72,11 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
     (rawUrl || "").includes("1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U");
 
   const activeDriveFolderUrl = isRacContext ? RAC_CNH_DRIVE_FOLDER_URL : CNH_DRIVE_FOLDER_URL;
-  const activeDriveFolderId = isRacContext ? "1nmuczx-AwkUIlj48mj8toAdzKlJM9u9U" : "1tIJ67ADpN6blterYogPq9SObDVHr3xsk";
 
-  const convertBase64ToBlobUrl = (inputB64: string, fallbackName: string): { url: string; mime: string } | null => {
+  const convertBase64ToBlobUrl = (
+    inputB64: string,
+    fallbackName: string
+  ): { url: string; mime: string; bytes: Uint8Array } | null => {
     try {
       let base64Pure = inputB64.trim();
       let detectedMime = /\.(jpe?g)$/i.test(fallbackName)
@@ -100,7 +116,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
       }
 
       const blob = new Blob([bytes], { type: detectedMime });
-      return { url: URL.createObjectURL(blob), mime: detectedMime };
+      return { url: URL.createObjectURL(blob), mime: detectedMime, bytes };
     } catch (_) {
       return null;
     }
@@ -110,9 +126,21 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
     let active = true;
     let createdUrl: string | null = null;
 
+    const applyResolvedFile = (conv: { url: string; mime: string; bytes: Uint8Array }, resolvedName?: string) => {
+      createdUrl = conv.url;
+      setMimeType(conv.mime);
+      setBlobUrl(conv.url);
+      setPdfBytes(conv.mime === "application/pdf" ? conv.bytes : null);
+      if (resolvedName) setDisplayFileName(resolvedName);
+      setLoading(false);
+    };
+
     const processUrl = async () => {
       setLoading(true);
       setError(null);
+      setPdfDoc(null);
+      setPdfBytes(null);
+      setCurrentPage(1);
 
       try {
         const trimmed = (rawUrl || "").trim();
@@ -123,10 +151,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
         if (trimmed.startsWith("data:")) {
           const conv = convertBase64ToBlobUrl(trimmed, displayFileName);
           if (conv && active) {
-            createdUrl = conv.url;
-            setMimeType(conv.mime);
-            setBlobUrl(conv.url);
-            setLoading(false);
+            applyResolvedFile(conv);
             return;
           }
         }
@@ -142,10 +167,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
                 if (proxyData && proxyData.base64) {
                   const conv = convertBase64ToBlobUrl(proxyData.base64, displayFileName);
                   if (conv && active) {
-                    createdUrl = conv.url;
-                    setMimeType(conv.mime);
-                    setBlobUrl(conv.url);
-                    setLoading(false);
+                    applyResolvedFile(conv);
                     return;
                   }
                 }
@@ -168,11 +190,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
               if (data && data.base64) {
                 const conv = convertBase64ToBlobUrl(data.base64, data.nomeArquivo || displayFileName);
                 if (conv && active) {
-                  createdUrl = conv.url;
-                  setMimeType(conv.mime);
-                  setBlobUrl(conv.url);
-                  if (data.nomeArquivo) setDisplayFileName(data.nomeArquivo);
-                  setLoading(false);
+                  applyResolvedFile(conv, data.nomeArquivo);
                   return;
                 }
               }
@@ -197,11 +215,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
             if (resolveData && resolveData.base64) {
               const conv = convertBase64ToBlobUrl(resolveData.base64, resolveData.nomeArquivo || displayFileName);
               if (conv && active) {
-                createdUrl = conv.url;
-                setMimeType(conv.mime);
-                setBlobUrl(conv.url);
-                if (resolveData.nomeArquivo) setDisplayFileName(resolveData.nomeArquivo);
-                setLoading(false);
+                applyResolvedFile(conv, resolveData.nomeArquivo);
                 return;
               }
             }
@@ -226,10 +240,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
               if (vMatch?.cnhAnexoBase64 && vMatch.cnhAnexoBase64.startsWith("data:")) {
                 const conv = convertBase64ToBlobUrl(vMatch.cnhAnexoBase64, vMatch.cnhNomeArquivo || displayFileName);
                 if (conv && active) {
-                  createdUrl = conv.url;
-                  setMimeType(conv.mime);
-                  setBlobUrl(conv.url);
-                  setLoading(false);
+                  applyResolvedFile(conv, vMatch.cnhNomeArquivo);
                   return;
                 }
               }
@@ -243,24 +254,42 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
             if (rec?.cnhData) {
               const conv = convertBase64ToBlobUrl(rec.cnhData, rec.fileName || displayFileName);
               if (conv && active) {
-                createdUrl = conv.url;
-                setMimeType(conv.mime);
-                setBlobUrl(conv.url);
-                setLoading(false);
+                applyResolvedFile(conv, rec.fileName);
                 return;
               }
             }
           }
         } catch (_) {}
 
-        // 6. Última tentativa: se trimmed for base64 puro sem prefixo data:
+        // 6. Caso seja blob: ou rota binária direta que não retornou JSON acima
+        if (trimmed.startsWith("blob:") || (trimmed.startsWith("/api/") && !isDriveFolderUrl)) {
+          try {
+            const binResp = await fetch(trimmed);
+            if (binResp.ok) {
+              const arrayBuf = await binResp.arrayBuffer();
+              if (arrayBuf && arrayBuf.byteLength > 10 && active) {
+                const bytes = new Uint8Array(arrayBuf);
+                let detectedMime = binResp.headers.get("content-type") || "application/pdf";
+                if (bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
+                  detectedMime = "application/pdf";
+                } else if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+                  detectedMime = "image/jpeg";
+                } else if (bytes.length > 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+                  detectedMime = "image/png";
+                }
+                const blob = new Blob([bytes], { type: detectedMime });
+                applyResolvedFile({ url: URL.createObjectURL(blob), mime: detectedMime, bytes });
+                return;
+              }
+            }
+          } catch (_) {}
+        }
+
+        // 7. Última tentativa: se trimmed for base64 puro sem prefixo data:
         if (trimmed && !trimmed.startsWith("http") && !trimmed.startsWith("/api/") && trimmed.length > 100) {
           const conv = convertBase64ToBlobUrl(trimmed, displayFileName);
           if (conv && active) {
-            createdUrl = conv.url;
-            setMimeType(conv.mime);
-            setBlobUrl(conv.url);
-            setLoading(false);
+            applyResolvedFile(conv);
             return;
           }
         }
@@ -286,6 +315,106 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
       }
     };
   }, [rawUrl, nome, condutor, placa, reloadTrigger]);
+
+  // Inicializa o documento PDF no PDF.js sempre que pdfBytes estiver disponível
+  useEffect(() => {
+    if (!pdfBytes || pdfBytes.length === 0) {
+      setPdfDoc(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const initPdf = async () => {
+      try {
+        const doc = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+        if (!cancelled) {
+          setPdfDoc(doc);
+          setNumPages(doc.numPages || 1);
+          setCurrentPage(1);
+        }
+      } catch (_) {
+        try {
+          const docFallback = await pdfjsLib.getDocument({ data: pdfBytes.slice(0), disableWorker: true } as any).promise;
+          if (!cancelled) {
+            setPdfDoc(docFallback);
+            setNumPages(docFallback.numPages || 1);
+            setCurrentPage(1);
+          }
+        } catch (err2) {
+          console.warn("Aviso ao inicializar PDF.js na CNH:", err2);
+          if (!cancelled) setPdfBytes(null);
+        }
+      }
+    };
+
+    initPdf();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfBytes]);
+
+  // Renderiza a página atual do PDF no Canvas HTML5 em alta definição
+  useEffect(() => {
+    if (!pdfDoc || !canvasRef.current) return;
+
+    let cancelled = false;
+
+    const renderPdfPage = async () => {
+      try {
+        setRenderingPage(true);
+
+        if (renderTaskRef.current) {
+          try {
+            renderTaskRef.current.cancel();
+          } catch (_) {}
+        }
+
+        const page = await pdfDoc.getPage(currentPage);
+        if (cancelled) return;
+
+        const baseScale = (zoom / 100) * 1.4;
+        const viewport = page.getViewport({
+          scale: baseScale,
+          rotation: (page.rotate + rotation) % 360
+        });
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const context = canvas.getContext("2d");
+        if (!context) return;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        const renderTask = page.render({
+          canvasContext: context,
+          viewport
+        });
+        renderTaskRef.current = renderTask;
+
+        await renderTask.promise;
+        if (!cancelled) setRenderingPage(false);
+      } catch (err: any) {
+        if (err?.name !== "RenderingCancelledException") {
+          console.warn("Aviso ao renderizar página da CNH no canvas:", err);
+        }
+        if (!cancelled) setRenderingPage(false);
+      }
+    };
+
+    renderPdfPage();
+
+    return () => {
+      cancelled = true;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch (_) {}
+      }
+    };
+  }, [pdfDoc, currentPage, zoom, rotation]);
 
   // Se o usuário já tiver token do Google Drive ativo, sincroniza automaticamente em background
   useEffect(() => {
@@ -369,6 +498,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
       if (conv) {
         setMimeType(conv.mime);
         setBlobUrl(conv.url);
+        setPdfBytes(conv.mime === "application/pdf" ? conv.bytes : null);
         setDisplayFileName(finalFileName);
         setError(null);
       }
@@ -513,7 +643,31 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap">
-            {!isPdf && blobUrl && (
+            {isPdf && pdfDoc && numPages > 1 && (
+              <div className="flex items-center gap-1 mr-1">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1 || renderingPage}
+                  className="p-1.5 bg-white hover:bg-slate-100 disabled:opacity-40 text-slate-700 rounded-lg border border-slate-200 text-xs font-bold cursor-pointer"
+                  title="Página Anterior"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[11px] font-mono text-slate-600 px-1.5">
+                  {currentPage}/{numPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                  disabled={currentPage >= numPages || renderingPage}
+                  className="p-1.5 bg-white hover:bg-slate-100 disabled:opacity-40 text-slate-700 rounded-lg border border-slate-200 text-xs font-bold cursor-pointer"
+                  title="Próxima Página"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {blobUrl && (
               <>
                 <button
                   onClick={() => setZoom(prev => Math.max(prev - 25, 50))}
@@ -533,7 +687,7 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
                 <button
                   onClick={() => setRotation(prev => (prev + 90) % 360)}
                   className="p-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 text-xs font-bold cursor-pointer ml-1"
-                  title="Girar Imagem"
+                  title="Girar 90°"
                 >
                   <RotateCw className="w-3.5 h-3.5" />
                 </button>
@@ -587,28 +741,30 @@ export const CnhViewerModal: React.FC<CnhViewerModalProps> = ({
               </button>
             </div>
           ) : isPdf ? (
-            <div className="w-full h-full flex flex-col items-center justify-center min-h-[440px]">
-              <object
-                data={blobUrl}
-                type="application/pdf"
-                className="w-full h-[500px] rounded-2xl border border-slate-300 shadow-sm bg-white"
-              >
+            pdfDoc ? (
+              <div className="w-full h-full flex flex-col items-center justify-start overflow-auto p-2 min-h-[440px]">
+                <canvas
+                  ref={canvasRef}
+                  className="rounded-2xl border border-slate-300 shadow-md bg-white max-w-full h-auto my-auto"
+                  style={{
+                    maxWidth: zoom <= 100 ? "100%" : "none"
+                  }}
+                />
+              </div>
+            ) : pdfBytes ? (
+              <div className="flex flex-col items-center justify-center gap-2 text-slate-500 py-10">
+                <Loader2 className="w-7 h-7 animate-spin text-[#114D38]" />
+                <p className="text-xs font-medium">Renderizando PDF...</p>
+              </div>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center min-h-[440px]">
                 <iframe
                   src={blobUrl}
                   className="w-full h-[500px] rounded-2xl border border-slate-300 shadow-sm bg-white"
                   title="CNH PDF"
-                >
-                  <div className="p-6 text-center bg-white rounded-2xl shadow-sm">
-                    <button
-                      onClick={handleOpenNewTab}
-                      className="px-4 py-2 bg-[#114D38] text-white font-bold rounded-xl text-xs flex items-center gap-2 mx-auto cursor-pointer"
-                    >
-                      <Eye className="w-4 h-4" /> Abrir PDF
-                    </button>
-                  </div>
-                </iframe>
-              </object>
-            </div>
+                />
+              </div>
+            )
           ) : (
             <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
               <img

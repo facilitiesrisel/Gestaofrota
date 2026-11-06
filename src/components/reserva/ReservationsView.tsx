@@ -12,15 +12,12 @@ import { getAllSystemUsersEmails } from '../../services/perimeterAlertService';
 import { resolveReservationRecipients, getAllSystemAdminEmails, sendReservationApprovalEmail } from '../../services/reservaEmailHelper';
 import { AdditionalRecipientsInput } from './AdditionalRecipientsInput';
 import { EmailRecipientsModal } from '../common/EmailRecipientsModal';
-import RacRentalsView from './RacRentalsView';
 import ReservationForm from './ReservationForm';
 import { ExternalLink, QrCode, Copy, Check, Car, Sparkles, FileText, ClipboardList, RefreshCw } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { normalizeCidade } from '../../utils/baseOperacional';
 import { normalizeNomeSetor } from '../../utils/setorOperacional';
 import { formatDateTimeBR, formatDateBR, parseLocalDateTime, formatToDateTimeLocalInput } from '../../utils/reservaDateUtils';
-import { CnhViewerModal } from '../CnhViewerModal';
-import { findDriverCnhInVaultOrFleet } from '../../services/cnhService';
 
 // Helper para calcular duração estimada
 const formatDuration = (start: Date | string, end: Date | string) => {
@@ -85,23 +82,6 @@ const ReservationsView: React.FC = () => {
     }
   });
   const [isNotifPanelOpen, setIsNotifPanelOpen] = useState(false);
-  const [viewingCnh, setViewingCnh] = useState<{ url: string; nome: string; condutor: string; placa: string } | null>(null);
-
-  const handleOpenReservationCnh = (res: Reservation) => {
-    const vehicle = getVehicleById(res.vehicleId);
-    const driver = res.driverName || res.requesterName || 'Condutor';
-    const plate = vehicle?.plate || '';
-    const resolved = findDriverCnhInVaultOrFleet(driver, res.email, plate);
-    const url = (res.cnhBase64 && (res.cnhBase64.startsWith('data:') || res.cnhBase64.startsWith('/api/')))
-      ? res.cnhBase64
-      : resolved.url;
-    setViewingCnh({
-      url,
-      nome: res.cnhFileName || resolved.fileName || `CNH - ${driver}.pdf`,
-      condutor: driver,
-      placa: plate || resolved.placa
-    });
-  };
 
   const markAsRead = (id: string) => {
     if (!readNotificationIds.includes(id)) {
@@ -176,7 +156,7 @@ const ReservationsView: React.FC = () => {
   const [rejectAdditionalEmails, setRejectAdditionalEmails] = useState<string[]>([]);
 
   // --- Filtros ---
-  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'locacoes'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
@@ -943,18 +923,9 @@ const ReservationsView: React.FC = () => {
                   {formatDateTimeBR(selectedReservation.departureDateTime)} até {formatDateTimeBR(selectedReservation.returnDate)}
                 </span>
               </div>
-              <div className="flex items-center justify-between pt-2 border-t border-slate-200/80">
-                <span className="text-slate-600 font-bold flex items-center gap-1">
-                  <span>🪪 Condutor:</span>
-                  <span className="text-slate-900">{selectedReservation.driverName || selectedReservation.requesterName}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleOpenReservationCnh(selectedReservation)}
-                  className="px-2.5 py-1 rounded-lg bg-[#114D38] hover:bg-[#1a664c] text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                >
-                  🪪 Visualizar CNH
-                </button>
+              <div className="flex justify-between pt-2 border-t border-slate-200/80">
+                <span className="text-slate-500 font-semibold">Condutor:</span>
+                <span className="font-bold text-slate-900">{selectedReservation.driverName || selectedReservation.requesterName}</span>
               </div>
             </div>
 
@@ -1176,12 +1147,6 @@ const ReservationsView: React.FC = () => {
                         {historyReservationsCount}
                     </span>
                 </button>
-                <button 
-                    onClick={() => { setActiveTab('locacoes'); setFilterStatus(''); }} 
-                    className={`flex-1 md:flex-none px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'locacoes' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                    <span>Locações (RAC)</span>
-                </button>
             </div>
             <div className="flex gap-2 items-center w-full md:w-auto justify-end">
                 <button onClick={() => setIsFiltersOpen(!isFiltersOpen)} className="border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 text-xs font-bold text-slate-700 flex items-center gap-1.5 bg-white transition-colors cursor-pointer"><FunnelIcon className="h-4 w-4"/> Filtros</button>
@@ -1344,11 +1309,7 @@ const ReservationsView: React.FC = () => {
 
       {/* Conteúdo com rolagem independente e cabeçalho congelado */}
       <div className="flex-1 min-h-0 flex flex-col pr-1 pb-2">
-        {activeTab === 'locacoes' ? (
-            <div className="flex-1 min-h-0 flex flex-col w-full h-full">
-                <RacRentalsView embedded={true} />
-            </div>
-        ) : activeTab === 'history' ? (
+        {activeTab === 'history' ? (
             <>
                 {/* Tabela de Histórico de Reservas (Desktop) */}
                 <div className="hidden md:block flex-1 min-h-0 overflow-auto bg-white rounded-3xl border border-slate-150 shadow-sm mb-4">
@@ -1381,14 +1342,6 @@ const ReservationsView: React.FC = () => {
                                       <div className="text-sm font-bold text-gray-900">{res.requesterName}</div>
                                       <div className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap mt-0.5">
                                           <span>{normalizeNomeSetor(res.department)} {res.role ? `• ${res.role}` : ''}</span>
-                                          <button
-                                              type="button"
-                                              onClick={() => handleOpenReservationCnh(res)}
-                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-300 text-[10px] font-bold cursor-pointer transition-colors"
-                                              title={`Visualizar CNH de ${res.driverName || res.requesterName}`}
-                                          >
-                                              🪪 CNH
-                                          </button>
                                       </div>
                                   </td>
                                   <td className="px-6 py-4 text-sm font-medium text-slate-600">
@@ -1501,13 +1454,6 @@ const ReservationsView: React.FC = () => {
                                                 <span className="text-[9px] font-black text-slate-400 uppercase block">Condutor Autorizado</span>
                                                 <span className="font-bold text-slate-800">{res.driverName || res.requesterName}</span>
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleOpenReservationCnh(res)}
-                                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-300 text-[10px] font-bold cursor-pointer"
-                                            >
-                                                🪪 Ver CNH
-                                            </button>
                                         </div>
 
                                         <div>
@@ -1592,14 +1538,6 @@ const ReservationsView: React.FC = () => {
                                       <div className="text-sm font-bold text-gray-900">{res.requesterName}</div>
                                       <div className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap mt-0.5">
                                           <span>{res.department}</span>
-                                          <button
-                                              type="button"
-                                              onClick={() => handleOpenReservationCnh(res)}
-                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-300 text-[10px] font-bold cursor-pointer transition-colors"
-                                              title={`Visualizar CNH de ${res.driverName || res.requesterName}`}
-                                          >
-                                              🪪 Ver CNH
-                                          </button>
                                       </div>
                                   </td>
                                   <td className="px-6 py-4 text-sm font-medium">{res.requestTimestamp ? new Date(res.requestTimestamp).toLocaleDateString('pt-BR') : '-'}</td>
@@ -1695,13 +1633,6 @@ const ReservationsView: React.FC = () => {
                                                 <span className="text-[9px] font-black text-slate-400 uppercase block">Condutor Autorizado</span>
                                                 <span className="font-bold text-slate-800">{res.driverName || res.requesterName}</span>
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleOpenReservationCnh(res)}
-                                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#114D38] border border-emerald-300 text-[10px] font-bold cursor-pointer"
-                                            >
-                                                🪪 Ver CNH
-                                            </button>
                                         </div>
 
                                         <div>
@@ -1781,16 +1712,6 @@ const ReservationsView: React.FC = () => {
         currentUserEmail={user?.email || "deny.goncalves@risel.com.br"}
         onSaved={() => showToast("Destinatários salvos e sincronizados com sucesso no Render!", "success")}
       />
-
-      {viewingCnh && (
-        <CnhViewerModal
-          rawUrl={viewingCnh.url}
-          nome={viewingCnh.nome}
-          condutor={viewingCnh.condutor}
-          placa={viewingCnh.placa}
-          onClose={() => setViewingCnh(null)}
-        />
-      )}
     </div>
   );
 };

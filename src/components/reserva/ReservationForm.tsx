@@ -25,8 +25,6 @@ import {
   getDefaultReservationDates, 
   validateReservationDates 
 } from '../../utils/reservaDateUtils';
-import { CnhViewerModal } from '../CnhViewerModal';
-import { findDriverCnhInVaultOrFleet, saveDriverCnhRecord } from '../../services/cnhService';
 
 // User Icon (Not in standard set, creating local)
 const UserIcon = ({ className }: { className?: string }) => (
@@ -93,47 +91,6 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
   const [isDriverSameAsRequester, setIsDriverSameAsRequester] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalState, setModalState] = useState<{ isOpen: boolean; title: string; content: React.ReactNode }>({ isOpen: false, title: '', content: <></> });
-  const [cnhAttachment, setCnhAttachment] = useState<{ base64: string; fileName: string; mimeType: string } | null>(null);
-  const [isViewingCnh, setIsViewingCnh] = useState(false);
-
-  const currentDriverName = (isDriverSameAsRequester ? formData.requesterName : formData.driverName) || '';
-  const existingDriverCnh = useMemo(() => {
-    return findDriverCnhInVaultOrFleet(currentDriverName, formData.email);
-  }, [currentDriverName, formData.email]);
-
-  const handleCnhFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const b64 = reader.result as string;
-      const driver = (currentDriverName || 'Condutor').trim();
-      const ext = file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'jpg';
-      const officialName = `CNH - ${driver}.${ext}`;
-      setCnhAttachment({ base64: b64, fileName: officialName, mimeType: file.type || (ext === 'pdf' ? 'application/pdf' : 'image/jpeg') });
-      try {
-        await fetch('/api/rac/upload-cnh', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            driverName: driver,
-            fileData: b64,
-            mimeType: file.type || (ext === 'pdf' ? 'application/pdf' : 'image/jpeg')
-          })
-        });
-        saveDriverCnhRecord({
-          driverName: driver,
-          email: formData.email,
-          fileName: officialName,
-          fileType: file.type,
-          fileSize: file.size,
-          cnhData: b64,
-          uploadDate: new Date().toISOString()
-        });
-      } catch (_) {}
-    };
-    reader.readAsDataURL(file);
-  };
 
   // Calculate minimum datetime (now) to prevent past bookings
   const [minDateTime, setMinDateTime] = useState('');
@@ -664,9 +621,6 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
       vehicleId: vehicleToReserve.id,
       purpose: formData.purpose,
       driverName: finalDriverName, // Send driver name
-      hasCnhCopy: Boolean(cnhAttachment || existingDriverCnh.hasCnh),
-      cnhFileName: cnhAttachment?.fileName || existingDriverCnh.fileName,
-      cnhBase64: cnhAttachment?.base64 || (existingDriverCnh.hasCnh ? existingDriverCnh.url : undefined),
     };
 
     if (distance !== null) {
@@ -1073,55 +1027,9 @@ const ReservationForm: React.FC<ReservationFormProps> = ({ initialVehicleId, onS
                               </div>
                           </div>
                       )}
-
-                      {/* Anexo / Visualização da CNH do Condutor */}
-                      <div className="mt-4 pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="text-lg">🪪</span>
-                          <div className="min-w-0">
-                            <span className="text-xs font-extrabold text-slate-800 block truncate">
-                              {cnhAttachment
-                                ? `CNH Anexada: ${cnhAttachment.fileName}`
-                                : existingDriverCnh.hasCnh
-                                  ? `CNH Cadastrada: ${existingDriverCnh.fileName}`
-                                  : 'Cópia Digital da CNH do Condutor'}
-                            </span>
-                            <span className="text-[11px] text-slate-500 block">
-                              {cnhAttachment || existingDriverCnh.hasCnh
-                                ? 'Pronta para visualização pela gestão de reservas'
-                                : 'Anexe a CNH (PDF, JPG ou PNG) para consulta imediata na reserva'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {(cnhAttachment || existingDriverCnh.hasCnh || currentDriverName) && (
-                            <button
-                              type="button"
-                              onClick={() => setIsViewingCnh(true)}
-                              className="px-3 py-1.5 rounded-xl bg-[#114D38] hover:bg-[#1a664c] text-white text-xs font-bold cursor-pointer transition-colors shadow-2xs"
-                            >
-                              Visualizar CNH
-                            </button>
-                          )}
-                          <label className="px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-50 text-[#114D38] border border-emerald-300 text-xs font-bold cursor-pointer transition-colors shadow-2xs">
-                            {cnhAttachment || existingDriverCnh.hasCnh ? 'Substituir CNH' : '📎 Anexar CNH'}
-                            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleCnhFileChange} />
-                          </label>
-                        </div>
-                      </div>
                   </div>
               </div>
           </div>
-
-          {isViewingCnh && (
-            <CnhViewerModal
-              rawUrl={cnhAttachment?.base64 || existingDriverCnh.url}
-              nome={cnhAttachment?.fileName || existingDriverCnh.fileName}
-              condutor={currentDriverName || 'Condutor'}
-              placa={existingDriverCnh.placa}
-              onClose={() => setIsViewingCnh(false)}
-            />
-          )}
 
           {/* SECTION 2: DADOS DA VIAGEM */}
           <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">

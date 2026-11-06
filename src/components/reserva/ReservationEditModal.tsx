@@ -11,8 +11,6 @@ import {
   formatToDateTimeLocalInput, 
   validateReservationDates 
 } from '../../utils/reservaDateUtils';
-import { CnhViewerModal } from '../CnhViewerModal';
-import { findDriverCnhInVaultOrFleet, saveDriverCnhRecord } from '../../services/cnhService';
 
 interface ReservationEditModalProps {
   isOpen: boolean;
@@ -25,7 +23,6 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
   const { vehicles } = useReservations();
   const [formData, setFormData] = useState<Partial<Reservation>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isViewingCnh, setIsViewingCnh] = useState(false);
 
   useEffect(() => {
     if (reservation) {
@@ -70,45 +67,6 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
     }
-  };
-
-  const handleCnhUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = reader.result as string;
-      const driver = (formData.driverName || formData.requesterName || 'Condutor').trim();
-      const ext = file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'jpg';
-      const officialName = `CNH - ${driver}.${ext}`;
-      setFormData(prev => ({
-        ...prev,
-        hasCnhCopy: true,
-        cnhFileName: officialName,
-        cnhBase64: base64
-      }));
-      try {
-        await fetch('/api/rac/upload-cnh', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            driverName: driver,
-            fileData: base64,
-            mimeType: file.type || (ext === 'pdf' ? 'application/pdf' : 'image/jpeg')
-          })
-        });
-        saveDriverCnhRecord({
-          driverName: driver,
-          email: formData.email,
-          fileName: officialName,
-          fileType: file.type,
-          fileSize: file.size,
-          cnhData: base64,
-          uploadDate: new Date().toISOString()
-        });
-      } catch (_) {}
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -166,12 +124,6 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
 
   if (!isOpen) return null;
 
-  const currentVehicle = vehicles.find(v => v.id === formData.vehicleId);
-  const currentDriver = formData.driverName || formData.requesterName || 'Condutor';
-  const resolvedCnh = findDriverCnhInVaultOrFleet(currentDriver, formData.email, currentVehicle?.plate);
-  const effectiveCnhUrl = formData.cnhBase64 || resolvedCnh.url;
-  const effectiveCnhName = formData.cnhFileName || resolvedCnh.fileName;
-
   return (
     <>
       <Modal isOpen={isOpen} onClose={onClose} title="Editar Reserva">
@@ -189,34 +141,6 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
               <div>
                   <label className="block text-sm font-medium text-gray-700">Condutor Autorizado</label>
                   <input type="text" name="driverName" value={formData.driverName || formData.requesterName || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm uppercase" />
-              </div>
-
-              {/* Bloco de CNH do Condutor na Reserva */}
-              <div className="md:col-span-2 bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-base">🪪</span>
-                  <div className="min-w-0">
-                    <span className="text-xs font-bold text-slate-800 block truncate">
-                      CNH do Condutor: {effectiveCnhName}
-                    </span>
-                    <span className="text-[10px] text-emerald-700 font-semibold block">
-                      Sincronizada entre Controle de Frota Leve e Gestão de Reservas
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setIsViewingCnh(true)}
-                    className="px-3 py-1.5 rounded-lg bg-[#114D38] hover:bg-[#1a664c] text-white text-xs font-bold cursor-pointer transition-colors shadow-2xs"
-                  >
-                    Visualizar CNH
-                  </button>
-                  <label className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold cursor-pointer transition-colors">
-                    Anexar / Trocar CNH
-                    <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleCnhUpload} />
-                  </label>
-                </div>
               </div>
 
               <div>
@@ -346,16 +270,6 @@ const ReservationEditModal: React.FC<ReservationEditModalProps> = ({ isOpen, onC
           </div>
         </form>
       </Modal>
-
-      {isViewingCnh && (
-        <CnhViewerModal
-          rawUrl={effectiveCnhUrl}
-          nome={effectiveCnhName}
-          condutor={currentDriver}
-          placa={currentVehicle?.plate || resolvedCnh.placa}
-          onClose={() => setIsViewingCnh(false)}
-        />
-      )}
     </>
   );
 };

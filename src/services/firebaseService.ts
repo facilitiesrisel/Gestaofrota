@@ -1144,7 +1144,9 @@ export const getReservationsFromLocalStorage = (): Reservation[] => {
 
 // Mapa em memória e armazenamento persistente para rastrear atualizações locais e evitar que snapshots remotos defasados revertam status
 const recentReservationUpdates = new Map<string, { timestamp: number; data: any }>();
+const memoryBackendReservationsMap = new Map<string, Reservation>();
 const RESERVATIONS_OVERRIDES_STORAGE_KEY = 'risel_reservas_overrides_v2';
+const RESERVATION_OVERRIDE_TTL_MS = 600000; // 10 minutos de proteção contra snapshots defasados
 
 export const getPersistentReservationOverrides = (): Record<string, any> => {
   try {
@@ -1152,12 +1154,11 @@ export const getPersistentReservationOverrides = (): Record<string, any> => {
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     const now = Date.now();
-    // Overrides locais só são válidos por até 45 segundos enquanto a escrita é propagada na nuvem
     const validOverrides: Record<string, any> = {};
     let hasExpired = false;
     Object.keys(parsed).forEach(k => {
       const item = parsed[k];
-      if (item && item.timestamp && (now - item.timestamp) < 45000) {
+      if (item && item.timestamp && (now - item.timestamp) < RESERVATION_OVERRIDE_TTL_MS) {
         validOverrides[k] = item;
       } else {
         hasExpired = true;
@@ -1192,10 +1193,10 @@ export const fetchBackendReservations = async (): Promise<Reservation[]> => {
     if (res.ok) {
       const items = await res.json();
       if (Array.isArray(items)) {
-        return items.map(item => {
+        const parsedItems = items.map(item => {
           const normStatus = normalizeStatus(item.status);
           const isCompleted = normStatus === ReservationStatus.Completed;
-          return {
+          const mapped: Reservation = {
             ...item,
             status: normStatus,
             departureDateTime: item.departureDateTime ? parseLocalDateTime(item.departureDateTime) : new Date(),
@@ -1204,7 +1205,10 @@ export const fetchBackendReservations = async (): Promise<Reservation[]> => {
             finalKm: isCompleted && item.finalKm !== undefined && item.finalKm !== null ? Number(item.finalKm) : undefined,
             requestTimestamp: item.requestTimestamp ? parseLocalDateTime(item.requestTimestamp) : undefined
           };
+          memoryBackendReservationsMap.set(mapped.id, mapped);
+          return mapped;
         });
+        return parsedItems;
       }
     }
   } catch (e) {
@@ -1260,36 +1264,43 @@ export const getReservations = async (): Promise<Reservation[]> => {
 
     // Sincroniza respeitando dados oficiais remotos e protegendo alterações locais recentes
     const reconciled = firestoreReservations.map(remoteRes => {
+        const backendRes = memoryBackendReservationsMap.get(remoteRes.id);
         const recent = recentReservationUpdates.get(remoteRes.id);
         const persistent = persistentOverrides[remoteRes.id];
-        const isRecent = (recent && (Date.now() - recent.timestamp < 30000)) || 
-                         (persistent && (Date.now() - persistent.timestamp < 30000));
+        const isRecent = (recent && (Date.now() - recent.timestamp < RESERVATION_OVERRIDE_TTL_MS)) || 
+                         (persistent && (Date.now() - persistent.timestamp < RESERVATION_OVERRIDE_TTL_MS));
         
-        let finalStatus = normalizeStatus(remoteRes.status);
-        let finalNotes = remoteRes.adminNotes;
+        const baseRes = backendRes ? { ...remoteRes, ...backendRes } : remoteRes;
+        let finalStatus = normalizeStatus(baseRes.status);
+        let finalNotes = baseRes.adminNotes;
 
         if (isRecent) {
           const overrideData = recent?.data || persistent;
           if (overrideData?.status) finalStatus = normalizeStatus(overrideData.status);
           if (overrideData?.adminNotes !== undefined) finalNotes = overrideData.adminNotes;
+          const isCompleted = finalStatus === ReservationStatus.Completed;
           const merged = {
-            ...remoteRes,
+            ...baseRes,
             ...overrideData,
             status: finalStatus,
             adminNotes: finalNotes,
           };
           return {
             ...merged,
-            departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : remoteRes.departureDateTime,
-            returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : remoteRes.returnDate,
-            actualReturnDateTime: merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : remoteRes.actualReturnDateTime,
-            requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : remoteRes.requestTimestamp,
+            departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : baseRes.departureDateTime,
+            returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : baseRes.returnDate,
+            actualReturnDateTime: isCompleted && merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : undefined,
+            finalKm: isCompleted && merged.finalKm !== undefined && merged.finalKm !== null ? Number(merged.finalKm) : undefined,
+            requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : baseRes.requestTimestamp,
           };
         }
 
+        const isCompleted = finalStatus === ReservationStatus.Completed;
         return {
-            ...remoteRes,
+            ...baseRes,
             status: finalStatus,
+            actualReturnDateTime: isCompleted ? baseRes.actualReturnDateTime : undefined,
+            finalKm: isCompleted ? baseRes.finalKm : undefined,
             adminNotes: finalNotes
         };
     });
@@ -1328,8 +1339,8 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                 const existing = map.get(b.id);
                 const recent = recentReservationUpdates.get(b.id);
                 const persistent = persistentOverrides[b.id];
-                const isRecent = (recent && (Date.now() - recent.timestamp < 30000)) ||
-                                 (persistent && (Date.now() - persistent.timestamp < 30000));
+                const isRecent = (recent && (Date.now() - recent.timestamp < RESERVATION_OVERRIDE_TTL_MS)) ||
+                                 (persistent && (Date.now() - persistent.timestamp < RESERVATION_OVERRIDE_TTL_MS));
                 
                 const normBackendStatus = normalizeStatus(b.status);
 
@@ -1376,15 +1387,18 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
         const reservations = snapshot.docs.map(docToReservation).filter((r): r is Reservation => r !== null);
         if (reservations.length > 0) {
             const persistentOverrides = getPersistentReservationOverrides();
+            const map = new Map<string, Reservation>();
 
-            const reconciled = reservations.map(remoteRes => {
+            reservations.forEach(remoteRes => {
+                const backendRes = memoryBackendReservationsMap.get(remoteRes.id);
                 const recent = recentReservationUpdates.get(remoteRes.id);
                 const persistent = persistentOverrides[remoteRes.id];
-                const isRecent = (recent && (Date.now() - recent.timestamp < 30000)) ||
-                                 (persistent && (Date.now() - persistent.timestamp < 30000));
+                const isRecent = (recent && (Date.now() - recent.timestamp < RESERVATION_OVERRIDE_TTL_MS)) ||
+                                 (persistent && (Date.now() - persistent.timestamp < RESERVATION_OVERRIDE_TTL_MS));
                 
-                let finalStatus = normalizeStatus(remoteRes.status);
-                let finalNotes = remoteRes.adminNotes;
+                const baseRes = backendRes ? { ...remoteRes, ...backendRes } : remoteRes;
+                let finalStatus = normalizeStatus(baseRes.status);
+                let finalNotes = baseRes.adminNotes;
 
                 if (isRecent) {
                     const overrideData = recent?.data || persistent;
@@ -1392,30 +1406,41 @@ export const subscribeToReservations = (onUpdate: (data: Reservation[]) => void,
                     if (overrideData?.adminNotes !== undefined) finalNotes = overrideData.adminNotes;
                     const isCompleted = finalStatus === ReservationStatus.Completed;
                     const merged = {
-                        ...remoteRes,
+                        ...baseRes,
                         ...overrideData,
                         status: finalStatus,
                         adminNotes: finalNotes
                     };
-                    return {
+                    map.set(remoteRes.id, {
                         ...merged,
-                        departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : remoteRes.departureDateTime,
-                        returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : remoteRes.returnDate,
+                        departureDateTime: merged.departureDateTime ? parseLocalDateTime(merged.departureDateTime) : baseRes.departureDateTime,
+                        returnDate: merged.returnDate ? parseLocalDateTime(merged.returnDate) : baseRes.returnDate,
                         actualReturnDateTime: isCompleted && merged.actualReturnDateTime ? parseLocalDateTime(merged.actualReturnDateTime) : undefined,
                         finalKm: isCompleted && merged.finalKm !== undefined && merged.finalKm !== null ? Number(merged.finalKm) : undefined,
-                        requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : remoteRes.requestTimestamp,
-                    };
+                        requestTimestamp: merged.requestTimestamp ? parseLocalDateTime(merged.requestTimestamp) : baseRes.requestTimestamp,
+                    });
+                } else {
+                    const isCompleted = finalStatus === ReservationStatus.Completed;
+                    map.set(remoteRes.id, {
+                        ...baseRes,
+                        status: finalStatus,
+                        actualReturnDateTime: isCompleted ? baseRes.actualReturnDateTime : undefined,
+                        finalKm: isCompleted ? baseRes.finalKm : undefined,
+                        adminNotes: finalNotes
+                    });
                 }
-
-                const isCompleted = finalStatus === ReservationStatus.Completed;
-                return {
-                    ...remoteRes,
-                    status: finalStatus,
-                    actualReturnDateTime: isCompleted ? remoteRes.actualReturnDateTime : undefined,
-                    finalKm: isCompleted ? remoteRes.finalKm : undefined,
-                    adminNotes: finalNotes
-                };
             });
+
+            // Inclui reservas que já existem no backend oficial mas ainda não propagaram no snapshot
+            memoryBackendReservationsMap.forEach((bRes, bId) => {
+                if (!map.has(bId)) {
+                    map.set(bId, bRes);
+                }
+            });
+
+            const reconciled = Array.from(map.values()).sort((a, b) =>
+                parseLocalDateTime(b.departureDateTime).getTime() - parseLocalDateTime(a.departureDateTime).getTime()
+            );
             saveReservationsToLocalStorage(reconciled);
             onUpdate(reconciled);
         } else {
@@ -1533,7 +1558,7 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
     if (idx !== -1) {
         const nextStatus = sanitizedData.status ? normalizeStatus(sanitizedData.status) : currentList[idx].status;
         const isCompleted = nextStatus === ReservationStatus.Completed;
-        currentList[idx] = {
+        const updatedRecord: Reservation = {
             ...currentList[idx],
             ...sanitizedData,
             status: nextStatus,
@@ -1546,6 +1571,8 @@ export const updateReservation = async (id: string, data: Partial<Omit<Reservati
                 ? (sanitizedData.finalKm !== undefined && sanitizedData.finalKm !== null ? Number(sanitizedData.finalKm) : currentList[idx].finalKm)
                 : undefined,
         };
+        currentList[idx] = updatedRecord;
+        memoryBackendReservationsMap.set(id, updatedRecord);
         saveReservationsToLocalStorage(currentList);
         notifyReservationListeners();
     }
@@ -1587,6 +1614,7 @@ export const deleteReservation = async (id: string) => {
     const currentList = getReservationsFromLocalStorage().filter(r => r.id !== id);
     saveReservationsToLocalStorage(currentList);
     recentReservationUpdates.delete(id);
+    memoryBackendReservationsMap.delete(id);
     notifyReservationListeners();
 
     try {
@@ -1825,6 +1853,8 @@ export const INITIAL_RAC_RENTALS: RacRental[] = [];
 
 let useRacLocalStorageFallback = false;
 const racListeners: ((data: RacRental[]) => void)[] = [];
+const recentRacUpdates = new Map<string, { timestamp: number; data: Partial<RacRental> }>();
+const RAC_OVERRIDES_TTL_MS = 600000; // 10 minutos
 
 export const isRacRentalUsingFallback = () => useRacLocalStorageFallback;
 
@@ -1835,7 +1865,6 @@ const getRacRentalsFromLocalStorage = (): RacRental[] => {
     if (data) {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
-        // Filtra e purga qualquer registro fictício / mock inicial
         const realRentals = parsed.filter((r: any) => !isMockRacRental(r));
         if (realRentals.length !== parsed.length) {
           saveRacRentalsToLocalStorage(realRentals);
@@ -1851,8 +1880,6 @@ const getRacRentalsFromLocalStorage = (): RacRental[] => {
   } catch (err) {
     console.error("Error reading RAC rentals from localStorage:", err);
   }
-
-  // Não semear com dados fictícios. Retorna array vazio se não houver dados reais salvos.
   return [];
 };
 
@@ -1877,7 +1904,27 @@ const notifyRacListeners = () => {
   });
 };
 
+const reconcileRacRentals = (remoteRentals: RacRental[]): RacRental[] => {
+  const now = Date.now();
+  const reconciled = remoteRentals.map(remote => {
+    const recent = recentRacUpdates.get(remote.id);
+    if (recent && (now - recent.timestamp < RAC_OVERRIDES_TTL_MS)) {
+      const merged = { ...remote, ...recent.data };
+      return {
+        ...merged,
+        reservationDate: merged.reservationDate ? convertFirestoreDate(merged.reservationDate) : remote.reservationDate,
+        pickupDate: merged.pickupDate ? convertFirestoreDate(merged.pickupDate) : remote.pickupDate,
+        returnDate: merged.returnDate ? convertFirestoreDate(merged.returnDate) : remote.returnDate,
+      };
+    }
+    return remote;
+  });
+  saveRacRentalsToLocalStorage(reconciled);
+  return reconciled;
+};
+
 export const getRacRentals = async (): Promise<RacRental[]> => {
+  ensureAdminFirebaseAuth().catch(() => {});
   if (useRacLocalStorageFallback) {
     return getRacRentalsFromLocalStorage();
   }
@@ -1890,27 +1937,28 @@ export const getRacRentals = async (): Promise<RacRental[]> => {
     if (firestoreRentals.length === 0) {
       return getRacRentalsFromLocalStorage();
     }
-    return firestoreRentals;
+    return reconcileRacRentals(firestoreRentals);
   } catch (error) {
     console.warn("getRacRentals failed, falling back to local storage.", error);
-    useRacLocalStorageFallback = true;
     return getRacRentalsFromLocalStorage();
   }
 };
 
 export const subscribeToRacRentals = (onUpdate: (data: RacRental[]) => void, onError: (error: any) => void) => {
   let isSubscribed = true;
+  ensureAdminFirebaseAuth().catch(() => {});
 
-  // Registrar callback na lista de ouvintes locais para garantir reatividade no modo de fallback
+  // Registrar callback na lista de ouvintes locais para garantir reatividade imediata
   racListeners.push(onUpdate);
+
+  const initialCached = getRacRentalsFromLocalStorage();
+  if (initialCached.length > 0) {
+    onUpdate(initialCached);
+  }
 
   const unsubscribe = racRentalsCollection.orderBy('pickupDate', 'desc').onSnapshot(
     (snapshot) => {
       if (!isSubscribed) return;
-      if (useRacLocalStorageFallback) {
-        onUpdate(getRacRentalsFromLocalStorage());
-        return;
-      }
 
       // Purga assíncrona no Firestore de qualquer registro mock residual
       snapshot.docs.forEach(doc => {
@@ -1927,20 +1975,20 @@ export const subscribeToRacRentals = (onUpdate: (data: RacRental[]) => void, onE
       if (rentals.length === 0) {
         onUpdate(getRacRentalsFromLocalStorage());
       } else {
-        onUpdate(rentals);
+        useRacLocalStorageFallback = false;
+        const reconciled = reconcileRacRentals(rentals);
+        onUpdate(reconciled);
       }
     },
     (error) => {
       if (!isSubscribed) return;
-      console.warn("Firestore RAC Rentals subscribe failed. Falling back to local storage.", error);
-      useRacLocalStorageFallback = true;
+      console.warn("Firestore RAC Rentals subscribe failed. Using local cache.", error);
       onUpdate(getRacRentalsFromLocalStorage());
     }
   );
 
   return () => {
     isSubscribed = false;
-    // Remover o callback da lista de ouvintes ao se desinscrever
     const index = racListeners.indexOf(onUpdate);
     if (index !== -1) {
       racListeners.splice(index, 1);
@@ -1950,107 +1998,92 @@ export const subscribeToRacRentals = (onUpdate: (data: RacRental[]) => void, onE
 };
 
 export const addRacRental = async (data: Omit<RacRental, 'id'>) => {
+  ensureAdminFirebaseAuth().catch(() => {});
   const sanitized = {
     ...data,
     requesterSector: normalizeNomeSetor(data.requesterSector, 'Operações')
   };
-  if (useRacLocalStorageFallback) {
-    const rentals = getRacRentalsFromLocalStorage();
-    const newRental: RacRental = {
-      ...sanitized,
-      id: 'local_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
-    };
-    rentals.unshift(newRental);
-    // Sort by pickupDate descending
-    rentals.sort((a, b) => new Date(b.pickupDate).getTime() - new Date(a.pickupDate).getTime());
-    saveRacRentalsToLocalStorage(rentals);
-    notifyRacListeners();
-    return { id: newRental.id };
-  }
+  const deterministicId = 'rac_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+  const newRental: RacRental = {
+    ...sanitized,
+    id: deterministicId,
+  };
+
+  // Atualiza imediatamente o cache local e notifica a tela
+  const rentals = getRacRentalsFromLocalStorage().filter(r => r.id !== deterministicId);
+  rentals.unshift(newRental);
+  rentals.sort((a, b) => new Date(b.pickupDate).getTime() - new Date(a.pickupDate).getTime());
+  saveRacRentalsToLocalStorage(rentals);
+  notifyRacListeners();
+
   try {
-    return await racRentalsCollection.add(removeUndefined(sanitized));
+    const cleanPayload = removeUndefined(sanitized);
+    const addPromise = racRentalsCollection.doc(deterministicId).set(cleanPayload, { merge: true });
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore addRacRental")), 5000));
+    await Promise.race([addPromise, timeoutPromise]);
+    return { id: deterministicId };
   } catch (error) {
-    console.warn("addRacRental failed, falling back to local storage.", error);
-    useRacLocalStorageFallback = true;
-    
-    const rentals = getRacRentalsFromLocalStorage();
-    const newRental: RacRental = {
-      ...sanitized,
-      id: 'local_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
-    };
-    rentals.unshift(newRental);
-    rentals.sort((a, b) => new Date(b.pickupDate).getTime() - new Date(a.pickupDate).getTime());
-    saveRacRentalsToLocalStorage(rentals);
-    notifyRacListeners();
-    return { id: newRental.id };
+    console.warn("addRacRental em background ou contingência:", error);
+    racRentalsCollection.doc(deterministicId).set(removeUndefined(sanitized), { merge: true }).catch(() => {});
+    return { id: deterministicId };
   }
 };
 
 export const updateRacRental = async (id: string, data: Partial<Omit<RacRental, 'id'>>) => {
+  ensureAdminFirebaseAuth().catch(() => {});
   const sanitizedData = { ...data };
   if (sanitizedData.requesterSector !== undefined) {
     sanitizedData.requesterSector = normalizeNomeSetor(sanitizedData.requesterSector, 'Operações');
   }
-  if (useRacLocalStorageFallback || id.startsWith('local_')) {
-    const rentals = getRacRentalsFromLocalStorage();
-    const idx = rentals.findIndex(r => r.id === id);
-    if (idx !== -1) {
-      rentals[idx] = {
-        ...rentals[idx],
-        ...sanitizedData,
-        reservationDate: sanitizedData.reservationDate ? new Date(sanitizedData.reservationDate) : rentals[idx].reservationDate,
-        pickupDate: sanitizedData.pickupDate ? new Date(sanitizedData.pickupDate) : rentals[idx].pickupDate,
-        returnDate: sanitizedData.returnDate ? new Date(sanitizedData.returnDate) : rentals[idx].returnDate,
-      };
-      rentals.sort((a, b) => new Date(b.pickupDate).getTime() - new Date(a.pickupDate).getTime());
-      saveRacRentalsToLocalStorage(rentals);
-      notifyRacListeners();
-    }
+
+  recentRacUpdates.set(id, { timestamp: Date.now(), data: sanitizedData });
+
+  // Atualiza imediatamente o cache local e notifica a UI sem depender de rede
+  const rentals = getRacRentalsFromLocalStorage();
+  const idx = rentals.findIndex(r => r.id === id);
+  if (idx !== -1) {
+    rentals[idx] = {
+      ...rentals[idx],
+      ...sanitizedData,
+      reservationDate: sanitizedData.reservationDate ? new Date(sanitizedData.reservationDate) : rentals[idx].reservationDate,
+      pickupDate: sanitizedData.pickupDate ? new Date(sanitizedData.pickupDate) : rentals[idx].pickupDate,
+      returnDate: sanitizedData.returnDate ? new Date(sanitizedData.returnDate) : rentals[idx].returnDate,
+    };
+    rentals.sort((a, b) => new Date(b.pickupDate).getTime() - new Date(a.pickupDate).getTime());
+    saveRacRentalsToLocalStorage(rentals);
+    notifyRacListeners();
+  }
+
+  if (id.startsWith('local_')) {
     return;
   }
+
   try {
     const payload = removeUndefined(sanitizedData);
     const updatePromise = racRentalsCollection.doc(id).set(payload, { merge: true });
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore")), 2000));
-    return await Promise.race([updatePromise, timeoutPromise]);
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore updateRacRental")), 5000));
+    await Promise.race([updatePromise, timeoutPromise]);
   } catch (error) {
-    console.warn("updateRacRental failed, falling back to local storage.", error);
-    useRacLocalStorageFallback = true;
-    
-    const rentals = getRacRentalsFromLocalStorage();
-    const idx = rentals.findIndex(r => r.id === id);
-    if (idx !== -1) {
-      rentals[idx] = {
-        ...rentals[idx],
-        ...sanitizedData,
-        reservationDate: sanitizedData.reservationDate ? new Date(sanitizedData.reservationDate) : rentals[idx].reservationDate,
-        pickupDate: sanitizedData.pickupDate ? new Date(sanitizedData.pickupDate) : rentals[idx].pickupDate,
-        returnDate: sanitizedData.returnDate ? new Date(sanitizedData.returnDate) : rentals[idx].returnDate,
-      };
-      rentals.sort((a, b) => new Date(b.pickupDate).getTime() - new Date(a.pickupDate).getTime());
-      saveRacRentalsToLocalStorage(rentals);
-      notifyRacListeners();
-    }
+    console.warn("updateRacRental enviado em background para o Firestore:", error);
+    racRentalsCollection.doc(id).set(removeUndefined(sanitizedData), { merge: true }).catch(() => {});
   }
 };
 
 export const deleteRacRental = async (id: string) => {
-  if (useRacLocalStorageFallback || id.startsWith('local_')) {
-    const rentals = getRacRentalsFromLocalStorage();
-    const filtered = rentals.filter(r => r.id !== id);
-    saveRacRentalsToLocalStorage(filtered);
-    notifyRacListeners();
+  ensureAdminFirebaseAuth().catch(() => {});
+  recentRacUpdates.delete(id);
+  const rentals = getRacRentalsFromLocalStorage();
+  const filtered = rentals.filter(r => r.id !== id);
+  saveRacRentalsToLocalStorage(filtered);
+  notifyRacListeners();
+
+  if (id.startsWith('local_')) {
     return;
   }
   try {
-    return await racRentalsCollection.doc(id).delete();
+    await racRentalsCollection.doc(id).delete();
   } catch (error) {
-    console.warn("deleteRacRental failed, falling back to local storage.", error);
-    useRacLocalStorageFallback = true;
-    const rentals = getRacRentalsFromLocalStorage();
-    const filtered = rentals.filter(r => r.id !== id);
-    saveRacRentalsToLocalStorage(filtered);
-    notifyRacListeners();
+    console.warn("deleteRacRental remoto falhou, mantido excluído no cache:", error);
   }
 };
 
