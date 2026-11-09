@@ -24,19 +24,15 @@ const sandboxConfig = {
   measurementId: ""
 };
 
-// Determina o ambiente ativo (padrão é produção para recuperar o histórico)
-let activeEnv = "production";
+// Determina o ambiente ativo (sempre produção para garantir acesso unificado às Reservas, RAC e Uso Diário)
+const activeEnv: string = "production";
 if (typeof window !== "undefined") {
-  const savedEnv = window.localStorage.getItem("custom_firebase_project");
-  if (savedEnv) {
-    activeEnv = savedEnv;
-  } else {
-    // Inicializa localmente caso não esteja definido
+  try {
     window.localStorage.setItem("custom_firebase_project", "production");
-  }
+  } catch (e) {}
 }
 
-const firebaseConfig = activeEnv === "sandbox" ? sandboxConfig : prodConfig;
+const firebaseConfig = prodConfig;
 
 // Initialize Firebase
 const app = !firebase.apps.length ? firebase.initializeApp(firebaseConfig) : firebase.app();

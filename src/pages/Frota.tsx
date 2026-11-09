@@ -702,25 +702,17 @@ export default function Frota() {
     const list: Array<"frota" | "checklist" | "reservas" | "multas" | "rastreamento"> = [];
     if (hasSubmoduleAccess(user?.permissions, "frota")) list.push("frota");
     if (hasSubmoduleAccess(user?.permissions, "checklist")) list.push("checklist");
-    if (hasSubmoduleAccess(user?.permissions, "reservas")) list.push("reservas");
+    if (hasSubmoduleAccess(user?.permissions, "reservas") || !list.includes("reservas")) list.push("reservas");
     if (hasSubmoduleAccess(user?.permissions, "multas")) list.push("multas");
     if (hasSubmoduleAccess(user?.permissions, "rastreamento")) list.push("rastreamento");
     return list;
   }, [user?.permissions]);
 
-  // Se o usuário só tem 1 submódulo liberado, ou se a tab atual for "portal" e ele só tem 1 acesso,
-  // ou se ele estiver tentando acessar uma aba não permitida, redireciona estritamente para o submódulo liberado
+  // Se a aba ativa não for permitida para o usuário (exceto portal e reservas que são sempre liberados)
   useEffect(() => {
     if (!user) return;
 
-    // Se o usuário possui apenas 1 submódulo liberado e está no "portal", vai direto para seu submódulo
-    if (activeTab === "portal" && allowedSubmodules.length === 1) {
-      setActiveTab(allowedSubmodules[0]);
-      return;
-    }
-
-    // Se a aba ativa não for permitida para o usuário
-    if (activeTab !== "portal" && !hasSubmoduleAccess(user?.permissions, activeTab)) {
+    if (activeTab !== "portal" && activeTab !== "reservas" && !hasSubmoduleAccess(user?.permissions, activeTab)) {
       if (allowedSubmodules.length > 0) {
         setActiveTab(allowedSubmodules[0]);
       } else {
@@ -3184,7 +3176,7 @@ export default function Frota() {
               id: "portal", 
               label: "Menu da Frota", 
               icon: LayoutGrid, 
-              visible: allowedSubmodules.length > 1 || user?.role === "admin" 
+              visible: true 
             },
             { 
               id: "frota", 
@@ -3202,7 +3194,7 @@ export default function Frota() {
               id: "reservas", 
               label: "Gestão de Reservas", 
               icon: Calendar, 
-              visible: hasSubmoduleAccess(user?.permissions, "reservas") 
+              visible: true 
             },
             { 
               id: "multas", 

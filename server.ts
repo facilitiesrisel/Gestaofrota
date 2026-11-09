@@ -369,6 +369,8 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const ABASTECIMENTOS_FILE = path.join(DATA_DIR, "imported_abastecimentos.json");
 const CHECKLISTS_FILE = path.join(DATA_DIR, "imported_checklists.json");
 const RESERVATIONS_FILE = path.join(DATA_DIR, "reservations.json");
+const RAC_RENTALS_FILE = path.join(DATA_DIR, "rac_rentals.json");
+const DAILY_USE_FILE = path.join(DATA_DIR, "daily_use.json");
 const APPS_SCRIPT_FILE = path.join(DATA_DIR, "apps_script_url.txt");
 const ONEDRIVE_CONFIG_FILE = path.join(DATA_DIR, "onedrive_config.json");
 const ONEDRIVE_LOGS_FILE = path.join(DATA_DIR, "onedrive_logs.json");
@@ -625,6 +627,60 @@ function saveStoredReservations(items: any[]) {
     fs.writeFileSync(RESERVATIONS_FILE, JSON.stringify(items, null, 2), "utf-8");
   } catch (err) {
     console.warn("Erro ao persistir reservas:", err);
+  }
+}
+
+function loadStoredRacRentals(): any[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(RAC_RENTALS_FILE)) {
+      const raw = fs.readFileSync(RAC_RENTALS_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (err) {
+    console.warn("Erro ao carregar locações RAC salvas:", err);
+  }
+  return [];
+}
+
+function saveStoredRacRentals(items: any[]) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(RAC_RENTALS_FILE, JSON.stringify(items, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("Erro ao persistir locações RAC:", err);
+  }
+}
+
+function loadStoredDailyUse(): any[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(DAILY_USE_FILE)) {
+      const raw = fs.readFileSync(DAILY_USE_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (err) {
+    console.warn("Erro ao carregar viagens de uso diário salvas:", err);
+  }
+  return [];
+}
+
+function saveStoredDailyUse(items: any[]) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(DAILY_USE_FILE, JSON.stringify(items, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("Erro ao persistir viagens de uso diário:", err);
   }
 }
 
@@ -1611,6 +1667,237 @@ async function startServer() {
       return res.json({ success: true, id: targetId, reservation: itemToPersist });
     } catch (err: any) {
       console.error("[Server Firestore] Erro ao criar reserva:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // pré-aquece a conexão Firestore do servidor em background
+  getServerFirestore().catch(() => {});
+
+  // =========================================================================
+  // ROTAS DE PERSISTÊNCIA E SINCRONIZAÇÃO DE LOCAÇÕES RAC (/api/rac-rentals)
+  // =========================================================================
+  const serializeFirestoreDates = (obj: any): any => {
+    if (!obj || typeof obj !== "object") return obj;
+    if (typeof obj.toDate === "function") return obj.toDate().toISOString();
+    if (obj instanceof Date) return obj.toISOString();
+    if (Array.isArray(obj)) return obj.map(serializeFirestoreDates);
+    const out: any = {};
+    for (const k of Object.keys(obj)) {
+      out[k] = serializeFirestoreDates(obj[k]);
+    }
+    return out;
+  };
+
+  app.get("/api/rac-rentals", async (req, res) => {
+    try {
+      try {
+        const db = await getServerFirestore();
+        const snapPromise = db.collection("racRentals").orderBy("pickupDate", "desc").get();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore racRentals")), 2500));
+        const snap: any = await Promise.race([snapPromise, timeoutPromise]);
+        if (snap && snap.docs && snap.docs.length > 0) {
+          const items = snap.docs.map((d: any) => ({
+            ...serializeFirestoreDates(d.data()),
+            id: d.id,
+          }));
+          saveStoredRacRentals(items);
+          return res.json(items);
+        }
+      } catch (fErr: any) {
+        console.warn("[Server Firestore] Consulta racRentals falhou ou excedeu tempo, usando arquivo local:", fErr.message);
+      }
+      return res.json(loadStoredRacRentals());
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/rac-rentals/add", express.json({ limit: "25mb" }), async (req, res) => {
+    try {
+      const { data } = req.body;
+      if (!data) return res.status(400).json({ success: false, error: "Dados da locação RAC ausentes." });
+      const targetId = data.id || `rac_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const cleanData = { ...data, id: targetId };
+
+      const list = loadStoredRacRentals();
+      const idx = list.findIndex(r => r.id === targetId);
+      if (idx !== -1) list[idx] = { ...list[idx], ...cleanData };
+      else list.unshift(cleanData);
+      saveStoredRacRentals(list);
+
+      try {
+        const db = await getServerFirestore();
+        const fsPayload = { ...cleanData };
+        if (typeof fsPayload.reservationDate === "string") fsPayload.reservationDate = new Date(fsPayload.reservationDate);
+        if (typeof fsPayload.pickupDate === "string") fsPayload.pickupDate = new Date(fsPayload.pickupDate);
+        if (typeof fsPayload.returnDate === "string") fsPayload.returnDate = new Date(fsPayload.returnDate);
+        await db.collection("racRentals").doc(targetId).set(fsPayload, { merge: true });
+      } catch (e: any) {
+        console.warn("[Server Firestore] Aviso ao gravar racRental no Firestore:", e.message);
+      }
+
+      return res.json({ success: true, id: targetId, rental: cleanData });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/rac-rentals/update", express.json({ limit: "25mb" }), async (req, res) => {
+    try {
+      const { id, data } = req.body;
+      if (!id) return res.status(400).json({ success: false, error: "ID obrigatório." });
+
+      const list = loadStoredRacRentals();
+      const idx = list.findIndex(r => r.id === id);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...data, id };
+      } else {
+        list.unshift({ id, ...data });
+      }
+      saveStoredRacRentals(list);
+
+      try {
+        const db = await getServerFirestore();
+        const fsPayload = { ...data };
+        if (typeof fsPayload.reservationDate === "string") fsPayload.reservationDate = new Date(fsPayload.reservationDate);
+        if (typeof fsPayload.pickupDate === "string") fsPayload.pickupDate = new Date(fsPayload.pickupDate);
+        if (typeof fsPayload.returnDate === "string") fsPayload.returnDate = new Date(fsPayload.returnDate);
+        await db.collection("racRentals").doc(id).set(fsPayload, { merge: true });
+      } catch (e: any) {
+        console.warn("[Server Firestore] Aviso ao atualizar racRental no Firestore:", e.message);
+      }
+
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/rac-rentals/delete", express.json(), async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) return res.status(400).json({ success: false, error: "ID obrigatório." });
+
+      const list = loadStoredRacRentals().filter(r => r.id !== id);
+      saveStoredRacRentals(list);
+
+      try {
+        const db = await getServerFirestore();
+        await db.collection("racRentals").doc(id).delete();
+      } catch (e: any) {
+        console.warn("[Server Firestore] Aviso ao excluir racRental no Firestore:", e.message);
+      }
+
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ROTAS DE PERSISTÊNCIA E SINCRONIZAÇÃO DE USO DIÁRIO (/api/daily-use)
+  // =========================================================================
+  app.get("/api/daily-use", async (req, res) => {
+    try {
+      try {
+        const db = await getServerFirestore();
+        const snapPromise = db.collection("dailyUse").orderBy("departureDateTime", "desc").get();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore dailyUse")), 2500));
+        const snap: any = await Promise.race([snapPromise, timeoutPromise]);
+        if (snap && snap.docs && snap.docs.length > 0) {
+          const items = snap.docs.map((d: any) => ({
+            ...serializeFirestoreDates(d.data()),
+            id: d.id,
+          }));
+          saveStoredDailyUse(items);
+          return res.json(items);
+        }
+      } catch (fErr: any) {
+        console.warn("[Server Firestore] Consulta dailyUse falhou ou excedeu tempo, usando arquivo local:", fErr.message);
+      }
+      return res.json(loadStoredDailyUse());
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/daily-use/add", express.json(), async (req, res) => {
+    try {
+      const { data } = req.body;
+      if (!data) return res.status(400).json({ success: false, error: "Dados de uso diário ausentes." });
+      const targetId = data.id || `daily_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const cleanData = { ...data, id: targetId };
+
+      const list = loadStoredDailyUse();
+      const idx = list.findIndex(t => t.id === targetId);
+      if (idx !== -1) list[idx] = { ...list[idx], ...cleanData };
+      else list.unshift(cleanData);
+      saveStoredDailyUse(list);
+
+      try {
+        const db = await getServerFirestore();
+        const fsPayload = { ...cleanData };
+        if (typeof fsPayload.departureDateTime === "string") fsPayload.departureDateTime = new Date(fsPayload.departureDateTime);
+        if (typeof fsPayload.actualReturnDateTime === "string") fsPayload.actualReturnDateTime = new Date(fsPayload.actualReturnDateTime);
+        await db.collection("dailyUse").doc(targetId).set(fsPayload, { merge: true });
+      } catch (e: any) {
+        console.warn("[Server Firestore] Aviso ao gravar dailyUse no Firestore:", e.message);
+      }
+
+      return res.json({ success: true, id: targetId, trip: cleanData });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/daily-use/update", express.json(), async (req, res) => {
+    try {
+      const { id, data } = req.body;
+      if (!id) return res.status(400).json({ success: false, error: "ID obrigatório." });
+
+      const list = loadStoredDailyUse();
+      const idx = list.findIndex(t => t.id === id);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...data, id };
+      } else {
+        list.unshift({ id, ...data });
+      }
+      saveStoredDailyUse(list);
+
+      try {
+        const db = await getServerFirestore();
+        const fsPayload = { ...data };
+        if (typeof fsPayload.departureDateTime === "string") fsPayload.departureDateTime = new Date(fsPayload.departureDateTime);
+        if (typeof fsPayload.actualReturnDateTime === "string") fsPayload.actualReturnDateTime = new Date(fsPayload.actualReturnDateTime);
+        await db.collection("dailyUse").doc(id).set(fsPayload, { merge: true });
+      } catch (e: any) {
+        console.warn("[Server Firestore] Aviso ao atualizar dailyUse no Firestore:", e.message);
+      }
+
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/daily-use/delete", express.json(), async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) return res.status(400).json({ success: false, error: "ID obrigatório." });
+
+      const list = loadStoredDailyUse().filter(t => t.id !== id);
+      saveStoredDailyUse(list);
+
+      try {
+        const db = await getServerFirestore();
+        await db.collection("dailyUse").doc(id).delete();
+      } catch (e: any) {
+        console.warn("[Server Firestore] Aviso ao excluir dailyUse no Firestore:", e.message);
+      }
+
+      return res.json({ success: true, id });
+    } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
   });

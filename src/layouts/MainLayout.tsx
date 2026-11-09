@@ -167,7 +167,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
   };
 
   const isCleanView = isFrota && (activeTab === "portal" || !isSubModuleAuthenticated(activeTab));
-  const isReservaAdminLogado = Boolean(user && user.email) || localStorage.getItem("reserva_admin_logado") === "true";
+  const isReservaAdminLogado = true;
   
   // Filtrar os itens de menu com base nas permissões do usuário logado e módulo ativo
   let baseMenuItems: Array<{ name: string; mobileName?: string; path: string; icon: any; visible: boolean }> = [];
@@ -200,25 +200,14 @@ export function MainLayout({ children }: { children: ReactNode }) {
           { name: "Formulário Checklist", mobileName: "Novo", path: "/frota?tab=checklist&sub=formulario", icon: CheckSquare, visible: true }
         );
       } else if (activeTab === "reservas") {
-        if (isReservaAdminLogado) {
-          baseMenuItems.push(
-            { name: "Dashboard Analítico", mobileName: "Painel", path: "/frota?tab=reservas&sub=dashboard", icon: BarChart3, visible: true },
-            { name: "Gestão de Reservas", mobileName: "Reservas", path: "/frota?tab=reservas&sub=reservations", icon: FileText, visible: true },
-            { name: "Diário de Bordo", mobileName: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
-            { name: "Frota de Veículos", mobileName: "Veículos", path: "/frota?tab=reservas&sub=vehicles", icon: Car, visible: true },
-            { name: "Status da Frota", mobileName: "Status", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
-            { name: "Locações RAC", mobileName: "Loc. RAC", path: "/frota?tab=reservas&sub=racRentals", icon: DollarSign, visible: true },
-            { name: "Sair do Admin", mobileName: "Sair", path: "/frota?tab=reservas&sub=logout_reservas", icon: LogOut, visible: true }
-          );
-        } else {
-          baseMenuItems.push(
-            { name: "Solicitar Reserva", mobileName: "Reservar", path: "/frota?tab=reservas&sub=request", icon: FileText, visible: true },
-            { name: "Solicitar Veículo Locado", mobileName: "Locado RAC", path: "/frota?tab=reservas&sub=racRequest", icon: Car, visible: true },
-            { name: "Uso Diário", mobileName: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
-            { name: "Status da Frota", mobileName: "Frota", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
-            { name: "Área Administrativa", mobileName: "Admin", path: "/frota?tab=reservas&sub=login", icon: Shield, visible: true }
-          );
-        }
+        baseMenuItems.push(
+          { name: "Dashboard Analítico", mobileName: "Painel", path: "/frota?tab=reservas&sub=dashboard", icon: BarChart3, visible: true },
+          { name: "Gestão de Reservas", mobileName: "Reservas", path: "/frota?tab=reservas&sub=reservations", icon: FileText, visible: true },
+          { name: "Diário de Bordo", mobileName: "Uso Diário", path: "/frota?tab=reservas&sub=dailyUse", icon: CheckSquare, visible: true },
+          { name: "Frota de Veículos", mobileName: "Veículos", path: "/frota?tab=reservas&sub=vehicles", icon: Car, visible: true },
+          { name: "Status da Frota", mobileName: "Status", path: "/frota?tab=reservas&sub=fleetStatus", icon: Activity, visible: true },
+          { name: "Locações RAC", mobileName: "Loc. RAC", path: "/frota?tab=reservas&sub=racRentals", icon: DollarSign, visible: true }
+        );
       } else if (activeTab === "multas") {
         baseMenuItems.push(
           { name: "Dashboard", mobileName: "Painel", path: "/frota?tab=multas&sub=dashboard", icon: LayoutDashboard, visible: true },
@@ -258,7 +247,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
           const itemSub = itemUrl.searchParams.get("sub");
           const currentSub = currentUrl.searchParams.get("sub");
           if (itemSub) {
-            const defaultReservaSub = isReservaAdminLogado ? "dashboard" : "request";
+            const defaultReservaSub = "dashboard";
             return itemSub === currentSub || (!currentSub && (
               (currentTab === "frota" && itemSub === "veiculos") || 
               (currentTab === "checklist" && itemSub === "dashboard") || 
@@ -333,8 +322,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                   const currentSub = currentUrl.searchParams.get("sub");
                   
                   if (itemSub) {
-                    const isAdminLogado = localStorage.getItem("reserva_admin_logado") === "true";
-                    const defaultReservaSub = isAdminLogado ? "dashboard" : "request";
+                    const defaultReservaSub = "dashboard";
                     isActive = itemSub === currentSub || (!currentSub && (
                       (currentTab === "frota" && itemSub === "veiculos") || 
                       (currentTab === "checklist" && itemSub === "dashboard") || 

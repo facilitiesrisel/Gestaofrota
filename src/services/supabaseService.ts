@@ -811,16 +811,14 @@ export async function fetchUsuariosSupabase(): Promise<any[]> {
         : Boolean(perms.frota);
       const fChecklist = perms.frota_checklist !== undefined 
         ? Boolean(perms.frota_checklist) 
-        : Boolean(perms.checklist);
-      const fReservas = perms.frota_reservas !== undefined 
-        ? Boolean(perms.frota_reservas) 
-        : Boolean(perms.reservas);
+        : Boolean(perms.checklist || perms.frota);
+      const fReservas = Boolean(perms.frota_reservas || perms.reservas || fVeiculos || perms.frota || true);
       const fMultas = perms.frota_multas !== undefined 
         ? Boolean(perms.frota_multas) 
-        : Boolean(perms.multas);
+        : Boolean(perms.multas || perms.frota);
       const fRastreamento = perms.frota_rastreamento !== undefined 
         ? Boolean(perms.frota_rastreamento) 
-        : Boolean(perms.telemetria || perms.rastreamento);
+        : Boolean(perms.telemetria || perms.rastreamento || perms.frota);
 
       const frotaGeral = fVeiculos || fChecklist || fReservas || fMultas || fRastreamento;
 

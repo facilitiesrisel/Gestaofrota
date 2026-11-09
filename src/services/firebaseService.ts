@@ -1693,29 +1693,85 @@ const notifyDailyTripListeners = (trips: DailyTrip[]) => {
     });
 };
 
+export const fetchBackendDailyTrips = async (): Promise<DailyTrip[]> => {
+    try {
+        const res = await fetch('/api/daily-use');
+        if (res.ok) {
+            const items = await res.json();
+            if (Array.isArray(items)) {
+                return items
+                    .map((item: any) => docToDailyTrip({ id: item.id, data: () => item }))
+                    .filter((t): t is DailyTrip => t !== null);
+            }
+        }
+    } catch (e) {
+        console.warn("Aviso ao sincronizar Uso Diário com /api/daily-use:", e);
+    }
+    return [];
+};
+
 export const getDailyUseTrips = async (): Promise<DailyTrip[]> => {
+    ensureAdminFirebaseAuth().catch(() => {});
     try {
         const snapshot = await dailyUseCollection.orderBy('departureDateTime', 'desc').get();
         const trips = snapshot.docs
             .map(docToDailyTrip)
             .filter((t): t is DailyTrip => t !== null);
-        saveCachedDailyTrips(trips);
-        return trips;
-    } catch (e) {
-        return getCachedDailyTrips();
+        if (trips.length > 0) {
+            saveCachedDailyTrips(trips);
+            return trips;
+        }
+    } catch (e) {}
+
+    const backendTrips = await fetchBackendDailyTrips();
+    if (backendTrips.length > 0) {
+        saveCachedDailyTrips(backendTrips);
+        return backendTrips;
     }
+    return getCachedDailyTrips();
 };
 
 export const subscribeToDailyUseTrips = (onUpdate: (data: DailyTrip[]) => void, onError: (error: any) => void) => {
+    let isSubscribed = true;
     dailyTripListeners.push(onUpdate);
+    ensureAdminFirebaseAuth().catch(() => {});
+
     const cached = getCachedDailyTrips();
     if (cached.length > 0) {
         try { onUpdate(cached); } catch (e) {}
     }
 
+    // Carrega imediatamente do servidor para garantir que todos os usuários vejam todas as viagens
+    fetchBackendDailyTrips().then(backendTrips => {
+        if (isSubscribed && backendTrips.length > 0) {
+            const currentLocal = getCachedDailyTrips();
+            const map = new Map<string, DailyTrip>();
+            backendTrips.forEach(t => map.set(t.id, t));
+            for (const localTrip of currentLocal) {
+                const remoteTrip = map.get(localTrip.id);
+                if (!remoteTrip && localTrip.status === ReservationStatus.InUse) {
+                    const ageMs = Date.now() - new Date(localTrip.departureDateTime).getTime();
+                    if (ageMs < 120000) map.set(localTrip.id, localTrip);
+                } else if (remoteTrip && localTrip.status === ReservationStatus.Completed && remoteTrip.status !== ReservationStatus.Completed) {
+                    map.set(localTrip.id, localTrip);
+                }
+            }
+            const merged = Array.from(map.values()).sort((a, b) =>
+                new Date(b.departureDateTime).getTime() - new Date(a.departureDateTime).getTime()
+            );
+            saveCachedDailyTrips(merged);
+            onUpdate(merged);
+        }
+    }).catch(() => {});
+
     const unsubFirestore = dailyUseCollection.orderBy('departureDateTime', 'desc').onSnapshot(snapshot => {
+        if (!isSubscribed) return;
         const firestoreTrips = snapshot.docs.map(docToDailyTrip).filter((t): t is DailyTrip => t !== null);
-        // Preserva eventuais viagens locais recém-iniciadas ou recém-finalizadas nos últimos 20s caso o snapshot ainda esteja propagando
+        if (firestoreTrips.length === 0) {
+            const fallback = getCachedDailyTrips();
+            if (fallback.length > 0) onUpdate(fallback);
+            return;
+        }
         const currentLocal = getCachedDailyTrips();
         const firestoreMap = new Map<string, DailyTrip>(firestoreTrips.map((t: DailyTrip) => [t.id, t]));
         const merged: DailyTrip[] = [...firestoreTrips];
@@ -1738,6 +1794,7 @@ export const subscribeToDailyUseTrips = (onUpdate: (data: DailyTrip[]) => void, 
         saveCachedDailyTrips(merged);
         onUpdate(merged);
     }, (err) => {
+        if (!isSubscribed) return;
         const fallback = getCachedDailyTrips();
         if (fallback.length > 0) {
             onUpdate(fallback);
@@ -1746,6 +1803,7 @@ export const subscribeToDailyUseTrips = (onUpdate: (data: DailyTrip[]) => void, 
     });
 
     return () => {
+        isSubscribed = false;
         const idx = dailyTripListeners.indexOf(onUpdate);
         if (idx !== -1) dailyTripListeners.splice(idx, 1);
         unsubFirestore();
@@ -1780,6 +1838,12 @@ export const addDailyUseTrip = async (data: Omit<DailyTrip, 'id' | 'status' | 'a
         departureDateTime: data.departureDateTime instanceof Date ? data.departureDateTime : new Date(data.departureDateTime),
     };
 
+    fetch('/api/daily-use/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: removeUndefined(createdTrip) }),
+    }).catch(() => {});
+
     const currentList = getCachedDailyTrips().filter(t => t.id !== newId);
     const updatedList: DailyTrip[] = [createdTrip, ...currentList];
     saveCachedDailyTrips(updatedList);
@@ -1805,6 +1869,12 @@ export const endDailyUseTrip = async (id: string, data: { actualReturnDateTime: 
     saveCachedDailyTrips(updatedList);
     notifyDailyTripListeners(updatedList);
 
+    fetch('/api/daily-use/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, data: removeUndefined(tripWithStatus) }),
+    }).catch(() => {});
+
     try {
         const updatePromise = dailyUseCollection.doc(id).set(removeUndefined(tripWithStatus), { merge: true });
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore endDailyUseTrip")), 5000));
@@ -1827,6 +1897,12 @@ export const updateDailyUseTrip = async (id: string, data: Partial<Omit<DailyTri
     saveCachedDailyTrips(updatedList);
     notifyDailyTripListeners(updatedList);
 
+    fetch('/api/daily-use/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, data: removeUndefined(sanitizedData) }),
+    }).catch(() => {});
+
     try {
         await dailyUseCollection.doc(id).set(removeUndefined(sanitizedData), { merge: true });
     } catch (err) {
@@ -1838,6 +1914,12 @@ export const deleteDailyUseTrip = async (id: string) => {
     const currentList = getCachedDailyTrips().filter(t => t.id !== id);
     saveCachedDailyTrips(currentList);
     notifyDailyTripListeners(currentList);
+
+    fetch('/api/daily-use/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+    }).catch(() => {});
 
     try {
         if (!id || id.startsWith('local_')) return;
@@ -1857,6 +1939,23 @@ const recentRacUpdates = new Map<string, { timestamp: number; data: Partial<RacR
 const RAC_OVERRIDES_TTL_MS = 600000; // 10 minutos
 
 export const isRacRentalUsingFallback = () => useRacLocalStorageFallback;
+
+export const fetchBackendRacRentals = async (): Promise<RacRental[]> => {
+  try {
+    const res = await fetch('/api/rac-rentals');
+    if (res.ok) {
+      const items = await res.json();
+      if (Array.isArray(items)) {
+        return items
+          .map((item: any) => docToRacRental({ id: item.id, data: () => item }))
+          .filter((r): r is RacRental => r !== null && !isMockRacRental(r));
+      }
+    }
+  } catch (e) {
+    console.warn("Aviso ao sincronizar Locações RAC com /api/rac-rentals:", e);
+  }
+  return [];
+};
 
 // Helper to get from local storage - estritamente dados reais
 const getRacRentalsFromLocalStorage = (): RacRental[] => {
@@ -1925,23 +2024,24 @@ const reconcileRacRentals = (remoteRentals: RacRental[]): RacRental[] => {
 
 export const getRacRentals = async (): Promise<RacRental[]> => {
   ensureAdminFirebaseAuth().catch(() => {});
-  if (useRacLocalStorageFallback) {
-    return getRacRentalsFromLocalStorage();
-  }
   try {
     const snapshot = await racRentalsCollection.orderBy('pickupDate', 'desc').get();
     const firestoreRentals = snapshot.docs
       .map(docToRacRental)
       .filter((r): r is RacRental => r !== null && !isMockRacRental(r));
       
-    if (firestoreRentals.length === 0) {
-      return getRacRentalsFromLocalStorage();
+    if (firestoreRentals.length > 0) {
+      return reconcileRacRentals(firestoreRentals);
     }
-    return reconcileRacRentals(firestoreRentals);
   } catch (error) {
-    console.warn("getRacRentals failed, falling back to local storage.", error);
-    return getRacRentalsFromLocalStorage();
+    console.warn("getRacRentals failed, trying backend.", error);
   }
+
+  const backendRentals = await fetchBackendRacRentals();
+  if (backendRentals.length > 0) {
+    return reconcileRacRentals(backendRentals);
+  }
+  return getRacRentalsFromLocalStorage();
 };
 
 export const subscribeToRacRentals = (onUpdate: (data: RacRental[]) => void, onError: (error: any) => void) => {
@@ -1955,6 +2055,14 @@ export const subscribeToRacRentals = (onUpdate: (data: RacRental[]) => void, onE
   if (initialCached.length > 0) {
     onUpdate(initialCached);
   }
+
+  // Carrega imediatamente do servidor para garantir que todos os usuários vejam todas as locações RAC
+  fetchBackendRacRentals().then(backendRentals => {
+    if (isSubscribed && backendRentals.length > 0) {
+      const reconciled = reconcileRacRentals(backendRentals);
+      onUpdate(reconciled);
+    }
+  }).catch(() => {});
 
   const unsubscribe = racRentalsCollection.orderBy('pickupDate', 'desc').onSnapshot(
     (snapshot) => {
@@ -2016,15 +2124,22 @@ export const addRacRental = async (data: Omit<RacRental, 'id'>) => {
   saveRacRentalsToLocalStorage(rentals);
   notifyRacListeners();
 
+  const cleanPayload = removeUndefined({ ...sanitized, id: deterministicId });
+
+  fetch('/api/rac-rentals/add', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: cleanPayload }),
+  }).catch(() => {});
+
   try {
-    const cleanPayload = removeUndefined(sanitized);
     const addPromise = racRentalsCollection.doc(deterministicId).set(cleanPayload, { merge: true });
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore addRacRental")), 5000));
     await Promise.race([addPromise, timeoutPromise]);
     return { id: deterministicId };
   } catch (error) {
     console.warn("addRacRental em background ou contingência:", error);
-    racRentalsCollection.doc(deterministicId).set(removeUndefined(sanitized), { merge: true }).catch(() => {});
+    racRentalsCollection.doc(deterministicId).set(cleanPayload, { merge: true }).catch(() => {});
     return { id: deterministicId };
   }
 };
@@ -2054,18 +2169,25 @@ export const updateRacRental = async (id: string, data: Partial<Omit<RacRental, 
     notifyRacListeners();
   }
 
+  const payload = removeUndefined(sanitizedData);
+
+  fetch('/api/rac-rentals/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, data: payload }),
+  }).catch(() => {});
+
   if (id.startsWith('local_')) {
     return;
   }
 
   try {
-    const payload = removeUndefined(sanitizedData);
     const updatePromise = racRentalsCollection.doc(id).set(payload, { merge: true });
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout Firestore updateRacRental")), 5000));
     await Promise.race([updatePromise, timeoutPromise]);
   } catch (error) {
     console.warn("updateRacRental enviado em background para o Firestore:", error);
-    racRentalsCollection.doc(id).set(removeUndefined(sanitizedData), { merge: true }).catch(() => {});
+    racRentalsCollection.doc(id).set(payload, { merge: true }).catch(() => {});
   }
 };
 
@@ -2076,6 +2198,12 @@ export const deleteRacRental = async (id: string) => {
   const filtered = rentals.filter(r => r.id !== id);
   saveRacRentalsToLocalStorage(filtered);
   notifyRacListeners();
+
+  fetch('/api/rac-rentals/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }).catch(() => {});
 
   if (id.startsWith('local_')) {
     return;

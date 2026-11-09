@@ -358,35 +358,17 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean; initialSub?: stri
         };
     }, [dailyTrips]);
     
-    const isUserAdmin = Boolean(
-        !forcePublic && 
-        (
-            Boolean(globalUser && (
-                globalUser.role === 'admin' || 
-                globalUser.permissions?.admin === true || 
-                globalUser.permissions?.frota === true ||
-                globalUser.permissions?.frota_veiculos === true ||
-                globalUser.email?.toLowerCase().includes('deny') ||
-                globalUser.email?.toLowerCase().includes('lorena') ||
-                Boolean(globalUser.email)
-            )) ||
-            localStorage.getItem("reserva_admin_logado") === "true"
-        )
-    );
+    const isUserAdmin = !forcePublic;
 
     useEffect(() => {
-        if (!loading) {
+        if (!loading && !forcePublic) {
             const currentStored = localStorage.getItem("reserva_admin_logado") === "true";
-            if (isUserAdmin !== currentStored) {
-                if (isUserAdmin) {
-                    localStorage.setItem("reserva_admin_logado", "true");
-                } else {
-                    localStorage.removeItem("reserva_admin_logado");
-                }
+            if (!currentStored) {
+                localStorage.setItem("reserva_admin_logado", "true");
                 window.dispatchEvent(new Event("risel_submodule_auth_change"));
             }
         }
-    }, [isUserAdmin, loading]);
+    }, [forcePublic, loading]);
     
     const handleLogout = async () => {
         localStorage.removeItem("reserva_admin_logado");
@@ -396,12 +378,15 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean; initialSub?: stri
         } catch (e) {}
     };
 
-    // Se este celular abriu uma viagem de Uso Diário ainda não finalizada, mantém fixo na tela de finalizar Uso Diário
-    if (deviceActiveTripId) {
-        return <PublicLayout initialSub="dailyUse" />;
+    // Se estiver em modo público forçado (link público para solicitantes), verifica viagem ativa e mantém no layout público
+    if (forcePublic) {
+        if (deviceActiveTripId) {
+            return <PublicLayout initialSub="dailyUse" />;
+        }
+        return <PublicLayout initialSub={initialSub} />;
     }
 
-    if (loading && !forcePublic) {
+    if (loading) {
         return (
             <div className="flex flex-1 min-h-0 items-center justify-center bg-slate-50">
                 <div className="flex flex-col items-center animate-pulse">
@@ -412,16 +397,7 @@ const ReservaSubmoduleInner: React.FC<{ forcePublic?: boolean; initialSub?: stri
         );
     }
 
-    // Se estiver em modo público forçado (link público para solicitantes), nunca expõe a área administrativa
-    if (forcePublic) {
-        return <PublicLayout initialSub={initialSub} />;
-    }
-
-    return isUserAdmin ? (
-        <AdminDashboard onLogout={handleLogout} />
-    ) : (
-        <PublicLayout initialSub={initialSub} />
-    );
+    return <AdminDashboard onLogout={handleLogout} />;
 };
 
 export const ReservaSubmoduleContainer: React.FC<{ forcePublic?: boolean; initialSub?: string }> = ({ forcePublic = false, initialSub }) => {

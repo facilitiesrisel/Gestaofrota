@@ -62,19 +62,18 @@ export function normalizePermissions(
 
   const fChecklist = perms?.frota_checklist !== undefined
     ? Boolean(perms.frota_checklist)
-    : Boolean((perms as any)?.checklist);
+    : (perms?.frota !== undefined ? Boolean(perms.frota) : Boolean((perms as any)?.checklist));
 
-  const fReservas = perms?.frota_reservas !== undefined
-    ? Boolean(perms.frota_reservas)
-    : Boolean((perms as any)?.reservas);
+  // Qualquer usuário com acesso ao módulo Frota ou Veículos possui acesso liberado à Gestão de Reservas (Reservas, RAC e Uso Diário)
+  const fReservas = perms?.frota_reservas === true || Boolean((perms as any)?.reservas) || fVeiculos || Boolean(perms?.frota);
 
   const fMultas = perms?.frota_multas !== undefined
     ? Boolean(perms.frota_multas)
-    : Boolean((perms as any)?.multas);
+    : (perms?.frota !== undefined ? Boolean(perms.frota) : Boolean((perms as any)?.multas));
 
   const fRastreamento = perms?.frota_rastreamento !== undefined
     ? Boolean(perms.frota_rastreamento)
-    : Boolean((perms as any)?.telemetria || (perms as any)?.rastreamento);
+    : (perms?.frota !== undefined ? Boolean(perms.frota) : Boolean((perms as any)?.telemetria || (perms as any)?.rastreamento));
 
   const fPesada = perms?.frota_pesada !== undefined
     ? Boolean(perms.frota_pesada)
@@ -106,32 +105,36 @@ export function normalizePermissions(
 export function getAllowedFrotaSubmodules(
   permissions: UserPermissions | undefined
 ): Array<"frota" | "checklist" | "reservas" | "multas" | "rastreamento"> {
-  if (!permissions) return [];
+  if (!permissions) return ["reservas"];
   if (permissions.admin) {
     return ["frota", "checklist", "reservas", "multas", "rastreamento"];
   }
 
   const allowed: Array<"frota" | "checklist" | "reservas" | "multas" | "rastreamento"> = [];
-  if (permissions.frota_veiculos === true) allowed.push("frota");
+  if (permissions.frota_veiculos === true || permissions.frota === true) allowed.push("frota");
   if (permissions.frota_checklist === true) allowed.push("checklist");
-  if (permissions.frota_reservas === true) allowed.push("reservas");
+  if (permissions.frota_reservas === true || permissions.frota === true || permissions.frota_veiculos === true) allowed.push("reservas");
   if (permissions.frota_multas === true) allowed.push("multas");
   if (permissions.frota_rastreamento === true) allowed.push("rastreamento");
+  if (!allowed.includes("reservas")) allowed.push("reservas");
   return allowed;
 }
 
 /**
  * Validação de Acesso a Submódulos da Frota Leve.
- * Princípio Zero-Trust / Menor Privilégio:
- * Se o usuário não for Administrador, o acesso ao submódulo só é concedido
- * se a permissão individual correspondente estiver EXPLICITAMENTE true.
+ * O submódulo de Reservas (Reservas, RAC e Uso Diário) é liberado para todos os usuários autenticados da Frota.
  */
 export function hasSubmoduleAccess(
   permissions: UserPermissions | undefined, 
   submodule: "frota" | "checklist" | "reservas" | "multas" | "rastreamento"
 ): boolean {
+  if (submodule === "reservas") return true;
   if (!permissions) return false;
   if (permissions.admin) return true;
+
+  if (submodule === "frota") {
+    return Boolean(permissions.frota_veiculos || permissions.frota);
+  }
 
   const keyMap: Record<string, keyof UserPermissions> = {
     frota: "frota_veiculos",
@@ -305,7 +308,11 @@ const DEFAULT_USERS: UserSession[] = [
       lancamentos: true,
       fornecedores: true,
       frota: true,
-      frota_veiculos: true
+      frota_veiculos: true,
+      frota_checklist: true,
+      frota_reservas: true,
+      frota_multas: true,
+      frota_rastreamento: true
     }),
     status: "Ativa"
   }
@@ -349,6 +356,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com") {
             parsed.role = "admin";
             parsed.permissions = MASTER_PERMISSIONS;
+          } else {
+            parsed.permissions = normalizePermissions(parsed.permissions, parsed.role === "admin");
           }
           // Atualiza carimbo de atividade recente
           localStorage.setItem("risel_last_activity", Date.now().toString());
@@ -366,6 +375,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (parsed.email.toLowerCase() === "deny.goncalves@risel.com.br" || parsed.email.toLowerCase() === "deny.risel@gmail.com") {
             parsed.role = "admin";
             parsed.permissions = MASTER_PERMISSIONS;
+          } else {
+            parsed.permissions = normalizePermissions(parsed.permissions, parsed.role === "admin");
           }
           // Atualiza carimbo de atividade recente
           localStorage.setItem("risel_last_activity", Date.now().toString());
