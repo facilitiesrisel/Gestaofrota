@@ -31,18 +31,33 @@ export default function Usuarios() {
     currentUser?.email?.toLowerCase() === "deny.goncalves@risel.com.br" ||
     currentUser?.email?.toLowerCase() === "deny.risel@gmail.com";
 
-  // Estados para as Configurações de E-mail SMTP do Sistema
+  // Estados para as Configurações de E-mail SMTP do Sistema (Padrão Oficial: gestaodefrotarisel@gmail.com)
   const [smtpHost, setSmtpHost] = useState(() => {
-    return localStorage.getItem("risel_smtp_host") || "smtp.gmail.com";
+    const saved = localStorage.getItem("risel_smtp_host");
+    if (!saved || saved.includes("office365")) {
+      localStorage.setItem("risel_smtp_host", "smtp.gmail.com");
+      return "smtp.gmail.com";
+    }
+    return saved;
   });
   const [smtpPort, setSmtpPort] = useState(() => {
-    return localStorage.getItem("risel_smtp_port") || "587";
+    const saved = localStorage.getItem("risel_smtp_port");
+    if (!saved || saved === "587") {
+      localStorage.setItem("risel_smtp_port", "465");
+      return "465";
+    }
+    return saved;
   });
   const [smtpEmail, setSmtpEmail] = useState(() => {
-    return localStorage.getItem("risel_smtp_email") || "deny.risel@gmail.com";
+    const saved = localStorage.getItem("risel_smtp_email");
+    if (!saved || saved.toLowerCase() === "deny.goncalves@risel.com.br" || saved.toLowerCase() === "deny.risel@gmail.com") {
+      localStorage.setItem("risel_smtp_email", "gestaodefrotarisel@gmail.com");
+      return "gestaodefrotarisel@gmail.com";
+    }
+    return saved;
   });
   const [smtpPassword, setSmtpPassword] = useState(() => {
-    return localStorage.getItem("risel_smtp_password") || "@Cap150957";
+    return localStorage.getItem("risel_smtp_password") || "aeczbopvnpocoezw";
   });
   const [showSmtpPassword, setShowSmtpPassword] = useState(false);
   const [isSavingSmtp, setIsSavingSmtp] = useState(false);

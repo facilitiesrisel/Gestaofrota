@@ -118,7 +118,22 @@ export function appendRiselSignatureToHtml(html: string, moduleName: string): st
  * - Rastreamento Ativo: "Rastreamento Frota Leve Risel"
  */
 export function getSenderNameForModule(moduleOrSource?: string, subject?: string, explicitName?: string): string {
+  const sourceLower = String(moduleOrSource || '').toLowerCase().trim();
   const tag = `${moduleOrSource || ''} ${subject || ''} ${explicitName || ''}`.toLowerCase();
+
+  // Prioridade máxima para o módulo de Lançamento de Documentos
+  if (
+    sourceLower === "documentos" ||
+    sourceLower === "lancamentos" ||
+    sourceLower === "lançamentos" ||
+    tag.includes("sistema de documentos") ||
+    tag.includes("documento") ||
+    tag.includes("lancamento") ||
+    tag.includes("lançamento") ||
+    tag.includes("[aprovado]")
+  ) {
+    return "Sistema de Documentos Risel";
+  }
 
   // Alerta de saída da sede sem reserva/condutor
   if (tag.includes("saída da sede") || tag.includes("saida da sede") || tag.includes("perimeter") || tag.includes("sem condutor")) {
@@ -136,7 +151,7 @@ export function getSenderNameForModule(moduleOrSource?: string, subject?: string
   if (tag.includes("checklist")) {
     return "Checklist Frota Leve - Risel";
   }
-  if (tag.includes("documento") || tag.includes("usuario") || tag.includes("usuário") || tag.includes("lancamento") || tag.includes("lançamento")) {
+  if (tag.includes("usuario") || tag.includes("usuário")) {
     return "Sistema de Documentos Risel";
   }
   if (tag.includes("multa") || tag.includes("ait") || tag.includes("infracao") || tag.includes("infração") || tag.includes("recurso")) {
@@ -179,15 +194,35 @@ export function getRiselSmtpConfig(overrides?: Partial<SmtpConfig>): SmtpConfig 
     userCandidate = "";
   }
 
+  // Ignora qualquer override que tente forçar deny.goncalves@risel.com.br ou deny.risel@gmail.com como remetente padrão
+  const rawOverrideUser = (overrides?.user || "").trim().toLowerCase();
+  const isBlockedOverrideUser =
+    !rawOverrideUser ||
+    rawOverrideUser === "deny.goncalves@risel.com.br" ||
+    rawOverrideUser === "deny.risel@gmail.com";
+
+  const validOverrideUser = isBlockedOverrideUser ? "" : overrides!.user!.trim();
+  const validEnvUser =
+    userCandidate.includes("@") &&
+    userCandidate.toLowerCase() !== "deny.goncalves@risel.com.br" &&
+    userCandidate.toLowerCase() !== "deny.risel@gmail.com"
+      ? userCandidate
+      : "";
+
   // Remetente padrão oficial consolidado: gestaodefrotarisel@gmail.com
-  const user = overrides?.user || (userCandidate.includes("@") ? userCandidate : "gestaodefrotarisel@gmail.com");
+  const user = validOverrideUser || validEnvUser || "gestaodefrotarisel@gmail.com";
   const isGmail = user.toLowerCase().includes("@gmail.com");
   const defaultHost = isGmail ? "smtp.gmail.com" : "smtp.office365.com";
-  const host = overrides?.host || envHost || hostFromEmailField || defaultHost;
-  const port = overrides?.port || parseInt(envPort || (host === "smtp.gmail.com" ? "465" : "587"), 10);
+  const host = isGmail ? "smtp.gmail.com" : (overrides?.host || envHost || hostFromEmailField || defaultHost);
+  const port = isGmail ? 465 : (overrides?.port || parseInt(envPort || "587", 10));
   const secure = port === 465;
 
-  let rawPass = overrides?.pass || envPass || ENCRYPTED_DEFAULT_PASSWORD;
+  // Para a conta oficial gestaodefrotarisel@gmail.com, utiliza sempre a senha de app oficial do cofre
+  // evitando que senhas antigas salvas no navegador invalidem a autenticação do Gmail
+  const isOfficialFrotaGmail = user.toLowerCase() === "gestaodefrotarisel@gmail.com";
+  let rawPass = isOfficialFrotaGmail
+    ? ENCRYPTED_DEFAULT_PASSWORD
+    : (overrides?.pass || envPass || ENCRYPTED_DEFAULT_PASSWORD);
   const pass = decryptSecret(rawPass);
 
   return {

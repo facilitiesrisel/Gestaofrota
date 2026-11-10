@@ -104,17 +104,20 @@ async function createSafeTransporter(smtpConfig: any) {
   const isPort465 = Number(smtpConfig.port) === 465 || isGmail;
   const targetPort = isGmail ? 465 : (Number(smtpConfig.port) || (isPort465 ? 465 : 587));
 
-  // Para o Gmail, usar o transporte SSL direto ou service nativo garante 100% de estabilidade e evita timeouts de IP estático
+  // Para o Gmail, usar o transporte SSL direto ou service nativo garante 100% de estabilidade e evita timeouts em anexos PDF grandes
   if (isGmail) {
     return nodemailer.createTransport({
       service: "gmail",
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
       auth: {
         user: smtpConfig.user,
         pass: smtpConfig.pass,
       },
-      connectionTimeout: 4000,
-      greetingTimeout: 3000,
-      socketTimeout: 6000,
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
     } as any);
   }
 
@@ -227,7 +230,7 @@ async function sendEmailViaResend(options: SendHttpEmailOptions, apiKey: string)
     to: toList.length > 0 ? toList : ["gestaodefrotarisel@gmail.com"],
     subject: options.subject,
     html: options.html,
-    reply_to: "deny.goncalves@risel.com.br"
+    reply_to: fromEmail
   };
 
   if (ccList && ccList.length > 0) {
@@ -264,9 +267,9 @@ async function sendEmailViaResend(options: SendHttpEmailOptions, apiKey: string)
   const resData = await response.json().catch(() => ({}));
   if (!response.ok) {
     const errorMsg = resData.message || JSON.stringify(resData);
-    if ((errorMsg.toLowerCase().includes("domain") || errorMsg.toLowerCase().includes("verify") || errorMsg.toLowerCase().includes("from")) && payload.from !== `"Risel Combustíveis" <onboarding@resend.dev>`) {
+    if ((errorMsg.toLowerCase().includes("domain") || errorMsg.toLowerCase().includes("verify") || errorMsg.toLowerCase().includes("from")) && payload.from !== `"${safeName}" <onboarding@resend.dev>`) {
       console.warn(`[Resend API] Domínio customizado requer verificação no Resend. Tentando envio pelo canal sandbox de alta entrega (onboarding@resend.dev)...`);
-      payload.from = `"Risel Combustíveis" <onboarding@resend.dev>`;
+      payload.from = `"${safeName}" <onboarding@resend.dev>`;
       payload.reply_to = fromEmail;
 
       const retryResponse = await fetch("https://api.resend.com/emails", {
@@ -307,15 +310,16 @@ async function sendEmailViaBrevo(options: SendHttpEmailOptions, apiKey: string) 
   const ccList = options.cc ? parseCleanEmailList(options.cc) : undefined;
 
   const fromEmail = (options.fromEmail || process.env.SMTP_EMAIL || "gestaodefrotarisel@gmail.com").trim();
+  const safeSenderName = (options.fromName || "Gestão de Reservas Risel").replace(/["\r\n]/g, '').trim();
   const payload: any = {
     sender: {
-      name: options.fromName || "Gestão de Reservas Risel",
+      name: safeSenderName,
       email: fromEmail
     },
     to: toList.length > 0 ? toList : [{ email: "gestaodefrotarisel@gmail.com" }],
     replyTo: {
-      email: "deny.goncalves@risel.com.br",
-      name: "Administração Risel"
+      email: fromEmail,
+      name: safeSenderName
     },
     headers: {
       "X-Entity-Ref-ID": `risel-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
@@ -3649,7 +3653,18 @@ async function startServer() {
     // - Gestão de Reservas: "Gestão de Reservas Risel"
     // - Rastreamento Ativo: "Rastreamento Frota Leve Risel"
     // Todos os e-mails enviados através de: deny.risel@gmail.com
-    const finalSenderName = getSenderNameForModule(source || req.body.module || provider, subject, fromName);
+    // Identifica se o envio pertence ao módulo de Lançamento de Documentos
+    const isDocumentos =
+      String(source || "").toLowerCase().trim() === "documentos" ||
+      String(req.body.module || "").toLowerCase().trim() === "documentos" ||
+      String(fromName || "").toLowerCase().includes("sistema de documentos") ||
+      String(subject || "").toLowerCase().includes("lançamento") ||
+      String(subject || "").toLowerCase().includes("lancamento") ||
+      String(subject || "").toLowerCase().includes("[aprovado]");
+
+    const finalSenderName = isDocumentos
+      ? "Sistema de Documentos Risel"
+      : getSenderNameForModule(source || req.body.module || provider, subject, fromName);
 
     // REGRA MANDATÓRIA RISEL: Nenhum e-mail deve ser enviado para deny.risel@gmail.com
     const cleanNoDenyGmail = (emails: any): string => {
@@ -3719,13 +3734,21 @@ async function startServer() {
     }
 
     // Obtém a configuração SMTP consolidada (padrão oficial: gestaodefrotarisel@gmail.com)
-    const smtpConfig = getRiselSmtpConfig({
-      user: smtpEmail || process.env.SMTP_EMAIL || "gestaodefrotarisel@gmail.com",
-      host: smtpHost || process.env.SMTP_HOST || "smtp.gmail.com",
-      port: smtpPort ? parseInt(smtpPort, 10) : (process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465),
-      pass: smtpPassword || process.env.SMTP_PASSWORD,
-      defaultSenderName: finalSenderName
-    });
+    // Para Lançamento de Documentos, garante estritamente o envio por gestaodefrotarisel@gmail.com
+    const smtpConfig = isDocumentos
+      ? getRiselSmtpConfig({
+          user: "gestaodefrotarisel@gmail.com",
+          host: "smtp.gmail.com",
+          port: 465,
+          defaultSenderName: "Sistema de Documentos Risel"
+        })
+      : getRiselSmtpConfig({
+          user: smtpEmail || process.env.SMTP_EMAIL || "gestaodefrotarisel@gmail.com",
+          host: smtpHost || process.env.SMTP_HOST || "smtp.gmail.com",
+          port: smtpPort ? parseInt(smtpPort, 10) : (process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465),
+          pass: smtpPassword || process.env.SMTP_PASSWORD,
+          defaultSenderName: finalSenderName
+        });
 
     // Caso 1: Envio Direto de Notificação (Multas, Rastreamento, Frota, Reservas, E-mails Gerais)
     if (to || subject || html) {
@@ -3982,36 +4005,97 @@ async function startServer() {
         try {
           const transporter = await createSafeTransporter(smtpConfig);
 
-          const safeSenderName = (finalSenderName || "Gestão de Reservas Risel").replace(/["\r\n]/g, "").trim();
+          const safeSenderName = isDocumentos
+            ? "Sistema de Documentos Risel"
+            : (finalSenderName || "Gestão de Reservas Risel").replace(/["\r\n]/g, "").trim();
+          const senderAddress = isDocumentos
+            ? "gestaodefrotarisel@gmail.com"
+            : (smtpConfig.user || "gestaodefrotarisel@gmail.com");
 
           await transporter.sendMail({
             from: {
               name: safeSenderName,
-              address: smtpConfig.user || "gestaodefrotarisel@gmail.com"
+              address: senderAddress
             },
             to: emailTo,
             cc: emailCc || undefined,
-            replyTo: "deny.goncalves@risel.com.br",
+            replyTo: isDocumentos ? "gestaodefrotarisel@gmail.com" : "deny.goncalves@risel.com.br",
             subject: emailSubject,
             html: emailHtml,
             attachments: mailAttachments
           });
 
-          console.log(`[Risel SMTP] Notificação enviada com sucesso para To: ${emailTo} | CC: ${emailCc || 'Nenhum'} via ${smtpConfig.user} (${safeSenderName})!`);
+          console.log(`[Risel SMTP] Notificação enviada com sucesso para To: ${emailTo} | CC: ${emailCc || 'Nenhum'} via ${senderAddress} (${safeSenderName})!`);
           return res.json({ 
             success: true, 
             delivered: true, 
-            provider: `Gmail SMTP Direto (${smtpConfig.user})`,
+            provider: `Gmail SMTP Direto (${senderAddress})`,
             sender: safeSenderName,
+            senderEmail: senderAddress,
             host: smtpConfig.host,
-            message: `E-mail enviado com sucesso via Gmail (${safeSenderName}) para ${emailTo}!`,
+            message: `E-mail enviado com sucesso via Gmail (${safeSenderName} <${senderAddress}>) para ${emailTo}!`,
             attachmentsCount: mailAttachments.length 
           });
         } catch (err: any) {
-          console.warn("[Risel SMTP] Envio via Gmail SMTP encontrou restrição de autenticação ou conexão:", err.message, ". Acionando contingência de alta disponibilidade...");
+          console.warn("[Risel SMTP] Envio via Gmail SMTP 465 encontrou restrição:", err.message, ". Tentando reconexão Gmail STARTTLS 587...");
+
+          // Retentativa imediata via Gmail STARTTLS (porta 587) mantendo estritamente gestaodefrotarisel@gmail.com
+          try {
+            const officialGmailConfig = getRiselSmtpConfig({
+              user: "gestaodefrotarisel@gmail.com",
+              host: "smtp.gmail.com",
+              port: 465,
+              defaultSenderName: isDocumentos ? "Sistema de Documentos Risel" : finalSenderName
+            });
+            const safeSenderName = isDocumentos
+              ? "Sistema de Documentos Risel"
+              : (finalSenderName || "Gestão de Reservas Risel").replace(/["\r\n]/g, "").trim();
+
+            const gmail587Transporter = nodemailer.createTransport({
+              host: "smtp.gmail.com",
+              port: 587,
+              secure: false,
+              requireTLS: true,
+              auth: {
+                user: "gestaodefrotarisel@gmail.com",
+                pass: officialGmailConfig.pass,
+              },
+              tls: { rejectUnauthorized: false },
+              connectionTimeout: 20000,
+              greetingTimeout: 15000,
+              socketTimeout: 45000,
+            } as any);
+
+            await gmail587Transporter.sendMail({
+              from: {
+                name: safeSenderName,
+                address: "gestaodefrotarisel@gmail.com"
+              },
+              to: emailTo,
+              cc: emailCc || undefined,
+              replyTo: isDocumentos ? "gestaodefrotarisel@gmail.com" : "deny.goncalves@risel.com.br",
+              subject: emailSubject,
+              html: emailHtml,
+              attachments: mailAttachments
+            });
+
+            console.log(`[Risel SMTP] E-mail entregue na reconexão Gmail 587 para ${emailTo} via gestaodefrotarisel@gmail.com (${safeSenderName})!`);
+            return res.json({
+              success: true,
+              delivered: true,
+              provider: "Gmail SMTP STARTTLS (gestaodefrotarisel@gmail.com)",
+              sender: safeSenderName,
+              senderEmail: "gestaodefrotarisel@gmail.com",
+              host: "smtp.gmail.com",
+              message: `E-mail enviado com sucesso via Gmail (${safeSenderName}) para ${emailTo}!`,
+              attachmentsCount: mailAttachments.length
+            });
+          } catch (gmail587Err: any) {
+            console.warn("[Risel SMTP] Reconexão Gmail 587 falhou:", gmail587Err.message);
+          }
           
-          // Contingência 1: Google Apps Script (HTTPS sem restrição de portas no Google Workspace / MailApp)
-          if (storedAppsScriptUrl) {
+          // Contingência 1: Google Apps Script (Apenas para módulos que não sejam Lançamento de Documentos, pois Documentos exige gestaodefrotarisel@gmail.com)
+          if (storedAppsScriptUrl && !isDocumentos) {
             try {
               console.log("[Risel SMTP Router] Acionando envio de alta disponibilidade via Google Apps Script (HTTPS)...");
               const gsResult = await sendEmailViaAppsScript({
@@ -4047,8 +4131,8 @@ async function startServer() {
                 cc: emailCc,
                 subject: emailSubject,
                 html: emailHtml,
-                fromName: finalSenderName,
-                fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
+                fromName: isDocumentos ? "Sistema de Documentos Risel" : finalSenderName,
+                fromEmail: "gestaodefrotarisel@gmail.com",
                 attachments: mailAttachments
               }, effectiveBrevoKey);
 
@@ -4074,8 +4158,8 @@ async function startServer() {
                 cc: emailCc,
                 subject: emailSubject,
                 html: emailHtml,
-                fromName: finalSenderName,
-                fromEmail: smtpConfig.user || "gestaodefrotarisel@gmail.com",
+                fromName: isDocumentos ? "Sistema de Documentos Risel" : finalSenderName,
+                fromEmail: "gestaodefrotarisel@gmail.com",
                 attachments: mailAttachments
               }, effectiveResendKey);
 
@@ -4092,32 +4176,44 @@ async function startServer() {
             }
           }
 
-          // Contingência 4: SMTP Microsoft 365
+          // Contingência 4: Última tentativa via IPv4 direto no smtp.gmail.com (sempre gestaodefrotarisel@gmail.com)
           try {
-            const fallbackTransporter = await createSafeTransporter({
-              user: "deny.goncalves@risel.com.br",
-              host: "smtp.office365.com",
-              port: 587,
-              pass: decryptSecret(ENCRYPTED_FALLBACK_PASSWORD)
+            const officialGmailConfig = getRiselSmtpConfig({
+              user: "gestaodefrotarisel@gmail.com",
+              host: "smtp.gmail.com",
+              port: 465,
+              defaultSenderName: isDocumentos ? "Sistema de Documentos Risel" : finalSenderName
+            });
+            const safeSenderName = isDocumentos
+              ? "Sistema de Documentos Risel"
+              : (finalSenderName || "Gestão de Reservas Risel").replace(/["\r\n]/g, "").trim();
+
+            const retryTransporter = await createSafeTransporter({
+              user: "gestaodefrotarisel@gmail.com",
+              host: "smtp.gmail.com",
+              port: 465,
+              pass: officialGmailConfig.pass
             });
 
-            const fallbackSenderHeader = `"${finalSenderName}" <deny.goncalves@risel.com.br>`;
-
-            await fallbackTransporter.sendMail({
-              from: fallbackSenderHeader,
+            await retryTransporter.sendMail({
+              from: {
+                name: safeSenderName,
+                address: "gestaodefrotarisel@gmail.com"
+              },
               to: emailTo,
               cc: emailCc || undefined,
+              replyTo: isDocumentos ? "gestaodefrotarisel@gmail.com" : "deny.goncalves@risel.com.br",
               subject: emailSubject,
               html: emailHtml,
               attachments: mailAttachments
             });
 
-            console.log(`[Risel SMTP] Envio de contingência entregue com sucesso para ${emailTo}! Remetente: ${finalSenderName}`);
+            console.log(`[Risel SMTP] Envio de segunda tentativa Gmail entregue com sucesso para ${emailTo}! Remetente: ${finalSenderName} <gestaodefrotarisel@gmail.com>`);
             return res.json({ 
               success: true, 
               delivered: true, 
-              host: "smtp.office365.com",
-              provider: `SMTP Contingência (${finalSenderName})`,
+              host: "smtp.gmail.com",
+              provider: `Gmail SMTP (${finalSenderName} <gestaodefrotarisel@gmail.com>)`,
               sender: finalSenderName,
               message: `E-mail enviado com sucesso (${finalSenderName}) para ${emailTo}!`,
               attachmentsCount: mailAttachments.length 

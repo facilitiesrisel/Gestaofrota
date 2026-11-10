@@ -271,7 +271,7 @@ export const sendEmail = async (
         return;
     }
 
-    // Lê eventuais preferências SMTP e Chaves de API HTTP salvas pelo usuário no painel de configurações
+    // Lê eventuais preferências de Chaves de API HTTP salvas pelo usuário no painel de configurações
     const rawHost = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_host") : null;
     const rawPort = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_port") : null;
     const rawEmail = typeof window !== 'undefined' ? localStorage.getItem("risel_smtp_email") : null;
@@ -279,14 +279,28 @@ export const sendEmail = async (
     const rawResendKey = typeof window !== 'undefined' ? localStorage.getItem("risel_resend_api_key") : null;
     const rawBrevoKey = typeof window !== 'undefined' ? localStorage.getItem("risel_brevo_api_key") : null;
 
-    // Filtra para não enviar senhas antigas de texto plano ou e-mails de teste que possam quebrar a autenticação
-    const isValidCustomEmail = rawEmail && rawEmail.includes('@') && rawEmail.trim() !== "deny.risel@gmail.com";
-    const isValidCustomPass = rawPassword && rawPassword.trim().length >= 8 && rawPassword.trim() !== "@Cap150957";
+    const isDocumentosModule =
+      options?.source === "documentos" ||
+      options?.fromName === "Sistema de Documentos Risel";
 
-    const smtpHost = rawHost?.trim() || undefined;
-    const smtpPort = rawPort?.trim() || undefined;
-    const smtpEmail = isValidCustomEmail ? rawEmail!.trim() : undefined;
-    const smtpPassword = isValidCustomPass ? rawPassword!.trim() : undefined;
+    // Filtra para nunca usar deny.goncalves@risel.com.br ou deny.risel@gmail.com como remetente SMTP
+    const cleanRawEmail = rawEmail ? rawEmail.trim().toLowerCase() : "";
+    const isValidCustomEmail =
+      !isDocumentosModule &&
+      Boolean(cleanRawEmail) &&
+      cleanRawEmail.includes('@') &&
+      cleanRawEmail !== "deny.risel@gmail.com" &&
+      cleanRawEmail !== "deny.goncalves@risel.com.br";
+    const isValidCustomPass =
+      !isDocumentosModule &&
+      Boolean(rawPassword) &&
+      rawPassword!.trim().length >= 8 &&
+      rawPassword!.trim() !== "@Cap150957";
+
+    const smtpHost = isDocumentosModule ? "smtp.gmail.com" : (rawHost?.trim() || undefined);
+    const smtpPort = isDocumentosModule ? "465" : (rawPort?.trim() || undefined);
+    const smtpEmail = isDocumentosModule ? "gestaodefrotarisel@gmail.com" : (isValidCustomEmail ? rawEmail!.trim() : undefined);
+    const smtpPassword = isDocumentosModule ? undefined : (isValidCustomPass ? rawPassword!.trim() : undefined);
     const resendApiKey = rawResendKey?.trim() || undefined;
     const brevoApiKey = rawBrevoKey?.trim() || undefined;
 
@@ -319,7 +333,7 @@ export const sendEmail = async (
         to: cleanTo,
         subject,
         html,
-        fromName: options?.fromName || "Gestão de Reservas Risel",
+        fromName: isDocumentosModule ? "Sistema de Documentos Risel" : (options?.fromName || "Gestão de Reservas Risel"),
         source: options?.source || "reservas",
         cc: cleanCc,
         attachments: options?.attachments,
